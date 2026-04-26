@@ -102,27 +102,40 @@ def load_positions(date_str=None):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_summary(days=60):
+def load_summary(days=60, end_date=None):
     """加载组合汇总历史"""
     conn = get_db_connection()
-    query = "SELECT * FROM portfolio_summary ORDER BY date DESC LIMIT ?"
-    df = pd.read_sql_query(query, conn, params=(days,))
+    if end_date:
+        query = "SELECT * FROM portfolio_summary WHERE date <= ? ORDER BY date DESC LIMIT ?"
+        df = pd.read_sql_query(query, conn, params=(end_date, days))
+    else:
+        query = "SELECT * FROM portfolio_summary ORDER BY date DESC LIMIT ?"
+        df = pd.read_sql_query(query, conn, params=(days,))
     df = df.sort_values('date').reset_index(drop=True)
     conn.close()
     return df
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_index_quotes(code='sh000300', days=60):
+def load_index_quotes(code='sh000300', days=60, end_date=None):
     """加载指数行情"""
     conn = get_db_connection()
-    query = """
-        SELECT date, close, volume 
-        FROM index_quotes 
-        WHERE code = ? 
-        ORDER BY date DESC LIMIT ?
-    """
-    df = pd.read_sql_query(query, conn, params=(code, days))
+    if end_date:
+        query = """
+            SELECT date, close, volume 
+            FROM index_quotes 
+            WHERE code = ? AND date <= ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df = pd.read_sql_query(query, conn, params=(code, end_date, days))
+    else:
+        query = """
+            SELECT date, close, volume 
+            FROM index_quotes 
+            WHERE code = ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df = pd.read_sql_query(query, conn, params=(code, days))
     df = df.sort_values('date').reset_index(drop=True)
     conn.close()
     return df
@@ -166,11 +179,11 @@ def load_execution_logs(limit=10):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_available_dates(limit=30):
-    """获取最近N个交易日日期"""
+def get_available_dates():
+    """获取所有交易日日期"""
     conn = get_db_connection()
-    query = "SELECT DISTINCT date FROM portfolio_snapshots ORDER BY date DESC LIMIT ?"
-    df = pd.read_sql_query(query, conn, params=(limit,))
+    query = "SELECT DISTINCT date FROM portfolio_snapshots ORDER BY date DESC"
+    df = pd.read_sql_query(query, conn)
     conn.close()
     return df['date'].tolist()
 
@@ -251,18 +264,20 @@ def main():
 
     # 加载数据（带缓存，相同参数不重复查询）
     positions = load_positions(selected_date)
-    summary = load_summary(show_days)
+    summary = load_summary(show_days, selected_date)
     technical = load_technical()
 
-    # 预生成缓存：近30个交易日 x 各时间预设，后台静默触发一次
+    # 预生成缓存：最近10个交易日 x 各时间预设，后台静默触发一次
     _preset_days_list = [60, 120, 250, 500, 1250, 4000]
-    _recent = available_dates[:5]  # 最近5个交易日
+    _recent = available_dates[:10]  # 最近10个交易日
     with st.spinner(""):
         for _d in _recent:
             load_positions(_d)
+            load_summary(show_days, _d)
+            load_index_quotes("sh000300", show_days, _d)
         for _days in _preset_days_list:
-            load_summary(_days)
-            load_index_quotes("sh000300", _days)
+            load_summary(_days, available_dates[0])
+            load_index_quotes("sh000300", _days, available_dates[0])
 
     if positions.empty:
         st.warning(f"{selected_date} 无持仓数据")
@@ -346,7 +361,7 @@ def main():
                 chart_data = downsample(summary_plot, max_points=500)
 
                 # 沪深300对比
-                hs300 = load_index_quotes('sh000300', show_days + 10)
+                hs300 = load_index_quotes('sh000300', show_days + 10, selected_date)
                 if not hs300.empty:
                     hs300_base = hs300.iloc[0]['close']
                     hs300_plot = hs300.copy()
