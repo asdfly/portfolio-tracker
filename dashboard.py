@@ -414,25 +414,27 @@ def load_correlation_matrix(days=250, end_date=None):
 
 
 # ==================== P1: 单只ETF详情数据 ====================
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_etf_detail(code, days=120, end_date=None):
-    """加载单只ETF的K线数据和技术指标"""
+    """加载单只ETF的快照数据和技术指标（含成本价、持仓量）"""
     conn = get_db_connection()
 
-    # 从snapshots获取市值变化（类K线）
+    # 从snapshots获取市值变化
     if end_date:
         query_snap = """
-            SELECT date, current_price, market_value, quantity, pnl, pnl_rate
-            FROM portfolio_snapshots 
-            WHERE code = ? AND date <= ? 
+            SELECT date, current_price, market_value, quantity, cost_price,
+                   pnl, pnl_rate, ytd_return, beta
+            FROM portfolio_snapshots
+            WHERE code = ? AND date <= ?
             ORDER BY date DESC LIMIT ?
         """
         df_snap = pd.read_sql_query(query_snap, conn, params=(code, end_date, days))
     else:
         query_snap = """
-            SELECT date, current_price, market_value, quantity, pnl, pnl_rate
-            FROM portfolio_snapshots 
-            WHERE code = ? 
+            SELECT date, current_price, market_value, quantity, cost_price,
+                   pnl, pnl_rate, ytd_return, beta
+            FROM portfolio_snapshots
+            WHERE code = ?
             ORDER BY date DESC LIMIT ?
         """
         df_snap = pd.read_sql_query(query_snap, conn, params=(code, days))
@@ -443,18 +445,18 @@ def load_etf_detail(code, days=120, end_date=None):
     if end_date:
         query_tech = """
             SELECT date, rsi_value, rsi_status, ma_signal, macd_signal, trend,
-                   macd_line, signal_line, histogram
-            FROM etf_technical 
-            WHERE code = ? AND date <= ? 
+                   kdj_signal, bollinger_position, atr_pct
+            FROM etf_technical
+            WHERE code = ? AND date <= ?
             ORDER BY date DESC LIMIT ?
         """
         df_tech = pd.read_sql_query(query_tech, conn, params=(code, end_date, days))
     else:
         query_tech = """
             SELECT date, rsi_value, rsi_status, ma_signal, macd_signal, trend,
-                   macd_line, signal_line, histogram
-            FROM etf_technical 
-            WHERE code = ? 
+                   kdj_signal, bollinger_position, atr_pct
+            FROM etf_technical
+            WHERE code = ?
             ORDER BY date DESC LIMIT ?
         """
         df_tech = pd.read_sql_query(query_tech, conn, params=(code, days))
@@ -480,6 +482,240 @@ def load_etf_detail(code, days=120, end_date=None):
         df = pd.DataFrame()
 
     return df, etf_name
+
+
+
+def _render_etf_detail_panel(row, selected_date):
+    """渲染ETF增强版详情面板：核心指标 + 价格走势 + 技术分析"""
+    code = row['code']
+    name = row['name']
+
+    # 加载详细数据（命中缓存时零延迟）
+    detail_df, etf_name = load_etf_detail(code, days=120, end_date=selected_date)
+    price_df, _ = load_etf_price_history(code, days=250, end_date=selected_date)
+
+    # ===== 第一行：核心指标卡片（6列） =====
+    mv = row.get('market_value', 0)
+    pnl = row.get('pnl', 0)
+    pnl_rate = row.get('pnl_rate', 0)
+    cost = row.get('cost_price', 0)
+    current = row.get('current_price', 0)
+    qty = row.get('quantity', 0)
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+    with c1:
+        st.metric("市值", f"¥{mv:,.0f}")
+    with c2:
+        st.metric("累计盈亏", f"¥{pnl:,.0f}",
+                  delta=f"{pnl_rate:+.2f}%")
+    with c3:
+        if pd.notna(row.get('ytd_return')):
+            yt = row['ytd_return']
+            st.metric("年内收益", f"{yt:+.2f}%")
+        else:
+            st.metric("年内收益", "--")
+    with c4:
+        if pd.notna(row.get('beta')):
+            st.metric("Beta", f"{row['beta']:.2f}")
+        else:
+            st.metric("Beta", "--")
+    with c5:
+        cost_val = f"{cost:.3f}" if pd.notna(cost) else "--"
+        st.metric("成本价", cost_val)
+    with c6:
+        price_diff = current - cost if pd.notna(cost) and pd.notna(current) else None
+        delta_str = f"{price_diff:+.3f}" if price_diff is not None else None
+        st.metric("现价", f"{current:.3f}" if pd.notna(current) else "--",
+                  delta=delta_str)
+
+    # ===== 第二行：价格走势图 + 技术指标详情 =====
+    if not price_df.empty:
+        col_chart, col_tech = st.columns([3, 1])
+
+        with col_chart:
+            st.markdown("**价格走势（近250日）**")
+            df = price_df.sort_values('date').copy()
+
+            # 降采样
+            if len(df) > 500:
+                step = max(1, len(df) // 500)
+                df_plot = df.iloc[::step].copy()
+            else:
+                df_plot = df.copy()
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_plot['date'], y=df_plot['close'],
+                mode='lines', name='收盘价',
+                line=dict(color='#58a6ff', width=1.5),
+                fill='tozeroy',
+                fillcolor='rgba(88,166,255,0.05)',
+                hovertemplate='%{x|%m-%d}<br>价格: %{y:.3f}<extra></extra>'
+            ))
+
+            # 添加成本线
+            if pd.notna(cost) and cost > 0:
+                fig.add_hline(
+                    y=cost, line_dash="dash", line_color="#f59e0b",
+                    annotation_text=f"成本 {cost:.3f}",
+                    annotation_position="top left",
+                    annotation_font=dict(size=10, color="#f59e0b")
+                )
+
+            fig.update_layout(
+                height=220,
+                plot_bgcolor='#0d1117',
+                paper_bgcolor='#0d1117',
+                font=dict(color='#c9d1d9', size=11),
+                margin=dict(l=40, r=15, t=10, b=30),
+                xaxis=dict(showgrid=False, tickformat='%m-%d', dtick="M1"),
+                yaxis=dict(showgrid=True, gridcolor='#21262d', tickformat='.3f'),
+                hovermode='x unified',
+            )
+            st.plotly_chart(fig, width='stretch')
+
+        with col_tech:
+            st.markdown("**技术指标**")
+            if not detail_df.empty:
+                latest = detail_df.iloc[-1]
+
+                trend_map = {
+                    'bullish': ('看多', '#22c55e'),
+                    'bearish': ('看空', '#ef4444'),
+                    'neutral': ('中性', '#f59e0b'),
+                    None: ('--', '#888')
+                }
+                trend_label, trend_color = trend_map.get(latest.get('trend'), ('--', '#888'))
+
+                # 技术指标卡片
+                indicators = [
+                    ("趋势", trend_label, trend_color),
+                    ("RSI", f"{latest.get('rsi_value', '--'):.1f}" if pd.notna(latest.get('rsi_value')) else "--",
+                     '#22c55e' if latest.get('rsi_status') in ('oversold',) else
+                     '#ef4444' if latest.get('rsi_status') in ('overbought',) else '#c9d1d9'),
+                    ("MA信号", str(latest.get('ma_signal', '--')), '#c9d1d9'),
+                    ("MACD", str(latest.get('macd_signal', '--')), '#c9d1d9'),
+                    ("KDJ", str(latest.get('kdj_signal', '--')), '#c9d1d9'),
+                    ("布林位置", str(latest.get('bollinger_position', '--')), '#c9d1d9'),
+                    ("ATR%", f"{latest.get('atr_pct', '--'):.1f}%" if pd.notna(latest.get('atr_pct')) else "--", '#c9d1d9'),
+                ]
+
+                for label, value, color in indicators:
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;padding:4px 8px;'
+                        f'border-bottom:1px solid #21262d;font-size:12px;">'
+                        f'<span style="color:#8b949e;">{label}</span>'
+                        f'<span style="color:{color};font-weight:bold;">{value}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # RSI 仪表条
+                rsi_val = latest.get('rsi_value', None)
+                if pd.notna(rsi_val):
+                    rsi_clamped = max(0, min(100, float(rsi_val)))
+                    bar_color = '#ef4444' if rsi_clamped > 70 else '#22c55e' if rsi_clamped < 30 else '#f59e0b'
+                    st.markdown(
+                        f'<div style="margin-top:8px;font-size:11px;color:#8b949e;">RSI 位置</div>'
+                        f'<div style="background:#21262d;border-radius:4px;height:8px;position:relative;">'
+                        f'<div style="background:{bar_color};border-radius:4px;height:8px;width:{rsi_clamped}%;"></div>'
+                        f'<div style="position:absolute;top:-2px;left:70%;width:1px;height:12px;background:#ef4444;opacity:0.5;"></div>'
+                        f'<div style="position:absolute;top:-2px;left:30%;width:1px;height:12px;background:#22c55e;opacity:0.5;"></div>'
+                        f'</div>'
+                        f'<div style="display:flex;justify-content:space-between;font-size:9px;color:#484f58;">'
+                        f'<span>超卖 30</span><span>中性</span><span>超买 70</span></div>',
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.info("暂无技术指标数据")
+
+    # ===== 第三行：收益率分布 + 关键统计 =====
+    if not detail_df.empty:
+        col_stats, col_dist = st.columns([1, 2])
+
+        with col_stats:
+            st.markdown("**关键统计**")
+            df_detail = detail_df.sort_values('date')
+            daily_returns = df_detail['current_price'].pct_change().dropna() if len(df_detail) > 1 else pd.Series()
+
+            stats_items = []
+            if len(daily_returns) > 0:
+                stats_items.append(("日均收益", f"{daily_returns.mean()*100:+.3f}%"))
+                stats_items.append(("日收益标准差", f"{daily_returns.std()*100:.3f}%"))
+                stats_items.append(("最大单日涨幅", f"{daily_returns.max()*100:+.2f}%"))
+                stats_items.append(("最大单日跌幅", f"{daily_returns.min()*100:+.2f}%"))
+            stats_items.append(("数据天数", f"{len(df_detail)} 天"))
+            stats_items.append(("持仓市值占比", f"{mv/total_value*100:.1f}%" if total_value > 0 else "--"))
+
+            for label, value in stats_items:
+                st.markdown(
+                    f'<div style="display:flex;justify-content:space-between;padding:4px 8px;'
+                    f'border-bottom:1px solid #21262d;font-size:12px;">'
+                    f'<span style="color:#8b949e;">{label}</span>'
+                    f'<span style="color:#c9d1d9;font-weight:bold;">{value}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+        with col_dist:
+            if len(daily_returns) > 5:
+                st.markdown("**日收益率分布**")
+                fig_hist = go.Figure()
+                colors = ['#22c55e' if v >= 0 else '#ef4444' for v in daily_returns]
+                fig_hist.add_trace(go.Histogram(
+                    x=daily_returns * 100,
+                    marker_color='#58a6ff',
+                    nbinsx=30,
+                    opacity=0.7,
+                    hovertemplate='区间: %{x:.2f}%<br>次数: %{y}<extra></extra>'
+                ))
+                # 标记零线
+                fig_hist.add_vline(x=0, line_dash="dash", line_color="#f59e0b", line_width=1)
+                fig_hist.update_layout(
+                    height=180,
+                    plot_bgcolor='#0d1117',
+                    paper_bgcolor='#0d1117',
+                    font=dict(color='#c9d1d9', size=11),
+                    margin=dict(l=40, r=15, t=10, b=30),
+                    xaxis=dict(title='日收益率 %', showgrid=False),
+                    yaxis=dict(title='频次', showgrid=True, gridcolor='#21262d'),
+                    bargap=0.05,
+                )
+                st.plotly_chart(fig_hist, width='stretch')
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_etf_price_history(code, days=250, end_date=None):
+    """加载单只ETF的价格历史，用于绘制K线/走势图"""
+    conn = get_db_connection()
+    if end_date:
+        query = """
+            SELECT date, current_price as close, market_value, quantity
+            FROM portfolio_snapshots
+            WHERE code = ? AND date <= ?
+            ORDER BY date DESC LIMIT ?
+        """
+        df = pd.read_sql_query(query, conn, params=(code, end_date, days))
+    else:
+        query = """
+            SELECT date, current_price as close, market_value, quantity
+            FROM portfolio_snapshots
+            WHERE code = ?
+            ORDER BY date DESC LIMIT ?
+        """
+        df = pd.read_sql_query(query, conn, params=(code, days))
+    df = df.sort_values('date').reset_index(drop=True)
+    conn.close()
+
+    # 计算简单统计
+    if not df.empty:
+        df['returns'] = df['close'].pct_change()
+        df['ma5'] = df['close'].rolling(5).mean()
+        df['ma20'] = df['close'].rolling(20).mean()
+        df['ma60'] = df['close'].rolling(60).mean()
+
+    return df
+
 
 
 # ==================== P1: 多基准指数对比数据 ====================
@@ -943,19 +1179,7 @@ def main():
                     idx = selected_rows[0]
                     row = positions.iloc[idx]
                     with st.expander(f"**{row['name']}（{row['code']}）** 详细分析", expanded=True):
-                        col_d1, col_d2, col_d3 = st.columns(3)
-                        with col_d1:
-                            st.metric("市值", f"¥{row['market_value']:,.0f}")
-                        with col_d2:
-                            st.metric("累计盈亏", f"¥{row['pnl']:,.0f}",
-                                      delta=f"{row['pnl_rate']:.2f}%")
-                        with col_d3:
-                            if pd.notna(row.get('ytd_return')):
-                                yt = row['ytd_return']
-                                yt_color = "normal" if yt >= 0 else "inverse"
-                                st.metric("年内收益", f"{yt:.2f}%", delta_color=yt_color)
-                            elif pd.notna(row.get('beta')):
-                                st.metric("Beta", f"{row['beta']:.2f}")
+                        _render_etf_detail_panel(row, selected_date)
 
         # ===== 相关性矩阵热力图 =====
         st.markdown("---")
@@ -1362,33 +1586,26 @@ def main():
                 )
                 st.plotly_chart(fig_heat, width='stretch')
 
-    # ========== 技术指标 ==========
+    # ========== 技术指标（增强版：点击持仓行查看详情） ==========
     st.markdown('<div class="section-title" style="margin-top:20px;">🔍 技术指标信号</div>', unsafe_allow_html=True)
-
     if not technical.empty:
+        st.info("💡 点击上方持仓表格中的任意ETF行，即可查看完整的技术分析详情面板（价格走势、RSI/MACD/KDJ指标、收益率分布等）。")
+        # 全览信号卡片（精简版）
         trend_map = {'bullish': ('看多', '#22c55e'), 'bearish': ('看空', '#ef4444'),
                      'neutral': ('中性', '#f59e0b'), None: ('--', '#888')}
-
-        tech_cols = st.columns(5)
+        tech_cols = st.columns(min(len(technical), 6))
         for idx, (_, row) in enumerate(technical.iterrows()):
-            if idx >= 10:
+            if idx >= 12:
                 break
-            with tech_cols[idx % 5]:
+            with tech_cols[idx % len(tech_cols)]:
                 trend_label, trend_color = trend_map.get(row.get('trend'), ('--', '#888'))
-                rsi_val = row.get('rsi_value', 0)
-                rsi_status = row.get('rsi_status', '--')
-                ma_signal = row.get('ma_signal', '--')
-                macd_signal = row.get('macd_signal', '--')
-
                 st.markdown(
-                    f'<div style="padding:10px;border-radius:8px;background:#161b22;'
-                    f'border-top:2px solid {trend_color};margin-bottom:6px;">'
-                    f'<div style="font-size:12px;color:#c9d1d9;font-weight:bold;white-space:nowrap;'
+                    f'<div style="padding:8px;border-radius:6px;background:#161b22;'
+                    f'border-left:3px solid {trend_color};margin-bottom:4px;">'
+                    f'<div style="font-size:11px;color:#c9d1d9;font-weight:bold;white-space:nowrap;'
                     f'overflow:hidden;text-overflow:ellipsis;">{row.get("name", row.get("code", "未知"))}</div>'
                     f'<div style="font-size:11px;color:{trend_color};">{trend_label}</div>'
-                    f'<div style="font-size:10px;color:#8b949e;">RSI: {rsi_val:.1f} ({rsi_status})</div>'
-                    f'<div style="font-size:10px;color:#8b949e;">MA: {ma_signal}</div>'
-                    f'<div style="font-size:10px;color:#8b949e;">MACD: {macd_signal}</div>'
+                    f'<div style="font-size:10px;color:#8b949e;">RSI: {row.get("rsi_value", 0):.1f} | MA: {row.get("ma_signal", "--")}</div>'
                     f'</div>',
                     unsafe_allow_html=True
                 )
