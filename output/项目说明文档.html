@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>投资组合跟踪分析系统 - 项目说明文档</title>
+<style>
+body {
+    font-family: Arial, "Microsoft YaHei", SimSun, sans-serif;
+    font-size: 11pt;
+    line-height: 1.7;
+    color: #1a1a1a;
+    max-width: 780px;
+    margin: 40px auto;
+    padding: 0 20px;
+}
+
+h1 {
+    font-size: 22pt;
+    font-weight: bold;
+    color: #1a3c6e;
+    text-align: center;
+    border-bottom: 3px solid #1a3c6e;
+    padding-bottom: 12px;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    text-align: center;
+    color: #666666;
+    font-size: 10pt;
+    margin-bottom: 30px;
+}
+
+h2 {
+    font-size: 16pt;
+    font-weight: bold;
+    color: #1a3c6e;
+    border-bottom: 1.5px solid #d0d8e8;
+    padding-bottom: 6px;
+    margin-top: 28px;
+    margin-bottom: 12px;
+}
+
+h3 {
+    font-size: 13pt;
+    font-weight: bold;
+    color: #2c5282;
+    margin-top: 20px;
+    margin-bottom: 8px;
+}
+
+p {
+    margin: 6px 0;
+    text-align: justify;
+}
+
+ul, ol {
+    margin: 6px 0 6px 20px;
+    padding-left: 0;
+}
+
+li {
+    margin-bottom: 3px;
+}
+
+code {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 9.5pt;
+    background-color: #f0f2f5;
+    border: 1px solid #dde1e6;
+    border-radius: 3px;
+    padding: 1px 5px;
+}
+
+pre {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 9pt;
+    background-color: #f5f7fa;
+    border: 1px solid #dde1e6;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin: 10px 0;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+blockquote {
+    border-left: 4px solid #2c5282;
+    background-color: #f0f4fa;
+    margin: 12px 0;
+    padding: 10px 16px;
+    color: #333333;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0;
+    font-size: 10pt;
+}
+
+th, td {
+    border: 1px solid #c8cdd5;
+    padding: 7px 10px;
+    text-align: left;
+}
+
+th {
+    background-color: #e8ecf2;
+    font-weight: bold;
+    color: #1a3c6e;
+}
+
+tr:nth-child(even) {
+    background-color: #f8f9fb;
+}
+
+.toc {
+    background-color: #f8f9fb;
+    border: 1px solid #dde1e6;
+    border-radius: 6px;
+    padding: 16px 24px;
+    margin: 20px 0 30px 0;
+}
+
+.toc-title {
+    font-size: 13pt;
+    font-weight: bold;
+    color: #1a3c6e;
+    margin-bottom: 10px;
+}
+
+.toc ul {
+    list-style: none;
+    margin: 0;
+    padding-left: 0;
+}
+
+.toc li {
+    margin-bottom: 4px;
+}
+
+.toc a {
+    color: #2c5282;
+    text-decoration: none;
+}
+
+.note {
+    background-color: #fffbe6;
+    border: 1px solid #e6d966;
+    border-radius: 4px;
+    padding: 8px 14px;
+    margin: 10px 0;
+    font-size: 10pt;
+    color: #555555;
+}
+
+.section-intro {
+    color: #555555;
+    font-size: 10pt;
+    margin-bottom: 10px;
+}
+</style>
+</head>
+<body>
+
+<h1>投资组合跟踪分析系统</h1>
+<div class="subtitle">项目说明文档 &nbsp;|&nbsp; v1.3 &nbsp;|&nbsp; 2026-04-26</div>
+
+<div class="toc">
+<div class="toc-title">目录</div>
+<ul>
+<li>1 &nbsp; 项目概述</li>
+<li>2 &nbsp; 环境要求</li>
+<li>3 &nbsp; 项目结构</li>
+<li>4 &nbsp; 数据库设计</li>
+<li>5 &nbsp; 快速开始</li>
+<li>6 &nbsp; 核心功能详解</li>
+<li>7 &nbsp; 可视化 Dashboard</li>
+<li>8 &nbsp; 数据更新流程</li>
+<li>9 &nbsp; 定时任务配置</li>
+<li>10 &nbsp; 技术架构</li>
+<li>11 &nbsp; 常见问题</li>
+</ul>
+</div>
+
+<!-- ==================== 1. 项目概述 ==================== -->
+<h2>1 &nbsp; 项目概述</h2>
+<p>投资组合跟踪分析系统是一套完整的 ETF 投资组合管理与智能分析工具。系统从通达信交易终端导出持仓数据，自动获取实时行情，计算技术指标与风险指标，生成可视化报告，并提供 Web 交互式 Dashboard。</p>
+
+<h3>核心能力</h3>
+<ul>
+<li><strong>持仓跟踪</strong> — 23 只 ETF 实时行情获取、市值/盈亏自动计算</li>
+<li><strong>技术分析</strong> — MA / MACD / RSI / KDJ / 布林带 / ATR 六大指标全覆盖</li>
+<li><strong>风险分析</strong> — 夏普比率、最大回撤、年化波动率、VaR、Beta</li>
+<li><strong>基准对比</strong> — 11 个主流指数实时对比（沪深300、中证500 等）</li>
+<li><strong>智能建议</strong> — 基于动量/估值/风险的自动再平衡建议</li>
+<li><strong>可视化</strong> — Streamlit Dashboard，净值曲线、收益分布、回撤曲线、持仓饼图</li>
+<li><strong>自动报告</strong> — HTML 增强版报告，含图表，可邮件推送</li>
+<li><strong>告警监控</strong> — 跌幅/回撤/集中度/波动率异常自动告警</li>
+</ul>
+
+<h3>数据规模</h3>
+<table>
+<tr><th>数据表</th><th>记录数</th><th>时间跨度</th></tr>
+<tr><td>portfolio_snapshots（持仓快照）</td><td>33,420</td><td>2012-05-28 ~ 2026-04-26</td></tr>
+<tr><td>portfolio_summary（组合汇总）</td><td>3,382</td><td>2012-05-28 ~ 2026-04-26</td></tr>
+<tr><td>index_quotes（指数行情）</td><td>49,815</td><td>1990-12-19 ~ 2026-04-26</td></tr>
+<tr><td>etf_technical（技术指标）</td><td>32,960</td><td>2012-06-26 ~ 2026-04-26</td></tr>
+</table>
+
+<!-- ==================== 2. 环境要求 ==================== -->
+<h2>2 &nbsp; 环境要求</h2>
+<table>
+<tr><th>组件</th><th>版本 / 路径</th></tr>
+<tr><td>Python</td><td>3.12.13</td></tr>
+<tr><td>Python 解释器</td><td><code>C:\Users\HUAWEI\AppData\Roaming\WPS 灵犀\python-env\python.exe</code></td></tr>
+<tr><td>Streamlit</td><td>1.56.0</td></tr>
+<tr><td>Plotly</td><td>6.7.0</td></tr>
+<tr><td>操作系统</td><td>Windows</td></tr>
+<tr><td>通达信</td><td>用于导出持仓 .xls 文件</td></tr>
+</table>
+
+<h3>依赖清单（requirements.txt）</h3>
+<pre>
+streamlit>=1.40.0
+plotly>=5.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.28.0
+beautifulsoup4>=4.12.0
+openpyxl>=3.1.0
+</pre>
+
+<!-- ==================== 3. 项目结构 ==================== -->
+<h2>3 &nbsp; 项目结构</h2>
+<pre>
+portfolio_tracker/
+├── config/
+│   └── settings.py              # 全局配置（数据源、指数代码、阈值等）
+├── src/
+│   ├── analysis/
+│   │   ├── portfolio.py         # 组合分析主逻辑（持仓读取、行情获取、保存）
+│   │   ├── portfolio_risk.py    # 组合风险评估
+│   │   ├── risk.py              # 风险指标计算（夏普、回撤、VaR）
+│   │   ├── technical.py         # 技术指标计算（MA/MACD/RSI/KDJ/布林带/ATR）
+│   │   ├── advisor.py           # 智能建议引擎
+│   │   └── backtest.py          # 策略回测
+│   ├── data_sources/
+│   │   ├── base.py              # 数据源基类
+│   │   ├── sina.py              # 新浪财经接口（主数据源）
+│   │   └── akshare_ds.py        # AKShare 数据源（备用）
+│   ├── report/
+│   │   ├── smart_report.py      # 智能报告生成
+│   │   └── risk_report.py       # 风险报告
+│   └── utils/
+│       ├── database.py          # 数据库管理
+│       ├── position_reader.py   # 通达信持仓文件解析
+│       ├── enhanced_report.py   # 增强版 HTML 报告（含图表）
+│       ├── email_report.py      # 邮件报告发送
+│       ├── news_fetcher.py      # 行业新闻抓取
+│       ├── monitor.py           # 告警监控
+│       ├── notification.py      # 通知管理（邮件/企业微信）
+│       └── backfill.py          # 历史数据回填工具
+├── data/
+│   ├── database/
+│   │   └── portfolio.db         # SQLite 数据库
+│   ├── reports/                 # 生成的报告
+│   ├── raw/                     # 原始数据
+│   └── processed/               # 处理后数据
+├── logs/                        # 运行日志
+├── report/templates/            # 报告模板
+├── tests/
+├── dashboard.py                 # Streamlit 可视化 Dashboard
+├── run_analysis.py              # 主分析入口（四阶段流程）
+├── backfill_full_history.py     # 完整历史回填（新浪K线接口）
+├── backfill_history.py          # 历史回填工具
+├── run_enhanced.py              # 增强报告入口
+├── run_smart.py                 # 智能分析入口
+├── setup_notification.py        # 通知配置向导
+├── scheduled_run.bat            # 定时任务入口
+├── run_all.bat                  # 交互式主菜单
+├── run_analysis.bat             # 分析任务启动脚本
+├── run_dashboard.bat            # Dashboard 启动脚本
+├── start_dashboard.bat          # Dashboard 启动脚本（带环境检查）
+├── monitor.bat                  # 监控面板
+└── requirements.txt             # Python 依赖
+</pre>
+
+<!-- ==================== 4. 数据库设计 ==================== -->
+<h2>4 &nbsp; 数据库设计</h2>
+<p>系统使用 SQLite 数据库 <code>data/database/portfolio.db</code>，共 8 张核心表。</p>
+
+<h3>4.1 portfolio_snapshots（持仓快照）</h3>
+<p>记录每个交易日每只 ETF 的持仓明细。</p>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td>id</td><td>INTEGER</td><td>自增主键</td></tr>
+<tr><td>date</td><td>TEXT</td><td>交易日期 (YYYY-MM-DD)</td></tr>
+<tr><td>code</td><td>TEXT</td><td>证券代码（如 sh510300）</td></tr>
+<tr><td>name</td><td>TEXT</td><td>证券名称</td></tr>
+<tr><td>quantity</td><td>REAL</td><td>持仓数量</td></tr>
+<tr><td>cost_price</td><td>REAL</td><td>成本价</td></tr>
+<tr><td>current_price</td><td>REAL</td><td>当前价格</td></tr>
+<tr><td>market_value</td><td>REAL</td><td>最新市值</td></tr>
+<tr><td>pnl</td><td>REAL</td><td>持仓盈亏</td></tr>
+<tr><td>pnl_rate</td><td>REAL</td><td>盈亏率 (%)</td></tr>
+<tr><td>ytd_return</td><td>REAL</td><td>年初至今收益率 (%)</td></tr>
+<tr><td>beta</td><td>REAL</td><td>贝塔系数</td></tr>
+</table>
+
+<h3>4.2 portfolio_summary（组合汇总）</h3>
+<p>记录每个交易日的组合整体指标，含风险指标。</p>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td>date</td><td>TEXT</td><td>交易日期</td></tr>
+<tr><td>total_value</td><td>REAL</td><td>总市值</td></tr>
+<tr><td>total_cost</td><td>REAL</td><td>总成本</td></tr>
+<tr><td>total_pnl</td><td>REAL</td><td>总盈亏</td></tr>
+<tr><td>daily_pnl</td><td>REAL</td><td>当日盈亏</td></tr>
+<tr><td>daily_return</td><td>REAL</td><td>当日收益率 (%)</td></tr>
+<tr><td>vs_hs300</td><td>REAL</td><td>对比沪深300超额收益 (%)</td></tr>
+<tr><td>profit_count</td><td>INTEGER</td><td>盈利 ETF 数量</td></tr>
+<tr><td>loss_count</td><td>INTEGER</td><td>亏损 ETF 数量</td></tr>
+<tr><td>sharpe_ratio</td><td>REAL</td><td>夏普比率</td></tr>
+<tr><td>max_drawdown</td><td>REAL</td><td>最大回撤 (%)</td></tr>
+<tr><td>volatility</td><td>REAL</td><td>年化波动率 (%)</td></tr>
+</table>
+
+<h3>4.3 index_quotes（指数行情）</h3>
+<p>11 个基准指数的日线行情数据。</p>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td>date</td><td>TEXT</td><td>交易日期</td></tr>
+<tr><td>code</td><td>TEXT</td><td>指数代码（如 sh000300）</td></tr>
+<tr><td>name</td><td>TEXT</td><td>指数名称</td></tr>
+<tr><td>close</td><td>REAL</td><td>收盘价</td></tr>
+<tr><td>change_pct</td><td>REAL</td><td>涨跌幅 (%)</td></tr>
+<tr><td>volume</td><td>REAL</td><td>成交量</td></tr>
+<tr><td>amount</td><td>REAL</td><td>成交额</td></tr>
+</table>
+
+<h3>4.4 etf_technical（技术指标）</h3>
+<p>每只 ETF 的每日技术指标信号。</p>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td>date</td><td>TEXT</td><td>交易日期</td></tr>
+<tr><td>code</td><td>TEXT</td><td>证券代码</td></tr>
+<tr><td>ma_signal</td><td>TEXT</td><td>均线信号（金叉/死叉）</td></tr>
+<tr><td>macd_signal</td><td>TEXT</td><td>MACD 信号</td></tr>
+<tr><td>rsi_value</td><td>REAL</td><td>RSI 数值</td></tr>
+<tr><td>rsi_status</td><td>TEXT</td><td>RSI 状态（超买/超卖/正常）</td></tr>
+<tr><td>kdj_signal</td><td>TEXT</td><td>KDJ 信号</td></tr>
+<tr><td>bollinger_position</td><td>TEXT</td><td>布林带位置</td></tr>
+<tr><td>atr_pct</td><td>REAL</td><td>ATR 百分比</td></tr>
+<tr><td>trend</td><td>TEXT</td><td>综合趋势（bullish/bearish/neutral）</td></tr>
+</table>
+
+<h3>4.5 辅助表</h3>
+<table>
+<tr><th>表名</th><th>说明</th></tr>
+<tr><td>alerts</td><td>告警记录</td></tr>
+<tr><td>execution_logs</td><td>任务执行日志</td></tr>
+<tr><td>daily_news</td><td>每日行业新闻</td></tr>
+</table>
+
+<h3>4.6 数据库索引</h3>
+<p>Dashboard 启动时自动创建以下索引以加速查询：</p>
+<pre>
+idx_snap_date          ON portfolio_snapshots(date)
+idx_snap_code_date     ON portfolio_snapshots(code, date)
+idx_summary_date       ON portfolio_summary(date)
+idx_idx_quote_code_date ON index_quotes(code, date)
+idx_tech_date          ON etf_technical(date)
+idx_tech_code_date     ON etf_technical(code, date)
+</pre>
+
+<!-- ==================== 5. 快速开始 ==================== -->
+<h2>5 &nbsp; 快速开始</h2>
+
+<h3>5.1 启动 Dashboard</h3>
+<p>最快速的方式是通过启动脚本：</p>
+<pre>
+cd C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker
+start_dashboard.bat
+</pre>
+<p>浏览器访问 <code>http://localhost:8501</code> 即可看到可视化界面。</p>
+
+<p>或手动启动：</p>
+<pre>
+"C:\Users\HUAWEI\AppData\Roaming\WPS 灵犀\python-env\python.exe" -m streamlit run dashboard.py --server.port 8501
+</pre>
+
+<h3>5.2 运行完整分析</h3>
+<pre>
+cd C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker
+run_all.bat
+</pre>
+<p>选择菜单选项 <code>[1]</code> 执行完整五阶段分析，或选择 <code>[2]</code> 执行快速基础分析。</p>
+
+<h3>5.3 生成报告</h3>
+<p>运行完整分析后自动生成 HTML 增强版报告，保存在 <code>data/reports/</code> 目录。也可手动生成：</p>
+<pre>
+python -c "from src.utils.enhanced_report import EnhancedReportBuilder; from config.settings import DATABASE_PATH; b=EnhancedReportBuilder(str(DATABASE_PATH)); h=b.build_full_report(); p=b.save_report(h); print(f'报告: {p}')"
+</pre>
+
+<!-- ==================== 6. 核心功能详解 ==================== -->
+<h2>6 &nbsp; 核心功能详解</h2>
+
+<h3>6.1 四阶段分析流程（run_analysis.py）</h3>
+<table>
+<tr><th>阶段</th><th>功能</th><th>说明</th></tr>
+<tr><td>阶段一</td><td>基础分析</td><td>读取通达信持仓 → 新浪/东方财富获取行情 → 计算技术指标 → 写入数据库</td></tr>
+<tr><td>阶段二</td><td>风险分析</td><td>计算夏普比率、最大回撤、年化波动率、VaR</td></tr>
+<tr><td>阶段三</td><td>监控告警</td><td>检测日跌幅/回撤/集中度/波动率异常，触发邮件或企业微信通知</td></tr>
+<tr><td>阶段四</td><td>智能分析</td><td>生成投资建议（动量/估值/风险），策略回测，输出 Markdown 智能报告</td></tr>
+</table>
+
+<h3>6.2 数据源</h3>
+<p>系统使用多数据源策略，优先级如下：</p>
+<table>
+<tr><th>优先级</th><th>数据源</th><th>接口</th><th>用途</th></tr>
+<tr><td>1</td><td>新浪财经</td><td><code>hq.sinajs.cn</code></td><td>实时行情、K线数据</td></tr>
+<tr><td>2</td><td>东方财富</td><td><code>push2.eastmoney.com</code></td><td>备用实时行情</td></tr>
+<tr><td>3</td><td>AKShare</td><td>Python SDK</td><td>补充数据</td></tr>
+</table>
+
+<blockquote>
+<strong>网络说明：</strong>东方财富 API（push2his.eastmoney.com）在当前网络环境下可能被阻断，历史回填已切换至新浪财经 K 线接口（<code>money.finance.sina.com.cn</code>）作为主数据源，腾讯财经作为备用。
+</blockquote>
+
+<h3>6.3 持仓数据导入</h3>
+<p>持仓数据从通达信交易终端导出，格式为制表符分隔的 .xls 文件。</p>
+<ol>
+<li>在通达信中打开持仓窗口</li>
+<li>右键 → 导出为 Excel</li>
+<li>保存到 <code>C:\zd_zsone\T0002\export\持仓股YYYYMMDD.xls</code></li>
+<li>更新 <code>config/settings.py</code> 中的 <code>POSITION_FILE</code> 路径</li>
+</ol>
+
+<h3>6.4 基准指数</h3>
+<p>系统跟踪 11 个基准指数，在 <code>config/settings.py</code> 的 <code>INDEX_CODES</code> 中配置：</p>
+<pre>
+sh000001  上证指数        sh000300  沪深300        sh000905  中证500
+sz399001  深证成指        sh000852  中证1000       sz399006  创业板指
+sh000688  科创50          sz399673  创业板50       sz399987  中证酒
+sz399989  中证医疗        sh000015  红利指数
+</pre>
+
+<h3>6.5 告警规则</h3>
+<table>
+<tr><th>规则</th><th>条件</th><th>阈值</th><th>级别</th></tr>
+<tr><td>单日跌幅</td><td>日收益率</td><td>&lt; -3%</td><td>warning</td></tr>
+<tr><td>最大回撤</td><td>回撤幅度</td><td>&lt; -10%</td><td>error</td></tr>
+<tr><td>持仓集中度</td><td>HHI 指数</td><td>&gt; 0.5</td><td>warning</td></tr>
+<tr><td>波动率飙升</td><td>年化波动率</td><td>&gt; 30%</td><td>warning</td></tr>
+</table>
+
+<!-- ==================== 7. Dashboard ==================== -->
+<h2>7 &nbsp; 可视化 Dashboard</h2>
+<p>Dashboard 基于 Streamlit + Plotly 构建，提供深色主题的交互式分析界面。</p>
+
+<h3>7.1 功能模块</h3>
+<table>
+<tr><th>模块</th><th>内容</th></tr>
+<tr><td>控制面板（侧边栏）</td><td>日期选择（全部交易日）、时间范围预设（3月/6月/1年/2年/5年/全部/自定义）</td></tr>
+<tr><td>概览指标</td><td>总市值、总盈亏、日收益、夏普比率、最大回撤、年化波动率</td></tr>
+<tr><td>净值走势</td><td>组合净值 vs 沪深300 对比曲线，基准100归一化</td></tr>
+<tr><td>收益分布</td><td>日收益率直方图 + 均值标记线</td></tr>
+<tr><td>每日盈亏</td><td>红绿柱状图</td></tr>
+<tr><td>持仓分布</td><td>饼图 + 持仓明细表</td></tr>
+<tr><td>风险仪表盘</td><td>风险评分量表、风险指标详情</td></tr>
+<tr><td>回撤曲线</td><td>历史回撤填充面积图</td></tr>
+<tr><td>技术指标信号</td><td>MA/MACD/RSI/KDJ 综合趋势卡片</td></tr>
+<tr><td>智能建议</td><td>最新 Smart Report 展示</td></tr>
+</table>
+
+<h3>7.2 性能优化</h3>
+<ul>
+<li><strong>@st.cache_data</strong> — 所有数据库查询函数带 5 分钟缓存，相同参数命中零延迟</li>
+<li><strong>降采样</strong> — 图表数据自动压缩至 500 个点，保留首尾边界值不失真</li>
+<li><strong>SQLite 索引</strong> — 6 个复合索引加速常用查询</li>
+<li><strong>缓存预热</strong> — 页面加载时后台静默预生成最近 10 个交易日 + 6 个时间预设的缓存</li>
+<li><strong>end_date 参数</strong> — load_summary / load_index_quotes 支持按选定日期截断，切换历史日期时返回该日期视角的数据</li>
+</ul>
+
+<h3>7.3 重启 Dashboard</h3>
+<p>如果 Dashboard 无响应，在命令行执行：</p>
+<pre>
+taskkill /F /IM streamlit.exe
+cd C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker
+start_dashboard.bat
+</pre>
+
+<!-- ==================== 8. 数据更新流程 ==================== -->
+<h2>8 &nbsp; 数据更新流程</h2>
+
+<h3>8.1 日常更新（推荐方式）</h3>
+<ol>
+<li>在通达信中导出最新持仓文件到 <code>C:\zd_zsone\T0002\export\</code></li>
+<li>修改 <code>config/settings.py</code> 中的 <code>POSITION_FILE</code> 路径指向新文件</li>
+<li>运行分析：<pre>python run_analysis.py</pre></li>
+<li>刷新 Dashboard 页面查看最新数据</li>
+</ol>
+
+<div class="note">
+<strong>周末执行：</strong>系统默认跳过周末，如需周末执行，使用以下命令绕过交易日检查：
+<pre>python -c "import run_analysis; run_analysis.is_trading_day = lambda: True; exit(run_analysis.main())"</pre>
+</div>
+
+<h3>8.2 历史数据回填</h3>
+<p>若需补充历史数据（如首次部署或新增 ETF），使用回填脚本：</p>
+<pre>
+python backfill_full_history.py                  # 回填全部（ETF + 指数）
+python backfill_full_history.py --etf-only        # 仅 ETF
+python backfill_full_history.py --index-only      # 仅指数
+python backfill_full_history.py --dry-run         # 预览模式，不实际写入
+</pre>
+<p>回填数据源为新浪财经 K 线接口，备用腾讯财经接口。</p>
+
+<h3>8.3 报告访问</h3>
+<p>报告文件位于 <code>data/reports/</code> 目录：</p>
+<table>
+<tr><th>文件</th><th>说明</th></tr>
+<tr><td><code>latest_report.html</code></td><td>最新增强版报告（含图表）</td></tr>
+<tr><td><code>enhanced_report_YYYYMMDD.html</code></td><td>日期归档报告</td></tr>
+<tr><td><code>smart_report_YYYYMMDD.md</code></td><td>智能建议 Markdown 报告</td></tr>
+</table>
+<p>可直接在浏览器中打开 HTML 报告查看。</p>
+
+<!-- ==================== 9. 定时任务 ==================== -->
+<h2>9 &nbsp; 定时任务配置</h2>
+<p><code>scheduled_run.bat</code> 为定时任务入口脚本，通过 Windows 任务计划程序配置自动执行。</p>
+
+<h3>配置步骤</h3>
+<ol>
+<li>打开「任务计划程序」（taskschd.msc）</li>
+<li>创建基本任务，设置触发器为「每个工作日 15:30」</li>
+<li>操作选择「启动程序」，指向 <code>scheduled_run.bat</code></li>
+<li>确保 <code>POSITION_FILE</code> 指向最新的通达信持仓文件</li>
+</ol>
+
+<div class="note">
+<strong>前提：</strong>每日 15:30 前需从通达信导出持仓文件并更新配置路径。如持仓未变化，分析仍会运行（使用数据库中的现有持仓 + 新行情）。
+</div>
+
+<!-- ==================== 10. 技术架构 ==================== -->
+<h2>10 &nbsp; 技术架构</h2>
+
+<h3>10.1 数据流</h3>
+<pre>
+通达信 .xls → PositionReader → PortfolioAnalyzer
+                                    ↓
+                            新浪/东方财富 API（行情）
+                                    ↓
+                            technical.py（技术指标）
+                                    ↓
+                            portfolio_risk.py（风险指标）
+                                    ↓
+                            SQLite portfolio.db
+                                    ↓
+                    ┌───────────────┼───────────────┐
+                    ↓               ↓               ↓
+              Dashboard      HTML 报告        告警通知
+            (Streamlit)   (EnhancedReport)  (Monitor)
+</pre>
+
+<h3>10.2 配置文件关键参数</h3>
+<table>
+<tr><th>参数</th><th>位置</th><th>说明</th></tr>
+<tr><td><code>POSITION_FILE</code></td><td>settings.py</td><td>通达信持仓文件路径</td></tr>
+<tr><td><code>DATABASE_PATH</code></td><td>settings.py</td><td>SQLite 数据库路径</td></tr>
+<tr><td><code>INDEX_CODES</code></td><td>settings.py</td><td>基准指数代码映射</td></tr>
+<tr><td><code>MAJOR_ETFS</code></td><td>settings.py</td><td>主要持仓 ETF 列表</td></tr>
+<tr><td><code>RISK_CONFIG</code></td><td>settings.py</td><td>风险计算参数（无风险利率、VaR 置信度等）</td></tr>
+<tr><td><code>MONITOR_CONFIG</code></td><td>settings.py</td><td>告警规则与阈值</td></tr>
+<tr><td><code>NOTIFICATION_CONFIG</code></td><td>settings.py</td><td>邮件/企业微信通知配置</td></tr>
+</table>
+
+<h3>10.3 版本历史</h3>
+<table>
+<tr><th>提交</th><th>说明</th></tr>
+<tr><td>e5829f0</td><td>init: 投资组合跟踪分析系统 v1.3 基线版本</td></tr>
+<tr><td>0b58615</td><td>feat: 添加完整历史数据回填脚本（新浪K线接口）</td></tr>
+<tr><td>a54dee1</td><td>perf: Dashboard 性能优化 — 缓存/降采样/索引/日期选择器</td></tr>
+<tr><td>5928dbd</td><td>fix: 替换 use_container_width 消除 Streamlit 弃用警告</td></tr>
+<tr><td>98ea8e6</td><td>feat: summary/index_quotes 支持 end_date 参数，缓存预热扩展至10个交易日</td></tr>
+</table>
+
+<!-- ==================== 11. 常见问题 ==================== -->
+<h2>11 &nbsp; 常见问题</h2>
+
+<h3>Q1: Dashboard 打开报 Connection Error</h3>
+<p>Streamlit 进程可能已退出。执行 <code>taskkill /F /IM streamlit.exe</code> 清理后重新运行 <code>start_dashboard.bat</code>。</p>
+
+<h3>Q2: 选择长时间范围（2年+）时 Dashboard 响应慢</h3>
+<p>已通过缓存 + 降采样优化。首次加载长周期数据时会有短暂延迟（后台预热），后续切换时间范围会命中缓存，响应瞬间完成。</p>
+
+<h3>Q3: 东方财富 API 连接失败</h3>
+<p>当前网络环境下东方财富 API 可能被阻断。系统已自动切换至新浪财经接口作为主数据源。历史回填脚本同时内置了腾讯财经作为备用接口。</p>
+
+<h3>Q4: 如何添加新的 ETF 持仓</h3>
+<ol>
+<li>在通达信中添加新 ETF 到持仓</li>
+<li>导出新的持仓 .xls 文件</li>
+<li>更新 <code>config/settings.py</code> 中的 <code>POSITION_FILE</code> 和 <code>MAJOR_ETFS</code></li>
+<li>运行 <code>python backfill_full_history.py</code> 回填新 ETF 的历史数据</li>
+<li>运行 <code>python run_analysis.py</code> 更新当天数据</li>
+</ol>
+
+<h3>Q5: 数据库文件过大如何处理</h3>
+<p>可定期清理 <code>daily_news</code> 表的历史新闻数据（<code>DELETE FROM daily_news WHERE date &lt; 'YYYY-MM-DD'</code>）。核心行情数据建议保留以维持风险指标准确性。</p>
+
+<h3>Q6: 如何配置邮件通知</h3>
+<p>运行 <code>python setup_notification.py</code> 启动配置向导，按提示填写 SMTP 服务器、账号、授权码、收件人等信息。配置保存在 <code>config/settings.py</code> 的 <code>NOTIFICATION_CONFIG</code> 中。</p>
+
+</body>
+</html>

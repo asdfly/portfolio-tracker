@@ -24,6 +24,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import calendar
 
 from config.settings import DATABASE_PATH, INDEX_CODES
 
@@ -188,6 +189,22 @@ def get_available_dates():
     return df['date'].tolist()
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_calendar_data():
+    """加载全部日历收益数据（年/月/日汇总）"""
+    conn = get_db_connection()
+    query = "SELECT date, daily_pnl, daily_return FROM portfolio_summary ORDER BY date"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    if df.empty:
+        return df
+    df['date'] = pd.to_datetime(df['date'])
+    df['year'] = df['date'].dt.year
+    df['month'] = df['date'].dt.month
+    df['day'] = df['date'].dt.day
+    return df
+
+
 # ==================== 样式工具 ====================
 def format_value(val, prefix="", suffix="", decimals=2):
     """格式化数值"""
@@ -216,6 +233,47 @@ def main():
             font-size: 18px; font-weight: bold; color: #c9d1d9;
             padding: 10px 0 5px 0; border-bottom: 1px solid #30363d;
         }
+
+        .cal-table { border-collapse: collapse; margin: 0 auto; }
+        .cal-table th { padding: 6px 8px; font-size: 12px; color: #8b949e; font-weight: normal; }
+        .cal-table td {
+            width: 50px; height: 44px; text-align: center; vertical-align: middle;
+            border: 1px solid #21262d; border-radius: 4px; cursor: default;
+            position: relative; padding: 2px;
+        }
+        .cal-table td.cal-today { border: 2px solid #58a6ff; }
+        .cal-table td.cal-non-trading {
+            background: #0d1117; color: #30363d;
+        }
+        .cal-table td.cal-trading {
+            background: #161b22;
+        }
+        .cal-table td.cal-profit { background: #0d2818; }
+        .cal-table td.cal-loss { background: #2d1215; }
+        .cal-day { font-size: 12px; color: #c9d1d9; }
+        .cal-pnl { font-size: 10px; display: block; line-height: 1.2; }
+        .cal-pnl-profit { color: #22c55e; }
+        .cal-pnl-loss { color: #ef4444; }
+        .cal-pnl-zero { color: #484f58; }
+        .yr-pill {
+            display: inline-block; padding: 4px 14px; margin: 2px;
+            border-radius: 14px; font-size: 13px; cursor: pointer;
+            background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+        }
+        .yr-pill.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
+        .mo-pill {
+            display: inline-block; padding: 3px 12px; margin: 2px;
+            border-radius: 12px; font-size: 12px; cursor: pointer;
+            background: #161b22; color: #8b949e; border: 1px solid #21262d;
+        }
+        .mo-pill.active { background: #238636; color: #ffffff; border-color: #238636; }
+        .cal-summary {
+            display: inline-block; padding: 4px 12px; margin: 2px 6px;
+            border-radius: 6px; font-size: 12px; background: #161b22;
+        }
+        .cal-summary-profit { color: #22c55e; }
+        .cal-summary-loss { color: #ef4444; }
+
         </style>
         """, unsafe_allow_html=True
     )
@@ -344,7 +402,7 @@ def main():
             f'</div>', unsafe_allow_html=True)
 
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历"])
 
     with tab1:
         col_left, col_right = st.columns([2, 1])
@@ -618,6 +676,202 @@ def main():
                 yaxis=dict(title='回撤 (%)', showgrid=True, gridcolor='#21262d')
             )
             st.plotly_chart(fig_dd, width='stretch')
+
+    # ========== 收益日历 ==========
+    with tab4:
+        cal_data = load_calendar_data()
+
+        if cal_data.empty:
+            st.info("暂无日历数据")
+        else:
+            years = sorted(cal_data['year'].unique(), reverse=True)
+            latest_year = years[0]
+            today_str = datetime.now().strftime('%Y-%m-%d')
+
+            # --- 年份选择 ---
+            yr_cols = st.columns([6, 1])
+            with yr_cols[0]:
+                st.markdown("**选择年份**")
+                yr_html = '<div style="margin-bottom:8px;">'
+                for yr in years:
+                    is_active = (st.session_state.get('cal_year', latest_year) == yr)
+                    cls = 'active' if is_active else ''
+                    yr_html += f'<span class="yr-pill {cls}">{yr}</span>'
+                yr_html += '</div>'
+                st.markdown(yr_html, unsafe_allow_html=True)
+
+                # 年份按钮用 columns 实现
+                yr_sel = st.columns(len(years))
+                for i, yr in enumerate(years):
+                    with yr_sel[i]:
+                        label = f"**{yr}**" if st.session_state.get('cal_year', latest_year) == yr else str(yr)
+                        if st.button(label, key=f"yr_{yr}", use_container_width=True):
+                            st.session_state['cal_year'] = yr
+                            st.rerun()
+
+            st.markdown("---")
+
+            sel_year = st.session_state.get('cal_year', latest_year)
+            year_df = cal_data[cal_data['year'] == sel_year]
+
+            # --- 月份选择 ---
+            months_in_year = sorted(year_df['month'].unique())
+            month_names = [f"{m}月" for m in months_in_year]
+
+            st.markdown("**选择月份**")
+            mo_sel = st.columns(len(months_in_year))
+            for i, m in enumerate(months_in_year):
+                with mo_sel[i]:
+                    is_active = (st.session_state.get('cal_month', months_in_year[-1]) == m)
+                    label = f"**{m}月**" if is_active else f"{m}月"
+                    if st.button(label, key=f"mo_{sel_year}_{m}", use_container_width=True):
+                        st.session_state['cal_month'] = m
+                        st.rerun()
+
+            sel_month = st.session_state.get('cal_month', months_in_year[-1])
+            month_df = year_df[year_df['month'] == sel_month]
+
+            # --- 月度汇总 ---
+            m_pnl = month_df['daily_pnl'].sum()
+            m_return = month_df['daily_return'].sum()
+            m_trading = len(month_df)
+            m_profit = len(month_df[month_df['daily_pnl'] > 0])
+            m_loss = len(month_df[month_df['daily_pnl'] < 0])
+
+            st.markdown("---")
+            sum_col1, sum_col2, sum_col3, sum_col4, sum_col5 = st.columns(5)
+            with sum_col1:
+                st.metric("月收益", f"¥{m_pnl:,.0f}")
+            with sum_col2:
+                st.metric("月收益率", f"{m_return:.2f}%")
+            with sum_col3:
+                st.metric("交易日", f"{m_trading}天")
+            with sum_col4:
+                st.metric("盈利天数", f"{m_profit}天")
+            with sum_col5:
+                st.metric("亏损天数", f"{m_loss}天")
+
+            st.markdown("---")
+
+            # --- 年度月汇总条 ---
+            st.markdown("**年度月度概览**")
+            yr_monthly = year_df.groupby('month').agg(
+                pnl_sum=('daily_pnl', 'sum'),
+                ret_sum=('daily_return', 'sum'),
+                days=('day', 'count')
+            ).reset_index()
+
+            sm_html = '<div style="margin-bottom:12px;">'
+            for _, row in yr_monthly.iterrows():
+                m = int(row['month'])
+                pnl = row['pnl_sum']
+                is_active = (m == sel_month)
+                bold = 'font-weight:bold;' if is_active else ''
+                border = 'border:2px solid #58a6ff;' if is_active else 'border:1px solid #21262d;'
+                if pnl >= 0:
+                    color = '#22c55e'
+                    bg = '#0d2818'
+                else:
+                    color = '#ef4444'
+                    bg = '#2d1215'
+                sm_html += (
+                    f'<span class="cal-summary" style="{bold}{border}background:{bg};color:{color};">'
+                    f'{m}月 &nbsp; ¥{pnl:,.0f}</span>'
+                )
+            yr_total_pnl = year_df['daily_pnl'].sum()
+            yr_total_ret = year_df['daily_return'].sum()
+            yr_color = '#22c55e' if yr_total_pnl >= 0 else '#ef4444'
+            sm_html += (
+                f'<span class="cal-summary" style="border:1px solid #30363d;font-weight:bold;'
+                f'color:{yr_color};">全年 &nbsp; ¥{yr_total_pnl:,.0f} ({yr_total_ret:.2f}%)</span>'
+            )
+            sm_html += '</div>'
+            st.markdown(sm_html, unsafe_allow_html=True)
+
+            # --- 月度日历 ---
+            st.markdown(f"**{sel_year}年{sel_month}月 日历**")
+
+            # 获取交易日数据字典
+            trading_days = {}
+            for _, row in month_df.iterrows():
+                d = int(row['day'])
+                pnl = row['daily_pnl']
+                ret = row['daily_return']
+                dt_str = row['date'].strftime('%Y-%m-%d')
+                trading_days[d] = {'pnl': pnl, 'ret': ret, 'date_str': dt_str}
+
+            # 构建日历HTML
+            cal = calendar.Calendar(firstweekday=0)  # 周一开始
+            month_days = list(cal.itermonthdays(sel_year, sel_month))
+
+            # 周标题
+            week_headers = ['一', '二', '三', '四', '五', '六', '日']
+
+            cal_html = '<table class="cal-table"><tr>'
+            for h in week_headers:
+                cal_html += f'<th>{h}</th>'
+            cal_html += '</tr><tr>'
+
+            for i, day in enumerate(month_days):
+                if day == 0:
+                    cal_html += '<td class="cal-non-trading"></td>'
+                elif day in trading_days:
+                    info = trading_days[day]
+                    pnl = info['pnl']
+                    ret = info['ret']
+                    dt_str = info['date_str']
+
+                    if pnl > 0:
+                        td_cls = 'cal-trading cal-profit'
+                        pnl_cls = 'cal-pnl cal-pnl-profit'
+                    elif pnl < 0:
+                        td_cls = 'cal-trading cal-loss'
+                        pnl_cls = 'cal-pnl cal-pnl-loss'
+                    else:
+                        td_cls = 'cal-trading'
+                        pnl_cls = 'cal-pnl cal-pnl-zero'
+
+                    today_cls = ' cal-today' if dt_str == today_str else ''
+
+                    # 格式化收益金额
+                    if abs(pnl) >= 10000:
+                        pnl_text = f"{pnl/10000:.1f}万"
+                    elif abs(pnl) >= 1000:
+                        pnl_text = f"{pnl/1000:.1f}k"
+                    else:
+                        pnl_text = f"{pnl:.0f}"
+
+                    cal_html += (
+                        f'<td class="{td_cls}{today_cls}" title="{dt_str}  收益: ¥{pnl:,.0f}  ({ret:+.2f}%)">'
+                        f'<span class="cal-day">{day}</span>'
+                        f'<span class="{pnl_cls}">{pnl_text}</span>'
+                        f'</td>'
+                    )
+                else:
+                    # 非交易日
+                    cal_html += f'<td class="cal-non-trading"><span class="cal-day">{day}</span></td>'
+
+                if (i + 1) % 7 == 0:
+                    cal_html += '</tr><tr>'
+
+            # 清理最后可能的多余tr
+            cal_html = cal_html.rstrip('<tr>')
+            cal_html += '</table>'
+
+            st.markdown(cal_html, unsafe_allow_html=True)
+
+            # --- 每日收益明细表 ---
+            with st.expander("查看每日收益明细", expanded=False):
+                detail_df = month_df[['date', 'daily_pnl', 'daily_return']].copy()
+                detail_df.columns = ['日期', '日收益 (¥)', '日收益率 (%)']
+                detail_df['日期'] = detail_df['日期'].dt.strftime('%Y-%m-%d')
+                detail_df['日收益 (¥)'] = detail_df['日收益 (¥)'].apply(
+                    lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x:,.2f}</span>'
+                )
+                detail_df['日收益率 (%)'] = detail_df['日收益率 (%)'].apply(
+                    lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x:+.2f}%</span>'
+                )
+                st.markdown(detail_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
     # ========== 技术指标 ==========
     st.markdown('<div class="section-title" style="margin-top:20px;">🔍 技术指标信号</div>', unsafe_allow_html=True)
