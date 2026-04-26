@@ -205,6 +205,146 @@ def load_calendar_data():
     return df
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def compute_extended_risk_metrics(end_date=None):
+    """计算扩展风险指标（基于全部历史日收益率）"""
+    conn = get_db_connection()
+    query = "SELECT date, daily_return, daily_pnl FROM portfolio_summary ORDER BY date"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    if df.empty or len(df) < 10:
+        return {}
+    df['date'] = pd.to_datetime(df['date'])
+    if end_date:
+        df = df[df['date'] <= pd.Timestamp(end_date)]
+    if len(df) < 10:
+        return {}
+
+    returns = df['daily_return'].dropna()
+    pnls = df['daily_pnl']
+
+    # Sortino Ratio (downside deviation)
+    neg_returns = returns[returns < 0]
+    downside_std = neg_returns.std() * np.sqrt(252) if len(neg_returns) > 1 else np.nan
+    annual_return = returns.mean() * 252
+    annual_std = returns.std() * np.sqrt(252)
+    sortino = annual_return / downside_std if downside_std and downside_std > 0 else np.nan
+
+    # Max Drawdown Duration (最大回撤持续时间)
+    max_dd_duration = 0
+    current_dd_duration = 0
+    if 'total_value' in df.columns:
+        cummax = df['total_value'].cummax()
+        in_drawdown = df['total_value'] < cummax
+        for is_dd in in_drawdown:
+            if is_dd:
+                current_dd_duration += 1
+                max_dd_duration = max(max_dd_duration, current_dd_duration)
+            else:
+                current_dd_duration = 0
+
+    # Calmar Ratio (annual return / max drawdown)
+    cummax = df['total_value'].cummax() if 'total_value' in df.columns else None
+    if cummax is not None:
+        dd = (df['total_value'] - cummax) / cummax * 100
+        max_dd_abs = abs(dd.min())
+        calmar = annual_return / max_dd_abs if max_dd_abs > 0 else np.nan
+    else:
+        calmar = np.nan
+
+    # Win rate
+    win_days = len(pnls[pnls > 0])
+    total_days = len(pnls[pnls != 0])
+    win_rate = win_days / total_days * 100 if total_days > 0 else np.nan
+
+    # Profit/Loss ratio
+    avg_win = pnls[pnls > 0].mean() if win_days > 0 else 0
+    avg_loss = abs(pnls[pnls < 0].mean()) if len(pnls[pnls < 0]) > 0 else 1
+    pl_ratio = avg_win / avg_loss if avg_loss > 0 else np.nan
+
+    # Max consecutive win/loss days
+    max_consec_win, max_consec_loss = 0, 0
+    consec_win, consec_loss = 0, 0
+    for p in pnls:
+        if p > 0:
+            consec_win += 1
+            consec_loss = 0
+            max_consec_win = max(max_consec_win, consec_win)
+        elif p < 0:
+            consec_loss += 1
+            consec_win = 0
+            max_consec_loss = max(max_consec_loss, consec_loss)
+        else:
+            consec_win, consec_loss = 0, 0
+
+    # Skewness & Kurtosis
+    skewness = returns.skew()
+    kurtosis = returns.kurtosis()
+
+    return {
+        'sortino': sortino,
+        'calmar': calmar,
+        'win_rate': win_rate,
+        'pl_ratio': pl_ratio,
+        'max_consec_win': max_consec_win,
+        'max_consec_loss': max_consec_loss,
+        'max_dd_duration': max_dd_duration,
+        'skewness': skewness,
+        'kurtosis': kurtosis,
+        'annual_return': annual_return,
+        'annual_std': annual_std,
+    }
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def compute_monthly_returns():
+    """计算月度收益率矩阵（年份 x 月份，含年度合计列和汇总行）"""
+    conn = get_db_connection()
+    query = "SELECT date, daily_return FROM portfolio_summary ORDER BY date"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    if df.empty:
+        return pd.DataFrame()
+    df['date'] = pd.to_datetime(df['date'])
+    df['year'] = df['date'].dt.year
+    df['month'] = df['date'].dt.month
+    monthly = df.groupby(['year', 'month'])['daily_return'].sum().reset_index()
+    pivot = monthly.pivot(index='year', columns='month', values='daily_return')
+    pivot.columns = [f'{m}月' for m in pivot.columns]
+    # 年度合计列（各月收益率简单求和作为年度累计收益率）
+    pivot['年累计'] = pivot.sum(axis=1)
+    # 汇总行（各年份同月收益率均值，作为月均收益率参考）
+    summary_row = pivot.mean(axis=0)
+    summary_row.name = '月均'
+    pivot = pd.concat([pivot, summary_row.to_frame().T])
+    return pivot
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def compute_rolling_metrics(window=60, end_date=None):
+    """计算滚动夏普比率和滚动波动率（支持end_date过滤）"""
+    conn = get_db_connection()
+    query = "SELECT date, daily_return FROM portfolio_summary ORDER BY date"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    if df.empty or len(df) < window:
+        return pd.DataFrame()
+    df['date'] = pd.to_datetime(df['date'])
+    if end_date:
+        df = df[df['date'] <= pd.Timestamp(end_date)]
+    if len(df) < window:
+        return pd.DataFrame()
+    ret = df['daily_return']
+    rolling_sharpe = (ret.rolling(window).mean() / ret.rolling(window).std() * np.sqrt(252))
+    rolling_vol = ret.rolling(window).std() * np.sqrt(252)
+    result = pd.DataFrame({
+        'date': df['date'],
+        'rolling_sharpe': rolling_sharpe,
+        'rolling_vol': rolling_vol
+    }).dropna()
+    return result
+
+
 # ==================== 样式工具 ====================
 def format_value(val, prefix="", suffix="", decimals=2):
     """格式化数值"""
@@ -509,6 +649,58 @@ def main():
             )
             st.plotly_chart(fig_bar, width='stretch')
 
+        # ---------- 滚动指标图表 ----------
+        r1, r2 = st.columns([1, 3])
+        with r1:
+            rolling_window = st.selectbox(
+                "滚动窗口", options=[60, 120, 250],
+                format_func=lambda x: f"{x}日", index=0, key="rolling_window"
+            )
+        rolling_data = compute_rolling_metrics(window=rolling_window, end_date=selected_date)
+        if not rolling_data.empty and len(rolling_data) > 5:
+            st.markdown(f'<div class="section-title">滚动风险指标（{rolling_window}日窗口）</div>', unsafe_allow_html=True)
+            rolling_chart = downsample(rolling_data, max_points=500)
+
+            fig_roll = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                vertical_spacing=0.08,
+                subplot_titles=('滚动夏普比率', '滚动年化波动率')
+            )
+            fig_roll.add_trace(go.Scatter(
+                x=rolling_chart['date'], y=rolling_chart['rolling_sharpe'],
+                mode='lines', name='滚动夏普',
+                line=dict(color='#58a6ff', width=1.5),
+                fill='tozeroy', fillcolor='rgba(88,166,255,0.08)'
+            ), row=1, col=1)
+            fig_roll.add_hline(y=0, line_dash='dash', line_color='#484f58', row=1, col=1)
+            fig_roll.add_hline(y=1, line_dash='dot', line_color='#22c55e',
+                               annotation_text='优秀线(1.0)', row=1, col=1)
+
+            fig_roll.add_trace(go.Scatter(
+                x=rolling_chart['date'], y=rolling_chart['rolling_vol'],
+                mode='lines', name='滚动波动率',
+                line=dict(color='#f59e0b', width=1.5),
+                fill='tozeroy', fillcolor='rgba(245,158,11,0.08)'
+            ), row=2, col=1)
+
+            fig_roll.update_layout(
+                height=350,
+                plot_bgcolor='#0d1117',
+                paper_bgcolor='#0d1117',
+                font=dict(color='#c9d1d9', size=11),
+                margin=dict(l=50, r=20, t=35, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                            font=dict(size=10)),
+                showlegend=False,
+            )
+            fig_roll.update_xaxes(showgrid=False, row=1, col=1)
+            fig_roll.update_xaxes(showgrid=False, row=2, col=1)
+            fig_roll.update_yaxes(title_text='夏普比率', showgrid=True,
+                                 gridcolor='#21262d', row=1, col=1)
+            fig_roll.update_yaxes(title_text='波动率 (%)', showgrid=True,
+                                 gridcolor='#21262d', row=2, col=1)
+            st.plotly_chart(fig_roll, width='stretch')
+
     with tab2:
         col_dist, col_table = st.columns([1, 1])
 
@@ -623,11 +815,26 @@ def main():
         with col_risk_detail:
             st.markdown('<div class="section-title">风险指标详情</div>', unsafe_allow_html=True)
 
+            # 计算扩展风险指标
+            ext_risk = compute_extended_risk_metrics(end_date=selected_date)
+
             risk_metrics = [
                 ("夏普比率", sharpe, "衡量风险调整后收益，>1为优秀"),
+                ("Sortino比率", ext_risk.get('sortino', np.nan),
+                 "仅考虑下行波动的风险调整收益"),
+                ("Calmar比率", ext_risk.get('calmar', np.nan),
+                 "年化收益 / 最大回撤，越高越好"),
                 ("最大回撤", max_dd, "历史最大亏损幅度"),
                 ("年化波动率", volatility, "收益率的标准差，越高越不稳定"),
-                ("盈亏比", f"{profit_count}:{loss_count}" if profit_count or loss_count else "N/A",
+                ("胜率", ext_risk.get('win_rate', np.nan), "盈利天数 / 有盈亏交易天数"),
+                ("盈亏比", ext_risk.get('pl_ratio', np.nan),
+                 "平均盈利 / 平均亏损，>1为优"),
+                ("最大连续盈利", ext_risk.get('max_consec_win', 0), "历史最长连续盈利天数"),
+                ("最大连续亏损", ext_risk.get('max_consec_loss', 0), "历史最长连续亏损天数"),
+                ("最大回撤持续", ext_risk.get('max_dd_duration', 0), "历史最长回撤恢复天数（净值低于峰值）"),
+                ("偏度", ext_risk.get('skewness', np.nan), "收益率分布偏斜，正值为右偏"),
+                ("峰度", ext_risk.get('kurtosis', np.nan), "收益率分布尾部厚度，>0为尖峰"),
+                ("持仓盈亏比", f"{profit_count}:{loss_count}" if profit_count or loss_count else "N/A",
                  f"盈利{profit_count}只 vs 亏损{loss_count}只"),
                 ("数据周期", f"{len(summary)}天" if not summary.empty else "N/A", "历史数据积累天数"),
             ]
@@ -872,6 +1079,35 @@ def main():
                     lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x:+.2f}%</span>'
                 )
                 st.markdown(detail_df.to_html(index=False, escape=False), unsafe_allow_html=True)
+
+            # --- 月度收益热力图 ---
+            st.markdown("---")
+            st.markdown("**月度收益热力图**")
+            monthly_pivot = compute_monthly_returns()
+            if not monthly_pivot.empty:
+                fig_heat = go.Figure(go.Heatmap(
+                    z=monthly_pivot.values,
+                    x=monthly_pivot.columns.tolist(),
+                    y=monthly_pivot.index.astype(str).tolist(),
+                    text=monthly_pivot.values,
+                    texttemplate='%{text:.2f}%' if monthly_pivot.abs().max().max() < 10 else '%{text:.1f}%',
+                    textfont=dict(size=10),
+                    colorscale=[[0, '#ef4444'], [0.5, '#0d1117'], [1, '#22c55e']],
+                    zmin=-monthly_pivot.abs().max().max(),
+                    zmax=monthly_pivot.abs().max().max(),
+                    xgap=2, ygap=2,
+                    hovertemplate='%{y}年%{x}<br>收益率: %{z:.2f}%<extra></extra>'
+                ))
+                fig_heat.update_layout(
+                    height=max(250, 40 * len(monthly_pivot)),
+                    plot_bgcolor='#0d1117',
+                    paper_bgcolor='#0d1117',
+                    font=dict(color='#c9d1d9', size=11),
+                    margin=dict(l=50, r=20, t=10, b=40),
+                    xaxis=dict(title='', showgrid=False, side='top'),
+                    yaxis=dict(title='', showgrid=False, autorange='reversed'),
+                )
+                st.plotly_chart(fig_heat, width='stretch')
 
     # ========== 技术指标 ==========
     st.markdown('<div class="section-title" style="margin-top:20px;">🔍 技术指标信号</div>', unsafe_allow_html=True)
