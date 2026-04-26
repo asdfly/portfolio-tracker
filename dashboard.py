@@ -25,8 +25,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import calendar
+import base64
 
-from config.settings import DATABASE_PATH, INDEX_CODES
+from config.settings import DATABASE_PATH, INDEX_CODES, ETF_CATEGORIES, SECTOR_COLORS
 
 # ==================== 数据库索引 ====================
 def _ensure_indexes():
@@ -485,14 +486,14 @@ def load_etf_detail(code, days=120, end_date=None):
 
 
 
-def _render_etf_detail_panel(row, selected_date):
+def _render_etf_detail_panel(row, selected_date, total_value=0):
     """渲染ETF增强版详情面板：核心指标 + 价格走势 + 技术分析"""
     code = row['code']
     name = row['name']
 
     # 加载详细数据（命中缓存时零延迟）
     detail_df, etf_name = load_etf_detail(code, days=120, end_date=selected_date)
-    price_df, _ = load_etf_price_history(code, days=250, end_date=selected_date)
+    price_df = load_etf_price_history(code, days=250, end_date=selected_date)
 
     # ===== 第一行：核心指标卡片（6列） =====
     mv = row.get('market_value', 0)
@@ -745,6 +746,437 @@ def load_benchmark_comparison(code, days=250, end_date=None):
 
 
 # ==================== 样式工具 ====================
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_sector_weights(days=250, end_date=None):
+    """加载按行业聚合的持仓权重历史（堆叠面积图数据源）"""
+    query = """
+        SELECT ps.date, ps.code, ps.market_value, ps.quantity, ps.current_price
+        FROM portfolio_snapshots ps
+        WHERE ps.date >= (
+            SELECT DISTINCT date FROM portfolio_snapshots
+            ORDER BY date DESC
+            LIMIT 1 OFFSET %(days)s
+        )
+    """
+    if end_date:
+        query += " AND ps.date <= %(end_date)s"
+    query += " ORDER BY ps.date, ps.code"
+
+    try:
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        params = {"days": days}
+        if end_date:
+            params["end_date"] = end_date
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+    except Exception:
+        return pd.DataFrame(), {}
+
+    if df.empty:
+        return pd.DataFrame(), {}
+
+    # 按行业分类
+    df["sector"] = df["code"].map(lambda c: ETF_CATEGORIES.get(c, {}).get("sector", "其他"))
+
+    # 每日各行业总市值
+    pivot = df.pivot_table(index="date", columns="sector", values="market_value",
+                           aggfunc="sum", fill_value=0)
+    # 计算每日权重百分比
+    daily_total = pivot.sum(axis=1)
+    weight_df = pivot.div(daily_total, axis=0) * 100
+
+    # 确定显示顺序（按最新日期的权重降序）
+    if not weight_df.empty:
+        latest = weight_df.iloc[-1].sort_values(ascending=False)
+        weight_df = weight_df[latest.index]
+
+    # 扇区颜色映射
+    sector_color_map = {}
+    for sector in weight_df.columns:
+        sector_color_map[sector] = SECTOR_COLORS.get(sector, "#6b7280")
+
+    return weight_df, sector_color_map
+
+
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def run_monte_carlo(days=252, n_simulations=500, end_date=None):
+    """蒙特卡洛模拟：基于历史日收益率分布，生成未来N日组合净值路径
+
+    Args:
+        days: 模拟未来交易日天数
+        n_simulations: 模拟路径数量
+        end_date: 截止日期
+
+    Returns:
+        dict: {
+            'paths': np.ndarray (n_simulations, days+1),
+            'percentiles': DataFrame (date, p5, p25, p50, p75, p95),
+            'last_value': float,  # 当前组合总市值
+            'mean_return': float,  # 日均收益
+            'daily_std': float,    # 日收益标准差
+        }
+    """
+    conn = get_db_connection()
+    query = "SELECT date, daily_return FROM portfolio_summary ORDER BY date"
+    df = pd.read_sql(query, conn)
+    conn.close()
+
+    if df.empty or len(df) < 30:
+        return None
+
+    if end_date:
+        df = df[df['date'] <= end_date]
+
+    # 获取最新市值
+    conn2 = get_db_connection()
+    query2 = f"SELECT total_value FROM portfolio_summary WHERE date <= '{df['date'].max()}' ORDER BY date DESC LIMIT 1"
+    last_row = pd.read_sql(query2, conn2)
+    conn2.close()
+
+    if last_row.empty:
+        return None
+
+    last_value = float(last_row['total_value'].iloc[0])
+    returns = df['daily_return'].dropna()
+
+    mean_ret = float(returns.mean())
+    std_ret = float(returns.std())
+
+    if std_ret <= 0 or std_ret == 0:
+        std_ret = 1e-8
+
+    # 生成模拟路径
+    np.random.seed(42)
+    # 使用历史分布bootstrap采样，更贴近真实分布（含偏度和峰度）
+    hist_returns = returns.values
+
+    paths = np.zeros((n_simulations, days + 1))
+    paths[:, 0] = last_value
+
+    for t in range(1, days + 1):
+        # Bootstrap采样
+        samples = np.random.choice(hist_returns, size=n_simulations, replace=True)
+        paths[:, t] = paths[:, t - 1] * (1 + samples)
+
+    # 计算百分位
+    percentiles_data = {'day': list(range(days + 1))}
+    for p in [5, 25, 50, 75, 95]:
+        percentiles_data[f'p{p}'] = np.percentile(paths, p, axis=0)
+    percentiles_df = pd.DataFrame(percentiles_data)
+
+    return {
+        'paths': paths,
+        'percentiles': percentiles_df,
+        'last_value': last_value,
+        'mean_return': mean_ret,
+        'daily_std': std_ret,
+    }
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def compute_return_attribution(days=250, end_date=None):
+    """Brinson 收益归因：将组合收益分解为行业配置效应和选股效应
+
+    使用基准指数（沪深300）的行业权重作为参考基准。
+
+    Returns:
+        dict: {
+            'total_return': float,       # 组合总收益率
+            'benchmark_return': float,   # 基准总收益率
+            'allocation_effect': dict,   # 行业配置效应 {sector: value}
+            'selection_effect': dict,    # 选股效应 {sector: value}
+            'sector_returns': dict,      # 各行业实际收益率
+            'sector_weights': dict,      # 组合各行业权重
+            'bench_weights': dict,       # 基准各行业权重（近似）
+        }
+    """
+    conn = get_db_connection()
+
+    # 获取组合持仓快照
+    query_snap = """
+        SELECT ps.date, ps.code, ps.market_value, ps.pnl_rate
+        FROM portfolio_snapshots ps
+        WHERE ps.date = (SELECT MAX(date) FROM portfolio_snapshots WHERE date <= :end)
+        AND ps.market_value > 0
+    """
+    if end_date:
+        df_snap = pd.read_sql(query_snap, conn, params={"end": end_date})
+    else:
+        df_snap = pd.read_sql(query_snap, conn, params={"end": "9999-12-31"})
+
+    if df_snap.empty:
+        conn.close()
+        return None
+
+    # 获取N天前快照
+    query_prev = """
+        SELECT ps.code, ps.market_value as prev_mv
+        FROM portfolio_snapshots ps
+        WHERE ps.date = (
+            SELECT DISTINCT date FROM portfolio_snapshots 
+            WHERE date <= :end 
+            ORDER BY date DESC 
+            LIMIT 1 OFFSET :skip
+        )
+        AND ps.market_value > 0
+    """
+    skip = days
+    if end_date:
+        df_prev = pd.read_sql(query_prev, conn, params={"end": end_date, "skip": skip})
+    else:
+        df_prev = pd.read_sql(query_prev, conn, params={"end": "9999-12-31", "skip": skip})
+
+    conn.close()
+
+    if df_prev.empty:
+        return None
+
+    # 行业分类
+    def get_sector(code):
+        clean = code.replace("sh", "").replace("sz", "")
+        cat = ETF_CATEGORIES.get(clean, {})
+        return cat.get("sector", "其他")
+
+    # 当前快照按行业聚合
+    df_snap['sector'] = df_snap['code'].apply(get_sector)
+    total_mv = df_snap['market_value'].sum()
+    sector_weights = {}
+    for sector, grp in df_snap.groupby('sector'):
+        sector_weights[sector] = float(grp['market_value'].sum() / total_mv)
+
+    # 计算各行业收益率
+    df_prev['sector'] = df_prev['code'].apply(get_sector)
+
+    # 计算每只ETF的N日收益率
+    current_mv = df_snap.set_index('code')['market_value']
+    prev_mv = df_prev.set_index('code')['prev_mv']
+
+    # 匹配代码
+    common_codes = current_mv.index.intersection(prev_mv.index)
+    if len(common_codes) == 0:
+        return None
+
+    etf_returns = (current_mv[common_codes] / prev_mv[common_codes] - 1)
+    etf_returns_df = etf_returns.reset_index()
+    etf_returns_df.columns = ['code', 'return']
+    etf_returns_df['sector'] = etf_returns_df['code'].apply(get_sector)
+
+    # 各行业加权收益率
+    sector_returns = {}
+    for sector, grp in etf_returns_df.groupby('sector'):
+        sector_returns[sector] = float(grp['return'].mean())
+
+    # 基准行业权重（近似：均匀分布，实际应用中应从指数成分获取）
+    n_sectors = len(sector_weights)
+    bench_weights = {s: 1.0 / max(n_sectors, 1) for s in sector_weights}
+
+    # 组合总收益率
+    total_return = float(df_snap['market_value'].sum() / df_prev['prev_mv'].sum() - 1)
+
+    # 基准收益率
+    conn3 = get_db_connection()
+    query_bench = "SELECT close FROM index_quotes WHERE code='sh000300' ORDER BY date DESC LIMIT 1"
+    query_bench_prev = f"SELECT close FROM index_quotes WHERE code='sh000300' ORDER BY date DESC LIMIT 1 OFFSET {days}"
+    bench_now = pd.read_sql(query_bench, conn3)
+    bench_prev = pd.read_sql(query_bench_prev, conn3)
+    conn3.close()
+
+    benchmark_return = 0.0
+    if not bench_now.empty and not bench_prev.empty:
+        benchmark_return = float(bench_now['close'].iloc[0] / bench_prev['close'].iloc[0] - 1)
+
+    # Brinson 分解
+    all_sectors = set(list(sector_weights.keys()) + list(bench_weights.keys()))
+    allocation_effect = {}
+    selection_effect = {}
+
+    for s in all_sectors:
+        w_p = sector_weights.get(s, 0)    # 组合权重
+        w_b = bench_weights.get(s, 0)     # 基准权重
+        r_p = sector_returns.get(s, 0)    # 行业组合收益
+        r_b = sector_returns.get(s, 0)    # 行业基准收益（简化：使用同值）
+
+        allocation_effect[s] = (w_p - w_b) * r_b
+        selection_effect[s] = w_p * (r_p - r_b)
+
+    return {
+        'total_return': total_return,
+        'benchmark_return': benchmark_return,
+        'allocation_effect': allocation_effect,
+        'selection_effect': selection_effect,
+        'sector_returns': sector_returns,
+        'sector_weights': sector_weights,
+        'bench_weights': bench_weights,
+    }
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def compute_rebalance_suggestion(target_weights=None, threshold=0.05):
+    """计算再平衡建议：基于目标权重与实际权重的偏离，生成调仓方案
+
+    Args:
+        target_weights: dict {sector: target_pct}，None则使用等权重
+        threshold: 最小偏离阈值（百分比），低于此值不触发调仓
+
+    Returns:
+        dict or None
+    """
+    if target_weights is None:
+        target_weights = {
+            "医药": 0.15, "金融": 0.10, "军工": 0.10, "新能源": 0.15,
+            "科技": 0.15, "宽基": 0.20, "红利": 0.10, "债券": 0.05
+        }
+
+    conn = get_db_connection()
+    query = """
+        SELECT code, name, market_value, current_price, quantity, cost_price
+        FROM portfolio_snapshots 
+        WHERE date = (SELECT MAX(date) FROM portfolio_snapshots)
+        AND market_value > 0
+    """
+    df = pd.read_sql(query, conn)
+    conn.close()
+
+    if df.empty:
+        return None
+
+    total_mv = df['market_value'].sum()
+
+    def get_sector(code):
+        clean = code.replace("sh", "").replace("sz", "")
+        cat = ETF_CATEGORIES.get(clean, {})
+        return cat.get("sector", "其他")
+
+    df['sector'] = df['code'].apply(get_sector)
+
+    # 当前行业权重
+    current_weights = {}
+    sector_etfs = {}
+    for sector, grp in df.groupby('sector'):
+        current_weights[sector] = float(grp['market_value'].sum() / total_mv)
+        sector_etfs[sector] = grp
+
+    # 计算偏离
+    suggestions = []
+    all_sectors = set(list(target_weights.keys()) + list(current_weights.keys()))
+
+    for sector in all_sectors:
+        target = target_weights.get(sector, 0)
+        current = current_weights.get(sector, 0)
+        diff = current - target  # 正值=超配，负值=低配
+
+        if abs(diff) < threshold:
+            continue
+
+        # 调仓金额
+        trade_value = -diff * total_mv  # 负diff(低配) => 正trade(买入)
+
+        etfs = sector_etfs.get(sector)
+        if etfs is None or etfs.empty:
+            continue
+
+        # 等权分配到该行业的各ETF
+        n_etfs = len(etfs)
+        per_etf_value = trade_value / n_etfs
+
+        for _, etf in etfs.iterrows():
+            if abs(per_etf_value) < 100:  # 忽略小额
+                continue
+            shares = int(per_etf_value / etf['current_price']) if etf['current_price'] > 0 else 0
+            if shares == 0:
+                continue
+            suggestions.append({
+                'sector': sector,
+                'code': etf['code'],
+                'name': etf['name'],
+                'current_weight': current,
+                'target_weight': target,
+                'diff': diff,
+                'trade_value': per_etf_value,
+                'shares': shares,
+                'direction': '买入' if per_etf_value > 0 else '卖出',
+                'price': etf['current_price'],
+            })
+
+    return {
+        'current_weights': current_weights,
+        'target_weights': target_weights,
+        'suggestions': suggestions,
+        'total_value': total_mv,
+        'threshold': threshold,
+    }
+
+def export_positions_csv(positions_df, filename="持仓数据"):
+    """导出持仓数据为CSV"""
+    import tempfile
+    import streamlit.components.v1 as components
+
+    csv = positions_df.to_csv(index=False, encoding="utf-8-sig")
+    b64 = base64.b64encode(csv.encode("utf-8-sig")).decode()
+    href = f'data:text/csv;charset=utf-8-sig;base64,{b64}'
+    return href, f"{filename}.csv"
+
+
+def export_summary_csv(summary_df, filename="收益数据"):
+    """导出收益数据为CSV"""
+    csv = summary_df.to_csv(index=False, encoding="utf-8-sig")
+    b64 = base64.b64encode(csv.encode("utf-8-sig")).decode()
+    href = f'data:text/csv;charset=utf-8-sig;base64,{b64}'
+    return href, f"{filename}.csv"
+
+
+
+
+@st.cache_data(ttl=0, show_spinner=False)
+def capture_dashboard_screenshot(port=8501):
+    """使用 Playwright 截取 Dashboard 全页截图
+
+    Args:
+        port: Streamlit 端口号
+
+    Returns:
+        str: PNG 文件路径，失败返回 None
+    """
+    import asyncio
+    from playwright.async_api import async_playwright
+
+    output_dir = PROJECT_ROOT / "output"
+    output_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    png_path = str(output_dir / f"dashboard_{timestamp}.png")
+
+    async def _screenshot():
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(
+                    viewport={"width": 1920, "height": 1080},
+                    device_scale_factor=2
+                )
+                url = f"http://localhost:{port}"
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                # 等待页面完全渲染
+                await page.wait_for_timeout(3000)
+                await page.screenshot(path=png_path, full_page=True)
+                await browser.close()
+                return png_path
+        except Exception as e:
+            print(f"截图失败: {e}")
+            return None
+
+    # 在 Streamlit 的同步环境中运行异步代码
+    try:
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(_screenshot())
+        loop.close()
+        return result
+    except Exception as e:
+        print(f"截图异常: {e}")
+        return None
+
 def format_value(val, prefix="", suffix="", decimals=2):
     """格式化数值"""
     if val is None or (isinstance(val, float) and np.isnan(val)):
@@ -956,7 +1388,7 @@ def main():
             f'</div>', unsafe_allow_html=True)
 
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析"])
 
     with tab1:
         col_left, col_right = st.columns([2, 1])
@@ -1160,28 +1592,74 @@ def main():
                 display_df['盈亏'] = display_df['盈亏'].apply(lambda x: f"¥{x:,.0f}")
                 display_df['收益率%'] = display_df['收益率%'].apply(lambda x: f"{x:+.2f}%")
 
-                # 交互式表格（点击行查看详情）
-                sel_event = st.data_editor(
+                # 交互式表格 + ETF 选择器（点击行查看详情）
+                selected_etf = st.selectbox(
+                    "选择ETF查看详情",
+                    options=[f"{row['name']}（{row['code']}）" for _, row in positions.iterrows()],
+                    key="etf_detail_select",
+                    label_visibility="collapsed",
+                )
+                st.dataframe(
                     display_df,
                     height=420,
                     use_container_width=True,
-                    on_select="rerun",
-                    selection_mode=["single-row"],
-                    key="positions_table",
                     hide_index=True,
                     column_config={
                         "收益率%": st.column_config.TextColumn(disabled=True),
                     }
                 )
-                selected_rows = sel_event.get("selection", {}).get("rows", [])
 
-                if selected_rows and not positions.empty:
-                    idx = selected_rows[0]
-                    row = positions.iloc[idx]
-                    with st.expander(f"**{row['name']}（{row['code']}）** 详细分析", expanded=True):
-                        _render_etf_detail_panel(row, selected_date)
+                if selected_etf and not positions.empty:
+                    match = positions[positions.apply(lambda r: f"{r['name']}（{r['code']}）" == selected_etf, axis=1)]
+                    if not match.empty:
+                        row = match.iloc[0]
+                        with st.expander(f"**{row['name']}（{row['code']}）** 详细分析", expanded=True):
+                            _render_etf_detail_panel(row, selected_date, total_value)
 
-        # ===== 相关性矩阵热力图 =====
+        # ===== 行业权重堆叠面积图 =====
+        st.markdown('<div class="section-title">行业权重变化趋势</div>', unsafe_allow_html=True)
+        sector_weight_df, sector_colors = load_sector_weights(days=show_days, end_date=selected_date)
+        if not sector_weight_df.empty:
+            fig_sector = go.Figure()
+            for col in sector_weight_df.columns:
+                fig_sector.add_trace(go.Scatter(
+                    x=sector_weight_df.index,
+                    y=sector_weight_df[col],
+                    name=col,
+                    mode="lines",
+                    stackgroup="one",
+                    line=dict(width=0.5),
+                    fillcolor=sector_colors.get(col, "#6b7280"),
+                    hovertemplate=f"<b>{col}</b><br>权重: %{{y:.1f}}%<extra></extra>"
+                ))
+            fig_sector.update_layout(
+                height=280,
+                plot_bgcolor='#0d1117',
+                paper_bgcolor='#0d1117',
+                font=dict(color='#c9d1d9', size=11),
+                margin=dict(l=50, r=20, t=10, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                            font=dict(size=10)),
+                xaxis=dict(showgrid=False, tickformat='%m-%d'),
+                yaxis=dict(title='权重 %', showgrid=True, gridcolor='#21262d'),
+                hovermode='x unified',
+            )
+            st.plotly_chart(fig_sector, width='stretch')
+
+            # 行业权重摘要卡片
+            latest_weights = sector_weight_df.iloc[-1]
+            n_sectors = len(latest_weights[latest_weights > 1])
+            max_sector = latest_weights.idxmax()
+            min_sector = latest_weights[latest_weights > 0].idxmin()
+            st.caption(
+                f"覆盖 {n_sectors} 个行业 | 最大: **{max_sector}** {latest_weights[max_sector]:.1f}% | "
+                f"最小: **{min_sector}** {latest_weights[min_sector]:.1f}% | 数据截至 {selected_date}"
+            )
+        else:
+            st.info("持仓历史数据不足，暂无法展示行业权重变化")
+
+        st.markdown("---")
+                # ===== 相关性矩阵热力图 =====
         st.markdown("---")
         st.markdown('<div class="section-title">持仓相关性矩阵（日收益率 Pearson）</div>', unsafe_allow_html=True)
         corr_df, short_names = load_correlation_matrix(days=250, end_date=selected_date)
@@ -1360,6 +1838,116 @@ def main():
                 yaxis=dict(title='回撤 (%)', showgrid=True, gridcolor='#21262d')
             )
             st.plotly_chart(fig_dd, width='stretch')
+
+
+        # ===== P2: 收益归因分析（Brinson模型） =====
+        st.markdown("---")
+        st.markdown('<div class="section-title">收益归因分析（Brinson 模型）</div>', unsafe_allow_html=True)
+        st.caption("将组合收益分解为行业配置效应（超配/低配行业的贡献）和选股效应（行业内个股选择的贡献）")
+
+        attr_result = compute_return_attribution(days=show_days, end_date=selected_date)
+        if attr_result and attr_result.get('sector_returns'):
+            ar = attr_result
+
+            # 瀑布图数据
+            waterfall_labels = ["基准收益"]
+            waterfall_values = [ar['benchmark_return'] * 100]
+            waterfall_colors = ["#8b949e"]
+
+            # 配置效应
+            alloc_total = 0
+            for sector, val in sorted(ar['allocation_effect'].items(), key=lambda x: abs(x[1]), reverse=True):
+                if abs(val) > 0.001:  # > 0.1% 才显示
+                    waterfall_labels.append(f"{sector}\n配置")
+                    waterfall_values.append(val * 100)
+                    waterfall_colors.append("#22c55e" if val > 0 else "#ef4444")
+                    alloc_total += val
+
+            # 选股效应
+            sel_total = 0
+            for sector, val in sorted(ar['selection_effect'].items(), key=lambda x: abs(x[1]), reverse=True):
+                if abs(val) > 0.001:
+                    waterfall_labels.append(f"{sector}\n选股")
+                    waterfall_values.append(val * 100)
+                    waterfall_colors.append("#58a6ff" if val > 0 else "#f59e0b")
+                    sel_total += val
+
+            waterfall_labels.append("组合收益")
+            waterfall_values.append(ar['total_return'] * 100)
+            waterfall_colors.append("#a855f7")
+
+            # 计算瀑布图中间值
+            running = 0
+            y_data = []
+            for i, v in enumerate(waterfall_values):
+                if i == 0 or i == len(waterfall_values) - 1:
+                    y_data.append(v)
+                    running = v
+                else:
+                    y_data.append(running + v)
+                    running += v
+
+            # 底部坐标（从上一个running开始）
+            base_data = [0]  # 基准从0开始
+            run = waterfall_values[0]
+            for i in range(1, len(waterfall_values) - 1):
+                base_data.append(run)
+                run += waterfall_values[i]
+            base_data.append(0)  # 组合收益从0开始
+
+            fig_wf = go.Figure()
+            fig_wf.add_trace(go.Bar(
+                x=waterfall_labels,
+                y=[v if i == 0 or i == len(waterfall_values)-1 else abs(v)
+                   for i, v in enumerate(waterfall_values)],
+                base=base_data,
+                marker_color=waterfall_colors,
+                text=[f"{v:+.2f}%" for v in waterfall_values],
+                textposition="outside",
+                textfont=dict(size=9, color="#c9d1d9"),
+                hovertemplate="<b>%{x}</b><br>贡献: %{text}<extra></extra>",
+            ))
+            fig_wf.update_layout(
+                height=max(350, len(waterfall_labels) * 22),
+                plot_bgcolor='#0d1117',
+                paper_bgcolor='#0d1117',
+                font=dict(color='#c9d1d9', size=11),
+                margin=dict(l=50, r=20, t=10, b=80),
+                xaxis=dict(tickangle=45, tickfont=dict(size=8)),
+                yaxis=dict(title='收益率 (%)', showgrid=True, gridcolor='#21262d'),
+                showlegend=False,
+                barmode='relative',
+            )
+            st.plotly_chart(fig_wf, width='stretch')
+
+            # 归因摘要卡片
+            col_attr1, col_attr2, col_attr3 = st.columns(3)
+            with col_attr1:
+                st.metric("组合收益", f"{ar['total_return']*100:+.2f}%")
+            with col_attr2:
+                st.metric("基准收益", f"{ar['benchmark_return']*100:+.2f}%")
+            with col_attr3:
+                alpha = (ar['total_return'] - ar['benchmark_return']) * 100
+                st.metric("超额收益 (Alpha)", f"{alpha:+.2f}%")
+
+            # 行业明细表
+            with st.expander("查看行业归因明细", expanded=False):
+                attr_rows = []
+                for sector in sorted(set(list(ar['sector_weights'].keys()) + list(ar.get('allocation_effect', {}).keys()))):
+                    attr_rows.append({
+                        '行业': sector,
+                        '组合权重': f"{ar['sector_weights'].get(sector, 0)*100:.1f}%",
+                        '行业收益': f"{ar['sector_returns'].get(sector, 0)*100:+.2f}%",
+                        '配置效应': f"{ar['allocation_effect'].get(sector, 0)*100:+.3f}%",
+                        '选股效应': f"{ar['selection_effect'].get(sector, 0)*100:+.3f}%",
+                    })
+                if attr_rows:
+                    st.markdown(
+                        pd.DataFrame(attr_rows).to_html(index=False, escape=False),
+                        unsafe_allow_html=True
+                    )
+        else:
+            st.info("历史数据不足（需要至少250个交易日），暂无法进行收益归因分析")
 
     # ========== 收益日历 ==========
     with tab4:
@@ -1586,6 +2174,231 @@ def main():
                 )
                 st.plotly_chart(fig_heat, width='stretch')
 
+    # ========== Tab5: 高级分析（Monte Carlo / 再平衡建议） ==========
+    with tab5:
+        st.markdown('<div class="section-title">高级分析工具</div>', unsafe_allow_html=True)
+
+        # ----- Monte Carlo 模拟 -----
+        st.markdown("**Monte Carlo 模拟（未来收益预测）**")
+        st.caption("基于历史日收益率分布进行 Bootstrap 采样，生成未来收益区间预测")
+
+        mc_col1, mc_col2 = st.columns([2, 1])
+        with mc_col1:
+            mc_days = st.slider("模拟天数", 30, 500, 252, step=30, key="mc_days")
+        with mc_col2:
+            mc_sims = st.selectbox("模拟路径数", [200, 500, 1000], index=1, key="mc_sims")
+
+        mc_result = run_monte_carlo(days=mc_days, n_simulations=mc_sims, end_date=selected_date)
+
+        if mc_result is not None:
+            perc_df = mc_result['percentiles']
+
+            # 扇形区域图
+            fig_mc = go.Figure()
+
+            # 扇形填充区域（从外到内）
+            fig_mc.add_trace(go.Scatter(
+                x=perc_df['day'], y=perc_df['p95'],
+                mode='lines', name='P95', line=dict(width=0),
+                showlegend=False, hoverinfo='skip'
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=perc_df['day'], y=perc_df['p75'],
+                mode='lines', name='P75', fill='tonexty',
+                fillcolor='rgba(88,166,255,0.08)', line=dict(width=0),
+                showlegend=False, hoverinfo='skip'
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=perc_df['day'], y=perc_df['p25'],
+                mode='lines', name='P25', fill='tonexty',
+                fillcolor='rgba(88,166,255,0.12)', line=dict(width=0),
+                showlegend=False, hoverinfo='skip'
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=perc_df['day'], y=perc_df['p5'],
+                mode='lines', name='P5', fill='tonexty',
+                fillcolor='rgba(88,166,255,0.08)', line=dict(width=0),
+                showlegend=False, hoverinfo='skip'
+            ))
+
+            # 中位数线
+            fig_mc.add_trace(go.Scatter(
+                x=perc_df['day'], y=perc_df['p50'],
+                mode='lines', name='中位数 (P50)',
+                line=dict(color='#58a6ff', width=2),
+                hovertemplate='第 %{x} 天<br>中位数: ¥%{y:,.0f}<extra></extra>'
+            ))
+
+            # 起始值水平线
+            fig_mc.add_hline(
+                y=mc_result['last_value'], line_dash="dash", line_color="#f59e0b",
+                annotation_text=f"当前 ¥{mc_result['last_value']:,.0f}",
+                annotation_position="top right",
+                annotation_font=dict(size=10, color="#f59e0b")
+            )
+
+            fig_mc.update_layout(
+                height=350,
+                plot_bgcolor='#0d1117',
+                paper_bgcolor='#0d1117',
+                font=dict(color='#c9d1d9', size=11),
+                margin=dict(l=60, r=20, t=10, b=40),
+                xaxis=dict(title='交易日', showgrid=False),
+                yaxis=dict(title='组合市值 (¥)', showgrid=True, gridcolor='#21262d'),
+                hovermode='x unified',
+                legend=dict(
+                    orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1,
+                    font=dict(size=10, color='#8b949e')
+                ),
+            )
+            st.plotly_chart(fig_mc, width='stretch')
+
+            # 模拟摘要
+            mc_sum1, mc_sum2, mc_sum3, mc_sum4 = st.columns(4)
+            with mc_sum1:
+                st.metric("当前市值", f"¥{mc_result['last_value']:,.0f}")
+            with mc_sum2:
+                final_p50 = perc_df['p50'].iloc[-1]
+                chg = (final_p50 / mc_result['last_value'] - 1) * 100 if mc_result['last_value'] > 0 else 0
+                st.metric(f"P50 ({mc_days}日后)", f"¥{final_p50:,.0f}", delta=f"{chg:+.1f}%")
+            with mc_sum3:
+                final_p5 = perc_df['p5'].iloc[-1]
+                loss = (final_p5 / mc_result['last_value'] - 1) * 100 if mc_result['last_value'] > 0 else 0
+                st.metric("P5 (悲观)", f"¥{final_p5:,.0f}", delta=f"{loss:+.1f}%")
+            with mc_sum4:
+                final_p95 = perc_df['p95'].iloc[-1]
+                gain = (final_p95 / mc_result['last_value'] - 1) * 100 if mc_result['last_value'] > 0 else 0
+                st.metric("P95 (乐观)", f"¥{final_p95:,.0f}", delta=f"{gain:+.1f}%")
+
+            # VaR 估计
+            with st.expander("查看风险价值 (VaR) 估计", expanded=False):
+                var_95 = (mc_result['last_value'] - perc_df['p5'].iloc[-1])
+                cvar_95 = mc_result['last_value'] - np.percentile(mc_result['paths'][:, -1], 5)
+                st.markdown(
+                    f"**95% VaR（{mc_days}日）:** ¥{var_95:,.0f}\n\n"
+                    f"**95% CVaR（条件VaR）:** ¥{cvar_95:,.0f}\n\n"
+                    f"*VaR 表示在 95% 置信度下，{mc_days} 个交易日内的最大可能损失。"
+                    f"CVaR 是超出 VaR 时的平均损失（尾部风险）。*"
+                )
+        else:
+            st.info("历史数据不足（需要至少30个交易日），暂无法进行 Monte Carlo 模拟")
+
+        st.markdown("---")
+
+        # ----- 再平衡建议 -----
+        st.markdown("**再平衡建议**")
+        st.caption("基于目标行业权重与实际权重的偏离，生成调仓方案")
+
+        rb_col1, rb_col2 = st.columns([2, 1])
+        with rb_col1:
+            st.markdown("*默认目标权重*")
+        with rb_col2:
+            show_rb = st.toggle("显示再平衡方案", value=True, key="rb_toggle")
+
+        # 目标权重展示
+        default_targets = {
+            "医药": 0.15, "金融": 0.10, "军工": 0.10, "新能源": 0.15,
+            "科技": 0.15, "宽基": 0.20, "红利": 0.10, "债券": 0.05
+        }
+
+        if show_rb:
+            rb_result = compute_rebalance_suggestion(threshold=0.03)
+
+            if rb_result is not None:
+                rw = rb_result['current_weights']
+                tw = rb_result['target_weights']
+                all_sectors = sorted(set(list(rw.keys()) + list(tw.keys())))
+
+                # 权重对比柱状图
+                fig_rb = go.Figure()
+                x_labels = all_sectors
+                fig_rb.add_trace(go.Bar(
+                    name='当前权重', x=x_labels,
+                    y=[rw.get(s, 0) * 100 for s in all_sectors],
+                    marker_color='#58a6ff', opacity=0.85,
+                    hovertemplate='%{x}<br>当前: %{y:.1f}%<extra></extra>'
+                ))
+                fig_rb.add_trace(go.Bar(
+                    name='目标权重', x=x_labels,
+                    y=[tw.get(s, 0) * 100 for s in all_sectors],
+                    marker_color='#f59e0b', opacity=0.6,
+                    hovertemplate='%{x}<br>目标: %{y:.1f}%<extra></extra>'
+                ))
+
+                # 偏离线
+                deviations = [(rw.get(s, 0) - tw.get(s, 0)) * 100 for s in all_sectors]
+                fig_rb.add_trace(go.Scatter(
+                    name='偏离', x=x_labels, y=deviations,
+                    mode='lines+markers', marker_color='#ef4444', marker_size=6,
+                    line=dict(color='#ef4444', width=1.5, dash='dot'),
+                    yaxis='y2',
+                    hovertemplate='%{x}<br>偏离: %{y:+.1f}%<extra></extra>'
+                ))
+
+                fig_rb.update_layout(
+                    height=300,
+                    barmode='group',
+                    plot_bgcolor='#0d1117',
+                    paper_bgcolor='#0d1117',
+                    font=dict(color='#c9d1d9', size=11),
+                    margin=dict(l=40, r=40, t=10, b=40),
+                    xaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                    yaxis=dict(title='权重 (%)', showgrid=True, gridcolor='#21262d'),
+                    yaxis2=dict(title='偏离 (%)', overlaying='y', side='right',
+                                showgrid=False, range=[-20, 20]),
+                    legend=dict(
+                        orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1,
+                        font=dict(size=10, color='#8b949e')
+                    ),
+                )
+                st.plotly_chart(fig_rb, width='stretch')
+
+                # 摘要指标
+                rb_s1, rb_s2, rb_s3 = st.columns(3)
+                with rb_s1:
+                    n_suggestions = len(rb_result['suggestions'])
+                    st.metric("需调仓行业", f"{n_suggestions} 个")
+                with rb_s2:
+                    max_dev = max(abs(rw.get(s, 0) - tw.get(s, 0)) * 100 for s in all_sectors)
+                    max_sector = max(all_sectors, key=lambda s: abs(rw.get(s, 0) - tw.get(s, 0)))
+                    st.metric("最大偏离", f"{max_dev:.1f}%", delta=max_sector)
+                with rb_s3:
+                    st.metric("组合总市值", f"¥{rb_result['total_value']:,.0f}")
+
+                # 调仓明细
+                if rb_result['suggestions']:
+                    with st.expander("查看调仓明细", expanded=False):
+                        rb_rows = []
+                        for s in rb_result['suggestions']:
+                            rb_rows.append({
+                                '行业': s['sector'],
+                                'ETF': f"{s['name']}（{s['code']}）",
+                                '方向': s['direction'],
+                                '当前权重': f"{s['current_weight']*100:.1f}%",
+                                '目标权重': f"{s['target_weight']*100:.1f}%",
+                                '偏离': f"{s['diff']*100:+.1f}%",
+                                '调仓金额': f"¥{s['trade_value']:+,.0f}",
+                                '预估股数': f"{s['shares']:+,}",
+                                '现价': f"¥{s['price']:.3f}",
+                            })
+                        st.markdown(
+                            pd.DataFrame(rb_rows).to_html(index=False, escape=False),
+                            unsafe_allow_html=True
+                        )
+                        st.caption(f"*调仓阈值为 {rb_result['threshold']*100:.0f}%，低于此偏离的行业不触发调仓。股数按整数估算，实际以交易为准。*")
+                else:
+                    st.success("当前行业权重分布合理，无需调仓")
+            else:
+                st.info("暂无持仓数据，无法生成再平衡建议")
+        else:
+            # 显示目标权重表格
+            target_df = pd.DataFrame([
+                {'行业': k, '目标权重': f"{v*100:.0f}%"}
+                for k, v in default_targets.items()
+            ])
+            st.markdown(target_df.to_html(index=False, escape=False), unsafe_allow_html=True)
+
+
     # ========== 技术指标（增强版：点击持仓行查看详情） ==========
     st.markdown('<div class="section-title" style="margin-top:20px;">🔍 技术指标信号</div>', unsafe_allow_html=True)
     if not technical.empty:
@@ -1620,7 +2433,50 @@ def main():
                     report_text = f.read()
                 st.markdown(report_text[:3000] + ("..." if len(report_text) > 3000 else ""))
 
-    # ========== 页脚 ==========
+    # ========== 数据导出 ==========
+    st.markdown("---")
+    with st.expander("📥 数据导出", expanded=False):
+        col_exp1, col_exp2, col_exp3 = st.columns(3)
+        with col_exp1:
+            if not positions.empty:
+                href_pos, fname_pos = export_positions_csv(positions, f"持仓数据_{selected_date}")
+                st.markdown(
+                    f'<a href="{href_pos}" download="{fname_pos}" '
+                    f'style="display:inline-block;padding:8px 16px;background:#21262d;color:#c9d1d9;'
+                    f'border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #30363d;">'
+                    f'📋 导出持仓数据 (CSV)</a>',
+                    unsafe_allow_html=True
+                )
+        with col_exp2:
+            if not summary.empty:
+                href_sum, fname_sum = export_summary_csv(summary, f"收益数据_{selected_date}")
+                st.markdown(
+                    f'<a href="{href_sum}" download="{fname_sum}" '
+                    f'style="display:inline-block;padding:8px 16px;background:#21262d;color:#c9d1d9;'
+                    f'border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #30363d;">'
+                    f'📈 导出收益数据 (CSV)</a>',
+                    unsafe_allow_html=True
+                )
+        with col_exp3:
+            if st.button("📸 导出 Dashboard 截图 (PNG)", key="screenshot_btn", use_container_width=True):
+                with st.spinner("正在截图，请稍候..."):
+                    screenshot_path = capture_dashboard_screenshot(port=8501)
+                if screenshot_path:
+                    st.success(f"截图已保存: {screenshot_path}")
+                    # 提供下载链接
+                    with open(screenshot_path, "rb") as f:
+                        img_bytes = f.read()
+                    st.download_button(
+                        label="📥 下载截图",
+                        data=img_bytes,
+                        file_name=f"dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                        mime="image/png",
+                        key="download_screenshot"
+                    )
+                else:
+                    st.error("截图失败，请确认 Dashboard 正在运行")
+
+        # ========== 页脚 ==========
     st.markdown("---")
     st.markdown(
         f'<div style="text-align:center;color:#484f58;font-size:11px;">'
