@@ -1,0 +1,16 @@
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 数据获取
+requests>=2.31.0
+akshare>=1.11.0
+
+# 科学计算
+scipy>=1.11.0
+
+# 可视化
+matplotlib>=3.7.0
+
+# 工具
+python-dateutil>=2.8.0
