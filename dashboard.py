@@ -345,6 +345,169 @@ def compute_rolling_metrics(window=60, end_date=None):
     return result
 
 
+
+# ==================== P1: 持仓相关性矩阵 ====================
+@st.cache_data(ttl=600, show_spinner=False)
+def load_correlation_matrix(days=250, end_date=None):
+    """计算持仓ETF之间的皮尔逊相关系数矩阵（基于各ETF市值变动）"""
+    conn = get_db_connection()
+    if end_date:
+        query = """
+            SELECT date, code, market_value 
+            FROM portfolio_snapshots 
+            WHERE date <= ? 
+            ORDER BY date DESC
+        """
+        df = pd.read_sql_query(query, conn, params=(end_date,))
+    else:
+        query = """
+            SELECT date, code, market_value 
+            FROM portfolio_snapshots 
+            ORDER BY date DESC
+        """
+        df = pd.read_sql_query(query, conn)
+    conn.close()
+    if df.empty:
+        return pd.DataFrame(), []
+
+    # 取最近N个交易日
+    dates = df['date'].unique()[:days]
+    df = df[df['date'].isin(dates)]
+
+    # 构建透视表：行=日期, 列=code, 值=market_value
+    pivot = df.pivot_table(index='date', columns='code', values='market_value', aggfunc='first')
+
+    # 只保留有足够数据的ETF（至少80%的交易日有数据）
+    min_count = int(len(pivot) * 0.8)
+    valid_cols = pivot.columns[pivot.notna().sum() >= min_count]
+    pivot = pivot[valid_cols]
+
+    if pivot.shape[1] < 2:
+        return pd.DataFrame(), []
+
+    # 计算日收益率
+    returns = pivot.pct_change().dropna()
+
+    # 计算相关系数矩阵
+    corr = returns.corr()
+
+    # 获取ETF名称
+    conn = get_db_connection()
+    names = {}
+    for code in corr.columns:
+        row = conn.execute(
+            "SELECT name FROM portfolio_snapshots WHERE code = ? ORDER BY date DESC LIMIT 1",
+            (code,)
+        ).fetchone()
+        names[code] = row[0] if row else code
+    conn.close()
+
+    # 简化名称（取前4个字 + "..."）
+    short_names = {}
+    for code, name in names.items():
+        if len(name) > 6:
+            short_names[code] = name[:6] + ".."
+        else:
+            short_names[code] = name
+
+    return corr, short_names
+
+
+# ==================== P1: 单只ETF详情数据 ====================
+@st.cache_data(ttl=600, show_spinner=False)
+def load_etf_detail(code, days=120, end_date=None):
+    """加载单只ETF的K线数据和技术指标"""
+    conn = get_db_connection()
+
+    # 从snapshots获取市值变化（类K线）
+    if end_date:
+        query_snap = """
+            SELECT date, current_price, market_value, quantity, pnl, pnl_rate
+            FROM portfolio_snapshots 
+            WHERE code = ? AND date <= ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df_snap = pd.read_sql_query(query_snap, conn, params=(code, end_date, days))
+    else:
+        query_snap = """
+            SELECT date, current_price, market_value, quantity, pnl, pnl_rate
+            FROM portfolio_snapshots 
+            WHERE code = ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df_snap = pd.read_sql_query(query_snap, conn, params=(code, days))
+
+    df_snap = df_snap.sort_values('date').reset_index(drop=True)
+
+    # 从etf_technical获取技术指标
+    if end_date:
+        query_tech = """
+            SELECT date, rsi_value, rsi_status, ma_signal, macd_signal, trend,
+                   macd_line, signal_line, histogram
+            FROM etf_technical 
+            WHERE code = ? AND date <= ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df_tech = pd.read_sql_query(query_tech, conn, params=(code, end_date, days))
+    else:
+        query_tech = """
+            SELECT date, rsi_value, rsi_status, ma_signal, macd_signal, trend,
+                   macd_line, signal_line, histogram
+            FROM etf_technical 
+            WHERE code = ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df_tech = pd.read_sql_query(query_tech, conn, params=(code, days))
+
+    df_tech = df_tech.sort_values('date').reset_index(drop=True)
+
+    # 获取ETF名称
+    name_row = conn.execute(
+        "SELECT name FROM portfolio_snapshots WHERE code = ? ORDER BY date DESC LIMIT 1",
+        (code,)
+    ).fetchone()
+    etf_name = name_row[0] if name_row else code
+
+    conn.close()
+
+    # 合并数据
+    if not df_snap.empty and not df_tech.empty:
+        df = pd.merge(df_snap, df_tech, on='date', how='outer')
+        df = df.sort_values('date').reset_index(drop=True)
+    elif not df_snap.empty:
+        df = df_snap
+    else:
+        df = pd.DataFrame()
+
+    return df, etf_name
+
+
+# ==================== P1: 多基准指数对比数据 ====================
+@st.cache_data(ttl=600, show_spinner=False)
+def load_benchmark_comparison(code, days=250, end_date=None):
+    """加载指定基准指数行情，用于净值曲线对比"""
+    conn = get_db_connection()
+    if end_date:
+        query = """
+            SELECT date, close 
+            FROM index_quotes 
+            WHERE code = ? AND date <= ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df = pd.read_sql_query(query, conn, params=(code, end_date, days))
+    else:
+        query = """
+            SELECT date, close 
+            FROM index_quotes 
+            WHERE code = ? 
+            ORDER BY date DESC LIMIT ?
+        """
+        df = pd.read_sql_query(query, conn, params=(code, days))
+    df = df.sort_values('date').reset_index(drop=True)
+    conn.close()
+    return df
+
+
 # ==================== 样式工具 ====================
 def format_value(val, prefix="", suffix="", decimals=2):
     """格式化数值"""
@@ -457,6 +620,21 @@ def main():
                 if pd.notna(log.get('duration_seconds')):
                     st.caption(f"  耗时: {log['duration_seconds']:.1f}s")
 
+        # 基准指数选择（P1改进）
+        st.markdown("### 📌 基准指数")
+        benchmark_options = {k: v for k, v in INDEX_CODES.items()}
+        # 默认选中沪深300
+        default_bench = "sh000300"
+        benchmark_keys = list(benchmark_options.keys())
+        default_idx = benchmark_keys.index(default_bench) if default_bench in benchmark_keys else 0
+        selected_benchmark = st.selectbox(
+            "对比基准",
+            options=benchmark_keys,
+            index=default_idx,
+            format_func=lambda x: benchmark_options[x],
+            key="benchmark_select"
+        )
+
         st.markdown("---")
         st.markdown(f"*数据更新: {available_dates[0]}*")
 
@@ -472,10 +650,10 @@ def main():
         for _d in _recent:
             load_positions(_d)
             load_summary(show_days, _d)
-            load_index_quotes("sh000300", show_days, _d)
+            load_benchmark_comparison(selected_benchmark, show_days, _d)
         for _days in _preset_days_list:
             load_summary(_days, available_dates[0])
-            load_index_quotes("sh000300", _days, available_dates[0])
+            load_benchmark_comparison(selected_benchmark, _days, available_dates[0])
 
     if positions.empty:
         st.warning(f"{selected_date} 无持仓数据")
@@ -558,18 +736,19 @@ def main():
                 # 降采样用于图表渲染
                 chart_data = downsample(summary_plot, max_points=500)
 
-                # 沪深300对比
-                hs300 = load_index_quotes('sh000300', show_days + 10, selected_date)
-                if not hs300.empty:
-                    hs300_base = hs300.iloc[0]['close']
-                    hs300_plot = hs300.copy()
-                    hs300_plot['nav'] = hs300_plot['close'] / hs300_base * 100
-                    hs300_chart = downsample(hs300_plot, max_points=500)
+                # 基准指数对比（使用侧边栏选择的基准）
+                bench_name = INDEX_CODES.get(selected_benchmark, selected_benchmark)
+                bench_df = load_benchmark_comparison(selected_benchmark, show_days + 10, selected_date)
+                if not bench_df.empty:
+                    bench_base = bench_df.iloc[0]['close']
+                    bench_plot = bench_df.copy()
+                    bench_plot['nav'] = bench_plot['close'] / bench_base * 100
+                    bench_chart = downsample(bench_plot, max_points=500)
 
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
-                        x=hs300_chart['date'], y=hs300_chart['nav'],
-                        mode='lines', name='沪深300',
+                        x=bench_chart['date'], y=bench_chart['nav'],
+                        mode='lines', name=bench_name,
                         line=dict(color='#8b949e', width=1.5, dash='dash')
                     ))
                     fig.add_trace(go.Scatter(
@@ -734,6 +913,7 @@ def main():
         with col_table:
             st.markdown('<div class="section-title">持仓明细</div>', unsafe_allow_html=True)
             if not positions.empty:
+                # 格式化显示列
                 display_df = positions[['name', 'code', 'quantity', 'cost_price', 'current_price',
                                        'market_value', 'pnl', 'pnl_rate']].copy()
                 display_df.columns = ['名称', '代码', '持仓量', '成本价', '现价', '市值', '盈亏', '收益率%']
@@ -742,11 +922,84 @@ def main():
                 display_df['现价'] = display_df['现价'].apply(lambda x: f"{x:.3f}")
                 display_df['市值'] = display_df['市值'].apply(lambda x: f"¥{x:,.0f}")
                 display_df['盈亏'] = display_df['盈亏'].apply(lambda x: f"¥{x:,.0f}")
-                display_df['收益率%'] = display_df['收益率%'].apply(
-                    lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x:.2f}%</span>'
-                )
+                display_df['收益率%'] = display_df['收益率%'].apply(lambda x: f"{x:+.2f}%")
 
-                st.markdown(display_df.to_html(index=False, escape=False), unsafe_allow_html=True)
+                # 交互式表格（点击行查看详情）
+                sel_event = st.data_editor(
+                    display_df,
+                    height=420,
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode=["single-row"],
+                    key="positions_table",
+                    hide_index=True,
+                    column_config={
+                        "收益率%": st.column_config.TextColumn(disabled=True),
+                    }
+                )
+                selected_rows = sel_event.get("selection", {}).get("rows", [])
+
+                if selected_rows and not positions.empty:
+                    idx = selected_rows[0]
+                    row = positions.iloc[idx]
+                    with st.expander(f"**{row['name']}（{row['code']}）** 详细分析", expanded=True):
+                        col_d1, col_d2, col_d3 = st.columns(3)
+                        with col_d1:
+                            st.metric("市值", f"¥{row['market_value']:,.0f}")
+                        with col_d2:
+                            st.metric("累计盈亏", f"¥{row['pnl']:,.0f}",
+                                      delta=f"{row['pnl_rate']:.2f}%")
+                        with col_d3:
+                            if pd.notna(row.get('ytd_return')):
+                                yt = row['ytd_return']
+                                yt_color = "normal" if yt >= 0 else "inverse"
+                                st.metric("年内收益", f"{yt:.2f}%", delta_color=yt_color)
+                            elif pd.notna(row.get('beta')):
+                                st.metric("Beta", f"{row['beta']:.2f}")
+
+        # ===== 相关性矩阵热力图 =====
+        st.markdown("---")
+        st.markdown('<div class="section-title">持仓相关性矩阵（日收益率 Pearson）</div>', unsafe_allow_html=True)
+        corr_df, short_names = load_correlation_matrix(days=250, end_date=selected_date)
+        if not corr_df.empty and len(short_names) >= 2:
+            fig_corr = go.Figure(go.Heatmap(
+                z=corr_df.values,
+                x=[short_names.get(c, c) for c in corr_df.columns],
+                y=[short_names.get(c, c) for c in corr_df.index],
+                colorscale=[
+                    [0, '#0d419d'],
+                    [0.25, '#1a6bb5'],
+                    [0.5, '#21262d'],
+                    [0.75, '#b5411a'],
+                    [1, '#9d0d0d']
+                ],
+                zmin=-1, zmax=1,
+                text=corr_df.values.round(2),
+                texttemplate="%{text}",
+                textfont=dict(size=9),
+                hovertemplate="<b>%{x} vs %{y}</b><br>相关系数: %{z:.3f}<extra></extra>",
+                colorbar=dict(
+                    thickness=15,
+                    len=0.9,
+                    outlinewidth=0,
+                    tickfont=dict(size=10, color='#8b949e')
+                )
+            ))
+            fig_corr.update_layout(
+                height=max(500, len(corr_df) * 28),
+                plot_bgcolor='#0d1117',
+                paper_bgcolor='#0d1117',
+                font=dict(color='#c9d1d9', size=11),
+                margin=dict(l=5, r=40, t=10, b=5),
+                xaxis=dict(tickangle=45, side='bottom', tickfont=dict(size=9)),
+                yaxis=dict(tickfont=dict(size=9), autorange='reversed'),
+            )
+            fig_corr.update_xaxes(showgrid=False)
+            fig_corr.update_yaxes(showgrid=False)
+            st.plotly_chart(fig_corr, width='stretch')
+            st.caption(f"基于最近250个交易日的市值日收益率计算 | 数据截至 {selected_date}")
+        else:
+            st.info("持仓数据不足，暂无法计算相关性矩阵")
 
     with tab3:
         col_risk_gauge, col_risk_detail = st.columns([1, 1])
