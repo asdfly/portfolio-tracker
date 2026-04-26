@@ -3,7 +3,13 @@
 """
 投资组合跟踪分析系统 - Streamlit 可视化 Dashboard
 启动方式: streamlit run dashboard.py
+
+性能优化:
+  - @st.cache_data 缓存所有数据库查询，相同参数命中缓存零延迟
+  - 图表数据自动降采样，4000天数据压缩到<=500个点
+  - SQLite 索引加速查询
 """
+
 import sys
 import os
 from pathlib import Path
@@ -21,6 +27,28 @@ from datetime import datetime, timedelta
 
 from config.settings import DATABASE_PATH, INDEX_CODES
 
+# ==================== 数据库索引 ====================
+def _ensure_indexes():
+    """确保数据库索引存在（只执行一次）"""
+    conn = sqlite3.connect(str(DATABASE_PATH))
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_snap_date ON portfolio_snapshots(date)",
+        "CREATE INDEX IF NOT EXISTS idx_snap_code_date ON portfolio_snapshots(code, date)",
+        "CREATE INDEX IF NOT EXISTS idx_summary_date ON portfolio_summary(date)",
+        "CREATE INDEX IF NOT EXISTS idx_idx_quote_code_date ON index_quotes(code, date)",
+        "CREATE INDEX IF NOT EXISTS idx_tech_date ON etf_technical(date)",
+        "CREATE INDEX IF NOT EXISTS idx_tech_code_date ON etf_technical(code, date)",
+    ]
+    for sql in indexes:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+
+_ensure_indexes()
+
 # ==================== 页面配置 ====================
 st.set_page_config(
     page_title="投资组合跟踪分析",
@@ -29,12 +57,33 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ==================== 数据读取工具 ====================
+# ==================== 降采样工具 ====================
+def downsample(df, date_col='date', max_points=500):
+    """将时间序列降采样到max_points个点，保留边界值"""
+    n = len(df)
+    if n <= max_points:
+        return df
+
+    # 确保首尾在结果中
+    step = max(1, (n - 2) // (max_points - 2))
+    indices = list(range(0, n, step))
+    if indices[-1] != n - 1:
+        indices.append(n - 1)
+    if indices[0] != 0:
+        indices.insert(0, 0)
+
+    # 去重排序
+    indices = sorted(set(indices))
+    return df.iloc[indices].reset_index(drop=True)
+
+
+# ==================== 数据读取工具（带缓存） ====================
 def get_db_connection():
     """获取数据库连接"""
-    return sqlite3.connect(str(DATABASE_PATH))
+    return sqlite3.connect(str(DATABASE_PATH), check_same_thread=False)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_positions(date_str=None):
     """加载持仓数据"""
     conn = get_db_connection()
@@ -52,6 +101,7 @@ def load_positions(date_str=None):
     return df
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_summary(days=60):
     """加载组合汇总历史"""
     conn = get_db_connection()
@@ -62,6 +112,7 @@ def load_summary(days=60):
     return df
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_index_quotes(code='sh000300', days=60):
     """加载指数行情"""
     conn = get_db_connection()
@@ -77,23 +128,8 @@ def load_index_quotes(code='sh000300', days=60):
     return df
 
 
-def load_all_index_quotes(days=60):
-    """加载所有指数行情"""
-    conn = get_db_connection()
-    query = """
-        SELECT date, code, name, close, change_pct 
-        FROM index_quotes 
-        ORDER BY date DESC, code
-    """
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    if not df.empty:
-        df = df.drop_duplicates(subset=['date', 'code'], keep='first')
-        df['date'] = pd.to_datetime(df['date'])
-    return df
-
-
-def load_technical(days=5):
+@st.cache_data(ttl=300, show_spinner=False)
+def load_technical():
     """加载技术指标，关联ETF名称"""
     conn = get_db_connection()
     query = """
@@ -109,6 +145,7 @@ def load_technical(days=5):
     return df
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_alerts(limit=10):
     """加载告警"""
     conn = get_db_connection()
@@ -118,6 +155,7 @@ def load_alerts(limit=10):
     return df
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_execution_logs(limit=10):
     """加载执行日志"""
     conn = get_db_connection()
@@ -127,11 +165,12 @@ def load_execution_logs(limit=10):
     return df
 
 
-def get_available_dates():
-    """获取所有可用日期"""
+@st.cache_data(ttl=600, show_spinner=False)
+def get_available_dates(limit=30):
+    """获取最近N个交易日日期"""
     conn = get_db_connection()
-    query = "SELECT DISTINCT date FROM portfolio_snapshots ORDER BY date DESC"
-    df = pd.read_sql_query(query, conn)
+    query = "SELECT DISTINCT date FROM portfolio_snapshots ORDER BY date DESC LIMIT ?"
+    df = pd.read_sql_query(query, conn, params=(limit,))
     conn.close()
     return df['date'].tolist()
 
@@ -144,34 +183,6 @@ def format_value(val, prefix="", suffix="", decimals=2):
     if isinstance(val, (int, float)):
         return f"{prefix}{val:,.{decimals}f}{suffix}"
     return str(val)
-
-
-def color_for_value(val, reverse=False):
-    """根据数值返回颜色"""
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return "#888888"
-    if reverse:
-        return "#22c55e" if val < 0 else "#ef4444" if val > 0 else "#ffffff"
-    return "#22c55e" if val > 0 else "#ef4444" if val < 0 else "#ffffff"
-
-
-def metric_card(title, value, subtitle="", delta=None, color=None):
-    """渲染指标卡片"""
-    if color is None:
-        color = "#1f77b4"
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.markdown(
-            f"""
-            <div style="padding: 12px; border-radius: 8px; 
-                        background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-                        border-left: 3px solid {color}; margin-bottom: 8px;">
-                <div style="font-size: 12px; color: #8b949e;">{title}</div>
-                <div style="font-size: 24px; font-weight: bold; color: {color};">{value}</div>
-                {f'<div style="font-size: 11px; color: #8b949e;">{subtitle}</div>' if subtitle else ''}
-            </div>
-            """, unsafe_allow_html=True
-        )
 
 
 # ==================== 主页面 ====================
@@ -208,18 +219,25 @@ def main():
     # 侧边栏
     with st.sidebar:
         st.markdown("### 🔧 控制面板")
-        
+
         selected_date = st.selectbox(
-            "选择日期", available_dates, 
+            "选择日期", available_dates,
             index=0,
             format_func=lambda x: f"{x} {'(最新)' if x == available_dates[0] else ''}"
         )
-        
-        show_days = st.slider("历史天数", min_value=10, max_value=90, value=60, step=5)
-        
+
+        # 快捷预设
+        preset = st.radio("时间范围", ["3个月", "6个月", "1年", "2年", "5年", "全部", "自定义"],
+                          horizontal=True, index=2)
+        preset_days = {"3个月": 60, "6个月": 120, "1年": 250, "2年": 500, "5年": 1250, "全部": 4000}
+        if preset == "自定义":
+            show_days = st.slider("自定义天数", min_value=10, max_value=4000, value=250, step=10)
+        else:
+            show_days = preset_days[preset]
+
         st.markdown("---")
         st.markdown("### 📋 系统信息")
-        
+
         logs = load_execution_logs(5)
         if not logs.empty:
             for _, log in logs.iterrows():
@@ -227,14 +245,24 @@ def main():
                 st.markdown(f"{status_icon} `{log['task_name']}` - {log['status']}")
                 if pd.notna(log.get('duration_seconds')):
                     st.caption(f"  耗时: {log['duration_seconds']:.1f}s")
-        
+
         st.markdown("---")
         st.markdown(f"*数据更新: {available_dates[0]}*")
 
-    # 加载数据
+    # 加载数据（带缓存，相同参数不重复查询）
     positions = load_positions(selected_date)
     summary = load_summary(show_days)
     technical = load_technical()
+
+    # 预生成缓存：近30个交易日 x 各时间预设，后台静默触发一次
+    _preset_days_list = [60, 120, 250, 500, 1250, 4000]
+    _recent = available_dates[:5]  # 最近5个交易日
+    with st.spinner(""):
+        for _d in _recent:
+            load_positions(_d)
+        for _days in _preset_days_list:
+            load_summary(_days)
+            load_index_quotes("sh000300", _days)
 
     if positions.empty:
         st.warning(f"{selected_date} 无持仓数据")
@@ -311,81 +339,89 @@ def main():
             if not summary.empty and len(summary) > 1:
                 # 计算累计净值（基准100）
                 base_value = summary.iloc[0]['total_value']
-                summary['nav'] = summary['total_value'] / base_value * 100
+                summary_plot = summary.copy()
+                summary_plot['nav'] = summary_plot['total_value'] / base_value * 100
+
+                # 降采样用于图表渲染
+                chart_data = downsample(summary_plot, max_points=500)
 
                 # 沪深300对比
                 hs300 = load_index_quotes('sh000300', show_days + 10)
                 if not hs300.empty:
                     hs300_base = hs300.iloc[0]['close']
-                    hs300['nav'] = hs300['close'] / hs300_base * 100
+                    hs300_plot = hs300.copy()
+                    hs300_plot['nav'] = hs300_plot['close'] / hs300_base * 100
+                    hs300_chart = downsample(hs300_plot, max_points=500)
 
-                fig = go.Figure()
-
-                # 组合净值
-                fig.add_trace(go.Scatter(
-                    x=summary['date'], y=summary['nav'],
-                    mode='lines', name='组合净值',
-                    line=dict(color='#58a6ff', width=2),
-                    fill='tozeroy', fillcolor='rgba(88,166,255,0.05)'
-                ))
-
-                # 沪深300
-                if not hs300.empty:
+                    fig = go.Figure()
                     fig.add_trace(go.Scatter(
-                        x=hs300['date'], y=hs300['nav'],
+                        x=hs300_chart['date'], y=hs300_chart['nav'],
                         mode='lines', name='沪深300',
-                        line=dict(color='#f59e0b', width=1.5, dash='dash')
+                        line=dict(color='#8b949e', width=1.5, dash='dash')
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=chart_data['date'], y=chart_data['nav'],
+                        mode='lines', name='投资组合',
+                        line=dict(color='#58a6ff', width=2)
+                    ))
+                else:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=chart_data['date'], y=chart_data['nav'],
+                        mode='lines', name='投资组合',
+                        line=dict(color='#58a6ff', width=2)
                     ))
 
                 fig.update_layout(
-                    height=380,
+                    height=350,
                     plot_bgcolor='#0d1117',
                     paper_bgcolor='#0d1117',
                     font=dict(color='#c9d1d9', size=11),
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
                     margin=dict(l=50, r=20, t=10, b=40),
-                    xaxis=dict(showgrid=True, gridcolor='#21262d', tickfont=dict(size=10)),
-                    yaxis=dict(showgrid=True, gridcolor='#21262d', tickfont=dict(size=10))
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                                font=dict(size=11)),
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(title='净值 (基准100)', showgrid=True, gridcolor='#21262d')
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
         with col_right:
             st.markdown('<div class="section-title">日收益率分布</div>', unsafe_allow_html=True)
-            if not summary.empty and 'daily_return' in summary.columns:
-                returns = summary['daily_return'].dropna()
-                if len(returns) > 2:
+            if not summary.empty and 'daily_return' in summary.columns and len(summary) > 5:
+                # 用原始数据计算分布（不降采样，数据量不大）
+                daily_rets = summary['daily_return'].dropna().values
+                if len(daily_rets) > 0:
                     fig_hist = go.Figure()
-                    colors = ['#22c55e' if r >= 0 else '#ef4444' for r in returns]
-
                     fig_hist.add_trace(go.Histogram(
-                        x=returns, nbinsx=20,
-                        marker_color=returns.apply(lambda r: '#22c55e' if r >= 0 else '#ef4444').tolist(),
-                        opacity=0.75,
-                        name='日收益率'
+                        x=daily_rets,
+                        nbinsx=40,
+                        marker_color='#58a6ff',
+                        marker_line_color='#0d1117',
+                        marker_line_width=0.5,
+                        opacity=0.85
                     ))
-
-                    mean_ret = returns.mean()
-                    fig_hist.add_vline(x=mean_ret, line_dash='dash', line_color='#58a6ff',
-                                       annotation_text=f'均值 {mean_ret:.2f}%')
-
+                    mean_ret = np.mean(daily_rets)
+                    fig_hist.add_vline(x=mean_ret, line_dash="dash", line_color="#f59e0b",
+                                       annotation_text=f"均值 {mean_ret:.3f}%")
                     fig_hist.update_layout(
-                        height=380,
+                        height=200,
                         plot_bgcolor='#0d1117',
                         paper_bgcolor='#0d1117',
                         font=dict(color='#c9d1d9', size=11),
-                        margin=dict(l=40, r=20, t=10, b=40),
+                        margin=dict(l=50, r=20, t=10, b=40),
                         xaxis=dict(title='日收益率 (%)', showgrid=True, gridcolor='#21262d'),
                         yaxis=dict(title='天数', showgrid=True, gridcolor='#21262d')
                     )
                     st.plotly_chart(fig_hist, use_container_width=True)
 
-        # 日收益柱状图
+        # 日收益柱状图（降采样）
         st.markdown('<div class="section-title">每日盈亏</div>', unsafe_allow_html=True)
-        if not summary.empty and 'daily_pnl' in summary.columns:
+        if not summary.empty and 'daily_pnl' in summary.columns and len(summary) > 1:
+            bar_data = downsample(summary[['date', 'daily_pnl']].copy(), max_points=500)
+            colors = ['#22c55e' if dp >= 0 else '#ef4444' for dp in bar_data['daily_pnl']]
             fig_bar = go.Figure()
-            colors = ['#22c55e' if dp >= 0 else '#ef4444' for dp in summary['daily_pnl']]
             fig_bar.add_trace(go.Bar(
-                x=summary['date'], y=summary['daily_pnl'],
+                x=bar_data['date'], y=bar_data['daily_pnl'],
                 marker_color=colors,
                 name='日盈亏'
             ))
@@ -433,7 +469,7 @@ def main():
         with col_table:
             st.markdown('<div class="section-title">持仓明细</div>', unsafe_allow_html=True)
             if not positions.empty:
-                display_df = positions[['name', 'code', 'quantity', 'cost_price', 'current_price', 
+                display_df = positions[['name', 'code', 'quantity', 'cost_price', 'current_price',
                                        'market_value', 'pnl', 'pnl_rate']].copy()
                 display_df.columns = ['名称', '代码', '持仓量', '成本价', '现价', '市值', '盈亏', '收益率%']
                 display_df['持仓量'] = display_df['持仓量'].apply(lambda x: f"{x:,.0f}")
@@ -518,7 +554,7 @@ def main():
                 ("夏普比率", sharpe, "衡量风险调整后收益，>1为优秀"),
                 ("最大回撤", max_dd, "历史最大亏损幅度"),
                 ("年化波动率", volatility, "收益率的标准差，越高越不稳定"),
-                ("盈亏比", f"{profit_count}:{loss_count}" if profit_count or loss_count else "N/A", 
+                ("盈亏比", f"{profit_count}:{loss_count}" if profit_count or loss_count else "N/A",
                  f"盈利{profit_count}只 vs 亏损{loss_count}只"),
                 ("数据周期", f"{len(summary)}天" if not summary.empty else "N/A", "历史数据积累天数"),
             ]
@@ -542,16 +578,16 @@ def main():
                     unsafe_allow_html=True
                 )
 
-        # 回撤曲线
+        # 回撤曲线（降采样）
         if not summary.empty and len(summary) > 5:
             st.markdown('<div class="section-title">回撤曲线</div>', unsafe_allow_html=True)
-            values = summary['total_value'].values
-            peak = np.maximum.accumulate(values)
-            drawdown = (values - peak) / peak * 100
+            dd_data = summary[['date', 'total_value']].copy()
+            dd_data['drawdown'] = (dd_data['total_value'] - dd_data['total_value'].cummax()) / dd_data['total_value'].cummax() * 100
+            dd_chart = downsample(dd_data, max_points=500)
 
             fig_dd = go.Figure()
             fig_dd.add_trace(go.Scatter(
-                x=summary['date'], y=drawdown,
+                x=dd_chart['date'], y=dd_chart['drawdown'],
                 mode='lines', name='回撤',
                 fill='tozeroy',
                 line=dict(color='#ef4444', width=1.5),
@@ -572,21 +608,20 @@ def main():
     st.markdown('<div class="section-title" style="margin-top:20px;">🔍 技术指标信号</div>', unsafe_allow_html=True)
 
     if not technical.empty:
-        # 信号统计
-        trend_map = {'bullish': ('看多', '#22c55e'), 'bearish': ('看空', '#ef4444'), 'neutral': ('中性', '#f59e0b'), None: ('--', '#888')}
-        
+        trend_map = {'bullish': ('看多', '#22c55e'), 'bearish': ('看空', '#ef4444'),
+                     'neutral': ('中性', '#f59e0b'), None: ('--', '#888')}
+
         tech_cols = st.columns(5)
         for idx, (_, row) in enumerate(technical.iterrows()):
-            if idx >= 10:  # 只显示前10个
+            if idx >= 10:
                 break
             with tech_cols[idx % 5]:
                 trend_label, trend_color = trend_map.get(row.get('trend'), ('--', '#888'))
                 rsi_val = row.get('rsi_value', 0)
                 rsi_status = row.get('rsi_status', '--')
-                
                 ma_signal = row.get('ma_signal', '--')
                 macd_signal = row.get('macd_signal', '--')
-                
+
                 st.markdown(
                     f'<div style="padding:10px;border-radius:8px;background:#161b22;'
                     f'border-top:2px solid {trend_color};margin-bottom:6px;">'
@@ -600,7 +635,7 @@ def main():
                     unsafe_allow_html=True
                 )
 
-    # ========== 智能建议（如果有）==========
+    # ========== 智能建议 ==========
     report_dir = PROJECT_ROOT / "data" / "reports"
     if report_dir.exists():
         report_files = sorted(report_dir.glob("smart_report_*.md"), reverse=True)
@@ -614,7 +649,7 @@ def main():
     st.markdown("---")
     st.markdown(
         f'<div style="text-align:center;color:#484f58;font-size:11px;">'
-        f'投资组合跟踪分析系统 v1.2 | 数据截至 {selected_date} | '
+        f'投资组合跟踪分析系统 v1.3 | 数据截至 {selected_date} | '
         f'共 {len(positions)} 只持仓</div>',
         unsafe_allow_html=True
     )
