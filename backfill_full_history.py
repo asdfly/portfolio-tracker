@@ -248,6 +248,13 @@ def save_etf_snapshots(db_path, code, name, quantity, cost_price, klines, existi
             continue
         if kdate >= today_str:
             continue
+        # 跳过周末非交易日
+        try:
+            _wd = date.fromisoformat(kdate).weekday()
+            if _wd >= 5:
+                continue
+        except (ValueError, TypeError):
+            pass
 
         try:
             close = float(k.get("close", 0))
@@ -306,6 +313,13 @@ def save_index_quotes(db_path, code, name, klines, existing_dates):
             continue
         if kdate >= today_str:
             continue
+        # 跳过周末非交易日
+        try:
+            _wd = date.fromisoformat(kdate).weekday()
+            if _wd >= 5:
+                continue
+        except (ValueError, TypeError):
+            pass
 
         try:
             close = float(k.get("close", 0))
