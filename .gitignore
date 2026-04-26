@@ -39,3 +39,10 @@ Desktop.ini
 *.bak
 *.swp
 timer_config.xml
+
+# 临时测试/调试文件
+_test_*.py
+_run_*.py
+read_kline.py
+backfill_log.txt
+run_backfill.bat
