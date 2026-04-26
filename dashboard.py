@@ -383,7 +383,7 @@ def main():
                     xaxis=dict(showgrid=False),
                     yaxis=dict(title='净值 (基准100)', showgrid=True, gridcolor='#21262d')
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
         with col_right:
             st.markdown('<div class="section-title">日收益率分布</div>', unsafe_allow_html=True)
@@ -412,7 +412,7 @@ def main():
                         xaxis=dict(title='日收益率 (%)', showgrid=True, gridcolor='#21262d'),
                         yaxis=dict(title='天数', showgrid=True, gridcolor='#21262d')
                     )
-                    st.plotly_chart(fig_hist, use_container_width=True)
+                    st.plotly_chart(fig_hist, width='stretch')
 
         # 日收益柱状图（降采样）
         st.markdown('<div class="section-title">每日盈亏</div>', unsafe_allow_html=True)
@@ -434,7 +434,7 @@ def main():
                 xaxis=dict(showgrid=False, tickfont=dict(size=9)),
                 yaxis=dict(title='盈亏 (¥)', showgrid=True, gridcolor='#21262d')
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, width='stretch')
 
     with tab2:
         col_dist, col_table = st.columns([1, 1])
@@ -464,7 +464,7 @@ def main():
                     margin=dict(l=10, r=10, t=10, b=10),
                     showlegend=False
                 )
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width='stretch')
 
         with col_table:
             st.markdown('<div class="section-title">持仓明细</div>', unsafe_allow_html=True)
@@ -542,7 +542,7 @@ def main():
                 font=dict(color='#c9d1d9'),
                 margin=dict(l=30, r=30, t=10, b=10)
             )
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            st.plotly_chart(fig_gauge, width='stretch')
 
             st.markdown(f'<div style="text-align:center;color:{risk_color};font-size:16px;font-weight:bold;">'
                         f'{risk_label}</div>', unsafe_allow_html=True)
@@ -602,7 +602,7 @@ def main():
                 xaxis=dict(showgrid=False),
                 yaxis=dict(title='回撤 (%)', showgrid=True, gridcolor='#21262d')
             )
-            st.plotly_chart(fig_dd, use_container_width=True)
+            st.plotly_chart(fig_dd, width='stretch')
 
     # ========== 技术指标 ==========
     st.markdown('<div class="section-title" style="margin-top:20px;">🔍 技术指标信号</div>', unsafe_allow_html=True)
