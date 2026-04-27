@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>投资组合Dashboard改进计划与路线图（最终版）</title>
+<style>
+body {
+    font-family: Arial, "Microsoft YaHei", SimSun, sans-serif;
+    margin: 40px 60px;
+    color: #1a1a1a;
+    line-height: 1.8;
+    font-size: 11pt;
+}
+h1 {
+    font-size: 22pt;
+    color: #0d1117;
+    border-bottom: 3px solid #0d419d;
+    padding-bottom: 10px;
+    margin-top: 0;
+}
+h2 {
+    font-size: 16pt;
+    color: #0d419d;
+    margin-top: 36px;
+    border-left: 4px solid #0d419d;
+    padding-left: 12px;
+}
+h3 {
+    font-size: 13pt;
+    color: #21262d;
+    margin-top: 24px;
+}
+.meta {
+    color: #666666;
+    font-size: 10pt;
+    margin-bottom: 30px;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 14px 0;
+    font-size: 10pt;
+}
+th {
+    background-color: #0d419d;
+    color: #ffffff;
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: bold;
+}
+td {
+    border: 1px solid #dddddd;
+    padding: 7px 10px;
+    vertical-align: top;
+}
+tr:nth-child(even) {
+    background-color: #f6f8fa;
+}
+blockquote {
+    border-left: 4px solid #0d419d;
+    margin: 16px 0;
+    padding: 10px 16px;
+    background-color: #f0f5ff;
+    color: #333333;
+    font-size: 10pt;
+}
+code {
+    font-family: Consolas, "Courier New", monospace;
+    background-color: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+}
+ul, ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+li {
+    margin-bottom: 4px;
+}
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 9pt;
+    font-weight: bold;
+}
+.badge-done { background-color: #dcfce7; color: #166534; }
+.section-summary {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 16px 0;
+}
+.stat-box {
+    display: inline-block;
+    width: 23%;
+    background-color: #f0f5ff;
+    border: 1px solid #d0e0ff;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 4px 1%;
+    text-align: center;
+    vertical-align: top;
+}
+.stat-num {
+    font-size: 20pt;
+    font-weight: bold;
+    color: #0d419d;
+}
+.stat-label {
+    font-size: 9pt;
+    color: #666666;
+}
+</style>
+</head>
+<body>
+
+<h1>投资组合Dashboard改进计划与路线图（最终版）</h1>
+<div class="meta">
+    项目：Portfolio Tracker v1.3 | 文档日期：2026-04-27 | 涉及文件：<code>dashboard.py</code> (2568行) | 数据库：<code>portfolio.db</code> (8张表, 120,000+ 条记录) | 状态：<span class="badge badge-done">全部完成</span>
+</div>
+
+<h2>一、项目概况</h2>
+
+<p>投资组合跟踪分析系统（Portfolio Tracker）是一套基于 Python + Streamlit 的 ETF 投资组合实时监控与量化分析平台。系统从通达信导出持仓数据，通过新浪财经/K线接口获取行情，存储至 SQLite 数据库，并在 Streamlit Dashboard 中以 Dark Theme 风格展示。</p>
+
+<p>Dashboard 初始基线版本（commit <code>e5829f0</code>）提供基础的四标签页布局和核心指标展示。通过参考 QuantStats、pyfolio、Interactive Brokers PortfolioAnalyst 等业界标杆工具，制定了分三级（P0/P1/P2）的渐进式改进计划。</p>
+
+<div class="section-summary">
+<strong style="font-size:14pt;">全部改进已完成交付。</strong>P0（7项）&rarr; P1（10项）&rarr; P2（4项），共 21 项改进，Dashboard 从基线版本扩展至 5 个 Tab / 2568 行 / 30 个函数。
+</div>
+
+<h2>二、核心统计</h2>
+
+<div class="stat-box">
+    <div class="stat-num">5</div>
+    <div class="stat-label">功能标签页</div>
+</div>
+<div class="stat-box">
+    <div class="stat-num">2568</div>
+    <div class="stat-label">代码行数</div>
+</div>
+<div class="stat-box">
+    <div class="stat-num">30</div>
+    <div class="stat-label">函数总数</div>
+</div>
+<div class="stat-box">
+    <div class="stat-num">21</div>
+    <div class="stat-label">改进项完成</div>
+</div>
+
+<h2>三、优先级分级原则</h2>
+
+<table>
+<tr>
+    <th style="width:60px;">优先级</th>
+    <th>定义</th>
+    <th>投入产出比</th>
+</tr>
+<tr>
+    <td><strong>P0</strong></td>
+    <td>基于现有数据即可计算的关键指标与可视化，不依赖新增数据源或外部接口</td>
+    <td>高 &mdash; 代码改动小，用户感知大</td>
+</tr>
+<tr>
+    <td><strong>P1</strong></td>
+    <td>需要新增数据函数和 UI 组件的功能扩展，涉及交互逻辑优化</td>
+    <td>中高 &mdash; 代码改动中，显著提升分析深度</td>
+</tr>
+<tr>
+    <td><strong>P2</strong></td>
+    <td>高级分析能力和数据输出，引入新的计算逻辑或外部工具</td>
+    <td>中 &mdash; 代码改动大，专业性强</td>
+</tr>
+</table>
+
+<h2>四、P0 改进（基础增强）&mdash; <span class="badge badge-done">7/7 完成</span></h2>
+
+<p>P0 目标是在不增加数据源依赖的前提下，用最小改动量补齐专业级投资组合分析工具必备的核心功能。</p>
+
+<table>
+<tr><th style="width:40px;">#</th><th>改进项</th><th>核心实现</th><th>代码位置</th></tr>
+<tr><td>1</td><td>Sortino 比率</td><td>年化收益 / 下行标准差，仅惩罚下行波动</td><td><code>compute_extended_risk_metrics()</code></td></tr>
+<tr><td>2</td><td>Calmar 比率</td><td>年化收益 / 最大回撤绝对值</td><td><code>compute_extended_risk_metrics()</code></td></tr>
+<tr><td>3</td><td>胜率 / 盈亏比</td><td>盈利天数占比 + 平均盈利/亏损金额比</td><td><code>compute_extended_risk_metrics()</code></td></tr>
+<tr><td>4</td><td>最大回撤持续天数</td><td>净值低于峰值的最长连续交易日数</td><td><code>compute_extended_risk_metrics()</code></td></tr>
+<tr><td>5</td><td>月度收益热力图</td><td>年份 &times; 月份矩阵，RdYlGn 色阶，含年度合计</td><td><code>compute_monthly_returns()</code></td></tr>
+<tr><td>6</td><td>滚动夏普 / 波动率</td><td>60 日滚动窗口双子图折线</td><td><code>compute_rolling_metrics()</code></td></tr>
+<tr><td>7</td><td>缓存优化 + 弃用修复 + 非交易日防护</td><td>@st.cache_data TTL、降采样 500 点、10 日预热、use_container_width 修复、周末脏数据过滤</td><td>全局</td></tr>
+</table>
+
+<h2>五、P1 改进（功能扩展）&mdash; <span class="badge badge-done">10/10 完成</span></h2>
+
+<p>P1 拓展分析维度：持仓间关联性、个股深度剖析、多基准灵活对比、行业权重可视化、数据导出。</p>
+
+<table>
+<tr><th style="width:40px;">#</th><th>改进项</th><th>核心实现</th><th>代码位置</th></tr>
+<tr><td>1</td><td>持仓相关性矩阵</td><td>Pearson 日收益率热力图，蓝-灰-红配色，自适应高度，数值标注</td><td><code>load_correlation_matrix()</code> L352</td></tr>
+<tr><td>2</td><td>ETF 详情面板 - 核心指标</td><td>6 列指标卡：市值、累计盈亏、年内收益、Beta、成本价、现价</td><td><code>_render_etf_detail_panel()</code> L488</td></tr>
+<tr><td>3</td><td>ETF 详情面板 - 价格走势</td><td>250 日收盘价折线 + 黄色成本线标注</td><td>同上</td></tr>
+<tr><td>4</td><td>ETF 详情面板 - 技术指标</td><td>趋势/RSI/MA/MACD/KDJ/布林/ATR 面板 + RSI 仪表条</td><td>同上</td></tr>
+<tr><td>5</td><td>ETF 详情面板 - 收益分布</td><td>日收益率直方图（30 分箱）+ 关键统计（均值/标准差/极值）</td><td>同上</td></tr>
+<tr><td>6</td><td>多基准指数选择</td><td>侧边栏 selectbox，11 个指数可选，缓存预热联动</td><td><code>load_benchmark_comparison()</code> L724</td></tr>
+<tr><td>7</td><td>行业权重堆叠面积图</td><td>8 大行业权重时序，独立配色，底部统计摘要</td><td><code>load_sector_weights()</code> L751</td></tr>
+<tr><td>8</td><td>CSV 数据导出</td><td>持仓数据 + 收益序列，一键下载</td><td><code>export_positions_csv()</code> / <code>export_summary_csv()</code></td></tr>
+<tr><td>9</td><td>智能分析建议</td><td>自动加载 data/reports/smart_report_*.md 最新报告</td><td>页脚区域</td></tr>
+<tr><td>10</td><td>净值曲线基准归一化</td><td>组合和基准统一归一化到 100 基点对比</td><td>Tab1 净值走势</td></tr>
+</table>
+
+<h2>六、P2 改进（高级特性）&mdash; <span class="badge badge-done">4/4 完成</span></h2>
+
+<p>P2 聚焦专业级分析能力和数据输出，共新增 267 行代码。</p>
+
+<h3>6.1 收益归因分析（Brinson 模型）</h3>
+
+<table>
+<tr><th style="width:100px;">组件</th><th>说明</th><th>代码位置</th></tr>
+<tr><td>数据函数</td><td><code>compute_return_attribution(days, end_date)</code> (58行) &mdash; Brinson 分解：配置效应 + 选股效应</td><td>L880</td></tr>
+<tr><td>可视化</td><td>Plotly 瀑布图：基准收益 &rarr; 各行业配置贡献 &rarr; 选股贡献 &rarr; 总超额收益</td><td>Tab5 L1845</td></tr>
+<tr><td>数据源</td><td>portfolio_snapshots 按行业聚合 + index_quotes 基准收益率</td><td></td></tr>
+</table>
+
+<h3>6.2 Monte Carlo 模拟</h3>
+
+<table>
+<tr><th style="width:100px;">组件</th><th>说明</th><th>代码位置</th></tr>
+<tr><td>数据函数</td><td><code>run_monte_carlo(days, n_simulations, end_date)</code> (75行) &mdash; Bootstrap 采样生成未来收益路径</td><td>L805</td></tr>
+<tr><td>交互控件</td><td>模拟天数滑块（30-500）+ 路径数选择（200/500/1000）</td><td>Tab5 L2187</td></tr>
+<tr><td>可视化</td><td>扇形区域图（P5/P25/P50/P75/P95）+ 中位数线 + 当前市值基准线</td><td>Tab5 L2196</td></tr>
+<tr><td>摘要指标</td><td>当前市值、P50/P5/P95 预估值、VaR(95%) 和 CVaR(95%)</td><td>Tab5 L2256</td></tr>
+</table>
+
+<h3>6.3 再平衡建议</h3>
+
+<table>
+<tr><th style="width:100px;">组件</th><th>说明</th><th>代码位置</th></tr>
+<tr><td>数据函数</td><td><code>compute_rebalance_suggestion(threshold=0.03)</code> (31行) &mdash; 当前权重 vs 目标权重偏离分析</td><td>L1017</td></tr>
+<tr><td>目标权重</td><td>医药 15%、科技 15%、新能源 15%、宽基 20%、金融 10%、军工 10%、红利 10%、债券 5%</td><td>Tab5 L2299</td></tr>
+<tr><td>可视化</td><td>分组柱状图（当前 vs 目标）+ 偏离折线（右 Y 轴）</td><td>Tab5 L2312</td></tr>
+<tr><td>调仓明细</td><td>行业/ETF/方向/当前权重/目标权重/偏离/调仓金额/预估股数/现价</td><td>Tab5 L2368</td></tr>
+</table>
+
+<h3>6.4 截图 / PDF 导出</h3>
+
+<table>
+<tr><th style="width:100px;">组件</th><th>说明</th><th>代码位置</th></tr>
+<tr><td>截图函数</td><td><code>capture_dashboard_screenshot(port)</code> (50行) &mdash; Selenium headless Chrome 全页截图</td><td>L1134</td></tr>
+<tr><td>PDF 函数</td><td><code>export_dashboard_pdf(port)</code> (53行) &mdash; Chrome CDP Page.printToPDF，A3 宽幅</td><td>L1184</td></tr>
+<tr><td>UI</td><td>页脚导出区域，PNG 和 PDF 两个按钮，一键生成并下载</td><td>L2517 / L2540</td></tr>
+<tr><td>依赖</td><td>selenium 4.41.0 + Chrome WebDriver</td><td></td></tr>
+</table>
+
+<h2>七、Dashboard Tab 结构</h2>
+
+<table>
+<tr><th>Tab</th><th>包含模块</th></tr>
+<tr><td><strong>Tab1 净值走势</strong></td><td>核心指标卡片（6 项）、组合净值走势（含基准对比）、日收益率分布、每日盈亏、滚动夏普/波动率双子图</td></tr>
+<tr><td><strong>Tab2 持仓分布</strong></td><td>持仓明细表格 + ETF 选择器、ETF 增强详情面板（6 区域）、行业权重堆叠面积图、持仓相关性矩阵热力图</td></tr>
+<tr><td><strong>Tab3 风险分析</strong></td><td>风险指标仪表盘、风险指标详情（Sortino/Calmar/胜率/盈亏比等）、月度收益热力图、回撤曲线</td></tr>
+<tr><td><strong>Tab4 收益日历</strong></td><td>日历视图（日/月/年汇总）、颜色编码</td></tr>
+<tr><td><strong>Tab5 高级分析</strong></td><td>Brinson 收益归因瀑布图、Monte Carlo 模拟（扇形图+VaR/CVaR）、再平衡建议（权重对比+调仓明细）、技术指标信号卡片</td></tr>
+</table>
+
+<p style="margin-top:16px;">页脚区域：数据导出（CSV 持仓/收益、PNG 截图、PDF 报告）+ 智能分析建议</p>
+
+<h2>八、技术架构</h2>
+
+<table>
+<tr><th style="width:120px;">组件</th><th>技术选型</th></tr>
+<tr><td>前端框架</td><td>Streamlit 1.56.0，Dark Theme</td></tr>
+<tr><td>图表库</td><td>Plotly（交互式图表），支持悬停/缩放/下载</td></tr>
+<tr><td>数据库</td><td>SQLite 3，<code>portfolio.db</code></td></tr>
+<tr><td>数据源</td><td>新浪财经（主）、东方财富（备用）、AKShare（三级备用）</td></tr>
+<tr><td>持仓导入</td><td>通达信 T0002 导出，制表符分隔 + GB2312 编码</td></tr>
+<tr><td>缓存策略</td><td><code>@st.cache_data(ttl=300/600)</code>，预热 10 日 &times; 6 预设</td></tr>
+<tr><td>导出能力</td><td>Selenium 4.41.0 headless Chrome（PNG 截图 + PDF 报告）</td></tr>
+<tr><td>Python 环境</td><td>独立虚拟环境，含 pandas / numpy / requests / streamlit / selenium</td></tr>
+</table>
+
+<h2>九、数据库统计</h2>
+
+<table>
+<tr><th>表名</th><th style="width:80px;">记录数</th><th style="width:100px;">最新日期</th><th>说明</th></tr>
+<tr><td>portfolio_snapshots</td><td>33,374</td><td>2026-04-24</td><td>每日持仓快照</td></tr>
+<tr><td>portfolio_summary</td><td>3,380</td><td>2026-04-24</td><td>每日组合汇总</td></tr>
+<tr><td>etf_technical</td><td>32,914</td><td>2026-04-24</td><td>每日技术指标</td></tr>
+<tr><td>index_quotes</td><td>49,794</td><td>2026-04-24</td><td>基准指数日线</td></tr>
+<tr><td>alerts</td><td>10</td><td>2026-04-26</td><td>监控告警记录</td></tr>
+<tr><td>execution_logs</td><td>18</td><td>2026-04-26</td><td>任务执行日志</td></tr>
+<tr><td>daily_news</td><td>162</td><td>2026-04-26</td><td>每日资讯摘要</td></tr>
+</table>
+
+<h2>十、Git 提交历史</h2>
+
+<table>
+<tr><th style="width:80px;">Commit</th><th style="width:100px;">日期</th><th>说明</th></tr>
+<tr><td><code>e5829f0</code></td><td>2026-04-26</td><td>init: 投资组合跟踪分析系统 v1.3 基线版本</td></tr>
+<tr><td><code>0b58615</code></td><td>2026-04-26</td><td>feat: 添加完整历史数据回填脚本</td></tr>
+<tr><td><code>a54dee1</code></td><td>2026-04-26</td><td>perf: Dashboard性能优化 - 缓存/降采样/索引/日期选择器</td></tr>
+<tr><td><code>5928dbd</code></td><td>2026-04-26</td><td>fix: 替换use_container_width消除Streamlit弃用警告</td></tr>
+<tr><td><code>98ea8e6</code></td><td>2026-04-26</td><td>feat: summary/index_quotes支持end_date参数，缓存预热扩展</td></tr>
+<tr><td><code>b652050</code></td><td>2026-04-26</td><td>fix: 回填脚本添加周末过滤</td></tr>
+<tr><td><code>c51bc2d</code></td><td>2026-04-26</td><td>feat: 添加收益日历模块(tab4)和项目文档</td></tr>
+<tr><td><code>be75c36</code></td><td>2026-04-26</td><td>feat: 4项Dashboard优化增强（P0完成）</td></tr>
+<tr><td><code>398c138</code></td><td>2026-04-26</td><td>feat: P1改进 - 相关性矩阵、ETF详情、多基准选择器</td></tr>
+<tr><td><code>0d66958</code></td><td>2026-04-26</td><td>feat: P1改进完善 - ETF详情增强、行业权重、CSV导出</td></tr>
+<tr><td><code>36fcf9c</code></td><td>2026-04-27</td><td>fix: 修复3个运行时错误（data_editor/解包/列名引用）</td></tr>
+</table>
+
+<h2>十一、业界参考与设计对标</h2>
+
+<table>
+<tr><th style="width:120px;">参考项目</th><th>核心优势</th><th>已采纳的设计</th></tr>
+<tr><td>QuantStats</td><td>40+ 量化指标、Tear Sheet、Monte Carlo 模拟</td><td>Sortino/Calmar/胜率/盈亏比；滚动夏普和波动率；Monte Carlo 扇形图 + VaR</td></tr>
+<tr><td>pyfolio</td><td>风险归因、交易分析、因子暴露</td><td>月度收益热力图；收益分布直方图</td></tr>
+<tr><td>IB PortfolioAnalyst</td><td>多基准对比、行业暴露、专业报告导出</td><td>多基准指数选择器；行业权重面积图；CSV/PNG/PDF 导出</td></tr>
+</table>
+
+<h2>十二、改进路线图总结</h2>
+
+<div class="section-summary">
+<table>
+<tr>
+    <td style="width:80px; vertical-align:middle;"><span class="badge badge-done">P0 已完成</span></td>
+    <td>7 项 &mdash; 扩展风险指标、月度收益热力图、滚动夏普/波动率、基准归一化、缓存优化、弃用修复、非交易日防护</td>
+</tr>
+<tr>
+    <td style="width:80px; vertical-align:middle;"><span class="badge badge-done">P1 已完成</span></td>
+    <td>10 项 &mdash; 相关性矩阵、ETF 详情面板（6 区域）、多基准选择（11 指数）、行业权重面积图、CSV 导出、智能建议、净值归一化</td>
+</tr>
+<tr>
+    <td style="width:80px; vertical-align:middle;"><span class="badge badge-done">P2 已完成</span></td>
+    <td>4 项 &mdash; Brinson 收益归因瀑布图、Monte Carlo 模拟（扇形图+VaR/CVaR）、再平衡建议（权重对比+调仓明细）、Selenium 截图/PDF 导出</td>
+</tr>
+</table>
+</div>
+
+<p>全部 21 项改进已交付。Dashboard 从初始基线 4 Tab 扩展至 5 Tab / 2568 行，覆盖了从基础风险指标到高级 Monte Carlo 模拟的完整投资组合分析链条。</p>
+
+</body>
+</html>

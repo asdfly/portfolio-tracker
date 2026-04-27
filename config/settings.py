@@ -212,3 +212,50 @@ SMART_ANALYSIS_CONFIG = {
     'momentum_lookback': 20,  # 动量观察期（交易日）
     'risk_parity_target': 0.2,  # 风险平价目标波动率
 }
+
+# ==================== ETF 行业分类 ====================
+ETF_CATEGORIES = {
+    # 医药
+    "512010": {"name": "医药ETF易方达", "sector": "医药", "color": "#22c55e"},
+    "159992": {"name": "创新药ETF银华", "sector": "医药", "color": "#22c55e"},
+    "515120": {"name": "创新药ETF广发", "sector": "医药", "color": "#22c55e"},
+    # 金融
+    "515010": {"name": "证券ETF华夏", "sector": "金融", "color": "#58a6ff"},
+    # 军工
+    "512810": {"name": "军工ETF华宝", "sector": "军工", "color": "#ef4444"},
+    "159267": {"name": "航天ETF华安", "sector": "军工", "color": "#ef4444"},
+    # 新能源
+    "516160": {"name": "新能源ETF南方", "sector": "新能源", "color": "#f59e0b"},
+    "561910": {"name": "电池ETF招商", "sector": "新能源", "color": "#f59e0b"},
+    "159796": {"name": "电池ETF汇添富", "sector": "新能源", "color": "#f59e0b"},
+    # 科技/AI
+    "159819": {"name": "人工智能ETF易方达", "sector": "科技", "color": "#a855f7"},
+    "159770": {"name": "机器人ETF天弘", "sector": "科技", "color": "#a855f7"},
+    "159732": {"name": "消费电子ETF华夏", "sector": "科技", "color": "#a855f7"},
+    # 宽基
+    "510300": {"name": "沪深300ETF华泰柏瑞", "sector": "宽基", "color": "#8b949e"},
+    "159300": {"name": "沪深300ETF富国", "sector": "宽基", "color": "#8b949e"},
+    "510500": {"name": "中证500ETF南方", "sector": "宽基", "color": "#8b949e"},
+    "512100": {"name": "中证1000ETF南方", "sector": "宽基", "color": "#8b949e"},
+    "159949": {"name": "创业板50ETF华安", "sector": "宽基", "color": "#8b949e"},
+    "588000": {"name": "科创50ETF华夏", "sector": "宽基", "color": "#8b949e"},
+    # 红利
+    "159220": {"name": "港股通红利低波ETF华宝", "sector": "红利", "color": "#06b6d4"},
+    "563020": {"name": "红利低波ETF易方达", "sector": "红利", "color": "#06b6d4"},
+    # 债券
+    "511520": {"name": "政金债ETF富国", "sector": "债券", "color": "#ec4899"},
+    "159650": {"name": "国开债ETF博时", "sector": "债券", "color": "#ec4899"},
+    "511380": {"name": "可转债ETF博时", "sector": "债券", "color": "#ec4899"},
+}
+
+# 行业颜色映射（用于图表）
+SECTOR_COLORS = {
+    "医药": "#22c55e",
+    "金融": "#58a6ff",
+    "军工": "#ef4444",
+    "新能源": "#f59e0b",
+    "科技": "#a855f7",
+    "宽基": "#8b949e",
+    "红利": "#06b6d4",
+    "债券": "#ec4899",
+}

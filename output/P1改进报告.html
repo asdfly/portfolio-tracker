@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>P1改进报告 — 投资组合Dashboard功能扩展</title>
+<style>
+body {
+    font-family: Arial, "Microsoft YaHei", SimSun, sans-serif;
+    margin: 40px 60px;
+    color: #1a1a1a;
+    line-height: 1.8;
+    font-size: 11pt;
+}
+h1 {
+    font-size: 22pt;
+    color: #854d0e;
+    border-bottom: 3px solid #f59e0b;
+    padding-bottom: 10px;
+    margin-top: 0;
+}
+h2 {
+    font-size: 16pt;
+    color: #854d0e;
+    margin-top: 36px;
+    border-left: 4px solid #f59e0b;
+    padding-left: 12px;
+}
+h3 {
+    font-size: 13pt;
+    color: #21262d;
+    margin-top: 24px;
+}
+h4 {
+    font-size: 11.5pt;
+    color: #444444;
+    margin-top: 16px;
+}
+.meta {
+    color: #666666;
+    font-size: 10pt;
+    margin-bottom: 30px;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 14px 0;
+    font-size: 10pt;
+}
+th {
+    background-color: #854d0e;
+    color: #ffffff;
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: bold;
+}
+td {
+    border: 1px solid #dddddd;
+    padding: 7px 10px;
+    vertical-align: top;
+}
+tr:nth-child(even) {
+    background-color: #fefce8;
+}
+blockquote {
+    border-left: 4px solid #f59e0b;
+    margin: 16px 0;
+    padding: 10px 16px;
+    background-color: #fffbeb;
+    color: #333333;
+    font-size: 10pt;
+}
+code {
+    font-family: Consolas, "Courier New", monospace;
+    background-color: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+}
+ul, ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+li {
+    margin-bottom: 4px;
+}
+.check-item {
+    padding: 6px 12px;
+    margin: 4px 0;
+    background-color: #fffbeb;
+    border-left: 3px solid #f59e0b;
+    font-size: 10.5pt;
+}
+.section-box {
+    background-color: #fefce8;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+}
+.feature-card {
+    background-color: #ffffff;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+}
+.feature-card h4 {
+    margin-top: 0;
+    color: #854d0e;
+    font-size: 12pt;
+}
+.param-table {
+    width: auto;
+    min-width: 300px;
+}
+.param-table th {
+    background-color: #fbbf24;
+    color: #1a1a1a;
+    font-size: 9.5pt;
+}
+</style>
+</head>
+<body>
+
+<h1>P1 改进报告 &mdash; 投资组合 Dashboard 功能扩展</h1>
+<div class="meta">
+    文档日期：2026-04-26 | 版本：v1.3 | 交付 Commit：<code>0d66958</code> | 涉及文件：<code>dashboard.py</code>, <code>config/settings.py</code> | 改动量：+262 行 / -45 行
+</div>
+
+<h2>一、改进背景与目标</h2>
+
+<p>P0 改进已补齐核心风险指标和性能基线。P1 阶段的目标是<strong>拓展分析维度</strong>，引入以下三类新能力：</p>
+
+<ol>
+    <li><strong>持仓间关联性分析</strong> &mdash; 通过相关性矩阵揭示组合内部分散化程度</li>
+    <li><strong>个股深度剖析</strong> &mdash; 从组合级分析下钻到单只 ETF 的技术面和统计面</li>
+    <li><strong>多基准灵活对比</strong> &mdash; 支持用户自由选择对比基准，适应不同投资风格</li>
+</ol>
+
+<p>同时补齐了行业权重可视化、CSV 数据导出和智能建议集成等辅助功能。</p>
+
+<h2>二、改进项清单</h2>
+
+<div class="section-box">
+<strong>共 6 项改进，全部已完成交付。</strong> Dashboard 代码从 928 行增长至 1,782 行。
+</div>
+
+<h3>2.1 持仓相关性矩阵</h3>
+
+<div class="feature-card">
+<h4>功能概述</h4>
+<p>计算持仓内各 ETF 之间日收益率的 Pearson 相关系数，以热力图形式展示。高相关性（接近 1）表示两只 ETF 走势趋同，组合分散化效果弱；低相关或负相关表示互补性强，分散化效果好。</p>
+</div>
+
+<table>
+<tr><th style="width:120px;">组件</th><th>实现细节</th><th>代码位置</th></tr>
+<tr><td>数据函数</td><td><code>load_correlation_matrix(days=250, end_date=None)</code> &mdash; 从 <code>portfolio_snapshots</code> 提取各 ETF 市值时间序列，计算日市值变动率（等价于日收益率），构建 Pearson 相关系数矩阵</td><td>L352-417</td></tr>
+<tr><td>短名称映射</td><td>自动生成 ETF 简称映射表（如 "sh512010" &rarr; "医药ETF"），用于热力图轴标签</td><td>L390-410</td></tr>
+<tr><td>最小持仓要求</td><td>至少 2 只 ETF 且数据点 &ge; 30 才渲染热力图，否则显示提示信息</td><td>L1304</td></tr>
+<tr><td>Heatmap 配色</td><td>五级渐变：深蓝(-1) &rarr; 浅蓝(-0.25) &rarr; 深灰(0) &rarr; 浅红(0.75) &rarr; 深红(+1)，贴合 Dark Theme</td><td>L1193-1199</td></tr>
+<tr><td>数值标注</td><td>每个格子内标注相关系数值（保留 2 位小数），字体 9pt</td><td>L1201-1202</td></tr>
+<tr><td>悬停提示</td><td><code>hovertemplate</code> 显示 "ETF A vs ETF B，相关系数: 0.850"</td><td>L1204</td></tr>
+<tr><td>自适应高度</td><td><code>max(500, n_etfs &times; 28)</code>，确保持仓数量多时不拥挤</td><td>L1330</td></tr>
+<tr><td>UI 位置</td><td>Tab2 持仓分布，ETF 详细列表下方</td><td>L1300</td></tr>
+</table>
+
+<h4>配色方案</h4>
+
+<table class="param-table">
+<tr><th>相关系数区间</th><th>颜色</th><th>含义</th></tr>
+<tr><td>[-1.0, -0.25]</td><td>深蓝 <code>#0d419d</code></td><td>强负相关</td></tr>
+<tr><td>[-0.25, 0.0]</td><td>浅蓝 <code>#1a6bb5</code></td><td>弱负相关</td></tr>
+<tr><td>0.0</td><td>深灰 <code>#21262d</code></td><td>无相关</td></tr>
+<tr><td>[0.0, 0.75]</td><td>浅红 <code>#b5411a</code></td><td>弱正相关</td></tr>
+<tr><td>[0.75, 1.0]</td><td>深红 <code>#9d0d0d</code></td><td>强正相关</td></tr>
+</table>
+
+<h3>2.2 单只 ETF 增强详情面板</h3>
+
+<div class="feature-card">
+<h4>功能概述</h4>
+<p>在 Tab2 持仓分布中，用户点击任意 ETF 行即可展开完整的详情分析面板。面板由 <code>_render_etf_detail_panel()</code> 函数统一渲染（L488-685），包含 6 个独立区域。</p>
+</div>
+
+<h4>区域一：核心指标卡片（6 列）</h4>
+
+<table>
+<tr><th>指标</th><th>数据来源</th><th>格式</th></tr>
+<tr><td>市值</td><td><code>row['market_value']</code></td><td>¥1,234,567</td></tr>
+<tr><td>累计盈亏</td><td><code>row['pnl']</code> + <code>row['pnl_rate']</code></td><td>¥+12,345 (+5.67%)</td></tr>
+<tr><td>年内收益</td><td><code>row['ytd_return']</code></td><td>+8.23%</td></tr>
+<tr><td>Beta 系数</td><td><code>row['beta']</code></td><td>1.15</td></tr>
+<tr><td>成本价</td><td><code>row['cost_price']</code></td><td>0.985</td></tr>
+<tr><td>现价</td><td><code>row['current_price']</code></td><td>1.028 (+0.043)</td></tr>
+</table>
+
+<h4>区域二：价格走势图（左侧 3/4 宽度）</h4>
+
+<table>
+<tr><th>设计要素</th><th>说明</th></tr>
+<tr><td>数据源</td><td><code>load_etf_price_history(code, days=250)</code>，近 250 个交易日</td></tr>
+<tr><td>曲线样式</td><td>蓝色折线（<code>#58a6ff</code>），线宽 1.5，下方淡蓝渐变填充</td></tr>
+<tr><td>成本线</td><td>黄色虚线（<code>#f59e0b</code>），标注"成本 0.985"，左上角定位</td></tr>
+<tr><td>降采样</td><td>超过 500 个数据点时自动降采样，保留边界值</td></tr>
+<tr><td>交互</td><td>悬停显示日期和精确价格，x 轴月份刻度</td></tr>
+</table>
+
+<h4>区域三：技术指标面板（右侧 1/4 宽度）</h4>
+
+<table>
+<tr><th>指标</th><th>数据源</th><th>显示逻辑</th></tr>
+<tr><td>趋势信号</td><td><code>latest['trend']</code></td><td>看多(绿) / 看空(红) / 中性(黄)</td></tr>
+<tr><td>RSI</td><td><code>latest['rsi_value']</code></td><td>数值 + 颜色编码（超卖绿/超买红/中性白）</td></tr>
+<tr><td>MA 信号</td><td><code>latest['ma_signal']</code></td><td>金叉/死叉/多头/空头</td></tr>
+<tr><td>MACD</td><td><code>latest['macd_signal']</code></td><td>金叉/死叉</td></tr>
+<tr><td>KDJ</td><td><code>latest['kdj_signal']</code></td><td>金叉/死叉/超买/超卖</td></tr>
+<tr><td>布林位置</td><td><code>latest['bollinger_position']</code></td><td>上轨/中轨/下轨附近</td></tr>
+<tr><td>ATR%</td><td><code>latest['atr_pct']</code></td><td>百分比格式</td></tr>
+</table>
+
+<h4>区域四：RSI 仪表条</h4>
+
+<ul>
+    <li>水平条形图，0-100 区间，颜色根据 RSI 值动态变化</li>
+    <li>30 以下绿色（超卖区）、70 以上红色（超买区）、中间黄色（中性区）</li>
+    <li>30 和 70 位置标记半透明竖线，直观显示超买超卖阈值</li>
+</ul>
+
+<h4>区域五：关键统计（左侧 1/3）</h4>
+
+<table>
+<tr><th>统计项</th><th>计算方式</th></tr>
+<tr><td>日均收益</td><td><code>daily_returns.mean()</code></td></tr>
+<tr><td>日收益标准差</td><td><code>daily_returns.std()</code></td></tr>
+<tr><td>最大单日涨幅</td><td><code>daily_returns.max()</code></td></tr>
+<tr><td>最大单日跌幅</td><td><code>daily_returns.min()</code></td></tr>
+<tr><td>数据天数</td><td>有效交易日数量</td></tr>
+<tr><td>持仓市值占比</td><td>当前 ETF 市值 / 组合总市值</td></tr>
+</table>
+
+<h4>区域六：日收益率分布直方图（右侧 2/3）</h4>
+
+<table>
+<tr><th>设计要素</th><th>说明</th></tr>
+<tr><td>数据源</td><td><code>load_etf_detail(code, days=120)</code> 的 <code>current_price</code> 序列计算日收益率</td></tr>
+<tr><td>最小数据量</td><td>要求 &ge; 5 个有效数据点才渲染</td></tr>
+<tr><td>直方图配置</td><td>30 个分箱，蓝色柱体（<code>#58a6ff</code>），透明度 0.7</td></tr>
+<tr><td>零线标注</td><td>黄色虚线标记零收益位置，区分涨跌区间</td></tr>
+<tr><td>悬停</td><td>显示区间范围和出现次数</td></tr>
+</table>
+
+<h3>2.3 多基准指数选择</h3>
+
+<div class="feature-card">
+<h4>功能概述</h4>
+<p>在侧边栏提供下拉选择器，用户可从 11 个主要指数中自由选择对比基准。选择后，净值走势图中的基准曲线实时切换，缓存自动预热。</p>
+</div>
+
+<table>
+<tr><th style="width:120px;">组件</th><th>实现细节</th><th>代码位置</th></tr>
+<tr><td>侧边栏 UI</td><td><code>st.selectbox("对比基准", options=benchmark_keys, format_func=...)</code>，显示中文名称</td><td>L866-872</td></tr>
+<tr><td>默认基准</td><td>沪深 300（<code>sh000300</code>）</td><td>L863</td></tr>
+<tr><td>可选基准</td><td>上证指数、深证成指、沪深 300、中证 500、中证 1000、创业板指、科创 50、创业板 50、中证酒、中证医疗、红利指数</td><td><code>INDEX_CODES</code> settings.py</td></tr>
+<tr><td>数据函数</td><td><code>load_benchmark_comparison(code, days, end_date)</code> &mdash; 从 <code>index_quotes</code> 表加载指定指数行情</td><td>L724-748</td></tr>
+<tr><td>缓存预热</td><td>预热循环中自动覆盖当前选中的基准（<code>selected_benchmark</code>）</td><td>L962</td></tr>
+<tr><td>净值图联动</td><td>基准指数按相同的 100 基点归一化，与组合净值同框对比</td><td>L1049-1060</td></tr>
+</table>
+
+<h3>2.4 行业权重堆叠面积图</h3>
+
+<div class="feature-card">
+<h4>功能概述</h4>
+<p>按行业维度聚合持仓权重历史，展示组合行业配置的时间演变趋势，帮助评估行业集中度风险。</p>
+</div>
+
+<table>
+<tr><th style="width:120px;">组件</th><th>实现细节</th><th>代码位置</th></tr>
+<tr><td>数据函数</td><td><code>load_sector_weights(days=250, end_date=None)</code> &mdash; 从 <code>portfolio_snapshots</code> 聚合各行业每日总市值，计算权重百分比</td><td>L751-800</td></tr>
+<tr><td>行业分类</td><td>8 个行业：医药、金融、军工、新能源、科技、宽基、红利、债券</td><td><code>ETF_CATEGORIES</code> settings.py</td></tr>
+<tr><td>ETF 映射</td><td>每个 ETF 配置所属行业和颜色，未配置的归入"其他"行业</td><td>23 个 ETF 已分类</td></tr>
+<tr><td>可视化</td><td>Plotly 堆叠面积图，各行业使用 <code>SECTOR_COLORS</code> 独立配色</td><td>L1261-1291</td></tr>
+<tr><td>底部统计</td><td>显示覆盖行业数、最大/最小权重行业及数值、数据截止日期</td><td>L1292-1295</td></tr>
+<tr><td>UI 位置</td><td>Tab2 持仓分布，ETF 详细列表上方</td><td>L1257</td></tr>
+</table>
+
+<h4>行业配色方案</h4>
+
+<table class="param-table">
+<tr><th>行业</th><th>颜色</th><th>代表 ETF</th></tr>
+<tr><td>医药</td><td><code>#22c55e</code> 绿色</td><td>医药ETF、创新药ETF银华、创新药ETF广发</td></tr>
+<tr><td>金融</td><td><code>#58a6ff</code> 蓝色</td><td>证券ETF华夏</td></tr>
+<tr><td>军工</td><td><code>#ef4444</code> 红色</td><td>军工ETF华宝、航天ETF华安</td></tr>
+<tr><td>新能源</td><td><code>#f59e0b</code> 黄色</td><td>新能源ETF南方、电池ETF招商、电池ETF汇添富</td></tr>
+<tr><td>科技</td><td><code>#a855f7</code> 紫色</td><td>人工智能ETF、机器人ETF、消费电子ETF</td></tr>
+<tr><td>宽基</td><td><code>#8b949e</code> 灰色</td><td>沪深300ETF、中证500ETF、中证1000ETF、创业板50ETF、科创50ETF</td></tr>
+<tr><td>红利</td><td><code>#06b6d4</code> 青色</td><td>港股通红利低波ETF、红利低波ETF</td></tr>
+<tr><td>债券</td><td><code>#ec4899</code> 粉色</td><td>政金债ETF、国开债ETF、可转债ETF</td></tr>
+</table>
+
+<h3>2.5 CSV 数据导出</h3>
+
+<table>
+<tr><th>功能</th><th>实现</th><th>代码位置</th></tr>
+<tr><td>持仓数据导出</td><td><code>export_positions_csv()</code> &mdash; 将持仓 DataFrame 转为 CSV，通过 <code>st.download_button</code> 提供下载</td><td>L803-812</td></tr>
+<tr><td>收益数据导出</td><td><code>export_summary_csv()</code> &mdash; 将收益序列 DataFrame 转为 CSV 下载</td><td>L814-820</td></tr>
+<tr><td>UI 设计</td><td>页脚导出区域，3 列布局，按钮采用深色主题风格</td><td>L1741-1765</td></tr>
+</table>
+
+<h3>2.6 智能分析建议集成</h3>
+
+<ul>
+    <li>自动扫描 <code>data/reports/smart_report_*.md</code>，加载最新报告</li>
+    <li>在页脚区域以可折叠面板展示，默认收起</li>
+    <li>报告内容截断至 3000 字符，避免页面过长</li>
+    <li>UI 位置：L1732</li>
+</ul>
+
+<h2>三、新增数据函数汇总</h2>
+
+<table>
+<tr><th style="width:160px;">函数名</th><th style="width:60px;">行号</th><th>参数</th><th>TTL</th><th>返回值</th></tr>
+<tr><td><code>load_correlation_matrix</code></td><td>L352</td><td>days=250, end_date</td><td>300s</td><td>(DataFrame, dict) 相关系数矩阵 + 短名称映射</td></tr>
+<tr><td><code>load_etf_detail</code></td><td>L419</td><td>code, days=120, end_date</td><td>300s</td><td>(DataFrame, str) ETF快照+技术指标 + 名称</td></tr>
+<tr><td><code>load_etf_price_history</code></td><td>L689</td><td>code, days=250, end_date</td><td>300s</td><td>(DataFrame, str) 价格历史 + 名称</td></tr>
+<tr><td><code>load_benchmark_comparison</code></td><td>L724</td><td>code, days=250, end_date</td><td>300s</td><td>DataFrame 基准指数行情</td></tr>
+<tr><td><code>load_sector_weights</code></td><td>L751</td><td>days=250, end_date</td><td>300s</td><td>(DataFrame, dict) 行业权重时序 + 颜色映射</td></tr>
+<tr><td><code>export_positions_csv</code></td><td>L803</td><td>positions_df, filename</td><td>-</td><td>(href, filename) 下载链接</td></tr>
+<tr><td><code>export_summary_csv</code></td><td>L814</td><td>summary_df, filename</td><td>-</td><td>(href, filename) 下载链接</td></tr>
+<tr><td><code>_render_etf_detail_panel</code></td><td>L488</td><td>row, selected_date</td><td>-</td><td>None（直接渲染 UI）</td></tr>
+</table>
+
+<h2>四、配置文件变更</h2>
+
+<p><code>config/settings.py</code> 新增以下配置：</p>
+
+<table>
+<tr><th style="width:140px;">配置项</th><th>说明</th></tr>
+<tr><td><code>ETF_CATEGORIES</code></td><td>23 个 ETF 的行业分类和颜色配置字典，键为代码（去掉市场前缀），值为 {name, sector, color}</td></tr>
+<tr><td><code>SECTOR_COLORS</code></td><td>8 个行业的统一颜色映射，用于图表渲染</td></tr>
+</table>
+
+<h2>五、代码改动明细</h2>
+
+<table>
+<tr><th style="width:80px;">Commit</th><th>文件</th><th>改动量</th><th>说明</th></tr>
+<tr><td><code>398c138</code></td><td>dashboard.py</td><td>+200 行</td><td>初始 P1 实现：相关性矩阵、ETF 详情抽屉、多基准选择器</td></tr>
+<tr><td><code>0d66958</code></td><td>dashboard.py</td><td>+262 行 / -45 行</td><td>完善 P1：ETF 详情增强（6 区域）、行业权重图、CSV 导出、智能建议集成</td></tr>
+</table>
+
+<h2>六、验证结果</h2>
+
+<div class="check-item">Dashboard 启动：健康检查 200 OK，零 WARNING、零 ERROR</div>
+<div class="check-item">相关性矩阵热力图：正确计算 Pearson 系数，颜色映射和数值标注准确</div>
+<div class="check-item">ETF 详情面板：6 个区域完整渲染，价格走势含成本线，技术指标和 RSI 仪表条正确显示</div>
+<div class="check-item">多基准选择器：11 个指数均可选择，切换后净值图基准曲线实时更新</div>
+<div class="check-item">行业权重面积图：8 个行业正确聚合，颜色与配置一致</div>
+<div class="check-item">CSV 导出：持仓和收益数据均可正常下载</div>
+<div class="check-item">缓存预热：包含基准指数的缓存预热覆盖完整</div>
+<div class="check-item">Git 提交：工作区干净，无未提交变更</div>
+
+<h2>七、后续衔接</h2>
+
+<p>P1 改进完成后，Dashboard 已具备持仓级分析、多基准对比和行业维度视图。P2 阶段将聚焦于收益归因（Brinson 模型）、再平衡建议、报告导出和 Monte Carlo 模拟等高级分析能力。</p>
+
+</body>
+</html>

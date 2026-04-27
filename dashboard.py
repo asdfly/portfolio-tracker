@@ -832,8 +832,8 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
 
     # 获取最新市值
     conn2 = get_db_connection()
-    query2 = f"SELECT total_value FROM portfolio_summary WHERE date <= '{df['date'].max()}' ORDER BY date DESC LIMIT 1"
-    last_row = pd.read_sql(query2, conn2)
+    query2 = "SELECT total_value FROM portfolio_summary WHERE date <= ? ORDER BY date DESC LIMIT 1"
+    last_row = pd.read_sql(query2, conn2, params=(str(df['date'].max()),))
     conn2.close()
 
     if last_row.empty:
@@ -979,9 +979,9 @@ def compute_return_attribution(days=250, end_date=None):
     # 基准收益率
     conn3 = get_db_connection()
     query_bench = "SELECT close FROM index_quotes WHERE code='sh000300' ORDER BY date DESC LIMIT 1"
-    query_bench_prev = f"SELECT close FROM index_quotes WHERE code='sh000300' ORDER BY date DESC LIMIT 1 OFFSET {days}"
+    query_bench_prev = "SELECT close FROM index_quotes WHERE code='sh000300' ORDER BY date DESC LIMIT 1 OFFSET ?"
     bench_now = pd.read_sql(query_bench, conn3)
-    bench_prev = pd.read_sql(query_bench_prev, conn3)
+    bench_prev = pd.read_sql(query_bench_prev, conn3, params=(days,))
     conn3.close()
 
     benchmark_return = 0.0
@@ -1132,7 +1132,7 @@ def export_summary_csv(summary_df, filename="收益数据"):
 
 @st.cache_data(ttl=0, show_spinner=False)
 def capture_dashboard_screenshot(port=8501):
-    """使用 Playwright 截取 Dashboard 全页截图
+    """使用 Selenium 截取 Dashboard 全页截图
 
     Args:
         port: Streamlit 端口号
@@ -1140,41 +1140,98 @@ def capture_dashboard_screenshot(port=8501):
     Returns:
         str: PNG 文件路径，失败返回 None
     """
-    import asyncio
-    from playwright.async_api import async_playwright
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
 
     output_dir = PROJECT_ROOT / "output"
     output_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     png_path = str(output_dir / f"dashboard_{timestamp}.png")
 
-    async def _screenshot():
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page(
-                    viewport={"width": 1920, "height": 1080},
-                    device_scale_factor=2
-                )
-                url = f"http://localhost:{port}"
-                await page.goto(url, wait_until="networkidle", timeout=30000)
-                # 等待页面完全渲染
-                await page.wait_for_timeout(3000)
-                await page.screenshot(path=png_path, full_page=True)
-                await browser.close()
-                return png_path
-        except Exception as e:
-            print(f"截图失败: {e}")
-            return None
-
-    # 在 Streamlit 的同步环境中运行异步代码
     try:
-        loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(_screenshot())
-        loop.close()
-        return result
+        opts = Options()
+        opts.add_argument("--headless=new")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1920,1080")
+        # 排除自动化检测
+        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+        opts.add_experimental_option("useAutomationExtension", False)
+
+        driver = webdriver.Chrome(options=opts)
+        driver.get(f"http://localhost:{port}")
+        # 等待 Streamlit 完全渲染（检测 stApp 标签出现）
+        import time as _t
+        _t.sleep(8)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
+        _t.sleep(2)
+        total_height = driver.execute_script("return document.body.scrollHeight")
+        # 设置视口为完整页面高度以实现全页截图
+        driver.set_window_size(1920, total_height + 200)
+        _t.sleep(2)
+        driver.save_screenshot(png_path)
+        driver.quit()
+        return png_path
     except Exception as e:
-        print(f"截图异常: {e}")
+        print(f"截图失败: {e}")
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        return None
+
+
+def export_dashboard_pdf(port=8501):
+    """使用 Selenium 导出 Dashboard 为 PDF
+
+    Args:
+        port: Streamlit 端口号
+
+    Returns:
+        str: PDF 文件路径，失败返回 None
+    """
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+
+    output_dir = PROJECT_ROOT / "output"
+    output_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pdf_path = str(output_dir / f"dashboard_{timestamp}.pdf")
+
+    try:
+        opts = Options()
+        opts.add_argument("--headless=new")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1920,1080")
+        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+        opts.add_experimental_option("useAutomationExtension", False)
+
+        driver = webdriver.Chrome(options=opts)
+        driver.get(f"http://localhost:{port}")
+        import time as _t
+        _t.sleep(10)
+        # Chrome 内置 PDF 打印
+        pdf_opts = {
+            "landscape": False,
+            "displayHeaderFooter": False,
+            "printBackground": True,
+            "paperWidth": 13,   # A3 宽度 (英寸)
+            "paperHeight": 19,  # 长页面
+        }
+        result = driver.execute_cdp_cmd("Page.printToPDF", pdf_opts)
+        driver.quit()
+
+        with open(pdf_path, "wb") as f:
+            f.write(result["data"])
+
+        return pdf_path
+    except Exception as e:
+        print(f"PDF导出失败: {e}")
+        try:
+            driver.quit()
+        except Exception:
+            pass
         return None
 
 def format_value(val, prefix="", suffix="", decimals=2):
@@ -1602,7 +1659,7 @@ def main():
                 st.dataframe(
                     display_df,
                     height=420,
-                    use_container_width=True,
+                    
                     hide_index=True,
                     column_config={
                         "收益率%": st.column_config.TextColumn(disabled=True),
@@ -1977,7 +2034,7 @@ def main():
                 for i, yr in enumerate(years):
                     with yr_sel[i]:
                         label = f"**{yr}**" if st.session_state.get('cal_year', latest_year) == yr else str(yr)
-                        if st.button(label, key=f"yr_{yr}", use_container_width=True):
+                        if st.button(label, key=f"yr_{yr}"):
                             st.session_state['cal_year'] = yr
                             st.rerun()
 
@@ -1996,7 +2053,7 @@ def main():
                 with mo_sel[i]:
                     is_active = (st.session_state.get('cal_month', months_in_year[-1]) == m)
                     label = f"**{m}月**" if is_active else f"{m}月"
-                    if st.button(label, key=f"mo_{sel_year}_{m}", use_container_width=True):
+                    if st.button(label, key=f"mo_{sel_year}_{m}", type="secondary" if not is_active else "primary"):
                         st.session_state['cal_month'] = m
                         st.rerun()
 
@@ -2458,7 +2515,7 @@ def main():
                     unsafe_allow_html=True
                 )
         with col_exp3:
-            if st.button("📸 导出 Dashboard 截图 (PNG)", key="screenshot_btn", use_container_width=True):
+            if st.button("📸 导出 Dashboard 截图 (PNG)", key="screenshot_btn"):
                 with st.spinner("正在截图，请稍候..."):
                     screenshot_path = capture_dashboard_screenshot(port=8501)
                 if screenshot_path:
@@ -2475,6 +2532,27 @@ def main():
                     )
                 else:
                     st.error("截图失败，请确认 Dashboard 正在运行")
+
+        # PDF 导出按钮（第4列，新行）
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_exp4 = st.columns([1, 1, 1])[1]
+        with col_exp4:
+            if st.button("📄 导出 Dashboard 报告 (PDF)", key="pdf_btn"):
+                with st.spinner("正在生成 PDF，请稍候..."):
+                    pdf_path = export_dashboard_pdf(port=8501)
+                if pdf_path:
+                    st.success(f"PDF 已生成: {pdf_path}")
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+                    st.download_button(
+                        label="📥 下载 PDF 报告",
+                        data=pdf_bytes,
+                        file_name=f"dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        key="download_pdf"
+                    )
+                else:
+                    st.error("PDF 导出失败，请确认 Dashboard 正在运行")
 
         # ========== 页脚 ==========
     st.markdown("---")
