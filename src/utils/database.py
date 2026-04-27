@@ -108,6 +108,11 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             for holding in holdings:
+                # 优先使用实时行情数据（来自新浪API），确保与summary一致
+                current_price = holding.get('realtime_price', holding.get('current_price'))
+                market_value = holding.get('realtime_market_value', holding.get('market_value'))
+                pnl = holding.get('realtime_pnl', holding.get('pnl'))
+
                 cursor.execute("""
                     INSERT OR REPLACE INTO portfolio_snapshots 
                     (date, code, name, quantity, cost_price, current_price, 
@@ -119,9 +124,9 @@ class DatabaseManager:
                     holding.get('name'),
                     holding.get('quantity'),
                     holding.get('cost_price'),
-                    holding.get('current_price'),
-                    holding.get('market_value'),
-                    holding.get('pnl'),
+                    current_price,
+                    market_value,
+                    pnl,
                     holding.get('pnl_rate'),
                     holding.get('ytd_return'),
                     holding.get('beta')

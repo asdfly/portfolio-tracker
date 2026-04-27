@@ -109,7 +109,22 @@ class PortfolioAnalyzer:
             code = pos['code']
             if code in quotes:
                 quote = quotes[code]
-                pos['realtime_price'] = quote.get('price', pos['current_price'])
+                price = quote.get('price', 0)
+
+                # 价格合理性校验：价格必须为正，且与当前价格偏离不超过±30%
+                current_price = pos.get('current_price', 0)
+                if price > 0 and current_price > 0 and abs(price - current_price) / current_price > 0.3:
+                    logger.warning(
+                        f"行情价格异常: {code}({pos.get('name')}) "
+                        f"实时={price}, 当前={current_price}, 偏离={abs(price-current_price)/current_price*100:.1f}%, 跳过更新"
+                    )
+                    continue
+
+                if price > 0:
+                    pos['realtime_price'] = price
+                else:
+                    pos['realtime_price'] = current_price
+
                 pos['realtime_change_pct'] = quote.get('change_pct', 0)
                 pos['volume'] = quote.get('volume', 0)
                 pos['amount'] = quote.get('amount', 0)
@@ -121,6 +136,13 @@ class PortfolioAnalyzer:
                 # 重新计算市值和盈亏
                 pos['realtime_market_value'] = pos['realtime_price'] * pos['quantity']
                 pos['realtime_pnl'] = (pos['realtime_price'] - pos['cost_price']) * pos['quantity']
+            else:
+                # 无实时行情时，使用通达信静态数据
+                pos['realtime_price'] = pos.get('current_price', 0)
+                pos['realtime_market_value'] = pos.get('market_value', 0)
+                pos['realtime_pnl'] = pos.get('pnl', 0)
+                pos['realtime_change_pct'] = 0
+                pos['pre_close'] = 0
 
     def _fetch_index_quotes(self) -> Dict[str, Dict[str, Any]]:
         """获取指数行情"""
@@ -168,8 +190,16 @@ class PortfolioAnalyzer:
         total_pnl = sum(p.get('realtime_pnl', p['pnl']) for p in positions)
 
         # 计算日涨跌
-        prev_value = sum(p['market_value'] / (1 + p['daily_change_pct']/100) 
-                        for p in positions if p['daily_change_pct'] != 0)
+        # prev_value: 用每个持仓的current_price反推前日市值
+        # 优先使用新浪实时价格，fallback到通达信静态价格
+        prev_value = sum(
+            p.get('pre_close', p['current_price']) * p['quantity']
+            for p in positions if p.get('pre_close', 0) > 0
+        )
+        # 如果pre_close不可用，fallback到原始逻辑
+        if prev_value <= 0:
+            prev_value = sum(p['market_value'] / (1 + p['daily_change_pct']/100)
+                            for p in positions if p.get('daily_change_pct', 0) != 0)
         daily_pnl = total_value - prev_value if prev_value > 0 else 0
         daily_return = daily_pnl / prev_value * 100 if prev_value > 0 else 0
 
