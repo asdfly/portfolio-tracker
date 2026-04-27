@@ -23,7 +23,7 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
+from datetime import datetime
 import calendar
 import base64
 
@@ -210,7 +210,7 @@ def load_calendar_data():
 def compute_extended_risk_metrics(end_date=None):
     """计算扩展风险指标（基于全部历史日收益率）"""
     conn = get_db_connection()
-    query = "SELECT date, daily_return, daily_pnl FROM portfolio_summary ORDER BY date"
+    query = "SELECT date, daily_return, daily_pnl, total_value FROM portfolio_summary ORDER BY date"
     df = pd.read_sql_query(query, conn)
     conn.close()
     if df.empty or len(df) < 10:
@@ -756,21 +756,23 @@ def load_sector_weights(days=250, end_date=None):
         WHERE ps.date >= (
             SELECT DISTINCT date FROM portfolio_snapshots
             ORDER BY date DESC
-            LIMIT 1 OFFSET %(days)s
+            LIMIT 1 OFFSET ?
         )
     """
     if end_date:
-        query += " AND ps.date <= %(end_date)s"
+        query += " AND ps.date <= ?"
     query += " ORDER BY ps.date, ps.code"
 
     try:
         conn = sqlite3.connect(str(DATABASE_PATH))
-        params = {"days": days}
+        params = [days]
         if end_date:
-            params["end_date"] = end_date
+            params.append(end_date)
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"load_sector_weights 查询失败: {e}")
         return pd.DataFrame(), {}
 
     if df.empty:
