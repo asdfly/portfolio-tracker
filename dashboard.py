@@ -1134,7 +1134,10 @@ def export_summary_csv(summary_df, filename="收益数据"):
 
 @st.cache_data(ttl=0, show_spinner=False)
 def capture_dashboard_screenshot(port=8501):
-    """使用 Selenium 截取 Dashboard 全页截图
+    """截取 Dashboard 页面截图（PNG）
+
+    通过 Selenium headless Chrome + webdriver_manager 自动管理 ChromeDriver。
+    智能等待 Plotly 图表渲染完成后全页截图。
 
     Args:
         port: Streamlit 端口号
@@ -1142,8 +1145,16 @@ def capture_dashboard_screenshot(port=8501):
     Returns:
         str: PNG 文件路径，失败返回 None
     """
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
+    try:
+        import time
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.common.by import By
+        from webdriver_manager.chrome import ChromeDriverManager
+    except ImportError:
+        print("截图失败: 缺少 selenium 或 webdriver-manager，请执行 pip install selenium webdriver-manager")
+        return None
 
     output_dir = PROJECT_ROOT / "output"
     output_dir.mkdir(exist_ok=True)
@@ -1151,40 +1162,57 @@ def capture_dashboard_screenshot(port=8501):
     png_path = str(output_dir / f"dashboard_{timestamp}.png")
 
     try:
-        opts = Options()
-        opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--window-size=1920,1080")
-        # 排除自动化检测
-        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-        opts.add_experimental_option("useAutomationExtension", False)
+        options = Options()
+        options.add_argument('--headless=new')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--window-size=1920,3000')
 
-        driver = webdriver.Chrome(options=opts)
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
         driver.get(f"http://localhost:{port}")
-        # 等待 Streamlit 完全渲染（检测 stApp 标签出现）
-        import time as _t
-        _t.sleep(8)
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-        _t.sleep(2)
-        total_height = driver.execute_script("return document.body.scrollHeight")
-        # 设置视口为完整页面高度以实现全页截图
-        driver.set_window_size(1920, total_height + 200)
-        _t.sleep(2)
+
+        # Step 1: 等待 Streamlit App 容器就绪
+        for i in range(30):
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, "[data-testid='stApp']")
+                if el.is_displayed():
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+
+        # Step 2: 等待 Plotly 图表渲染（至少2个SVG出现）
+        for i in range(45):
+            try:
+                charts = driver.find_elements(By.CSS_SELECTOR, ".js-plotly-plot .main-svg")
+                if len(charts) >= 2:
+                    time.sleep(2)  # 等待剩余图表
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+
+        # Step 3: 滚动到底部触发懒加载，再滚回顶部
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+
+        # Step 4: 截取完整页面
         driver.save_screenshot(png_path)
         driver.quit()
         return png_path
     except Exception as e:
         print(f"截图失败: {e}")
-        try:
-            driver.quit()
-        except Exception:
-            pass
         return None
 
 
 def export_dashboard_pdf(port=8501):
-    """使用 Selenium 导出 Dashboard 为 PDF
+    """导出 Dashboard 为 PDF
+
+    通过 Selenium headless Chrome + CDP Page.printToPDF 实现，A3 宽幅输出。
+    智能等待 Plotly 图表渲染完成后导出。
 
     Args:
         port: Streamlit 端口号
@@ -1192,8 +1220,17 @@ def export_dashboard_pdf(port=8501):
     Returns:
         str: PDF 文件路径，失败返回 None
     """
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
+    try:
+        import time
+        import base64
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.common.by import By
+        from webdriver_manager.chrome import ChromeDriverManager
+    except ImportError:
+        print("PDF导出失败: 缺少 selenium 或 webdriver-manager，请执行 pip install selenium webdriver-manager")
+        return None
 
     output_dir = PROJECT_ROOT / "output"
     output_dir.mkdir(exist_ok=True)
@@ -1201,39 +1238,63 @@ def export_dashboard_pdf(port=8501):
     pdf_path = str(output_dir / f"dashboard_{timestamp}.pdf")
 
     try:
-        opts = Options()
-        opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--window-size=1920,1080")
-        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-        opts.add_experimental_option("useAutomationExtension", False)
+        options = Options()
+        options.add_argument('--headless=new')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--window-size=1920,3000')
 
-        driver = webdriver.Chrome(options=opts)
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
         driver.get(f"http://localhost:{port}")
-        import time as _t
-        _t.sleep(10)
-        # Chrome 内置 PDF 打印
-        pdf_opts = {
+
+        # Step 1: 等待 Streamlit App 容器就绪
+        for i in range(30):
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, "[data-testid='stApp']")
+                if el.is_displayed():
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+
+        # Step 2: 等待 Plotly 图表渲染
+        for i in range(45):
+            try:
+                charts = driver.find_elements(By.CSS_SELECTOR, ".js-plotly-plot .main-svg")
+                if len(charts) >= 2:
+                    time.sleep(2)
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+
+        # Step 3: 滚动触发懒加载
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+
+        # Step 4: CDP printToPDF (A3 宽幅)
+        pdf_result = driver.execute_cdp_cmd("Page.printToPDF", {
             "landscape": False,
             "displayHeaderFooter": False,
             "printBackground": True,
-            "paperWidth": 13,   # A3 宽度 (英寸)
-            "paperHeight": 19,  # 长页面
-        }
-        result = driver.execute_cdp_cmd("Page.printToPDF", pdf_opts)
-        driver.quit()
+            "paperWidth": 13.0,
+            "paperHeight": 19.0,
+            "marginTop": 0.4,
+            "marginBottom": 0.4,
+            "marginLeft": 0.4,
+            "marginRight": 0.4,
+        })
 
+        pdf_bytes = base64.b64decode(pdf_result['data'])
         with open(pdf_path, "wb") as f:
-            f.write(result["data"])
-
+            f.write(pdf_bytes)
+        driver.quit()
         return pdf_path
     except Exception as e:
         print(f"PDF导出失败: {e}")
-        try:
-            driver.quit()
-        except Exception:
-            pass
         return None
 
 def format_value(val, prefix="", suffix="", decimals=2):
