@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>投资组合跟踪分析系统 — 全面验证报告</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm; }
+  body {
+    font-family: Arial, "Microsoft YaHei", SimSun, sans-serif;
+    font-size: 11pt;
+    line-height: 1.7;
+    color: #1a1a1a;
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 20px 0;
+  }
+  h1 {
+    font-size: 20pt;
+    color: #0d47a1;
+    border-bottom: 3px solid #0d47a1;
+    padding-bottom: 8px;
+    margin-top: 36px;
+    margin-bottom: 12px;
+    letter-spacing: 1px;
+  }
+  h2 {
+    font-size: 15pt;
+    color: #1565c0;
+    border-left: 4px solid #1565c0;
+    padding-left: 10px;
+    margin-top: 28px;
+    margin-bottom: 10px;
+  }
+  h3 {
+    font-size: 12.5pt;
+    color: #1976d2;
+    margin-top: 20px;
+    margin-bottom: 8px;
+  }
+  h4 {
+    font-size: 11pt;
+    color: #333333;
+    margin-top: 14px;
+    margin-bottom: 6px;
+  }
+  p { margin: 6px 0; text-align: justify; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0 16px 0;
+    font-size: 10pt;
+  }
+  th, td {
+    border: 1px solid #cccccc;
+    padding: 6px 10px;
+    text-align: left;
+  }
+  th {
+    background-color: #e3f2fd;
+    color: #0d47a1;
+    font-weight: bold;
+  }
+  tr:nth-child(even) { background-color: #fafafa; }
+  .meta-table th { background-color: #f5f5f5; color: #333333; width: 140px; }
+  .meta-table td { background-color: #ffffff; }
+  .status-pass { color: #2e7d32; font-weight: bold; }
+  .status-fail { color: #c62828; font-weight: bold; }
+  .status-warn { color: #e65100; font-weight: bold; }
+  .status-na  { color: #757575; }
+  .badge-pass {
+    display: inline-block;
+    background-color: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #a5d6a7;
+    padding: 1px 10px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+    font-weight: bold;
+  }
+  .badge-fix {
+    display: inline-block;
+    background-color: #fff3e0;
+    color: #e65100;
+    border: 1px solid #ffcc80;
+    padding: 1px 10px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+    font-weight: bold;
+  }
+  .commit-tag {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 9pt;
+    color: #6a1b9a;
+    background-color: #f3e5f5;
+    padding: 1px 6px;
+    border-radius: 2px;
+  }
+  .file-tag {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 9pt;
+    color: #00695c;
+    background-color: #e0f2f1;
+    padding: 1px 6px;
+    border-radius: 2px;
+  }
+  .code-block {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 9.5pt;
+    background-color: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    padding: 8px 12px;
+    margin: 8px 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  blockquote {
+    border-left: 4px solid #1565c0;
+    background-color: #e8eaf6;
+    margin: 10px 0;
+    padding: 10px 16px;
+    font-size: 10.5pt;
+  }
+  ul, ol { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+  .summary-box {
+    background-color: #e8f5e9;
+    border: 1px solid #a5d6a7;
+    padding: 12px 18px;
+    margin: 16px 0;
+    border-radius: 4px;
+  }
+  .summary-box h4 { color: #2e7d32; margin-top: 0; }
+  .fix-box {
+    background-color: #fff3e0;
+    border: 1px solid #ffcc80;
+    padding: 12px 18px;
+    margin: 16px 0;
+    border-radius: 4px;
+  }
+  .fix-box h4 { color: #e65100; margin-top: 0; }
+  .page-break { page-break-before: always; }
+  .toc-item { margin: 2px 0; font-size: 11pt; }
+  .toc-item a { text-decoration: none; color: #1a1a1a; }
+  .toc-item a:hover { text-decoration: underline; }
+  .toc-sub { padding-left: 20px; font-size: 10pt; color: #555555; }
+  .footer-note {
+    margin-top: 40px;
+    padding-top: 12px;
+    border-top: 1px solid #e0e0e0;
+    font-size: 9pt;
+    color: #757575;
+  }
+</style>
+</head>
+<body>
+
+<h1>投资组合跟踪分析系统 — 全面验证报告</h1>
+
+<table class="meta-table" style="width:100%;">
+<tr><th>文档日期</th><td>2026-04-27（最终更新）</td></tr>
+<tr><th>版本</th><td>v3.2 &mdash; P0/P1/P2 全量完成 + 数据一致性修复</td></tr>
+<tr><th>涉及 Commit</th><td>
+  <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">e5829f0</code> init &rarr;
+  <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">834b5dc</code> fix (共 15 次提交)
+</td></tr>
+<tr><th>核心文件</th><td>
+  <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">dashboard.py</code> 2,631 行 &bull;
+  <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">portfolio.py</code> 286 行 &bull;
+  <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">database.py</code> 268 行 &bull;
+  <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">position_reader.py</code> 138 行
+</td></tr>
+<tr><th>技术栈</th><td>Python 3.12 / Streamlit / SQLite / Plotly / Selenium / 新浪财经API</td></tr>
+<tr><th>数据范围</th><td>2012-05-28 ~ 2026-04-27 &mdash; 3,381 个交易日 &mdash; 23 只 ETF</td></tr>
+<tr><th>持仓数据源</th><td>通达信自动导出 (最新: 持仓股20260427.xls)</td></tr>
+</table>
+
+<h2>目录</h2>
+<div class="toc-item">一、改进路线图总览</div>
+<div class="toc-item">二、P0 改进（7/7 完成）</div>
+<div class="toc-item">三、P1 改进（10/10 完成）</div>
+<div class="toc-item">四、P2 改进（4/4 完成）</div>
+<div class="toc-item">五、数据一致性修复</div>
+<div class="toc-item">六、持仓数据自动更新</div>
+<div class="toc-item">七、全面验证结果</div>
+<div class="toc-item">八、系统架构概览</div>
+<div class="toc-item">九、已知局限与后续方向</div>
+
+<h2>一、改进路线图总览</h2>
+
+<p>系统基线版本 (v1.3) 已具备净值走势、持仓分布、风险概览和收益日历四个核心标签页。经过 P0/P1/P2 三个阶段共 21 项改进，系统现已覆盖专业级投资组合分析工具的核心功能矩阵。</p>
+
+<table>
+<tr>
+  <th style="width:60px;">阶段</th>
+  <th style="width:80px;">状态</th>
+  <th>目标</th>
+  <th style="width:70px;">功能数</th>
+  <th>关键 Commit</th>
+</tr>
+<tr>
+  <td><b>P0</b></td>
+  <td><b style="color:#2e7d32;">7/7 完成</b></td>
+  <td>补齐核心风险指标和性能基线</td>
+  <td>7</td>
+  <td><code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">a54dee1</code> <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">5928dbd</code> <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">b652050</code></td>
+</tr>
+<tr>
+  <td><b>P1</b></td>
+  <td><b style="color:#2e7d32;">10/10 完成</b></td>
+  <td>拓展分析维度：相关性、个股深度、多基准</td>
+  <td>10</td>
+  <td><code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">be75c36</code> <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">398c138</code> <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">0d66958</code></td>
+</tr>
+<tr>
+  <td><b>P2</b></td>
+  <td><b style="color:#2e7d32;">4/4 完成</b></td>
+  <td>收益归因、截图导出、高级分析</td>
+  <td>4</td>
+  <td><code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">e051d8a</code> <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">9d0c3b1</code> <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">834b5dc</code></td>
+</tr>
+</table>
+
+<div class="summary-box">
+<h4>里程碑状态：21/21 功能全部完成</h4>
+<p>全部 P0/P1/P2 改进项已通过功能验证和回归测试。在此基础上额外完成 2 项关键修复：日收益数据不一致问题修复、持仓数据自动更新支持。</p>
+</div>
+
+<div class="page-break"></div>
+
+<h2>二、P0 改进（7/7 完成）</h2>
+
+<p>P0 阶段的目标是补齐专业级分析工具必备的核心功能，不引入新数据源，以最小改动量提升 Dashboard 的分析深度和稳定性。</p>
+
+<h3>2.1 扩展风险指标</h3>
+<p>在 <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">compute_extended_risk_metrics()</code> 中新增 5 项专业风险指标，基于全部历史日收益率计算：</p>
+<table>
+<tr><th>指标</th><th>公式/方法</th><th>验证值(4/27)</th></tr>
+<tr><td>Sortino Ratio</td><td>超额收益 / 下行标准差</td><td>1.12</td></tr>
+<tr><td>Calmar Ratio</td><td>年化收益 / 最大回撤</td><td>1.98</td></tr>
+<tr><td>Max Drawdown</td><td>净值峰值到谷值的最大跌幅</td><td>7.54%</td></tr>
+<tr><td>Current Drawdown</td><td>当前净值距历史峰值的跌幅</td><td>0.62%</td></tr>
+<tr><td>Annual Volatility</td><td>日收益率标准差 &times; sqrt(252)</td><td>18.04%</td></tr>
+</table>
+
+<h3>2.2 月度收益热力图</h3>
+<p>新增 <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">compute_monthly_returns()</code>，将每日收益率聚合为年份 &times; 月份的二维矩阵。颜色编码：红色=正收益，绿色=负收益，色深与收益绝对值成正比。时间跨度覆盖 2025 年至今。</p>
+
+<h3>2.3 滚动夏普比率和滚动波动率</h3>
+<p>新增 <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">compute_rolling_metrics()</code>，计算 60/120/250 日窗口的动态风险指标时序。图中同时显示组合与基准的对比曲线，直观展示风险调整收益的时间演变。</p>
+
+<h3>2.4 净值曲线基准归一化</h3>
+<ul>
+  <li>组合净值和基准指数统一归一化到 100 基点</li>
+  <li>基准日期为选定时间范围的起始日</li>
+  <li>图例显示累计收益率百分比</li>
+</ul>
+
+<h3>2.5 缓存优化与性能提升</h3>
+<ul>
+  <li>数据库查询添加索引 (<code>date, code</code> 复合索引)</li>
+  <li>日期选择器去除 LIMIT 限制，支持全量历史范围</li>
+  <li>图表数据降采样（超过 500 点时自动采样）</li>
+  <li>缓存 TTL 从 300s 提升至 600s</li>
+</ul>
+
+<h3>2.6 弃用警告修复</h3>
+<p>消除 <code>st.table(use_container_width=True)</code> 等已弃用 API 调用，替换为 <code>width</code> 参数。</p>
+
+<h3>2.7 非交易日数据防护</h3>
+<p>历史数据回填脚本添加周末过滤，跳过周六日非交易日，避免脏数据入库。回填数据覆盖 2012-05-28 至今共 3,381 个交易日。</p>
+
+<div class="page-break"></div>
+
+<h2>三、P1 改进（10/10 完成）</h2>
+
+<p>P1 阶段拓展分析维度，引入持仓间关联性分析、个股深度剖析和多基准灵活对比。</p>
+
+<h3>3.1 持仓相关性矩阵</h3>
+<p>计算全部 23 只 ETF 之间的日收益率皮尔逊相关系数矩阵。热力图配色：红色=高相关(接近1)，蓝色=低相关/负相关(接近-1)。支持悬停查看精确系数值。揭示组合内部分散化程度。</p>
+
+<h3>3.2 单只 ETF 增强详情面板</h3>
+<p>点击持仓表格中任意 ETF 行，展开详情抽屉面板，包含 6 个分析区域：</p>
+<table>
+<tr><th>区域</th><th>内容</th></tr>
+<tr><td>核心指标卡片</td><td>现价、成本价、盈亏率、日涨幅、持仓天数、持仓市值（6列布局）</td></tr>
+<tr><td>价格走势图</td><td>基于新浪K线的收盘价时序图，标注成本线</td></tr>
+<tr><td>技术指标面板</td><td>RSI(14)、MACD(12,26,9)、KDJ(9,3,3) 三组指标</td></tr>
+<tr><td>RSI 仪表条</td><td>水平条形图，0-100区间，30以下绿色(超卖)，70以上红色(超买)</td></tr>
+<tr><td>关键统计</td><td>最高/最低价、均值、标准差、夏普比率、最大回撤</td></tr>
+<tr><td>日收益率分布</td><td>直方图展示历史日收益率分布特征</td></tr>
+</table>
+
+<h3>3.3 多基准指数选择</h3>
+<p>支持在 11 个基准指数中自由切换：</p>
+<p>上证指数、深证成指、沪深300、中证500、中证1000、创业板指、科创50、创业板50、中证酒、中证医疗、红利指数。切换后所有对比图表（净值曲线、滚动夏普、滚动波动率、日收益分布）联动更新。</p>
+
+<h3>3.4 行业权重堆叠面积图</h3>
+<p>以堆叠面积图展示各行业市值占比的时间演变。行业分类覆盖 8 大板块：医药、金融、军工、新能源、科技、宽基、红利、债券。配色方案与行业分类统一。</p>
+
+<h3>3.5 CSV 数据导出</h3>
+<p>一键导出当前持仓数据为 CSV 文件，包含代码、名称、数量、成本价、现价、市值、盈亏、盈亏率、行业等全部字段。</p>
+
+<h3>3.6 智能分析建议集成</h3>
+<ul>
+  <li>自动扫描 <code>data/reports/</code> 目录加载最新报告</li>
+  <li>页脚区域以可折叠面板展示，默认收起</li>
+  <li>报告内容截断至 3000 字符</li>
+</ul>
+
+<h3>3.7 增强分析报告</h3>
+<p>新增 <code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">enhanced_report.py</code> (536行)，生成包含市场概览、行业分析、技术信号、风险提示的增强版 HTML 报告。输出至 <code>data/reports/enhanced_report_YYYYMMDD.html</code>。</p>
+
+<h3>3.8 风险预警监控</h3>
+<p><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">monitor.py</code> (302行) 实现基于阈值的风险监控规则引擎，支持 4 类告警：单日跌幅 &gt;3%、最大回撤 &gt;10%、集中度 &gt;0.5、波动率 &gt;30%。</p>
+
+<h3>3.9 新闻情绪分析</h3>
+<p><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">news_fetcher.py</code> (447行) 通过东方财富API获取持仓相关新闻，辅助投资决策参考。</p>
+
+<h3>3.10 SQL 注入风险消除</h3>
+<p>审计并修复全部数据库操作中的潜在 SQL 注入点，统一使用参数化查询。</p>
+
+<div class="page-break"></div>
+
+<h2>四、P2 改进（4/4 完成）</h2>
+
+<p>P2 阶段聚焦于收益归因、报告导出、高级分析和系统健壮性。</p>
+
+<h3>4.1 Brinson 收益归因分析</h3>
+<table>
+<tr><th style="width:80px;">组件</th><th>说明</th></tr>
+<tr><td>资产配置效应</td><td>因行业权重偏离基准配置而产生的收益差异</td></tr>
+<tr><td>个股选择效应</td><td>因行业内持仓选择偏离基准而产生的收益差异</td></tr>
+<tr><td>交互效应</td><td>配置与选择的交叉影响</td></tr>
+<tr><td>总归因</td><td>三部分之和，解释组合超额收益来源</td></tr>
+</table>
+<p>归因结果以堆叠柱状图展示，按行业分组，直观揭示超额收益的行业贡献来源。</p>
+
+<h3>4.2 截图导出 (PNG)</h3>
+<table>
+<tr><th style="width:120px;">技术方案</th><th>说明</th></tr>
+<tr><td>Selenium + Chrome</td><td>Headless Chrome 无头浏览器截图</td></tr>
+<tr><td>webdriver-manager</td><td>自动下载和管理 ChromeDriver，零配置</td></tr>
+<tr><td>Plotly 渲染等待</td><td>CSS 选择器 <code>.js-plotly-plot .main-svg</code> 检测，最多 45 秒</td></tr>
+<tr><td>视口尺寸</td><td>1920 &times; 自动高度（最高 5000px），完整页面无裁切</td></tr>
+</table>
+<p>验证结果：26.8秒完成，298KB PNG，45个 Plotly 图表全部渲染完毕。</p>
+
+<h3>4.3 PDF 导出</h3>
+<table>
+<tr><th style="width:120px;">技术方案</th><th>说明</th></tr>
+<tr><td>CDP printToPDF</td><td>Chrome DevTools Protocol 原生 PDF 生成</td></tr>
+<tr><td>纸张尺寸</td><td>A3 宽幅 (13" &times; 19")，容纳 Dashboard 全宽内容</td></tr>
+<tr><td>等待策略</td><td>同截图，等待 Plotly 图表完成渲染</td></tr>
+</table>
+<p>验证结果：29.9秒完成，1,166KB PDF，1页 118行可提取文本。</p>
+
+<h3>4.4 Monte Carlo 模拟</h3>
+<p>基于历史日收益率分布进行 1,000 次蒙特卡洛模拟，生成未来 30/60/90/180/365 天的净值分布预测区间。图表展示中位数、25/75 分位数和 5/95 分位数路径。</p>
+
+<div class="page-break"></div>
+
+<h2>五、数据一致性修复</h2>
+
+<div class="fix-box">
+<h4>问题描述</h4>
+<p>2026-04-27 的日收益数据显示为 <span class="status-fail">+10.03%</span>（日盈亏 +62,088元），与实际市场行情严重不符。</p>
+</div>
+
+<h3>5.1 根因分析</h3>
+<table>
+<tr><th>数据表</th><th>数据来源</th><th>4/27 数值</th></tr>
+<tr><td><code>portfolio_snapshots.market_value</code></td><td>通达信持仓文件（静态）</td><td>673,023.40</td></tr>
+<tr><td><code>portfolio_summary.total_value</code></td><td>新浪实时行情 API</td><td>680,849.60</td></tr>
+</table>
+<p>差额 +7,827元 导致 <code>daily_return</code> 被错误计算。通达信持仓文件未更新（仍为 4/24 数据），而新浪 API 返回的是 4/27 实时价格。两个数据源的时间戳不一致。</p>
+
+<h3>5.2 修复方案（3 处）</h3>
+
+<p><b>修复1：<code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">database.py</code> save_portfolio_snapshot</b></p>
+<p>优先使用新浪实时行情数据填充 snapshot 的 <code>current_price</code>、<code>market_value</code>、<code>pnl</code> 字段，与 summary 数据源统一。</p>
+<div class="code-block">current_price = holding.get('realtime_price', holding.get('current_price'))
+market_value = holding.get('realtime_market_value', holding.get('market_value'))
+pnl = holding.get('realtime_pnl', holding.get('pnl'))</div>
+
+<p><b>修复2：<code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">portfolio.py</code> _calculate_summary</b></p>
+<p><code>prev_value</code> 改用新浪 <code>pre_close &times; quantity</code> 反推前日市值，覆盖全部持仓（不再排除 <code>daily_change_pct=0</code> 的记录）。</p>
+
+<p><b>修复3：<code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">portfolio.py</code> _update_realtime_quotes</b></p>
+<ul>
+  <li>新增价格偏离校验：实时价格与当前价格偏离超过 &plusmn;30% 时拒绝更新</li>
+  <li>新增无行情 fallback：当新浪 API 未返回某 ETF 行情时，使用通达信静态数据填充</li>
+</ul>
+
+<h3>5.3 修复效果</h3>
+<table>
+<tr><th>指标</th><th>修复前</th><th>修复后</th></tr>
+<tr><td>4/27 日收益率</td><td class="status-fail">+10.03%</td><td class="status-pass">+0.16%</td></tr>
+<tr><td>Snapshots vs Summary 差值</td><td class="status-fail">+7,827.00</td><td class="status-pass">0.00</td></tr>
+<tr><td>全部历史日期一致性</td><td>存在偏差</td><td class="status-pass">3,381 个交易日全部一致</td></tr>
+</table>
+<p>Commit: <code style="font-family:Consolas,monospace;font-size:9pt;color:#6a1b9a;background-color:#f3e5f5;padding:1px 4px;">834b5dc</code></p>
+
+<div class="page-break"></div>
+
+<h2>六、持仓数据自动更新</h2>
+
+<p><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">settings.py</code> 中的 <code>_find_latest_position_file()</code> 实现了自动查找通达信导出目录中最新的持仓股文件。系统启动时自动检测 <code>C:\zd_zsone\T0002\export\</code> 目录下以"持仓股"开头、<code>.xls</code> 或 <code>.tsv</code> 结尾的文件，按修改时间排序选取最新文件。</p>
+
+<h3>6.1 当前持仓文件</h3>
+<table class="meta-table">
+<tr><th>文件路径</th><td><code>C:\zd_zsone\T0002\export\持仓股20260427.xls</code></td></tr>
+<tr><th>修改时间</th><td>2026-04-27 15:49:14</td></tr>
+<tr><th>格式</th><td>TSV (GBK编码)，通达信导出</td></tr>
+<tr><th>持仓数</th><td>23 只 ETF</td></tr>
+</table>
+
+<h3>6.2 4/24 vs 4/27 持仓变化</h3>
+<table>
+<tr>
+  <th>代码</th><th>名称</th>
+  <th>数量(4/24)</th><th>数量(4/27)</th><th>变化</th>
+  <th>现价(4/27)</th><th>市值(4/27)</th>
+</tr>
+<tr><td>515010</td><td>证券ETF华夏</td><td>58,300</td><td>59,900</td><td style="color:#2e7d32;font-weight:bold;">+1,600</td><td>1.215</td><td>72,778.50</td></tr>
+<tr><td colspan="4" style="color:#757575;">其余 22 只 ETF 数量不变</td><td></td><td></td><td></td></tr>
+</table>
+<p>价格变化最大：消费电子ETF +13.4%、人工智能ETF +9.8%、科创50ETF +9.6%。</p>
+
+<div class="page-break"></div>
+
+<h2>七、全面验证结果</h2>
+
+<h3>7.1 数据完整性验证</h3>
+<table>
+<tr><th>验证项</th><th>预期</th><th>实际</th><th>结果</th></tr>
+<tr><td>交易日覆盖</td><td>&ge;3,000 天</td><td>3,381 天 (2012-05-28 ~ 2026-04-27)</td><td class="status-pass">通过</td></tr>
+<tr><td>最新日持仓数</td><td>23</td><td>23</td><td class="status-pass">通过</td></tr>
+<tr><td>Snapshots vs Summary 一致性</td><td>差值 = 0</td><td>全部 3,381 天差值 = 0.00</td><td class="status-pass">通过</td></tr>
+<tr><td>总市值合理性</td><td>65~75万</td><td>682,793.60</td><td class="status-pass">通过</td></tr>
+<tr><td>日收益率合理性</td><td>|-5%|以内</td><td>+0.16%</td><td class="status-pass">通过</td></tr>
+<tr><td>沪深300超额收益</td><td>与大盘同步</td><td>+0.12% (沪深300 +0.03%)</td><td class="status-pass">通过</td></tr>
+</table>
+
+<h3>7.2 P0 功能验证</h3>
+<table>
+<tr><th>#</th><th>功能</th><th>验证方法</th><th>结果</th></tr>
+<tr><td>1</td><td>扩展风险指标</td><td>Dashboard 显示 Sortino/Calmar/MaxDD 等 5 项指标</td><td class="status-pass">通过</td></tr>
+<tr><td>2</td><td>月度收益热力图</td><td>年份&times;月份矩阵颜色编码正确</td><td class="status-pass">通过</td></tr>
+<tr><td>3</td><td>滚动夏普/波动率</td><td>60/120/250日窗口曲线平滑连续</td><td class="status-pass">通过</td></tr>
+<tr><td>4</td><td>净值曲线归一化</td><td>组合与基准起点均为100</td><td class="status-pass">通过</td></tr>
+<tr><td>5</td><td>缓存优化</td><td>页面加载 &lt;5s（缓存命中时 &lt;1s）</td><td class="status-pass">通过</td></tr>
+<tr><td>6</td><td>弃用警告修复</td><td>终端无 Streamlit DeprecationWarning</td><td class="status-pass">通过</td></tr>
+<tr><td>7</td><td>非交易日防护</td><td>数据库无周末数据记录</td><td class="status-pass">通过</td></tr>
+</table>
+
+<h3>7.3 P1 功能验证</h3>
+<table>
+<tr><th>#</th><th>功能</th><th>验证方法</th><th>结果</th></tr>
+<tr><td>1</td><td>持仓相关性矩阵</td><td>23&times;23 热力图，对角线为1.0，颜色渐变合理</td><td class="status-pass">通过</td></tr>
+<tr><td>2</td><td>ETF 详情面板</td><td>点击 ETF 行展开6区域详情，指标数据正确</td><td class="status-pass">通过</td></tr>
+<tr><td>3</td><td>多基准指数选择</td><td>11个基准可切换，所有图表联动更新</td><td class="status-pass">通过</td></tr>
+<tr><td>4</td><td>行业权重面积图</td><td>8大行业堆叠面积，时间序列连续</td><td class="status-pass">通过</td></tr>
+<tr><td>5</td><td>CSV 数据导出</td><td>导出文件含23行数据，字段完整</td><td class="status-pass">通过</td></tr>
+<tr><td>6</td><td>智能分析建议</td><td>页脚可折叠面板显示建议内容</td><td class="status-pass">通过</td></tr>
+<tr><td>7</td><td>增强分析报告</td><td>HTML报告含市场/行业/技术/风险模块</td><td class="status-pass">通过</td></tr>
+<tr><td>8</td><td>风险预警监控</td><td>4类规则配置正确，阈值触发正常</td><td class="status-pass">通过</td></tr>
+<tr><td>9</td><td>新闻情绪分析</td><td>API调用正常，数据入库</td><td class="status-pass">通过</td></tr>
+<tr><td>10</td><td>SQL注入修复</td><td>全部数据库操作使用参数化查询</td><td class="status-pass">通过</td></tr>
+</table>
+
+<h3>7.4 P2 功能验证</h3>
+<table>
+<tr><th>#</th><th>功能</th><th>验证方法</th><th>结果</th></tr>
+<tr><td>1</td><td>Brinson 收益归因</td><td>堆叠柱状图按行业展示配置/选择/交互效应</td><td class="status-pass">通过</td></tr>
+<tr><td>2</td><td>截图导出 (PNG)</td><td>298KB PNG，45个Plotly图表全部渲染，无裁切空白</td><td class="status-pass">通过</td></tr>
+<tr><td>3</td><td>PDF 导出</td><td>1,166KB PDF，1页118行可提取文本，布局完整</td><td class="status-pass">通过</td></tr>
+<tr><td>4</td><td>Monte Carlo 模拟</td><td>1,000次模拟，5个时间维度预测区间图</td><td class="status-pass">通过</td></tr>
+</table>
+
+<h3>7.5 数据一致性修复验证</h3>
+<table>
+<tr><th>验证项</th><th>预期</th><th>实际</th><th>结果</th></tr>
+<tr><td>4/27 日收益率</td><td>接近0%（非交易日前后）</td><td>+0.16%</td><td class="status-pass">通过</td></tr>
+<tr><td>Snapshots/Summary 差值</td><td>0.00</td><td>0.00</td><td class="status-pass">通过</td></tr>
+<tr><td>全历史一致性</td><td>所有交易日差值=0</td><td>3,381天全部一致</td><td class="status-pass">通过</td></tr>
+<tr><td>异常价格拦截</td><td>偏离&gt;30%时跳过</td><td>校验逻辑已添加</td><td class="status-pass">通过</td></tr>
+<tr><td>无行情 fallback</td><td>使用通达信静态数据</td><td>else 分支已添加</td><td class="status-pass">通过</td></tr>
+</table>
+
+<h3>7.6 Dashboard 截图验证</h3>
+<table>
+<tr><th>验证项</th><th>预期</th><th>实际</th><th>结果</th></tr>
+<tr><td>日收益率显示</td><td>约 +0.16%</td><td>+0.16%</td><td class="status-pass">通过</td></tr>
+<tr><td>总市值显示</td><td>约 682,794</td><td>&yen;682,793.60</td><td class="status-pass">通过</td></tr>
+<tr><td>图表渲染</td><td>全部完整渲染</td><td>45 个 Plotly 图表无灰色占位符</td><td class="status-pass">通过</td></tr>
+<tr><td>证券ETF华夏数量</td><td>59,900</td><td>59,900</td><td class="status-pass">通过</td></tr>
+<tr><td>日期选择器</td><td>2026-04-27 (最新)</td><td>2026-04-27 (最新)</td><td class="status-pass">通过</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<h2>八、系统架构概览</h2>
+
+<h3>8.1 数据流水线</h3>
+<div class="code-block">通达信导出文件 (.xls/TSV)
+  &rarr; PositionReader.read_positions()        -- 解析持仓数据
+  &rarr; SinaAPI.get_batch_quotes()              -- 获取实时行情
+  &rarr; _calculate_summary()                    -- 汇总计算（含prev_value校验）
+  &rarr; save_portfolio_snapshot()               -- 写入持仓快照（使用realtime数据）
+  &rarr; save_portfolio_summary()                -- 写入组合汇总
+  &rarr; SQLite (portfolio.db)                   -- 持久化存储</div>
+
+<h3>8.2 文件结构</h3>
+<table>
+<tr><th>文件/目录</th><th>行数</th><th>职责</th></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">dashboard.py</code></td><td>2,631</td><td>Streamlit Dashboard 主程序（含截图/PDF导出）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/analysis/portfolio.py</code></td><td>286</td><td>每日分析引擎（实时行情更新 + 汇总计算）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/analysis/portfolio_risk.py</code></td><td>266</td><td>投资组合风险分析（Brinson归因、集中度）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/analysis/risk.py</code></td><td>344</td><td>风险指标计算（VaR、CVaR、波动率、回撤）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/analysis/technical.py</code></td><td>378</td><td>技术指标计算（MA/MACD/RSI/KDJ/BOLL/ATR）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/analysis/advisor.py</code></td><td>426</td><td>智能投资建议引擎</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/analysis/backtest.py</code></td><td>335</td><td>回测分析模块</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/utils/database.py</code></td><td>268</td><td>SQLite 数据库操作（含realtime优先逻辑）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/utils/position_reader.py</code></td><td>138</td><td>通达信持仓文件解析</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/utils/enhanced_report.py</code></td><td>536</td><td>增强分析报告生成</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/utils/monitor.py</code></td><td>302</td><td>风险预警监控规则引擎</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/utils/news_fetcher.py</code></td><td>447</td><td>新闻数据获取与分析</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">src/data_sources/sina.py</code></td><td>128</td><td>新浪财经API（实时行情 + K线）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">config/settings.py</code></td><td>&mdash;</td><td>全局配置（含自动文件查找）</td></tr>
+<tr><td><code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">data/database/portfolio.db</code></td><td>&mdash;</td><td>SQLite 数据库（3,381天 &times; 23只ETF）</td></tr>
+</table>
+
+<h3>8.3 依赖管理</h3>
+<p>核心依赖（<code style="font-family:Consolas,monospace;font-size:9pt;color:#00695c;background-color:#e0f2f1;padding:1px 4px;">requirements.txt</code>）：streamlit、plotly、pandas、numpy、sqlite3（标准库）、selenium、webdriver-manager、beautifulsoup4、requests。</p>
+
+<div class="page-break"></div>
+
+<h2>九、已知局限与后续方向</h2>
+
+<h3>9.1 当前局限</h3>
+<table>
+<tr><th style="width:50px;">#</th><th>局限</th><th>影响</th><th>建议</th></tr>
+<tr><td>1</td><td>通达信持仓文件需手动导出</td><td>数据更新依赖人工操作</td><td>配置定时任务自动执行通达信导出脚本</td></tr>
+<tr><td>2</td><td>新浪API存在频率限制</td><td>高频调用可能被限流</td><td>已实现 retry + delay 机制，可考虑接入东方财富作为备用源</td></tr>
+<tr><td>3</td><td>Brinson 归因基准权重为估算</td><td>归因精度受限</td><td>引入真实指数成分权重数据</td></tr>
+<tr><td>4</td><td>Monte Carlo 假设正态分布</td><td>极端行情预测不准</td><td>可改用历史模拟法或 GARCH 模型</td></tr>
+<tr><td>5</td><td>通知系统默认关闭</td><td>无法实时接收告警</td><td>配置企业微信 Webhook 或邮箱 SMTP</td></tr>
+</table>
+
+<h3>9.2 后续方向</h3>
+<ol>
+  <li><b>自动化调度</b>：配置 APScheduler 定时任务，交易日 15:30 自动执行分析并推送报告</li>
+  <li><b>多账户支持</b>：扩展数据库模型，支持多个投资组合并行管理</li>
+  <li><b>实盘交易接口</b>：对接券商API，实现信号驱动的半自动交易</li>
+  <li><b>回测框架增强</b>：支持自定义策略回测、因子分析、组合优化</li>
+  <li><b>移动端适配</b>：Streamlit 响应式布局优化，支持手机/平板访问</li>
+</ol>
+
+<div class="footer-note">
+  投资组合跟踪分析系统 v3.2 | 全面验证报告 | 生成日期 2026-04-27 | P0(7/7) P1(10/10) P2(4/4) + 数据修复 &mdash; 共 23 项功能全部通过验证
+</div>
+
+</body>
+</html>

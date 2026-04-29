@@ -19,37 +19,79 @@ class PositionReader:
         self.file_path = file_path or POSITION_FILE
 
     def read_positions(self) -> List[Dict[str, Any]]:
-        """读取持仓数据"""
+        """读取持仓数据
+
+        支持通达信导出的 .xls (实际为TSV格式) 和 .tsv 文件，
+        自动处理代码字段的 ="..." 格式、列名差异和无效数据行。
+        """
         try:
-            df = pd.read_csv(self.file_path, encoding='gb2312', sep='\t')
+            # 通达信导出的.xls实际为TSV格式，优先尝试gb2312编码
+            for encoding in ['gb2312', 'gbk', 'gb18030', 'utf-8']:
+                try:
+                    df = pd.read_csv(self.file_path, encoding=encoding, sep='\t')
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            else:
+                raise ValueError(f"无法以支持编码读取文件: {self.file_path}")
 
-            # 过滤掉数据来源行
+            # 列名标准化映射（不同通达信版本导出的列名可能略有差异）
+            column_map = {
+                '名称': '名称', '代码': '代码', '涨幅%': '涨幅%', '现价': '现价',
+                '成本价': '成本价', '证券数量': '证券数量', '最新市值': '最新市值',
+                '持仓盈亏': '持仓盈亏', '盈亏率%': '盈亏率%', '年初至今%': '年初至今%',
+                '贝塔系数': '贝塔系数', '连涨天': '连涨天', '细分行业': '细分行业',
+            }
+            # 只保留已知列，忽略通达信导出的额外列
+            available_cols = [c for c in column_map.keys() if c in df.columns]
+            if len(available_cols) < 10:
+                logger.warning(f"文件列数不足: 找到 {len(available_cols)} 列 (期望>=10), 实际列={list(df.columns)}")
+            df = df[[c for c in df.columns if c in column_map or c == 'Unnamed: 30']]
+
+            # 过滤掉数据来源行和非数据行
             df = df[df['名称'].notna()]
-            df = df[~df['名称'].str.contains('数据来源', na=False)]
+            df = df[~df['名称'].str.contains('数据来源|合计|小计', na=False)]
 
-            # 提取纯代码
-            df['纯代码'] = df['代码'].apply(lambda x: re.sub(r'[=""]', '', str(x)).strip())
+            # 提取纯代码：处理 ="512010" 格式
+            def _clean_code(raw: str) -> str:
+                cleaned = re.sub(r'[=""]', '', str(raw)).strip()
+                # 去除可能残留的前后缀
+                cleaned = cleaned.strip('.')
+                return cleaned
+
+            df['纯代码'] = df['代码'].apply(_clean_code)
+            df = df[df['纯代码'].str.len() >= 4]  # 过滤无效代码行
+
+            # 数值转换辅助函数
+            def _to_float(val, default=0.0) -> float:
+                try:
+                    if pd.isna(val) or val in ('--', '-', 'NaN', ''):
+                        return default
+                    return float(val)
+                except (ValueError, TypeError):
+                    return default
 
             # 转换为标准格式
             positions = []
             for _, row in df.iterrows():
                 positions.append({
                     'code': row['纯代码'],
-                    'name': row['名称'],
-                    'quantity': float(row['证券数量']) if pd.notna(row['证券数量']) else 0,
-                    'cost_price': float(row['成本价']) if pd.notna(row['成本价']) else 0,
-                    'current_price': float(row['现价']) if pd.notna(row['现价']) else 0,
-                    'market_value': float(row['最新市值']) if pd.notna(row['最新市值']) else 0,
-                    'pnl': float(row['持仓盈亏']) if pd.notna(row['持仓盈亏']) else 0,
-                    'pnl_rate': float(row['盈亏率%']) if pd.notna(row['盈亏率%']) else 0,
-                    'ytd_return': float(row['年初至今%']) if pd.notna(row['年初至今%']) else 0,
-                    'beta': float(row['贝塔系数']) if pd.notna(row['贝塔系数']) else 0,
-                    'daily_change_pct': float(row['涨幅%']) if pd.notna(row['涨幅%']) else 0,
-                    'industry': row.get('细分行业', ''),
-                    'consecutive_days': float(row['连涨天']) if pd.notna(row['连涨天']) else 0,
+                    'name': str(row['名称']).strip(),
+                    'quantity': _to_float(row.get('证券数量')),
+                    'cost_price': _to_float(row.get('成本价')),
+                    'current_price': _to_float(row.get('现价')),
+                    'market_value': _to_float(row.get('最新市值')),
+                    'pnl': _to_float(row.get('持仓盈亏')),
+                    'pnl_rate': _to_float(row.get('盈亏率%')),
+                    'ytd_return': _to_float(row.get('年初至今%')),
+                    'beta': _to_float(row.get('贝塔系数')),
+                    'daily_change_pct': _to_float(row.get('涨幅%')),
+                    'industry': str(row.get('细分行业', '')).strip(),
+                    'consecutive_days': _to_float(row.get('连涨天')),
                 })
 
-            logger.info(f"成功读取 {len(positions)} 条持仓记录")
+            logger.info(f"成功读取持仓文件: {self.file_path}")
+            logger.info(f"读取到 {len(positions)} 条持仓记录")
             return positions
 
         except Exception as e:

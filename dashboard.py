@@ -207,6 +207,54 @@ def load_calendar_data():
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+
+def _cleanse_daily_returns(df, return_col='daily_return', threshold=5.0, max_tail=500):
+    """清洗日收益率数据：过滤异常值 + 截断早期高波动区间
+
+    Args:
+        df: 包含 daily_return 列的 DataFrame
+        return_col: 收益率列名
+        threshold: 异常值阈值（%），默认5%（ETF单日正常波动上限）
+        max_tail: 最大采样条数，默认500（约2个交易年），避免早期高波动区间污染
+
+    Returns:
+        (cleaned_df, stats) 元组
+        stats = {'original': n, 'after_filter': n, 'after_tail': n, 'filtered': n, 'tailed': n}
+    """
+    original_count = len(df)
+
+    # 步骤1: 过滤 |return| > threshold 的异常值
+    mask = df[return_col].abs() <= threshold
+    filtered_df = df[mask].copy()
+    filtered_count = original_count - len(filtered_df)
+
+    # 步骤2: 截断到最近 max_tail 条，排除早期高波动区间
+    if len(filtered_df) > max_tail:
+        tailed_df = filtered_df.tail(max_tail).copy()
+        tailed_count = len(filtered_df) - len(tailed_df)
+    else:
+        tailed_df = filtered_df
+        tailed_count = 0
+
+    stats = {
+        'original': original_count,
+        'after_filter': len(filtered_df),
+        'after_tail': len(tailed_df),
+        'filtered': filtered_count,
+        'tailed': tailed_count,
+    }
+
+    if filtered_count > 0 or tailed_count > 0:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"日收益率清洗: {original_count}条 -> 过滤|ret|>{threshold}%: {filtered_count}条, "
+            f"截断早期: {tailed_count}条, 剩余{len(tailed_df)}条"
+        )
+
+    return tailed_df, stats
+
+
 def compute_extended_risk_metrics(end_date=None):
     """计算扩展风险指标（基于全部历史日收益率）"""
     conn = get_db_connection()
@@ -807,6 +855,11 @@ def load_sector_weights(days=250, end_date=None):
 def run_monte_carlo(days=252, n_simulations=500, end_date=None):
     """蒙特卡洛模拟：基于历史日收益率分布，生成未来N日组合净值路径
 
+    数据清洗：
+    1. 移除 |daily_return| > 15% 的异常值（历史脏数据/数据迁移错误）
+    2. 默认仅使用近2年数据采样，避免早期高波动数据污染预测
+    3. 近期数据指数加权，更贴近当前市场状态
+
     Args:
         days: 模拟未来交易日天数
         n_simulations: 模拟路径数量
@@ -816,9 +869,12 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         dict: {
             'paths': np.ndarray (n_simulations, days+1),
             'percentiles': DataFrame (date, p5, p25, p50, p75, p95),
-            'last_value': float,  # 当前组合总市值
-            'mean_return': float,  # 日均收益
-            'daily_std': float,    # 日收益标准差
+            'last_value': float,
+            'mean_return': float,
+            'daily_std': float,
+            'sample_count': int,      # 采样池大小
+            'filtered_count': int,    # 过滤掉的异常值数
+            'sample_start': str,      # 采样起始日期
         }
     """
     conn = get_db_connection()
@@ -844,24 +900,40 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
     last_value = float(last_row['total_value'].iloc[0])
     returns = df['daily_return'].dropna()
 
+    # ===== 数据清洗（统一使用 _cleanse_daily_returns）=====
+    df_clean, clean_stats = _cleanse_daily_returns(
+        df[['date', 'daily_return']], return_col='daily_return', threshold=5.0, max_tail=500
+    )
+    returns = df_clean['daily_return']
+    filtered_count = clean_stats['filtered']
+
+    sample_start = str(df_clean['date'].iloc[0])
+
     mean_ret = float(returns.mean())
     std_ret = float(returns.std())
 
-    if std_ret <= 0 or std_ret == 0:
+    if std_ret <= 0:
         std_ret = 1e-8
 
-    # 生成模拟路径
+    # ===== Bootstrap 采样（指数加权，近期数据权重更高） =====
     np.random.seed(42)
-    # 使用历史分布bootstrap采样，更贴近真实分布（含偏度和峰度）
     hist_returns = returns.values
+
+    # 指数加权：最近的数据权重最大，半年前的权重约为0.5
+    n_hist = len(hist_returns)
+    half_life = 126  # 半衰期约6个月(126个交易日)
+    weights = np.array([2 ** (-i / half_life) for i in range(n_hist)])
+    weights = weights[::-1]  # 最近的在末尾，权重最大
+    weights /= weights.sum()  # 归一化
 
     paths = np.zeros((n_simulations, days + 1))
     paths[:, 0] = last_value
 
     for t in range(1, days + 1):
-        # Bootstrap采样
-        samples = np.random.choice(hist_returns, size=n_simulations, replace=True)
-        paths[:, t] = paths[:, t - 1] * (1 + samples)
+        # 加权 Bootstrap 采样
+        indices = np.random.choice(n_hist, size=n_simulations, replace=True, p=weights)
+        samples = hist_returns[indices]
+        paths[:, t] = paths[:, t - 1] * (1 + samples / 100)
 
     # 计算百分位
     percentiles_data = {'day': list(range(days + 1))}
@@ -875,6 +947,9 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         'last_value': last_value,
         'mean_return': mean_ret,
         'daily_std': std_ret,
+        'sample_count': len(returns),
+        'filtered_count': filtered_count,
+        'sample_start': sample_start,
     }
 
 

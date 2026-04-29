@@ -23,7 +23,26 @@ REPORT_DIR = PROJECT_ROOT / "report"
 DATABASE_PATH = DATABASE_DIR / "portfolio.db"
 
 # 持仓文件路径（通达信导出）
-POSITION_FILE = r"C:\zd_zsone\T0002\export\持仓股20260410.xls"
+# 自动查找通达信导出目录中最新的持仓股文件
+def _find_latest_position_file() -> str:
+    """自动查找通达信导出目录中最新的持仓股文件"""
+    export_dir = r"C:\zd_zsone\T0002\export"
+    if not os.path.isdir(export_dir):
+        # fallback到历史文件
+        return os.path.join(os.path.dirname(__file__), "..", "data", "raw", "positions.tsv")
+    candidates = []
+    for fname in os.listdir(export_dir):
+        if fname.startswith("持仓股") and (fname.endswith(".xls") or fname.endswith(".tsv")):
+            fpath = os.path.join(export_dir, fname)
+            candidates.append((os.path.getmtime(fpath), fpath))
+    if not candidates:
+        # fallback
+        return os.path.join(os.path.dirname(__file__), "..", "data", "raw", "positions.tsv")
+    candidates.sort(reverse=True)
+    latest = candidates[0][1]
+    return latest
+
+POSITION_FILE = _find_latest_position_file()
 
 # 数据源配置
 DATA_SOURCES = {
