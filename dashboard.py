@@ -2330,6 +2330,9 @@ def main():
                     )
             yr_tags_html += '</div>'
             st.markdown(yr_tags_html, unsafe_allow_html=True)
+            st.markdown('<style>[id^="vertical-stack"] > [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stButton"][key^="yr_"]) '
+                         '{height:0 !important;min-height:0 !important;margin:0 !important;padding:0 !important;overflow:hidden !important;}</style>',
+                         unsafe_allow_html=True)
             yr_cols = st.columns(len(years))
             for i, yr in enumerate(years):
                 with yr_cols[i]:
@@ -2388,19 +2391,19 @@ def main():
                     f'</tr>'
                 )
 
-            # Month click buttons (visually hidden, 1 per month for table alignment)
+            # Month click buttons (hidden via CSS)
+            st.markdown('<style>[id^="vertical-stack"] > [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stButton"][key^="mo_"]) '
+                         '{height:0 !important;min-height:0 !important;margin:0 !important;padding:0 !important;overflow:hidden !important;}</style>',
+                         unsafe_allow_html=True)
             mo_cols = st.columns(len(months_in_year) + 1)
             for i, m in enumerate(months_in_year):
                 with mo_cols[i]:
-                    st.markdown('<style>[data-testid="stButton"][key^="mo_"] button '
-                                '{visibility:hidden;height:0;padding:0;margin:0;border:none;'
-                                'min-height:0;font-size:0;}</style>', unsafe_allow_html=True)
                     if st.button(f"  ", key=f"mo_{sel_year}_{m}",
                                  help=f"选择{m}月"):
                         st.session_state['cal_month'] = m
                         st.rerun()
             with mo_cols[-1]:
-                st.markdown("")  # spacer to avoid layout warning
+                st.markdown("")  # spacer
 
             # Yearly total row
             yr_total_pnl = year_df['daily_pnl'].sum()
