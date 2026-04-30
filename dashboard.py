@@ -2339,9 +2339,31 @@ def main():
             yr_monthly['profit_days'] = year_df[year_df['daily_pnl'] > 0].groupby('month').size().reindex(yr_monthly['month'], fill_value=0).values
             yr_monthly['loss_days'] = year_df[year_df['daily_pnl'] < 0].groupby('month').size().reindex(yr_monthly['month'], fill_value=0).values
 
-            # Build overview table with clickable month cells
-            overview_rows = []
-            for idx, (_, row) in enumerate(yr_monthly.iterrows()):
+            # --- 年度月度概览（月份按钮在表格内） ---
+            yr_total_pnl = year_df['daily_pnl'].sum()
+            yr_total_ret = year_df['daily_return'].sum()
+            yr_total_days = len(year_df)
+            yr_profit_days = len(year_df[year_df['daily_pnl'] > 0])
+            yr_loss_days = len(year_df[year_df['daily_pnl'] < 0])
+            yr_pnl_color = '#22c55e' if yr_total_pnl >= 0 else '#ef4444'
+            yr_ret_color = '#22c55e' if yr_total_ret >= 0 else '#ef4444'
+
+            # Header row: label + data headers
+            hdr_col1, hdr_col2 = st.columns([1, 5])
+            with hdr_col1:
+                st.markdown('<div style="color:#8b949e;font-size:13px;padding:6px 0;border-bottom:1px solid #30363d;text-align:center;">月份</div>', unsafe_allow_html=True)
+            with hdr_col2:
+                st.markdown(
+                    '<div style="display:flex;color:#8b949e;font-size:13px;border-bottom:1px solid #30363d;">'
+                    '<div style="flex:1;text-align:right;padding:6px 10px;">月收益</div>'
+                    '<div style="flex:1;text-align:right;padding:6px 10px;">月收益率</div>'
+                    '<div style="flex:1;text-align:center;padding:6px 10px;">交易日</div>'
+                    '<div style="flex:1;text-align:center;padding:6px 10px;">盈利天数</div>'
+                    '<div style="flex:1;text-align:center;padding:6px 10px;">亏损天数</div>'
+                    '</div>', unsafe_allow_html=True)
+
+            # Data rows: month button + data
+            for _, row in yr_monthly.iterrows():
                 m = int(row['month'])
                 pnl = row['pnl_sum']
                 ret = row['ret_sum']
@@ -2350,63 +2372,38 @@ def main():
                 loss_d = int(row['loss_days'])
                 pnl_color = '#22c55e' if pnl >= 0 else '#ef4444'
                 ret_color = '#22c55e' if ret >= 0 else '#ef4444'
-                overview_rows.append(
-                    f'<tr style="{"background:#161b22;" if m == sel_month else ""}">'
-                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{m}月</td>'
-                    f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{pnl_color};">¥{pnl:,.0f}</td>'
-                    f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{ret_color};">{ret:+.2f}%</td>'
-                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{days}天</td>'
-                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;color:#22c55e;">{profit_d}天</td>'
-                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;color:#ef4444;">{loss_d}天</td>'
-                    f'</tr>'
-                )
+                is_active = (m == sel_month)
 
-            # Month click buttons aligned with table rows
-            mo_cols = st.columns(len(months_in_year) + 5)
-            for i, m in enumerate(months_in_year):
-                with mo_cols[i]:
-                    if st.button(f"{m}月", key=f"mo_{sel_year}_{m}",
-                                 type="primary" if m == sel_month else "secondary"):
-                        st.session_state['cal_month'] = m
-                        st.rerun()
-            for j in range(len(months_in_year), len(months_in_year) + 5):
-                with mo_cols[j]:
-                    st.markdown("")
-
+                row_col1, row_col2 = st.columns([1, 5])
+                with row_col1:
+                    st.button(f"{m}月", key=f"mo_{sel_year}_{m}",
+                              type="primary" if is_active else "secondary")
+                with row_col2:
+                    bg = 'background:#161b22;' if is_active else ''
+                    st.markdown(
+                        f'<div style="display:flex;{bg}border-bottom:1px solid #21262d;">'
+                        f'<div style="flex:1;text-align:right;padding:6px 10px;color:{pnl_color};">¥{pnl:,.0f}</div>'
+                        f'<div style="flex:1;text-align:right;padding:6px 10px;color:{ret_color};">{ret:+.2f}%</div>'
+                        f'<div style="flex:1;text-align:center;padding:6px 10px;">{days}天</div>'
+                        f'<div style="flex:1;text-align:center;padding:6px 10px;color:#22c55e;">{profit_d}天</div>'
+                        f'<div style="flex:1;text-align:center;padding:6px 10px;color:#ef4444;">{loss_d}天</div>'
+                        f'</div>', unsafe_allow_html=True)
 
             # Yearly total row
-            yr_total_pnl = year_df['daily_pnl'].sum()
-            yr_total_ret = year_df['daily_return'].sum()
-            yr_total_days = len(year_df)
-            yr_profit_days = len(year_df[year_df['daily_pnl'] > 0])
-            yr_loss_days = len(year_df[year_df['daily_pnl'] < 0])
-            yr_pnl_color = '#22c55e' if yr_total_pnl >= 0 else '#ef4444'
-            yr_ret_color = '#22c55e' if yr_total_ret >= 0 else '#ef4444'
-            overview_rows.append(
-                f'<tr style="font-weight:bold;background:#161b22;border-top:2px solid #30363d;">'
-                f'<td style="text-align:center;padding:8px 10px;color:#58a6ff;">全年合计</td>'
-                f'<td style="text-align:right;padding:8px 10px;color:{yr_pnl_color};">¥{yr_total_pnl:,.0f}</td>'
-                f'<td style="text-align:right;padding:8px 10px;color:{yr_ret_color};">{yr_total_ret:+.2f}%</td>'
-                f'<td style="text-align:center;padding:8px 10px;">{yr_total_days}天</td>'
-                f'<td style="text-align:center;padding:8px 10px;color:#22c55e;">{yr_profit_days}天</td>'
-                f'<td style="text-align:center;padding:8px 10px;color:#ef4444;">{yr_loss_days}天</td>'
-                f'</tr>'
-            )
+            tot_col1, tot_col2 = st.columns([1, 5])
+            with tot_col1:
+                st.markdown('<div style="font-weight:bold;text-align:center;padding:8px 0;color:#58a6ff;'
+                            'border-top:2px solid #30363d;">全年合计</div>', unsafe_allow_html=True)
+            with tot_col2:
+                st.markdown(
+                    f'<div style="display:flex;font-weight:bold;background:#161b22;border-top:2px solid #30363d;">'
+                    f'<div style="flex:1;text-align:right;padding:8px 10px;color:{yr_pnl_color};">¥{yr_total_pnl:,.0f}</div>'
+                    f'<div style="flex:1;text-align:right;padding:8px 10px;color:{yr_ret_color};">{yr_total_ret:+.2f}%</div>'
+                    f'<div style="flex:1;text-align:center;padding:8px 10px;">{yr_total_days}天</div>'
+                    f'<div style="flex:1;text-align:center;padding:8px 10px;color:#22c55e;">{yr_profit_days}天</div>'
+                    f'<div style="flex:1;text-align:center;padding:8px 10px;color:#ef4444;">{yr_loss_days}天</div>'
+                    f'</div>', unsafe_allow_html=True)
 
-            ov_html = (
-                '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;">'
-                '<tr style="color:#8b949e;font-size:13px;border-bottom:1px solid #30363d;">'
-                '<th style="text-align:center;padding:6px 10px;">月份</th>'
-                '<th style="text-align:right;padding:6px 10px;">月收益</th>'
-                '<th style="text-align:right;padding:6px 10px;">月收益率</th>'
-                '<th style="text-align:center;padding:6px 10px;">交易日</th>'
-                '<th style="text-align:center;padding:6px 10px;">盈利天数</th>'
-                '<th style="text-align:center;padding:6px 10px;">亏损天数</th>'
-                '</tr>'
-                + ''.join(overview_rows) +
-                '</table>'
-            )
-            st.markdown(ov_html, unsafe_allow_html=True)
 
             month_df = year_df[year_df['month'] == sel_month]
 
