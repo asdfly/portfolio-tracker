@@ -583,7 +583,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
         col_chart, col_tech = st.columns([3, 1])
 
         with col_chart:
-            st.markdown("**价格走势（近250日）**")
+            st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">价格走势（近250日）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示该ETF近250个交易日的收盘价走势，叠加MA5/MA10/MA20均线，并标注买入成本参考线。</span></div>', unsafe_allow_html=True)
             df = price_df.sort_values('date').copy()
 
             # 降采样
@@ -625,7 +625,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
             st.plotly_chart(fig, width='stretch')
 
         with col_tech:
-            st.markdown("**技术指标**")
+            st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">技术指标<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示该ETF的RSI、MACD、KDJ、布林带等常用技术指标信号。</span></div>', unsafe_allow_html=True)
             if not detail_df.empty:
                 latest = detail_df.iloc[-1]
 
@@ -684,7 +684,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
         col_stats, col_dist = st.columns([1, 2])
 
         with col_stats:
-            st.markdown("**关键统计**")
+            st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">关键统计<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示该ETF的日均收益、标准差、最大涨跌幅等关键统计指标。</span></div>', unsafe_allow_html=True)
             df_detail = detail_df.sort_values('date')
             daily_returns = df_detail['current_price'].pct_change().dropna() if len(df_detail) > 1 else pd.Series()
 
@@ -709,7 +709,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
         with col_dist:
             if len(daily_returns) > 5:
-                st.markdown("**日收益率分布**")
+                st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">日收益率分布<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">统计该ETF日收益率的频率分布，可判断收益的正态性和肥尾特征。</span></div>', unsafe_allow_html=True)
                 fig_hist = go.Figure()
                 colors = ['#22c55e' if v >= 0 else '#ef4444' for v in daily_returns]
                 fig_hist.add_trace(go.Histogram(
@@ -1399,6 +1399,41 @@ def main():
             font-size: 18px; font-weight: bold; color: #c9d1d9;
             padding: 10px 0 5px 0; border-bottom: 1px solid #30363d;
         }
+        .tip-title {
+            font-size: 18px; font-weight: bold; color: #c9d1d9;
+            padding: 10px 0 5px 0; border-bottom: 1px solid #30363d;
+            display: inline-block; cursor: help;
+        }
+        .tip-title::after {
+            content: ' ℹ';
+            font-size: 11px; color: #58a6ff; font-weight: normal;
+        }
+        .tip-title .tip-text {
+            visibility: hidden; opacity: 0;
+            position: absolute; z-index: 999;
+            background: #1c2333; color: #c9d1d9;
+            border: 1px solid #30363d; border-radius: 6px;
+            padding: 8px 12px; font-size: 12px; font-weight: normal;
+            line-height: 1.5; width: max-content; max-width: 360px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            transition: opacity 0.2s, visibility 0.2s;
+            margin-top: 6px; margin-left: 0;
+        }
+        .tip-title:hover .tip-text {
+            visibility: visible; opacity: 1;
+        }
+        .tip-title .tip-arrow {
+            visibility: hidden; opacity: 0;
+            position: absolute; z-index: 999;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 6px solid #30363d;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+        .tip-title:hover .tip-arrow {
+            visibility: visible; opacity: 1;
+        }
+
 
         .cal-table { border-collapse: collapse; margin: 0 auto; }
         .cal-table th { padding: 6px 8px; font-size: 12px; color: #8b949e; font-weight: normal; }
@@ -1541,14 +1576,14 @@ def main():
     with cols[0]:
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid #58a6ff;">'
-            f'<div style="font-size:11px;color:#8b949e;">总市值</div>'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="当前所有持仓证券的市值总和">总市值 ℹ</div>'
             f'<div style="font-size:20px;font-weight:bold;color:#58a6ff;">¥{format_value(total_value)}</div>'
             f'</div>', unsafe_allow_html=True)
     with cols[1]:
         pnl_color = "#22c55e" if total_pnl >= 0 else "#ef4444"
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {pnl_color};">'
-            f'<div style="font-size:11px;color:#8b949e;">总盈亏</div>'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="所有持仓的累计盈亏金额和收益率，基于买入成本计算">总盈亏 ℹ</div>'
             f'<div style="font-size:20px;font-weight:bold;color:{pnl_color};">{format_value(total_pnl, prefix="¥")}</div>'
             f'<div style="font-size:11px;color:#8b949e;">{format_value(total_return, suffix="%")}</div>'
             f'</div>', unsafe_allow_html=True)
@@ -1556,7 +1591,7 @@ def main():
         dr_color = "#22c55e" if daily_return >= 0 else "#ef4444"
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dr_color};">'
-            f'<div style="font-size:11px;color:#8b949e;">日收益</div>'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定日期相对于前一交易日的收益率(%)和盈亏金额(元)">日收益 ℹ</div>'
             f'<div style="font-size:20px;font-weight:bold;color:{dr_color};">{format_value(daily_return, suffix="%")}</div>'
             f'<div style="font-size:11px;color:#8b949e;">{format_value(daily_pnl, prefix="¥")}</div>'
             f'</div>', unsafe_allow_html=True)
@@ -1564,21 +1599,21 @@ def main():
         sharpe_color = "#22c55e" if (sharpe and sharpe > 0.5) else "#f59e0b" if sharpe else "#888"
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {sharpe_color};">'
-            f'<div style="font-size:11px;color:#8b949e;">夏普比率</div>'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="风险调整后收益指标 = (年化收益率 - 无风险利率) / 年化波动率。>1为优秀，>0.5为良好">夏普比率 ℹ</div>'
             f'<div style="font-size:20px;font-weight:bold;color:{sharpe_color};">{format_value(sharpe, decimals=3)}</div>'
             f'</div>', unsafe_allow_html=True)
     with cols[4]:
         dd_color = "#ef4444" if (max_dd and abs(max_dd) > 10) else "#f59e0b" if (max_dd and abs(max_dd) > 5) else "#22c55e"
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dd_color};">'
-            f'<div style="font-size:11px;color:#8b949e;">最大回撤</div>'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定时间段内，组合从历史最高点到最低点的最大跌幅(%)">最大回撤 ℹ</div>'
             f'<div style="font-size:20px;font-weight:bold;color:{dd_color};">{format_value(max_dd, suffix="%")}</div>'
             f'</div>', unsafe_allow_html=True)
     with cols[5]:
         vol_color = "#ef4444" if (volatility and volatility > 25) else "#f59e0b" if (volatility and volatility > 15) else "#22c55e"
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {vol_color};">'
-            f'<div style="font-size:11px;color:#8b949e;">年化波动率</div>'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="日收益率标准差的年化值，反映组合收益的波动幅度。值越高表示风险越大">年化波动率 ℹ</div>'
             f'<div style="font-size:20px;font-weight:bold;color:{vol_color};">{format_value(volatility, suffix="%")}</div>'
             f'</div>', unsafe_allow_html=True)
 
@@ -1586,10 +1621,11 @@ def main():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析"])
 
     with tab1:
+        st.caption("📈 展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
         col_left, col_right = st.columns([2, 1])
 
         with col_left:
-            st.markdown('<div class="section-title">组合净值走势</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="">组合净值走势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以组合总市值为基准归一化到100，展示组合净值随时间的变化趋势，同时叠加基准指数走势进行对比。</span></div>', unsafe_allow_html=True)
             if not summary.empty and len(summary) > 1:
                 # 计算累计净值（基准100）
                 base_value = summary.iloc[0]['total_value']
@@ -1641,7 +1677,7 @@ def main():
                 st.plotly_chart(fig, width='stretch')
 
         with col_right:
-            st.markdown('<div class="section-title">日收益率分布</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="">日收益率分布<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">统计选定时间范围内每日收益率(%)的频率分布。橙色虚线为均值，黄色区间为±1个标准差范围，绿色虚线为±2个标准差。</span></div>', unsafe_allow_html=True)
             if not summary.empty and 'daily_return' in summary.columns and len(summary) > 5:
                 # 用原始数据计算分布（不降采样，数据量不大）
                 daily_rets = summary['daily_return'].dropna().values
@@ -1670,7 +1706,7 @@ def main():
                     st.plotly_chart(fig_hist, width='stretch')
 
         # 日收益柱状图（降采样）
-        st.markdown('<div class="section-title">每日盈亏</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tip-title" style="">每日盈亏<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示每个交易日的盈亏金额(元)。绿色柱体表示盈利日，红色柱体表示亏损日，可直观观察收益的连续性和波动幅度。</span></div>', unsafe_allow_html=True)
         if not summary.empty and 'daily_pnl' in summary.columns and len(summary) > 1:
             bar_data = downsample(summary[['date', 'daily_pnl']].copy(), max_points=500)
             colors = ['#22c55e' if dp >= 0 else '#ef4444' for dp in bar_data['daily_pnl']]
@@ -1700,7 +1736,7 @@ def main():
             )
         rolling_data = compute_rolling_metrics(window=rolling_window, end_date=selected_date)
         if not rolling_data.empty and len(rolling_data) > 5:
-            st.markdown(f'<div class="section-title">滚动风险指标（{rolling_window}日窗口）</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="tip-title">'f'滚动风险指标（{rolling_window}日窗口）'f'<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'f'<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'f'使用{rolling_window}日滚动窗口计算的夏普比率和年化波动率。滚动夏普比率反映近期风险调整收益的稳定程度；滚动波动率反映近期市场波动水平的演变。</span>'f'</div>', unsafe_allow_html=True)
             rolling_chart = downsample(rolling_data, max_points=500)
 
             fig_roll = make_subplots(
@@ -1744,10 +1780,11 @@ def main():
             st.plotly_chart(fig_roll, width='stretch')
 
     with tab2:
+        st.caption("📊 展示持仓分布饼图、持仓明细表格、行业权重变化趋势及持仓相关性矩阵")
         col_dist, col_table = st.columns([1, 1])
 
         with col_dist:
-            st.markdown('<div class="section-title">持仓分布</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="">持仓分布<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以环形饼图展示各只ETF的市值占比，中心空白区域显示总持仓数量。鼠标悬停可查看具体金额和百分比。</span></div>', unsafe_allow_html=True)
             if not positions.empty:
                 fig_pie = go.Figure(go.Pie(
                     labels=positions['name'],
@@ -1774,7 +1811,7 @@ def main():
                 st.plotly_chart(fig_pie, width='stretch')
 
         with col_table:
-            st.markdown('<div class="section-title">持仓明细</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="">持仓明细<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示所有持仓ETF的详细信息，包括名称、代码、持仓量、成本价、现价、市值、盈亏和收益率。点击下拉框可查看单只ETF的技术分析详情。</span></div>', unsafe_allow_html=True)
             if not positions.empty:
                 # 格式化显示列
                 display_df = positions[['name', 'code', 'quantity', 'cost_price', 'current_price',
@@ -1812,7 +1849,7 @@ def main():
                             _render_etf_detail_panel(row, selected_date, total_value)
 
         # ===== 行业权重堆叠面积图 =====
-        st.markdown('<div class="section-title">行业权重变化趋势</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tip-title" style="">行业权重变化趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以堆叠面积图展示各行业ETF在组合中的权重占比随时间的变化，可观察仓位配置的调整趋势。</span></div>', unsafe_allow_html=True)
         sector_weight_df, sector_colors = load_sector_weights(days=show_days, end_date=selected_date)
         if not sector_weight_df.empty:
             fig_sector = go.Figure()
@@ -1856,7 +1893,7 @@ def main():
         st.markdown("---")
                 # ===== 相关性矩阵热力图 =====
         st.markdown("---")
-        st.markdown('<div class="section-title">持仓相关性矩阵（日收益率 Pearson）</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tip-title" style="">持仓相关性矩阵（日收益率 Pearson）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于最近250个交易日的日收益率计算各ETF之间的Pearson相关系数。数值接近1表示同向变动，接近-1表示反向变动，接近0表示无相关性。</span></div>', unsafe_allow_html=True)
         corr_df, short_names = load_correlation_matrix(days=250, end_date=selected_date)
         if not corr_df.empty and len(short_names) >= 2:
             fig_corr = go.Figure(go.Heatmap(
@@ -1899,10 +1936,11 @@ def main():
             st.info("持仓数据不足，暂无法计算相关性矩阵")
 
     with tab3:
+        st.caption("⚠️ 展示风险评分仪表盘、风险指标详情、回撤曲线及Brinson收益归因分析")
         col_risk_gauge, col_risk_detail = st.columns([1, 1])
 
         with col_risk_gauge:
-            st.markdown('<div class="section-title">风险指标仪表盘</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="">风险指标仪表盘<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">综合年化波动率和最大回撤计算风险评分（0-100分）。满分100表示低风险，低于60分表示高风险。颜色越绿越安全，越红风险越高。</span></div>', unsafe_allow_html=True)
 
             # 风险评分
             risk_score = 100
@@ -1963,7 +2001,7 @@ def main():
                         f'{risk_label}</div>', unsafe_allow_html=True)
 
         with col_risk_detail:
-            st.markdown('<div class="section-title">风险指标详情</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="">风险指标详情<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示夏普比率、Sortino比率、Calmar比率、最大回撤、年化波动率、胜率和盈亏比等核心风险指标，悬停可查看指标含义。</span></div>', unsafe_allow_html=True)
 
             # 计算扩展风险指标
             ext_risk = compute_extended_risk_metrics(end_date=selected_date)
@@ -2010,7 +2048,7 @@ def main():
 
         # 回撤曲线（降采样）
         if not summary.empty and len(summary) > 5:
-            st.markdown('<div class="section-title">回撤曲线</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="">回撤曲线<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示组合从历史最高点到当前市值的回撤幅度(%)。可识别最大回撤区间及其恢复时间，评估组合的抗风险能力。</span></div>', unsafe_allow_html=True)
             dd_data = summary[['date', 'total_value']].copy()
             dd_data['drawdown'] = (dd_data['total_value'] - dd_data['total_value'].cummax()) / dd_data['total_value'].cummax() * 100
             dd_chart = downsample(dd_data, max_points=500)
@@ -2037,7 +2075,7 @@ def main():
 
         # ===== P2: 收益归因分析（Brinson模型） =====
         st.markdown("---")
-        st.markdown('<div class="section-title">收益归因分析（Brinson 模型）</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tip-title" style="">收益归因分析（Brinson 模型）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">使用Brinson归因模型将组合超额收益分解为「配置效应」（超配/低配行业的贡献）和「选股效应」（行业内个股选择的贡献），帮助判断收益来源。</span></div>', unsafe_allow_html=True)
         st.caption("将组合收益分解为行业配置效应（超配/低配行业的贡献）和选股效应（行业内个股选择的贡献）")
 
         attr_result = compute_return_attribution(days=show_days, end_date=selected_date)
@@ -2146,6 +2184,7 @@ def main():
 
     # ========== 收益日历 ==========
     with tab4:
+        st.caption("📅 以日历热力图形式展示每月每个交易日的收益情况，支持按年/月切换查看")
         cal_data = load_calendar_data()
 
         if cal_data.empty:
@@ -2158,7 +2197,7 @@ def main():
             # --- 年份选择 ---
             yr_cols = st.columns([6, 1])
             with yr_cols[0]:
-                st.markdown("**选择年份**")
+                st.markdown('<span style="font-size:14px;font-weight:bold;color:#c9d1d9;cursor:help;border-bottom:1px dotted #8b949e;" title="点击切换查看不同年份的收益日历">选择年份 ℹ</span>', unsafe_allow_html=True)
                 yr_html = '<div style="margin-bottom:8px;">'
                 for yr in years:
                     is_active = (st.session_state.get('cal_year', latest_year) == yr)
@@ -2185,7 +2224,7 @@ def main():
             months_in_year = sorted(year_df['month'].unique())
             month_names = [f"{m}月" for m in months_in_year]
 
-            st.markdown("**选择月份**")
+            st.markdown('<span style="font-size:14px;font-weight:bold;color:#c9d1d9;cursor:help;border-bottom:1px dotted #8b949e;" title="点击切换查看不同月份的收益数据">选择月份 ℹ</span>', unsafe_allow_html=True)
             mo_sel = st.columns(len(months_in_year))
             for i, m in enumerate(months_in_year):
                 with mo_sel[i]:
@@ -2221,7 +2260,7 @@ def main():
             st.markdown("---")
 
             # --- 年度月汇总条 ---
-            st.markdown("**年度月度概览**")
+            st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">年度月度概览<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以卡片形式展示选中年份的年度总收益、月均收益、交易日数等汇总统计信息。</span></div>', unsafe_allow_html=True)
             yr_monthly = year_df.groupby('month').agg(
                 pnl_sum=('daily_pnl', 'sum'),
                 ret_sum=('daily_return', 'sum'),
@@ -2342,7 +2381,7 @@ def main():
 
             # --- 月度收益热力图 ---
             st.markdown("---")
-            st.markdown("**月度收益热力图**")
+            st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">月度收益热力图<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以热力图形式展示12个月的月度收益，颜色深浅反映收益高低。</span></div>', unsafe_allow_html=True)
             monthly_pivot = compute_monthly_returns()
             if not monthly_pivot.empty:
                 fig_heat = go.Figure(go.Heatmap(
@@ -2371,10 +2410,10 @@ def main():
 
     # ========== Tab5: 高级分析（Monte Carlo / 再平衡建议） ==========
     with tab5:
-        st.markdown('<div class="section-title">高级分析工具</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tip-title" style="">高级分析工具<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">包含Monte Carlo模拟（基于历史收益率随机采样预测未来收益区间）和再平衡建议（基于目标权重偏离度生成调仓方案）两种高级分析工具。</span></div>', unsafe_allow_html=True)
 
         # ----- Monte Carlo 模拟 -----
-        st.markdown("**Monte Carlo 模拟（未来收益预测）**")
+        st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">Monte Carlo 模拟（未来收益预测）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于历史日收益率分布进行Bootstrap随机采样，生成大量模拟路径，统计未来市值的概率分布区间（P5/P50/P95）。</span></div>', unsafe_allow_html=True)
         st.caption("基于历史日收益率分布进行 Bootstrap 采样，生成未来收益区间预测")
 
         mc_col1, mc_col2 = st.columns([2, 1])
@@ -2481,7 +2520,7 @@ def main():
         st.markdown("---")
 
         # ----- 再平衡建议 -----
-        st.markdown("**再平衡建议**")
+        st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">再平衡建议<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于各行业目标权重与实际权重的偏离度，自动生成调仓方案。超过偏离阈值的行业将给出买入/卖出建议和估算股数。</span></div>', unsafe_allow_html=True)
         st.caption("基于目标行业权重与实际权重的偏离，生成调仓方案")
 
         rb_col1, rb_col2 = st.columns([2, 1])
@@ -2595,7 +2634,7 @@ def main():
 
 
     # ========== 技术指标（增强版：点击持仓行查看详情） ==========
-    st.markdown('<div class="section-title" style="margin-top:20px;">🔍 技术指标信号</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tip-title" style="margin-top:20px;">🔍 技术指标信号<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示各ETF的技术指标信号概览，包括RSI超买超卖、MA均线信号和综合趋势判断(看多/看空/中性)。点击持仓表格中的ETF行可查看完整技术分析面板。</span></div>', unsafe_allow_html=True)
     if not technical.empty:
         st.info("💡 点击上方持仓表格中的任意ETF行，即可查看完整的技术分析详情面板（价格走势、RSI/MACD/KDJ指标、收益率分布等）。")
         # 全览信号卡片（精简版）
