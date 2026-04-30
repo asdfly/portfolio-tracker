@@ -2311,46 +2311,94 @@ def main():
             today_str = datetime.now().strftime('%Y-%m-%d')
 
             # --- 年份选择 ---
-            yr_cols = st.columns([6, 1])
-            with yr_cols[0]:
-                st.markdown('<span style="font-size:14px;font-weight:bold;color:#c9d1d9;cursor:help;border-bottom:1px dotted #8b949e;" title="点击切换查看不同年份的收益日历">选择年份 ℹ</span>', unsafe_allow_html=True)
-                yr_html = '<div style="margin-bottom:8px;">'
-                for yr in years:
-                    is_active = (st.session_state.get('cal_year', latest_year) == yr)
-                    cls = 'active' if is_active else ''
-                    yr_html += f'<span class="yr-pill {cls}">{yr}</span>'
-                yr_html += '</div>'
-                st.markdown(yr_html, unsafe_allow_html=True)
+            yr_label = "选择年份"
+            yr_options = list(years)
+            yr_default = st.session_state.get('cal_year', latest_year)
+            if yr_default not in yr_options:
+                yr_default = yr_options[0]
+            sel_year = st.selectbox(yr_label, yr_options, index=yr_options.index(yr_default), key='cal_year_select')
 
-                # 年份按钮用 columns 实现
-                yr_sel = st.columns(len(years))
-                for i, yr in enumerate(years):
-                    with yr_sel[i]:
-                        label = f"**{yr}**" if st.session_state.get('cal_year', latest_year) == yr else str(yr)
-                        if st.button(label, key=f"yr_{yr}"):
-                            st.session_state['cal_year'] = yr
-                            st.rerun()
-
-            st.markdown("---")
-
-            sel_year = st.session_state.get('cal_year', latest_year)
             year_df = cal_data[cal_data['year'] == sel_year]
 
-            # --- 月份选择 ---
+            # --- 月份选择 & 年度月度概览 ---
             months_in_year = sorted(year_df['month'].unique())
+
+            yr_monthly = year_df.groupby('month').agg(
+                pnl_sum=('daily_pnl', 'sum'),
+                ret_sum=('daily_return', 'sum'),
+                days=('day', 'count')
+            ).reset_index()
+
+            yr_monthly['profit_days'] = year_df[year_df['daily_pnl'] > 0].groupby('month').size().reindex(yr_monthly['month'], fill_value=0).values
+            yr_monthly['loss_days'] = year_df[year_df['daily_pnl'] < 0].groupby('month').size().reindex(yr_monthly['month'], fill_value=0).values
+
+            # Build overview dataframe
+            overview_rows = []
+            for _, row in yr_monthly.iterrows():
+                m = int(row['month'])
+                pnl = row['pnl_sum']
+                ret = row['ret_sum']
+                days = int(row['days'])
+                profit_d = int(row['profit_days'])
+                loss_d = int(row['loss_days'])
+                pnl_color = '#22c55e' if pnl >= 0 else '#ef4444'
+                ret_color = '#22c55e' if ret >= 0 else '#ef4444'
+                is_active = (m == st.session_state.get('cal_month', months_in_year[-1] if months_in_year else 1))
+                bold = 'font-weight:bold;' if is_active else ''
+                bg = '#161b22' if is_active else ''
+                overview_rows.append(
+                    f'<tr style="{bold}{bg}">'
+                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{m}月</td>'
+                    f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{pnl_color};">¥{pnl:,.0f}</td>'
+                    f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{ret_color};">{ret:+.2f}%</td>'
+                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{days}天</td>'
+                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;color:#22c55e;">{profit_d}天</td>'
+                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;color:#ef4444;">{loss_d}天</td>'
+                    f'</tr>'
+                )
+
+            # Yearly total row
+            yr_total_pnl = year_df['daily_pnl'].sum()
+            yr_total_ret = year_df['daily_return'].sum()
+            yr_total_days = len(year_df)
+            yr_profit_days = len(year_df[year_df['daily_pnl'] > 0])
+            yr_loss_days = len(year_df[year_df['daily_pnl'] < 0])
+            yr_pnl_color = '#22c55e' if yr_total_pnl >= 0 else '#ef4444'
+            yr_ret_color = '#22c55e' if yr_total_ret >= 0 else '#ef4444'
+            overview_rows.append(
+                f'<tr style="font-weight:bold;background:#161b22;border-top:2px solid #30363d;">'
+                f'<td style="text-align:center;padding:8px 10px;color:#58a6ff;">全年合计</td>'
+                f'<td style="text-align:right;padding:8px 10px;color:{yr_pnl_color};">¥{yr_total_pnl:,.0f}</td>'
+                f'<td style="text-align:right;padding:8px 10px;color:{yr_ret_color};">{yr_total_ret:+.2f}%</td>'
+                f'<td style="text-align:center;padding:8px 10px;">{yr_total_days}天</td>'
+                f'<td style="text-align:center;padding:8px 10px;color:#22c55e;">{yr_profit_days}天</td>'
+                f'<td style="text-align:center;padding:8px 10px;color:#ef4444;">{yr_loss_days}天</td>'
+                f'</tr>'
+            )
+
+            ov_html = (
+                '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;">'
+                '<tr style="color:#8b949e;font-size:13px;border-bottom:1px solid #30363d;">'
+                '<th style="text-align:center;padding:6px 10px;">月份</th>'
+                '<th style="text-align:right;padding:6px 10px;">月收益</th>'
+                '<th style="text-align:right;padding:6px 10px;">月收益率</th>'
+                '<th style="text-align:center;padding:6px 10px;">交易日</th>'
+                '<th style="text-align:center;padding:6px 10px;">盈利天数</th>'
+                '<th style="text-align:center;padding:6px 10px;">亏损天数</th>'
+                '</tr>'
+                + ''.join(overview_rows) +
+                '</table>'
+            )
+            st.markdown(ov_html, unsafe_allow_html=True)
+
+            # Month selection from the overview
             month_names = [f"{m}月" for m in months_in_year]
+            mo_default = st.session_state.get('cal_month', months_in_year[-1] if months_in_year else 1)
+            if mo_default not in months_in_year:
+                mo_default = months_in_year[-1] if months_in_year else 1
+            sel_month = st.selectbox("选择月份", month_names, index=months_in_year.index(mo_default), key='cal_month_select')
+            sel_month = months_in_year[month_names.index(sel_month)]
 
-            st.markdown('<span style="font-size:14px;font-weight:bold;color:#c9d1d9;cursor:help;border-bottom:1px dotted #8b949e;" title="点击切换查看不同月份的收益数据">选择月份 ℹ</span>', unsafe_allow_html=True)
-            mo_sel = st.columns(len(months_in_year))
-            for i, m in enumerate(months_in_year):
-                with mo_sel[i]:
-                    is_active = (st.session_state.get('cal_month', months_in_year[-1]) == m)
-                    label = f"**{m}月**" if is_active else f"{m}月"
-                    if st.button(label, key=f"mo_{sel_year}_{m}", type="secondary" if not is_active else "primary"):
-                        st.session_state['cal_month'] = m
-                        st.rerun()
-
-            sel_month = st.session_state.get('cal_month', months_in_year[-1])
             month_df = year_df[year_df['month'] == sel_month]
 
             # --- 月度汇总 ---
@@ -2373,42 +2421,6 @@ def main():
             with sum_col5:
                 st.metric("亏损天数", f"{m_loss}天")
 
-            st.markdown("---")
-
-            # --- 年度月汇总条 ---
-            st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">年度月度概览<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以卡片形式展示选中年份的年度总收益、月均收益、交易日数等汇总统计信息。</span></div>', unsafe_allow_html=True)
-            yr_monthly = year_df.groupby('month').agg(
-                pnl_sum=('daily_pnl', 'sum'),
-                ret_sum=('daily_return', 'sum'),
-                days=('day', 'count')
-            ).reset_index()
-
-            sm_html = '<div style="margin-bottom:12px;">'
-            for _, row in yr_monthly.iterrows():
-                m = int(row['month'])
-                pnl = row['pnl_sum']
-                is_active = (m == sel_month)
-                bold = 'font-weight:bold;' if is_active else ''
-                border = 'border:2px solid #58a6ff;' if is_active else 'border:1px solid #21262d;'
-                if pnl >= 0:
-                    color = '#22c55e'
-                    bg = '#0d2818'
-                else:
-                    color = '#ef4444'
-                    bg = '#2d1215'
-                sm_html += (
-                    f'<span class="cal-summary" style="{bold}{border}background:{bg};color:{color};">'
-                    f'{m}月 &nbsp; ¥{pnl:,.0f}</span>'
-                )
-            yr_total_pnl = year_df['daily_pnl'].sum()
-            yr_total_ret = year_df['daily_return'].sum()
-            yr_color = '#22c55e' if yr_total_pnl >= 0 else '#ef4444'
-            sm_html += (
-                f'<span class="cal-summary" style="border:1px solid #30363d;font-weight:bold;'
-                f'color:{yr_color};">全年 &nbsp; ¥{yr_total_pnl:,.0f} ({yr_total_ret:.2f}%)</span>'
-            )
-            sm_html += '</div>'
-            st.markdown(sm_html, unsafe_allow_html=True)
 
             # --- 月度日历 ---
             st.markdown(f"**{sel_year}年{sel_month}月 日历**")
