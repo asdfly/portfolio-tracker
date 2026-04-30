@@ -12,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import (
     DATA_SOURCES, INDEX_CODES, MAJOR_ETFS, 
-    TECH_INDICATORS, RISK_CONFIG
+    TECH_INDICATORS, RISK_CONFIG,
+    POSITION_FILE, POSITION_FILE_DATE
 )
 from src.data_sources import DataSourceManager
 from src.analysis.technical import TechnicalAnalyzer
@@ -59,6 +60,23 @@ class PortfolioAnalyzer:
         try:
             # 1. 读取持仓数据
             logger.info("步骤1: 读取持仓数据...")
+
+            # 日期校验：持仓文件的日期必须与今天一致，否则跳过写入
+            if POSITION_FILE_DATE and POSITION_FILE_DATE != self.today:
+                logger.warning(
+                    f"持仓文件日期为 {POSITION_FILE_DATE}，与今天 {self.today} 不一致，"
+                    f"跳过写入数据库（交易可能尚未结束或未导出最新文件）"
+                )
+                logger.info(f"持仓文件: {POSITION_FILE}")
+                # 仍然读取数据用于实时展示，但不保存到数据库
+                positions = self.position_reader.read_positions()
+                results['positions'] = positions
+                logger.info(f"读取到 {len(positions)} 条持仓记录（仅预览，未写入）")
+                # 跳过后续的数据库写入步骤
+                self._update_realtime_quotes(positions)
+                logger.info("⚠ 仅读取持仓文件预览数据，未写入数据库")
+                return results
+
             positions = self.position_reader.read_positions()
             results['positions'] = positions
             logger.info(f"读取到 {len(positions)} 条持仓记录")

@@ -42,7 +42,23 @@ def _find_latest_position_file() -> str:
     latest = candidates[0][1]
     return latest
 
+
+def _extract_position_file_date(file_path: str) -> str:
+    """从持仓文件名中提取日期（格式: 持仓股20260427.xls -> 2026-04-27）
+    
+    返回格式为 YYYY-MM-DD。如果无法提取则返回 None。
+    """
+    import re
+    fname = os.path.basename(file_path)
+    # 匹配 "持仓股YYYYMMDD" 格式
+    m = re.search(r'持仓股(\d{4})(\d{2})(\d{2})', fname)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    return None
+
+
 POSITION_FILE = _find_latest_position_file()
+POSITION_FILE_DATE = _extract_position_file_date(POSITION_FILE)
 
 # 数据源配置
 DATA_SOURCES = {
