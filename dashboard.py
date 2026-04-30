@@ -60,6 +60,99 @@ st.set_page_config(
 )
 
 # ==================== 降采样工具 ====================
+
+# ==================== 图表辅助函数 ====================
+def _add_min_max_annotations(fig, x_data, y_data, row=None, col=None,
+                              y_label=None, date_format='%m-%d'):
+    """在时间轴图表中标记最大值和最小值的位置及数值。
+    
+    Args:
+        fig: plotly 图表对象 (go.Figure 或 make_subplots 子图)
+        x_data: x 轴数据序列 (日期)
+        y_data: y 轴数据序列 (数值)
+        row, col: 子图位置 (make_subplots 时使用)，默认 None 表示单图
+        y_label: y 轴标签，用于标注文字前缀
+        date_format: 日期格式化字符串
+    """
+    import numpy as np
+    
+    x_arr = np.array(x_data)
+    y_arr = np.array(y_data, dtype=float)
+    
+    # 过滤 NaN
+    valid = ~np.isnan(y_arr)
+    x_arr, y_arr = x_arr[valid], y_arr[valid]
+    
+    if len(x_arr) < 2:
+        return
+    
+    max_idx = np.argmax(y_arr)
+    min_idx = np.argmin(y_arr)
+    
+    max_x, max_y = x_arr[max_idx], y_arr[max_idx]
+    min_x, min_y = x_arr[min_idx], y_arr[min_idx]
+    
+    # 格式化日期
+    if hasattr(max_x, 'strftime'):
+        max_date_str = max_x.strftime(date_format)
+        min_date_str = min_x.strftime(date_format)
+    else:
+        max_date_str = str(max_x)
+        min_date_str = str(min_x)
+    
+    # 格式化数值
+    def fmt_val(v):
+        if abs(v) >= 1000:
+            return f"{v:,.0f}"
+        elif abs(v) >= 1:
+            return f"{v:.2f}"
+        else:
+            return f"{v:.4f}"
+    
+    max_text = f"Max {fmt_val(max_y)}"
+    min_text = f"Min {fmt_val(min_y)}"
+    
+    # 添加散点标记
+    scatter_kwargs = dict(
+        mode='markers+text',
+        hoverinfo='skip',
+        showlegend=False,
+    )
+    
+    if row is not None and col is not None:
+        # make_subplots 子图
+        fig.add_trace(go.Scatter(
+            x=[max_x], y=[max_y],
+            marker=dict(color='#22c55e', size=8, symbol='triangle-down'),
+            text=[max_text], textposition='top center',
+            textfont=dict(size=9, color='#22c55e'),
+            **scatter_kwargs
+        ), row=row, col=col)
+        fig.add_trace(go.Scatter(
+            x=[min_x], y=[min_y],
+            marker=dict(color='#ef4444', size=8, symbol='triangle-up'),
+            text=[min_text], textposition='bottom center',
+            textfont=dict(size=9, color='#ef4444'),
+            **scatter_kwargs
+        ), row=row, col=col)
+    else:
+        # 单图
+        fig.add_trace(go.Scatter(
+            x=[max_x], y=[max_y],
+            marker=dict(color='#22c55e', size=8, symbol='triangle-down'),
+            text=[max_text], textposition='top center',
+            textfont=dict(size=9, color='#22c55e'),
+            **scatter_kwargs
+        ))
+        fig.add_trace(go.Scatter(
+            x=[min_x], y=[min_y],
+            marker=dict(color='#ef4444', size=8, symbol='triangle-up'),
+            text=[min_text], textposition='bottom center',
+            textfont=dict(size=9, color='#ef4444'),
+            **scatter_kwargs
+        ))
+
+
 def downsample(df, date_col='date', max_points=500):
     """将时间序列降采样到max_points个点，保留边界值"""
     n = len(df)
@@ -611,6 +704,10 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
                     annotation_position="top left",
                     annotation_font=dict(size=10, color="#f59e0b")
                 )
+
+
+            # 标记最高价和最低价
+            _add_min_max_annotations(fig, df_plot['date'], df_plot['close'], y_label="价格")
 
             fig.update_layout(
                 height=220,
@@ -1655,6 +1752,10 @@ def main():
                         mode='lines', name='投资组合',
                         line=dict(color='#58a6ff', width=2)
                     ))
+
+                    # 标记净值最高和最低
+                    _add_min_max_annotations(fig, chart_data['date'], chart_data['nav'], y_label="净值")
+
                 else:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
@@ -1662,6 +1763,9 @@ def main():
                         mode='lines', name='投资组合',
                         line=dict(color='#58a6ff', width=2)
                     ))
+
+                    # 标记净值最高和最低
+                    _add_min_max_annotations(fig, chart_data['date'], chart_data['nav'], y_label="净值")
 
                 fig.update_layout(
                     height=350,
@@ -1716,6 +1820,9 @@ def main():
                 marker_color=colors,
                 name='日盈亏'
             ))
+            # 标记最大盈亏
+            _add_min_max_annotations(fig_bar, bar_data['date'], bar_data['daily_pnl'], y_label="盈亏")
+
             fig_bar.update_layout(
                 height=200,
                 plot_bgcolor='#0d1117',
@@ -1754,12 +1861,18 @@ def main():
             fig_roll.add_hline(y=1, line_dash='dot', line_color='#22c55e',
                                annotation_text='优秀线(1.0)', row=1, col=1)
 
+            # 标记滚动夏普最高最低
+            _add_min_max_annotations(fig_roll, rolling_chart['date'], rolling_chart['rolling_sharpe'], row=1, col=1)
+
             fig_roll.add_trace(go.Scatter(
                 x=rolling_chart['date'], y=rolling_chart['rolling_vol'],
                 mode='lines', name='滚动波动率',
                 line=dict(color='#f59e0b', width=1.5),
                 fill='tozeroy', fillcolor='rgba(245,158,11,0.08)'
             ), row=2, col=1)
+
+            # 标记滚动波动率最高最低
+            _add_min_max_annotations(fig_roll, rolling_chart['date'], rolling_chart['rolling_vol'], row=2, col=1)
 
             fig_roll.update_layout(
                 height=350,
@@ -2061,6 +2174,9 @@ def main():
                 line=dict(color='#ef4444', width=1.5),
                 fillcolor='rgba(239,68,68,0.15)'
             ))
+            # 标记最大回撤
+            _add_min_max_annotations(fig_dd, dd_chart['date'], dd_chart['drawdown'], y_label="回撤")
+
             fig_dd.update_layout(
                 height=200,
                 plot_bgcolor='#0d1117',
