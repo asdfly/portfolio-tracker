@@ -2312,34 +2312,12 @@ def main():
 
             # --- 年份选择 ---
             cur_year = st.session_state.get('cal_year', latest_year)
-            yr_tags_html = '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;">'
-            for yr in years:
-                is_active = (cur_year == yr)
-                if is_active:
-                    yr_tags_html += (
-                        '<span style="display:inline-block;padding:4px 16px;border-radius:6px;'
-                        'background:#1f6feb;color:#fff;font-weight:bold;font-size:14px;cursor:default;">'
-                        + str(yr) + '</span>'
-                    )
-                else:
-                    yr_tags_html += (
-                        '<span style="display:inline-block;padding:4px 16px;border-radius:6px;'
-                        'background:#21262d;color:#8b949e;font-size:14px;cursor:pointer;'
-                        'border:1px solid #30363d;">'
-                        + str(yr) + '</span>'
-                    )
-            yr_tags_html += '</div>'
-            st.markdown(yr_tags_html, unsafe_allow_html=True)
-            st.markdown('<style>[id^="vertical-stack"] > [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stButton"][key^="yr_"]) '
-                         '{height:0 !important;min-height:0 !important;margin:0 !important;padding:0 !important;overflow:hidden !important;}</style>',
-                         unsafe_allow_html=True)
             yr_cols = st.columns(len(years))
             for i, yr in enumerate(years):
                 with yr_cols[i]:
                     if st.button(str(yr), key=f"yr_{yr}",
                                  type="primary" if cur_year == yr else "secondary"):
                         st.session_state['cal_year'] = yr
-                        # Reset month to latest available
                         st.session_state.pop('cal_month', None)
                         st.rerun()
 
@@ -2363,7 +2341,7 @@ def main():
 
             # Build overview table with clickable month cells
             overview_rows = []
-            for _, row in yr_monthly.iterrows():
+            for idx, (_, row) in enumerate(yr_monthly.iterrows()):
                 m = int(row['month'])
                 pnl = row['pnl_sum']
                 ret = row['ret_sum']
@@ -2372,17 +2350,9 @@ def main():
                 loss_d = int(row['loss_days'])
                 pnl_color = '#22c55e' if pnl >= 0 else '#ef4444'
                 ret_color = '#22c55e' if ret >= 0 else '#ef4444'
-                is_active = (m == sel_month)
-                if is_active:
-                    month_style = ('font-weight:bold;background:#1f6feb;color:#fff;'
-                                   'border-radius:6px;display:inline-block;padding:2px 14px;cursor:default;')
-                else:
-                    month_style = ('color:#58a6ff;cursor:pointer;text-decoration:underline;'
-                                   'text-underline-offset:3px;')
                 overview_rows.append(
-                    f'<tr style="{"background:#161b22;" if is_active else ""}">'
-                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">'
-                    f'<span style="{month_style}">{m}月</span></td>'
+                    f'<tr style="{"background:#161b22;" if m == sel_month else ""}">'
+                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{m}月</td>'
                     f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{pnl_color};">¥{pnl:,.0f}</td>'
                     f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{ret_color};">{ret:+.2f}%</td>'
                     f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{days}天</td>'
@@ -2391,19 +2361,18 @@ def main():
                     f'</tr>'
                 )
 
-            # Month click buttons (hidden via CSS)
-            st.markdown('<style>[id^="vertical-stack"] > [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stButton"][key^="mo_"]) '
-                         '{height:0 !important;min-height:0 !important;margin:0 !important;padding:0 !important;overflow:hidden !important;}</style>',
-                         unsafe_allow_html=True)
-            mo_cols = st.columns(len(months_in_year) + 1)
+            # Month click buttons aligned with table rows
+            mo_cols = st.columns(len(months_in_year) + 5)
             for i, m in enumerate(months_in_year):
                 with mo_cols[i]:
-                    if st.button(f"  ", key=f"mo_{sel_year}_{m}",
-                                 help=f"选择{m}月"):
+                    if st.button(f"{m}月", key=f"mo_{sel_year}_{m}",
+                                 type="primary" if m == sel_month else "secondary"):
                         st.session_state['cal_month'] = m
                         st.rerun()
-            with mo_cols[-1]:
-                st.markdown("")  # spacer
+            for j in range(len(months_in_year), len(months_in_year) + 5):
+                with mo_cols[j]:
+                    st.markdown("")
+
 
             # Yearly total row
             yr_total_pnl = year_df['daily_pnl'].sum()
