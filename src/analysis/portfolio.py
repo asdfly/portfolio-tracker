@@ -3,7 +3,7 @@
 """
 import logging
 from datetime import datetime, date
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 import sys
 from pathlib import Path
 
@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.settings import (
     DATA_SOURCES, INDEX_CODES, MAJOR_ETFS, 
     TECH_INDICATORS, RISK_CONFIG,
-    POSITION_FILE, POSITION_FILE_DATE
+    POSITION_FILE,
 )
 from src.data_sources import DataSourceManager
 from src.analysis.technical import TechnicalAnalyzer
@@ -42,8 +42,44 @@ class PortfolioAnalyzer:
         self.position_reader = PositionReader()
         self.today = date.today().strftime('%Y-%m-%d')
 
+    def _detect_position_file_updated(self) -> bool:
+        """检测持仓文件是否比上次写入DB的日期更新
+        
+        通过比较持仓文件日期与数据库中最新持仓记录日期来判断。
+        如果文件日期 > 数据库最新日期，说明有新的持仓文件需要导入。
+        """
+        from config.settings import _find_latest_position_file, _extract_position_file_date
+
+        file_path = _find_latest_position_file()
+        file_date = _extract_position_file_date(file_path)
+
+        if not file_date:
+            logger.warning(f"无法从持仓文件名提取日期: {file_path}")
+            return False
+
+        # 查询数据库中最新的持仓记录日期
+        latest_db = self.db.get_latest_portfolio()
+        if not latest_db:
+            # 数据库中没有任何记录，需要导入
+            logger.info(f"数据库无持仓记录，需要导入持仓文件")
+            return True
+
+        db_date = latest_db[0].get('date', '')
+        if file_date > db_date:
+            logger.info(f"持仓文件日期 {file_date} > 数据库最新日期 {db_date}，需要更新持仓")
+            return True
+        else:
+            logger.info(f"持仓文件日期 {file_date} <= 数据库最新日期 {db_date}，持仓无更新，保持不变")
+            return False
+
     def run_daily_analysis(self) -> Dict[str, Any]:
-        """执行每日分析"""
+        """执行每日分析
+        
+        逻辑：
+        - 如果持仓文件有更新 → 读取新持仓文件，更新持仓快照 + 行情 + 技术指标 + 风险指标
+        - 如果持仓文件无更新 → 从数据库读取最近一次持仓，仅更新行情（价格、市值、盈亏等）
+        - 指数行情、技术指标每天都会重新采集/计算
+        """
         logger.info("=" * 60)
         logger.info("开始执行投资组合每日分析")
         logger.info("=" * 60)
@@ -58,58 +94,101 @@ class PortfolioAnalyzer:
         }
 
         try:
-            # 1. 读取持仓数据
-            logger.info("步骤1: 读取持仓数据...")
+            # 检测持仓文件是否有更新
+            position_updated = self._detect_position_file_updated()
 
-            # 日期校验：持仓文件的日期必须与今天一致，否则跳过写入
-            if POSITION_FILE_DATE and POSITION_FILE_DATE != self.today:
-                logger.warning(
-                    f"持仓文件日期为 {POSITION_FILE_DATE}，与今天 {self.today} 不一致，"
-                    f"跳过写入数据库（交易可能尚未结束或未导出最新文件）"
-                )
-                logger.info(f"持仓文件: {POSITION_FILE}")
-                # 仍然读取数据用于实时展示，但不保存到数据库
+            if position_updated:
+                # ========== 持仓有更新：读取新文件 ==========
+                logger.info("步骤1: 检测到新持仓文件，读取持仓数据...")
                 positions = self.position_reader.read_positions()
                 results['positions'] = positions
-                logger.info(f"读取到 {len(positions)} 条持仓记录（仅预览，未写入）")
-                # 跳过后续的数据库写入步骤
+                logger.info(f"读取到 {len(positions)} 条持仓记录")
+
+                # 更新实时行情
+                logger.info("步骤2: 获取实时行情...")
                 self._update_realtime_quotes(positions)
-                logger.info("⚠ 仅读取持仓文件预览数据，未写入数据库")
-                return results
 
-            positions = self.position_reader.read_positions()
-            results['positions'] = positions
-            logger.info(f"读取到 {len(positions)} 条持仓记录")
+                # 保存持仓快照（新持仓数据写入数据库）
+                logger.info("步骤2.5: 保存新持仓快照到数据库...")
+                self.db.save_portfolio_snapshot(self.today, positions)
 
-            # 2. 获取实时行情
-            logger.info("步骤2: 获取实时行情...")
-            self._update_realtime_quotes(positions)
+            else:
+                # ========== 持仓无更新：从数据库加载最近持仓 ==========
+                logger.info("步骤1: 持仓文件无更新，从数据库加载最近持仓数据...")
+                db_positions = self.db.get_latest_portfolio()
 
-            # 3. 获取指数行情
+                if not db_positions:
+                    raise RuntimeError("数据库中无持仓记录，且持仓文件无更新，无法继续分析")
+
+                # 将数据库字段映射为分析器需要的格式
+                positions = []
+                for row in db_positions:
+                    pos = dict(row)
+                    # 确保关键字段存在
+                    pos.setdefault('code', row.get('code'))
+                    pos.setdefault('name', row.get('name'))
+                    pos.setdefault('quantity', row.get('quantity'))
+                    pos.setdefault('cost_price', row.get('cost_price'))
+                    pos.setdefault('current_price', row.get('current_price'))
+                    pos.setdefault('market_value', row.get('market_value'))
+                    pos.setdefault('pnl', row.get('pnl'))
+                    pos.setdefault('pnl_rate', row.get('pnl_rate'))
+                    pos.setdefault('ytd_return', row.get('ytd_return'))
+                    pos.setdefault('beta', row.get('beta'))
+                    positions.append(pos)
+
+                results['positions'] = positions
+                logger.info(f"从数据库加载 {len(positions)} 条持仓记录")
+
+                # 更新实时行情（用最新价格重新计算市值和盈亏）
+                logger.info("步骤2: 获取实时行情并更新持仓价格...")
+                self._update_realtime_quotes(positions)
+
+                # 用更新后的价格重新保存今日持仓快照（保持持仓结构不变，仅更新价格）
+                logger.info("步骤2.5: 更新持仓价格数据到数据库...")
+                self.db.save_portfolio_snapshot(self.today, positions)
+
+            # ========== 以下步骤每天都会执行 ==========
+
+            # 获取指数行情
             logger.info("步骤3: 获取指数行情...")
             index_quotes = self._fetch_index_quotes()
             results['indices'] = index_quotes
 
-            # 4. 计算技术指标
+            # 保存指数行情
+            self.db.save_index_quotes(self.today, index_quotes)
+
+            # 计算技术指标
             logger.info("步骤4: 计算技术指标...")
             tech_results = self._calculate_technical_indicators(positions)
             results['technical'] = tech_results
 
-            # 5. 风险分析
+            # 保存技术指标
+            for code, indicators in tech_results.items():
+                self.db.save_technical_indicators(self.today, code, indicators)
+
+            # 风险分析
             logger.info("步骤5: 风险分析...")
             risk_results = self.portfolio_risk_analyzer.analyze_portfolio_risk(
                 positions, index_quotes
             )
             results['risk'] = risk_results
 
-            # 6. 计算汇总数据
+            # 计算汇总数据
             logger.info("步骤6: 计算汇总数据...")
             summary = self._calculate_summary(positions, index_quotes, risk_results)
             results['summary'] = summary
 
-            # 7. 保存到数据库
-            logger.info("步骤7: 保存数据到数据库...")
-            self._save_to_database(positions, summary, index_quotes, tech_results)
+            # 保存组合汇总
+            logger.info("步骤7: 保存汇总数据到数据库...")
+            risk_summary = summary.get('risk_summary', {})
+            summary_with_risk = {
+                **summary,
+                'sharpe_ratio': risk_summary.get('sharpe_ratio'),
+                'max_drawdown': risk_summary.get('max_drawdown'),
+                'volatility': risk_summary.get('annual_volatility')
+            }
+            self.db.save_portfolio_summary(self.today, summary_with_risk)
 
             logger.info("分析完成!")
             return results
@@ -280,11 +359,9 @@ class PortfolioAnalyzer:
                          summary: Dict[str, Any],
                          index_quotes: Dict[str, Dict[str, Any]],
                          tech_results: Dict[str, Any]):
-        """保存数据到数据库"""
-        # 保存持仓快照
+        """保存数据到数据库（已内联到 run_daily_analysis 中，保留此方法作为向后兼容）"""
         self.db.save_portfolio_snapshot(self.today, positions)
 
-        # 保存组合汇总（包含风险指标）
         risk_summary = summary.get('risk_summary', {})
         summary_with_risk = {
             **summary,
@@ -294,10 +371,8 @@ class PortfolioAnalyzer:
         }
         self.db.save_portfolio_summary(self.today, summary_with_risk)
 
-        # 保存指数行情
         self.db.save_index_quotes(self.today, index_quotes)
 
-        # 保存技术指标
         for code, indicators in tech_results.items():
             self.db.save_technical_indicators(self.today, code, indicators)
 
