@@ -2376,8 +2376,10 @@ def main():
 
                 row_col1, row_col2 = st.columns([1, 5])
                 with row_col1:
-                    st.button(f"{m}月", key=f"mo_{sel_year}_{m}",
-                              type="primary" if is_active else "secondary")
+                    _b1, _b2, _b3 = st.columns([1, 1, 1])
+                    with _b2:
+                        st.button(f"{m}月", key=f"mo_{sel_year}_{m}",
+                                  type="primary" if is_active else "secondary")
                 with row_col2:
                     bg = 'background:#161b22;' if is_active else ''
                     st.markdown(
