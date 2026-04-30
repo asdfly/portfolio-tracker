@@ -2311,17 +2311,43 @@ def main():
             today_str = datetime.now().strftime('%Y-%m-%d')
 
             # --- 年份选择 ---
-            yr_label = "选择年份"
-            yr_options = list(years)
-            yr_default = st.session_state.get('cal_year', latest_year)
-            if yr_default not in yr_options:
-                yr_default = yr_options[0]
-            sel_year = st.selectbox(yr_label, yr_options, index=yr_options.index(yr_default), key='cal_year_select')
+            cur_year = st.session_state.get('cal_year', latest_year)
+            yr_tags_html = '<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;">'
+            for yr in years:
+                is_active = (cur_year == yr)
+                if is_active:
+                    yr_tags_html += (
+                        '<span style="display:inline-block;padding:4px 16px;border-radius:6px;'
+                        'background:#1f6feb;color:#fff;font-weight:bold;font-size:14px;cursor:default;">'
+                        + str(yr) + '</span>'
+                    )
+                else:
+                    yr_tags_html += (
+                        '<span style="display:inline-block;padding:4px 16px;border-radius:6px;'
+                        'background:#21262d;color:#8b949e;font-size:14px;cursor:pointer;'
+                        'border:1px solid #30363d;">'
+                        + str(yr) + '</span>'
+                    )
+            yr_tags_html += '</div>'
+            st.markdown(yr_tags_html, unsafe_allow_html=True)
+            yr_cols = st.columns(len(years))
+            for i, yr in enumerate(years):
+                with yr_cols[i]:
+                    if st.button(str(yr), key=f"yr_{yr}",
+                                 type="primary" if cur_year == yr else "secondary"):
+                        st.session_state['cal_year'] = yr
+                        # Reset month to latest available
+                        st.session_state.pop('cal_month', None)
+                        st.rerun()
 
+            sel_year = cur_year
             year_df = cal_data[cal_data['year'] == sel_year]
 
-            # --- 月份选择 & 年度月度概览 ---
+            # --- 年度月度概览（月份可点击切换） ---
             months_in_year = sorted(year_df['month'].unique())
+            sel_month = st.session_state.get('cal_month', months_in_year[-1] if months_in_year else 1)
+            if sel_month not in months_in_year:
+                sel_month = months_in_year[-1] if months_in_year else 1
 
             yr_monthly = year_df.groupby('month').agg(
                 pnl_sum=('daily_pnl', 'sum'),
@@ -2332,7 +2358,7 @@ def main():
             yr_monthly['profit_days'] = year_df[year_df['daily_pnl'] > 0].groupby('month').size().reindex(yr_monthly['month'], fill_value=0).values
             yr_monthly['loss_days'] = year_df[year_df['daily_pnl'] < 0].groupby('month').size().reindex(yr_monthly['month'], fill_value=0).values
 
-            # Build overview dataframe
+            # Build overview table with clickable month cells
             overview_rows = []
             for _, row in yr_monthly.iterrows():
                 m = int(row['month'])
@@ -2343,12 +2369,17 @@ def main():
                 loss_d = int(row['loss_days'])
                 pnl_color = '#22c55e' if pnl >= 0 else '#ef4444'
                 ret_color = '#22c55e' if ret >= 0 else '#ef4444'
-                is_active = (m == st.session_state.get('cal_month', months_in_year[-1] if months_in_year else 1))
-                bold = 'font-weight:bold;' if is_active else ''
-                bg = '#161b22' if is_active else ''
+                is_active = (m == sel_month)
+                if is_active:
+                    month_style = ('font-weight:bold;background:#1f6feb;color:#fff;'
+                                   'border-radius:6px;display:inline-block;padding:2px 14px;cursor:default;')
+                else:
+                    month_style = ('color:#58a6ff;cursor:pointer;text-decoration:underline;'
+                                   'text-underline-offset:3px;')
                 overview_rows.append(
-                    f'<tr style="{bold}{bg}">'
-                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{m}月</td>'
+                    f'<tr style="{"background:#161b22;" if is_active else ""}">'
+                    f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">'
+                    f'<span style="{month_style}">{m}月</span></td>'
                     f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{pnl_color};">¥{pnl:,.0f}</td>'
                     f'<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #21262d;color:{ret_color};">{ret:+.2f}%</td>'
                     f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;">{days}天</td>'
@@ -2356,6 +2387,20 @@ def main():
                     f'<td style="text-align:center;padding:6px 10px;border-bottom:1px solid #21262d;color:#ef4444;">{loss_d}天</td>'
                     f'</tr>'
                 )
+
+            # Month click buttons (visually hidden, 1 per month for table alignment)
+            mo_cols = st.columns(len(months_in_year) + 1)
+            for i, m in enumerate(months_in_year):
+                with mo_cols[i]:
+                    st.markdown('<style>[data-testid="stButton"][key^="mo_"] button '
+                                '{visibility:hidden;height:0;padding:0;margin:0;border:none;'
+                                'min-height:0;font-size:0;}</style>', unsafe_allow_html=True)
+                    if st.button(f"  ", key=f"mo_{sel_year}_{m}",
+                                 help=f"选择{m}月"):
+                        st.session_state['cal_month'] = m
+                        st.rerun()
+            with mo_cols[-1]:
+                st.markdown("")  # spacer to avoid layout warning
 
             # Yearly total row
             yr_total_pnl = year_df['daily_pnl'].sum()
@@ -2391,15 +2436,8 @@ def main():
             )
             st.markdown(ov_html, unsafe_allow_html=True)
 
-            # Month selection from the overview
-            month_names = [f"{m}月" for m in months_in_year]
-            mo_default = st.session_state.get('cal_month', months_in_year[-1] if months_in_year else 1)
-            if mo_default not in months_in_year:
-                mo_default = months_in_year[-1] if months_in_year else 1
-            sel_month = st.selectbox("选择月份", month_names, index=months_in_year.index(mo_default), key='cal_month_select')
-            sel_month = months_in_year[month_names.index(sel_month)]
-
             month_df = year_df[year_df['month'] == sel_month]
+
 
             # --- 月度汇总 ---
             m_pnl = month_df['daily_pnl'].sum()
