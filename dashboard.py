@@ -2378,8 +2378,10 @@ def main():
                 with row_col1:
                     _b1, _b2, _b3 = st.columns([1, 1, 1])
                     with _b2:
-                        st.button(f"{m}月", key=f"mo_{sel_year}_{m}",
-                                  type="primary" if is_active else "secondary")
+                        if st.button(f"{m}月", key=f"mo_{sel_year}_{m}",
+                                  type="primary" if is_active else "secondary"):
+                            st.session_state['cal_month'] = m
+                            st.rerun()
                 with row_col2:
                     bg = 'background:#161b22;' if is_active else ''
                     st.markdown(
