@@ -1715,7 +1715,7 @@ def main():
             f'</div>', unsafe_allow_html=True)
 
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析", "📡 技术信号"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析", "📡 技术信号", "📰 资讯与评估", "💡 操作建议"])
 
     with tab1:
         st.caption("📈 展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
@@ -2814,6 +2814,143 @@ def main():
                 st.plotly_chart(fig_heat, width='stretch')
 
 
+
+            # --- 事件日历：关键日期提醒 ---
+            st.markdown("---")
+            st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">关键日期提醒<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">自动检测持仓中的关键事件日期，如财报季、期权到期日等。</span></div>', unsafe_allow_html=True)
+
+            # 1. 财报季提醒
+            current_year = datetime.now().year
+            current_month = datetime.now().month
+            current_day = datetime.now().day
+
+            earnings_periods = [
+                {"name": "一季报", "start": (4, 1), "end": (4, 30), "icon": "📊"},
+                {"name": "半年报", "start": (7, 1), "end": (8, 31), "icon": "📋"},
+                {"name": "三季报", "start": (10, 1), "end": (10, 31), "icon": "📊"},
+                {"name": "年报", "start": (1, 1), "end": (4, 30), "icon": "📋"},
+            ]
+
+            # 2. 期权到期日（每月第三个周五）
+            def get_third_friday(year, month):
+                """计算某月的第三个周五"""
+                import calendar as cal_mod
+                cal = cal_mod.monthcalendar(year, month)
+                # 找到有周五的周
+                fridays = [week[cal_mod.FRIDAY] for week in cal if week[cal_mod.FRIDAY] != 0]
+                return fridays[2] if len(fridays) >= 3 else fridays[-1]
+
+            # 3. 基金分红季
+            dividend_months = [1, 6, 12]
+
+            # 4. 系统性风险事件
+            events_list = []
+
+            # 财报季
+            for ep in earnings_periods:
+                s_m, s_d = ep["start"]
+                e_m, e_d = ep["end"]
+                days_ahead = 0
+                if current_year == current_year:
+                    if s_m == current_month:
+                        days_ahead = s_d - current_day
+                    elif s_m > current_month:
+                        month_diff = s_m - current_month
+                        days_ahead = (month_diff * 30) + (s_d - current_day)
+
+                if days_ahead >= 0 and days_ahead <= 90:
+                    urgency = "即将到来" if days_ahead <= 14 else ("本月" if days_ahead <= 30 else f"{days_ahead}天后")
+                    events_list.append({
+                        "icon": ep["icon"],
+                        "title": f'{ep["name"]}披露期',
+                        "date": f"{current_year}-{s_m:02d}-{s_d:02d} ~ {current_year}-{e_m:02d}-{e_d:02d}",
+                        "urgency": urgency,
+                        "days_ahead": days_ahead,
+                        "color": "#f59e0b" if days_ahead <= 30 else "#8b949e",
+                        "desc": f"A股上市公司{ep['name']}集中披露窗口",
+                    })
+
+            # 期权到期日（未来3个月）
+            for m_offset in range(0, 4):
+                evt_month = current_month + m_offset
+                evt_year = current_year
+                while evt_month > 12:
+                    evt_month -= 12
+                    evt_year += 1
+                try:
+                    third_fri = get_third_friday(evt_year, evt_month)
+                    evt_date = datetime(evt_year, evt_month, third_fri)
+                    delta = (evt_date - datetime.now()).days
+                    if 0 <= delta <= 90:
+                        urgency = "本周五" if delta <= 7 else ("即将" if delta <= 14 else f"{delta}天后")
+                        events_list.append({
+                            "icon": "📅",
+                            "title": "股指期权交割日",
+                            "date": evt_date.strftime("%Y-%m-%d"),
+                            "urgency": urgency,
+                            "days_ahead": delta,
+                            "color": "#ef4444" if delta <= 7 else "#f59e0b" if delta <= 14 else "#8b949e",
+                            "desc": "沪深300/中证1000股指期权到期，注意波动加剧",
+                        })
+                except Exception:
+                    pass
+
+            # 基金分红提醒
+            for m_offset in range(0, 4):
+                d_month = current_month + m_offset
+                d_year = current_year
+                while d_month > 12:
+                    d_month -= 12
+                    d_year += 1
+                if d_month in dividend_months:
+                    delta = (datetime(d_year, d_month, 15) - datetime.now()).days
+                    if 0 <= delta <= 90:
+                        events_list.append({
+                            "icon": "💰",
+                            "title": "基金分红季",
+                            "date": f"{d_year}-{d_month:02d}",
+                            "urgency": f"{delta}天后" if delta > 7 else "即将",
+                            "days_ahead": delta,
+                            "color": "#22c55e" if delta > 14 else "#f59e0b",
+                            "desc": "ETF基金常见分红除息月份，关注持仓基金公告",
+                        })
+
+            # 年底/年初换仓提醒
+            if 12 <= current_month <= 12 or 1 <= current_month <= 1:
+                events_list.append({
+                    "icon": "🔄",
+                    "title": "年度换仓窗口",
+                    "date": f"{current_year}-12 ~ {current_year + 1}-01",
+                    "urgency": "当前",
+                    "days_ahead": 0,
+                    "color": "#a855f7",
+                    "desc": "年末机构调仓高峰，市场风格可能切换",
+                })
+
+            # Sort by days_ahead
+            events_list.sort(key=lambda x: x['days_ahead'])
+
+            # Render events
+            if events_list:
+                for evt in events_list:
+                    st.markdown(
+                        f'<div style="background:#161b22;border-radius:6px;padding:10px 14px;margin-bottom:5px;border-left:3px solid {evt["color"]};">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<div style="display:flex;align-items:center;gap:8px;">'
+                        f'<span style="font-size:16px;">{evt["icon"]}</span>'
+                        f'<div>'
+                        f'<div style="font-size:13px;color:#e6edf3;font-weight:bold;">{evt["title"]}</div>'
+                        f'<div style="font-size:11px;color:#6e7681;margin-top:2px;">{evt["desc"]}</div>'
+                        f'</div></div>'
+                        f'<div style="text-align:right;">'
+                        f'<div style="font-size:12px;color:{evt["color"]};font-weight:bold;">{evt["urgency"]}</div>'
+                        f'<div style="font-size:11px;color:#484f58;">{evt["date"]}</div>'
+                        f'</div></div></div>',
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.info("近90天内暂无关键日期事件")
+
     # ========== Tab6: 技术信号 ==========
     with tab6:
         st.markdown('<div class="tip-title" style="">技术信号总览<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于MA均线排列、MACD、KDJ、RSI、布林带位置等技术指标，对持仓品种进行全面信号检测，辅助判断短期走势。</span></div>', unsafe_allow_html=True)
@@ -3102,6 +3239,453 @@ def main():
                 bargap=0.2
             )
             st.plotly_chart(fig_rsi, width='stretch')
+
+    # ========== Tab7: 资讯与评估 ==========
+    with tab7:
+        st.caption("📰 持仓相关市场资讯与综合评估，帮助把握投资时机")
+
+        # ===== 资讯面板 =====
+        st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">市场资讯<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示与持仓板块相关的最新市场新闻，按行业板块分类。</span></div>', unsafe_allow_html=True)
+
+        news_categories_map = {
+            "医药": "医药板块",
+            "金融": "券商板块",
+            "军工": "军工板块",
+            "新能源": "大盘行情",
+            "科技": "AI板块",
+            "宽基": "ETF市场",
+            "红利": "大盘行情",
+            "债券": "大盘行情",
+        }
+        if not positions.empty:
+            held_sectors = set()
+            for _, pos in positions.iterrows():
+                code = str(pos['code'])
+                cat_info = ETF_CATEGORIES.get(code)
+                if cat_info:
+                    held_sectors.add(cat_info['sector'])
+
+            news_cats_to_load = set()
+            for sector in held_sectors:
+                cat = news_categories_map.get(sector, "大盘行情")
+                news_cats_to_load.add(cat)
+            news_cats_to_load.add("大盘行情")
+            news_cats_to_load.add("ETF市场")
+        else:
+            news_cats_to_load = ["大盘行情", "ETF市场"]
+
+        conn = get_db_connection()
+        try:
+            placeholders = ','.join(['?' for _ in news_cats_to_load])
+            news_df = pd.read_sql_query(
+                f"SELECT date, category, title, source, url, summary, publish_time FROM daily_news WHERE category IN ({placeholders}) ORDER BY date DESC, publish_time DESC LIMIT 60",
+                conn, params=list(news_cats_to_load)
+            )
+        finally:
+            conn.close()
+
+        if not news_df.empty:
+            # Category filter
+            all_cats = sorted(news_df['category'].unique())
+            selected_cat = st.selectbox("筛选板块", ["全部"] + all_cats, key="news_cat_filter", label_visibility="collapsed")
+            if selected_cat != "全部":
+                filtered_news = news_df[news_df['category'] == selected_cat]
+            else:
+                filtered_news = news_df
+
+            cat_color_map = {
+                "大盘行情": "#58a6ff", "ETF市场": "#06b6d4", "医药板块": "#22c55e",
+                "券商板块": "#58a6ff", "军工板块": "#ef4444", "AI板块": "#a855f7",
+                "新能源": "#f59e0b",
+            }
+
+            for _, row in filtered_news.iterrows():
+                cat_color = cat_color_map.get(row['category'], '#8b949e')
+                summary_text = row.get('summary', '') or ''
+                summary_html = f'<div style="font-size:12px;color:#6e7681;margin-top:4px;line-height:1.5;">{summary_text[:150]}{"..." if len(summary_text) > 150 else ""}</div>' if summary_text else ''
+                url_html = f'<a href="{row["url"]}" target="_blank" style="font-size:11px;color:#58a6ff;">{row["source"]} | {row.get("publish_time", "")[:16]}</a>' if pd.notna(row.get('url')) and row['url'] else f'<span style="font-size:11px;color:#484f58;">{row["source"]}</span>'
+                st.markdown(
+                    f'<div style="background:#161b22;border-radius:6px;padding:12px 14px;margin-bottom:6px;border-left:3px solid {cat_color};">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<span style="font-size:11px;color:{cat_color};background:{cat_color}15;padding:2px 8px;border-radius:3px;">{row["category"]}</span>'
+                    f'<span style="font-size:11px;color:#484f58;">{row["date"]}</span>'
+                    f'</div>'
+                    f'<div style="font-size:13px;color:#e6edf3;font-weight:bold;margin-top:6px;line-height:1.4;">{row["title"]}</div>'
+                    f'{summary_html}'
+                    f'<div style="margin-top:6px;">{url_html}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+        else:
+            st.info("暂无市场资讯数据，请检查数据采集服务是否正常运行")
+
+        st.markdown("---")
+
+        # ===== 综合评估面板 =====
+        st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">综合评估<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于收益、风险、技术面多维度的综合投资评分。</span></div>', unsafe_allow_html=True)
+
+        if not summary.empty and not positions.empty:
+            import math
+            # 收益评分 (30分)
+            port_daily = summary['daily_return'].dropna()
+            total_ret = (summary['total_value'].iloc[-1] / summary['total_value'].iloc[0] - 1) if summary['total_value'].iloc[0] > 0 else 0
+            ann_ret = port_daily.mean() * 252 if len(port_daily) > 0 else 0
+            if total_ret > 0.1:
+                score_return = 30
+            elif total_ret > 0.05:
+                score_return = 24
+            elif total_ret > 0:
+                score_return = 18
+            elif total_ret > -0.05:
+                score_return = 10
+            else:
+                score_return = 5
+
+            # 风险评分 (30分)
+            if volatility and not np.isnan(volatility):
+                if volatility < 10:
+                    score_risk = 28
+                elif volatility < 15:
+                    score_risk = 24
+                elif volatility < 20:
+                    score_risk = 18
+                elif volatility < 25:
+                    score_risk = 12
+                else:
+                    score_risk = 6
+            else:
+                score_risk = 15
+
+            if max_dd and not np.isnan(max_dd):
+                dd = abs(max_dd)
+                if dd < 5:
+                    score_risk = min(score_risk + 2, 30)
+                elif dd > 15:
+                    score_risk = max(score_risk - 5, 0)
+
+            # 技术面评分 (25分)
+            conn2 = get_db_connection()
+            try:
+                held_codes = positions['code'].tolist()[:5]
+                if held_codes:
+                    code_placeholders = ','.join(['?' for _ in held_codes])
+                    tech_df = pd.read_sql_query(
+                        f"SELECT code, ma_signal, macd_signal, rsi_status, kdj_signal, bollinger_position, trend FROM etf_technical WHERE code IN ({code_placeholders}) ORDER BY date DESC",
+                        conn2, params=held_codes
+                    )
+                else:
+                    tech_df = pd.DataFrame()
+            finally:
+                conn2.close()
+
+            tech_score = 0
+            tech_signals = []
+            if not tech_df.empty:
+                latest_tech = tech_df.drop_duplicates('code', keep='first')
+                for _, tr in latest_tech.iterrows():
+                    etf_name = ETF_CATEGORIES.get(str(tr['code']), {}).get('name', tr['code'])
+                    etf_score = 0
+                    if tr.get('ma_signal') == '多头排列':
+                        etf_score += 3
+                        tech_signals.append(f'{etf_name}: 均线多头排列')
+                    elif tr.get('ma_signal') == '空头排列':
+                        etf_score -= 1
+                    if tr.get('macd_signal') == '金叉':
+                        etf_score += 2
+                        tech_signals.append(f'{etf_name}: MACD金叉')
+                    elif tr.get('macd_signal') == '死叉':
+                        etf_score -= 1
+                    if tr.get('rsi_status') in ('超卖', '偏低'):
+                        etf_score += 1
+                    elif tr.get('rsi_status') in ('超买', '偏高'):
+                        etf_score -= 1
+                    if tr.get('trend') == '上涨':
+                        etf_score += 2
+                    elif tr.get('trend') == '下跌':
+                        etf_score -= 1
+                    tech_score += etf_score
+                tech_score = max(0, min(25, 10 + tech_score))
+
+            # 持仓健康度评分 (15分)
+            score_health = 15
+            total_mv = positions['market_value'].sum()
+            max_weight = positions['market_value'].max() / total_mv if total_mv > 0 else 0
+            if max_weight > 30:
+                score_health -= 5
+            elif max_weight > 20:
+                score_health -= 2
+            loss_ratio = len(positions[positions['pnl'] < 0]) / len(positions) if len(positions) > 0 else 0
+            if loss_ratio > 0.6:
+                score_health -= 5
+            elif loss_ratio > 0.4:
+                score_health -= 2
+            score_health = max(0, score_health)
+
+            total_score = score_return + score_risk + tech_score + score_health
+            score_color = "#22c55e" if total_score >= 70 else "#f59e0b" if total_score >= 45 else "#ef4444"
+            score_label = "优秀" if total_score >= 70 else "良好" if total_score >= 55 else "一般" if total_score >= 40 else "较差"
+
+            # 渲染评分
+            col_score1, col_score2 = st.columns([1, 2])
+            with col_score1:
+                fig_score_gauge = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=total_score,
+                    number={'suffix': '分', 'font': {'size': 42, 'color': score_color}},
+                    gauge={
+                        'axis': {'range': [0, 100], 'tickcolor': '#8b949e', 'tickfont': {'size': 10}},
+                        'bar': {'color': score_color},
+                        'bgcolor': '#161b22',
+                        'steps': [
+                            {'range': [0, 40], 'color': 'rgba(239,68,68,0.12)'},
+                            {'range': [40, 70], 'color': 'rgba(245,158,11,0.12)'},
+                            {'range': [70, 100], 'color': 'rgba(34,197,94,0.12)'},
+                        ],
+                        'threshold': {
+                            'line': {'color': score_color, 'width': 3},
+                            'thickness': 0.8,
+                            'value': total_score
+                        }
+                    }
+                ))
+                fig_score_gauge.update_layout(
+                    height=220,
+                    plot_bgcolor='#0d1117',
+                    paper_bgcolor='#0d1117',
+                    font=dict(color='#c9d1d9'),
+                    margin=dict(l=20, r=20, t=5, b=5)
+                )
+                st.plotly_chart(fig_score_gauge, width='stretch')
+                st.markdown(f'<div style="text-align:center;color:{score_color};font-size:15px;font-weight:bold;">{score_label}</div>', unsafe_allow_html=True)
+
+            with col_score2:
+                score_items = [
+                    ("收益能力", score_return, 30, "累计收益表现"),
+                    ("风险控制", score_risk, 30, "波动率与回撤水平"),
+                    ("技术面", tech_score, 25, "均线/MACD/RSI信号"),
+                    ("持仓健康", score_health, 15, "分散度与盈亏比"),
+                ]
+                for name, score, max_s, desc in score_items:
+                    pct = score / max_s * 100 if max_s > 0 else 0
+                    bar_color = "#22c55e" if pct >= 70 else "#f59e0b" if pct >= 40 else "#ef4444"
+                    st.markdown(
+                        f'<div style="margin-bottom:8px;">'
+                        f'<div style="display:flex;justify-content:space-between;font-size:13px;">'
+                        f'<span style="color:#c9d1d9;">{name} <span style="color:#484f58;font-size:11px;">{desc}</span></span>'
+                        f'<span style="color:{bar_color};font-weight:bold;">{score}/{max_s}</span>'
+                        f'</div>'
+                        f'<div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden;margin-top:3px;">'
+                        f'<div style="height:100%;width:{pct}%;background:{bar_color};border-radius:3px;transition:width 0.3s;"></div>'
+                        f'</div></div>',
+                        unsafe_allow_html=True
+                    )
+
+                if tech_signals:
+                    with st.expander("技术面信号详情", expanded=False):
+                        for sig in tech_signals[:10]:
+                            st.markdown(f'<div style="font-size:12px;color:#8b949e;padding:3px 0;">{sig}</div>', unsafe_allow_html=True)
+        else:
+            st.info("数据不足，暂无法生成综合评估")
+
+
+    # ========== Tab8: 操作建议 ==========
+    with tab8:
+        st.caption("💡 基于技术信号和持仓状态，生成具体操作建议")
+
+        if not positions.empty:
+            conn = get_db_connection()
+            try:
+                held_codes = positions['code'].tolist()
+                if held_codes:
+                    code_placeholders = ','.join(['?' for _ in held_codes])
+                    tech_df = pd.read_sql_query(
+                        f"SELECT * FROM etf_technical WHERE code IN ({code_placeholders}) ORDER BY date DESC",
+                        conn, params=held_codes
+                    )
+                else:
+                    tech_df = pd.DataFrame()
+            finally:
+                conn.close()
+
+            suggestions = []
+            action_colors = {"买入": "#22c55e", "持有": "#f59e0b", "观望": "#8b949e", "卖出": "#ef4444", "加仓": "#22c55e", "减仓": "#ef4444"}
+
+            if not tech_df.empty:
+                latest_tech = tech_df.drop_duplicates('code', keep='first')
+
+                for _, pos in positions.iterrows():
+                    code = str(pos['code'])
+                    name = pos['name']
+                    pnl_rate = pos.get('pnl_rate', 0)
+                    mv = pos['market_value']
+                    cat_info = ETF_CATEGORIES.get(code, {})
+                    sector = cat_info.get('sector', '未知')
+
+                    tech_row = latest_tech[latest_tech['code'] == code]
+                    if tech_row.empty:
+                        continue
+                    tr = tech_row.iloc[0]
+
+                    # 技术面综合判断
+                    buy_signals = 0
+                    sell_signals = 0
+                    reasons = []
+
+                    # 均线信号
+                    if tr.get('ma_signal') == '多头排列':
+                        buy_signals += 2
+                        reasons.append("均线多头排列")
+                    elif tr.get('ma_signal') == '空头排列':
+                        sell_signals += 2
+                        reasons.append("均线空头排列")
+                    elif tr.get('ma_signal') == '金叉':
+                        buy_signals += 1
+                        reasons.append("均线金叉")
+                    elif tr.get('ma_signal') == '死叉':
+                        sell_signals += 1
+                        reasons.append("均线死叉")
+
+                    # MACD信号
+                    if tr.get('macd_signal') == '金叉':
+                        buy_signals += 1.5
+                        reasons.append("MACD金叉")
+                    elif tr.get('macd_signal') == '死叉':
+                        sell_signals += 1.5
+                        reasons.append("MACD死叉")
+
+                    # RSI信号
+                    rsi_val = tr.get('rsi_value', 50)
+                    rsi_status = tr.get('rsi_status', '中性')
+                    if rsi_status in ('超卖', '偏低'):
+                        buy_signals += 1
+                        reasons.append(f"RSI偏低({rsi_val:.0f})")
+                    elif rsi_status in ('超买', '偏高'):
+                        sell_signals += 1
+                        reasons.append(f"RSI偏高({rsi_val:.0f})")
+
+                    # KDJ信号
+                    kdj = tr.get('kdj_signal', '')
+                    if '金叉' in str(kdj):
+                        buy_signals += 1
+                        reasons.append("KDJ金叉")
+                    elif '死叉' in str(kdj):
+                        sell_signals += 1
+                        reasons.append("KDJ死叉")
+
+                    # 布林带
+                    boll_pos = tr.get('bollinger_position', '')
+                    if '下轨' in str(boll_pos):
+                        buy_signals += 0.5
+                        reasons.append("触及布林下轨")
+                    elif '上轨' in str(boll_pos):
+                        sell_signals += 0.5
+                        reasons.append("触及布林上轨")
+
+                    # 趋势
+                    trend = tr.get('trend', '')
+                    if trend == '上涨':
+                        buy_signals += 1
+                    elif trend == '下跌':
+                        sell_signals += 1
+
+                    # 盈亏状态调整
+                    if pnl_rate < -10:
+                        sell_signals += 0.5
+                        reasons.append(f"亏损较深({pnl_rate:.1f}%)")
+                    elif pnl_rate > 20:
+                        sell_signals += 0.5
+                        reasons.append(f"盈利较多({pnl_rate:+.1f}%)，注意止盈")
+
+                    # 生成建议
+                    net_signal = buy_signals - sell_signals
+                    if net_signal >= 3:
+                        action = "买入"
+                        urgency = "强烈建议"
+                    elif net_signal >= 1.5:
+                        action = "加仓"
+                        urgency = "建议"
+                    elif net_signal >= -0.5:
+                        action = "持有"
+                        urgency = "维持"
+                    elif net_signal >= -2:
+                        action = "观望"
+                        urgency = "建议"
+                    else:
+                        action = "卖出"
+                        urgency = "建议"
+
+                    suggestions.append({
+                        'name': name,
+                        'code': code,
+                        'sector': sector,
+                        'action': action,
+                        'urgency': urgency,
+                        'reasons': reasons,
+                        'buy_score': buy_signals,
+                        'sell_score': sell_signals,
+                        'net_signal': net_signal,
+                        'pnl_rate': pnl_rate,
+                        'market_value': mv,
+                        'trend': trend,
+                        'rsi': rsi_val,
+                    })
+
+            # 按净信号排序
+            suggestions.sort(key=lambda x: x['net_signal'], reverse=True)
+
+            # ===== 操作建议汇总卡片 =====
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">建议汇总<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于技术指标综合评分，为每只持仓ETF生成操作建议。</span></div>', unsafe_allow_html=True)
+
+            action_counts = {}
+            for s in suggestions:
+                action_counts[s['action']] = action_counts.get(s['action'], 0) + 1
+
+            summary_html_parts = []
+            for action in ["买入", "加仓", "持有", "观望", "卖出"]:
+                cnt = action_counts.get(action, 0)
+                if cnt > 0:
+                    color = action_colors[action]
+                    summary_html_parts.append(
+                        f'<span style="display:inline-flex;align-items:center;gap:4px;background:{color}15;color:{color};padding:6px 14px;border-radius:6px;margin:0 4px 4px 0;font-size:13px;font-weight:bold;">'
+                        f'{action} <span style="font-size:16px;">{cnt}</span>只</span>'
+                    )
+            st.markdown(f'<div style="display:flex;flex-wrap:wrap;gap:4px;padding:8px 0;">{"".join(summary_html_parts)}</div>', unsafe_allow_html=True)
+
+            # ===== 建议详情 =====
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">建议详情</div>', unsafe_allow_html=True)
+
+            for s in suggestions:
+                action_color = action_colors.get(s['action'], '#8b949e')
+                sector_color = SECTOR_COLORS.get(s['sector'], '#8b949e')
+                trend_icon = {"上涨": "🟢", "下跌": "🔴", "震荡": "🟡"}.get(s['trend'], "⚪")
+                reasons_str = " | ".join(s['reasons'][:5]) if s['reasons'] else "暂无明显信号"
+
+                st.markdown(
+                    f'<div style="background:#161b22;border-radius:6px;padding:12px 14px;margin-bottom:6px;border-left:3px solid {action_color};">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<div>'
+                    f'<span style="font-size:14px;font-weight:bold;color:#e6edf3;">{s["name"]}</span>'
+                    f'<span style="font-size:11px;color:#484f58;margin-left:8px;">{s["code"]}</span>'
+                    f'<span style="font-size:11px;color:{sector_color};background:{sector_color}15;padding:1px 6px;border-radius:3px;margin-left:6px;">{s["sector"]}</span>'
+                    f'</div>'
+                    f'<div style="display:flex;align-items:center;gap:6px;">'
+                    f'{trend_icon}'
+                    f'<span style="color:{action_color};font-size:13px;font-weight:bold;background:{action_color}15;padding:3px 10px;border-radius:4px;">{s["urgency"]}{s["action"]}</span>'
+                    f'</div></div>'
+                    f'<div style="font-size:12px;color:#6e7681;margin-top:6px;">信号: {reasons_str}</div>'
+                    f'<div style="display:flex;gap:16px;margin-top:4px;font-size:11px;color:#484f58;">'
+                    f'<span>多空信号: <b style="color:#22c55e;">{s["buy_score"]:.1f}</b> / <b style="color:#ef4444;">{s["sell_score"]:.1f}</b></span>'
+                    f'<span>净信号: <b style="color:{action_color};">{s["net_signal"]:+.1f}</b></span>'
+                    f'<span>收益率: <b style="color:{"#22c55e" if s["pnl_rate"] >= 0 else "#ef4444"};">{s["pnl_rate"]:+.2f}%</b></span>'
+                    f'<span>RSI: {s["rsi"]:.0f}</span>'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
+
+            if not suggestions:
+                st.info("暂无足够技术数据生成操作建议")
+        else:
+            st.info("暂无持仓数据")
 
     # ========== Tab5: 高级分析（Monte Carlo / 再平衡建议） ==========
     with tab5:
@@ -3430,7 +4014,7 @@ def main():
     st.markdown("---")
     st.markdown(
         f'<div style="text-align:center;color:#484f58;font-size:11px;">'
-        f'投资组合跟踪分析系统 v1.5 | 数据截至 {selected_date} | '
+        f'投资组合跟踪分析系统 v1.6 | 数据截至 {selected_date} | '
         f'共 {len(positions)} 只持仓</div>',
         unsafe_allow_html=True
     )
