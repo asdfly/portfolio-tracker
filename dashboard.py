@@ -1479,6 +1479,129 @@ def format_value(val, prefix="", suffix="", decimals=2):
 
 
 # ==================== 主页面 ====================
+
+    def _generate_oneclick_report(positions, summary, technical, selected_date, selected_benchmark):
+        """生成综合分析报告 HTML"""
+        import math
+
+        if positions.empty or summary.empty:
+            return None
+
+        total_value = positions['market_value'].sum()
+        total_cost = summary.iloc[-1].get('total_cost', 0)
+        total_pnl = positions['pnl'].sum()
+        total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+
+        port_daily = summary['daily_return'].dropna()
+        ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
+        ann_vol = port_daily.std() * math.sqrt(252) * 100 if len(port_daily) > 1 else 0
+        sharpe = (port_daily.mean() / port_daily.std() * math.sqrt(252)) if port_daily.std() > 0 else 0
+        cummax = summary['total_value'].cummax()
+        max_dd = ((summary['total_value'] - cummax) / cummax * 100).min()
+
+        pc = len(positions[positions['pnl'] > 0])
+        lc = len(positions[positions['pnl'] < 0])
+        wr = (pc / (pc + lc) * 100) if (pc + lc) > 0 else 0
+
+        pnl_color = "#22c55e" if total_pnl >= 0 else "#ef4444"
+        ret_color = "#22c55e" if total_return >= 0 else "#ef4444"
+
+        # 持仓明细表
+        pos_rows = ""
+        for _, pos in positions.iterrows():
+            p_color = "#22c55e" if pos['pnl'] >= 0 else "#ef4444"
+            pos_rows += (
+                f'<tr style="border-bottom:1px solid #eee;">'
+                f'<td style="padding:6px 8px;">{pos["name"]}</td>'
+                f'<td style="padding:6px 8px;">{pos["code"]}</td>'
+                f'<td style="padding:6px 8px;text-align:right;">{pos["quantity"]:,.0f}</td>'
+                f'<td style="padding:6px 8px;text-align:right;">{pos["cost_price"]:.3f}</td>'
+                f'<td style="padding:6px 8px;text-align:right;">{pos["current_price"]:.3f}</td>'
+                f'<td style="padding:6px 8px;text-align:right;">¥{pos["market_value"]:,.0f}</td>'
+                f'<td style="padding:6px 8px;text-align:right;color:{p_color};">¥{pos["pnl"]:,.0f}</td>'
+                f'<td style="padding:6px 8px;text-align:right;color:{p_color};">{pos["pnl_rate"]:+.2f}%</td>'
+                f'</tr>'
+            )
+
+        # 技术信号摘要
+        tech_rows = ""
+        if technical is not None and not technical.empty:
+            tech_latest = technical.drop_duplicates('code', keep='first')
+            for _, tr in tech_latest.iterrows():
+                name = tr.get('name', tr['code'])
+                trend = tr.get('trend', '--')
+                ma = tr.get('ma_signal', '--')
+                macd = tr.get('macd_signal', '--')
+                rsi_st = tr.get('rsi_status', '--')
+                tech_rows += (
+                    f'<tr style="border-bottom:1px solid #eee;">'
+                    f'<td style="padding:5px 8px;">{name}</td>'
+                    f'<td style="padding:5px 8px;">{trend}</td>'
+                    f'<td style="padding:5px 8px;">{ma}</td>'
+                    f'<td style="padding:5px 8px;">{macd}</td>'
+                    f'<td style="padding:5px 8px;">{rsi_st}</td>'
+                    f'<td style="padding:5px 8px;">{tr.get("rsi_value", "--"):.1f}</td>'
+                    f'</tr>'
+                )
+
+        bench_name = INDEX_CODES.get(selected_benchmark, selected_benchmark)
+
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>投资组合分析报告 {selected_date}</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 960px; margin: 0 auto; padding: 20px; color: #333; }}
+h1 {{ font-size: 22px; border-bottom: 2px solid #4a90d9; padding-bottom: 8px; }}
+h2 {{ font-size: 16px; color: #4a90d9; margin-top: 24px; }}
+.meta {{ font-size: 12px; color: #888; margin-bottom: 20px; }}
+.metrics {{ display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0; }}
+.metric-card {{ background: #f8f9fa; border-radius: 8px; padding: 12px 16px; min-width: 140px; }}
+.metric-label {{ font-size: 11px; color: #888; }}
+.metric-value {{ font-size: 20px; font-weight: bold; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }}
+th {{ background: #f0f2f5; padding: 6px 8px; text-align: left; font-size: 11px; color: #666; }}
+td {{ padding: 5px 8px; }}
+.section {{ margin: 16px 0; padding: 12px; background: #fafbfc; border-radius: 6px; border-left: 3px solid #4a90d9; }}
+.footer {{ font-size: 11px; color: #aaa; text-align: center; margin-top: 30px; border-top: 1px solid #eee; padding-top: 12px; }}
+</style></head><body>
+<h1>📊 投资组合分析报告</h1>
+<div class="meta">生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | 数据截至: {selected_date} | 基准: {bench_name}</div>
+
+<h2>一、组合概览</h2>
+<div class="metrics">
+  <div class="metric-card"><div class="metric-label">总市值</div><div class="metric-value">¥{total_value:,.0f}</div></div>
+  <div class="metric-card"><div class="metric-label">总盈亏</div><div class="metric-value" style="color:{pnl_color};">¥{total_pnl:,.0f}</div></div>
+  <div class="metric-card"><div class="metric-label">总收益率</div><div class="metric-value" style="color:{ret_color};">{total_return:+.2f}%</div></div>
+  <div class="metric-card"><div class="metric-label">年化收益率</div><div class="metric-value">{ann_ret:+.2f}%</div></div>
+  <div class="metric-card"><div class="metric-label">夏普比率</div><div class="metric-value">{sharpe:.3f}</div></div>
+  <div class="metric-card"><div class="metric-label">最大回撤</div><div class="metric-value" style="color:#ef4444;">{max_dd:.2f}%</div></div>
+  <div class="metric-card"><div class="metric-label">年化波动率</div><div class="metric-value">{ann_vol:.2f}%</div></div>
+  <div class="metric-card"><div class="metric-label">胜率</div><div class="metric-value">{wr:.1f}% ({pc}盈/{lc}亏)</div></div>
+</div>
+
+<h2>二、持仓明细</h2>
+<table><thead><tr>
+<th>名称</th><th>代码</th><th style="text-align:right;">持仓量</th>
+<th style="text-align:right;">成本价</th><th style="text-align:right;">现价</th>
+<th style="text-align:right;">市值</th><th style="text-align:right;">盈亏</th>
+<th style="text-align:right;">收益率</th>
+</tr></thead><tbody>{pos_rows}</tbody></table>
+
+<h2>三、技术信号</h2>
+{"<table><thead><tr><th>ETF</th><th>趋势</th><th>均线</th><th>MACD</th><th>RSI状态</th><th>RSI值</th></tr></thead><tbody>" + tech_rows + "</tbody></table>" if tech_rows else "<p style='color:#888;'>暂无技术信号数据</p>"}
+
+<h2>四、风险提示</h2>
+<div class="section">
+<ul style="font-size:13px;line-height:1.8;">
+<li>最大回撤 <b>{max_dd:.2f}%</b>，{'超过15%警戒线，需注意控制下行风险' if abs(max_dd) > 15 else '处于正常波动范围'}</li>
+<li>年化波动率 <b>{ann_vol:.2f}%</b>，{'波动较大，注意风险管理' if ann_vol > 25 else '处于合理水平'}</li>
+<li>胜率 <b>{wr:.1f}%</b>，{'持仓中大部分标的处于盈利状态' if wr > 60 else '盈利标的占比较低，需关注'}</li>
+</ul></div>
+
+<div class="footer">投资组合跟踪分析系统 v1.7 | 本报告仅供参考，不构成投资建议</div>
+</body></html>"""
+        return html
+
+
 def main():
     # 自定义CSS
     st.markdown(
@@ -1633,6 +1756,10 @@ def main():
         st.markdown("---")
         st.markdown(f"*数据更新: {available_dates[0]}*")
 
+        st.markdown("---")
+        st.markdown("### 📊 快速指标")
+        st.markdown('<span style="font-size:11px;color:#484f58;">↓ 详见下方概览指标条</span>', unsafe_allow_html=True)
+
     # 加载数据（带缓存，相同参数不重复查询）
     positions = load_positions(selected_date)
     summary = load_summary(show_days, selected_date)
@@ -1716,6 +1843,57 @@ def main():
 
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析", "📡 技术信号", "📰 资讯与评估", "💡 操作建议"])
+
+
+    # ========== 快速指标条 ==========
+    if not positions.empty:
+        total_mv = positions['market_value'].sum()
+        pc = profit_count if profit_count else 0
+        lc = loss_count if loss_count else 0
+        total_held = pc + lc
+        wr = (pc / total_held * 100) if total_held > 0 else 0
+        wr_color = "#22c55e" if wr >= 60 else "#f59e0b" if wr >= 40 else "#ef4444"
+
+        # 最大持仓
+        max_pos = positions.loc[positions['market_value'].idxmax()]
+        max_wt = (max_pos['market_value'] / total_mv * 100) if total_mv > 0 else 0
+        wt_color = "#ef4444" if max_wt > 30 else "#f59e0b" if max_wt > 20 else "#22c55e"
+
+        # 技术信号统计
+        buy_sig = sell_sig = 0
+        if technical is not None and not technical.empty:
+            for _, tr in technical.iterrows():
+                if tr.get('ma_signal') in ('多头排列', '金叉') or tr.get('macd_signal') == '金叉':
+                    buy_sig += 1
+                if tr.get('ma_signal') in ('空头排列', '死叉') or tr.get('macd_signal') == '死叉':
+                    sell_sig += 1
+        sig_color = "#22c55e" if buy_sig > sell_sig else "#ef4444" if sell_sig > buy_sig else "#f59e0b"
+
+        # 行业分布
+        sector_dist = {}
+        for _, pos in positions.iterrows():
+            code = str(pos['code'])
+            cat_info = ETF_CATEGORIES.get(code)
+            if cat_info:
+                sec = cat_info['sector']
+                sector_dist[sec] = sector_dist.get(sec, 0) + pos['market_value']
+        sector_tags = ""
+        if sector_dist and total_mv > 0:
+            top_sec = sorted(sector_dist.items(), key=lambda x: x[1], reverse=True)[:4]
+            sector_tags = " ".join(
+                f'<span style="font-size:11px;color:{SECTOR_COLORS.get(s, "#8b949e")};background:{SECTOR_COLORS.get(s, "#8b949e")}15;padding:2px 6px;border-radius:3px;">{s} {(v/total_mv*100):.0f}%</span>'
+                for s, v in top_sec
+            )
+
+        st.markdown(
+            f'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 4px;margin-bottom:4px;font-size:13px;">'
+            f'<span style="color:#8b949e;">胜率: <b style="color:{wr_color};">{wr:.1f}%</b> <span style="color:#484f58;font-size:11px;">({pc}盈/{lc}亏)</span></span>'
+            f'<span style="color:#8b949e;">最大持仓: <b style="color:{wt_color};">{max_pos["name"]}</b> <span style="color:#484f58;font-size:11px;">{max_wt:.1f}%</span></span>'
+            f'<span style="color:#8b949e;">技术信号: <b style="color:{sig_color};">{buy_sig}多 / {sell_sig}空</b></span>'
+            f'</div>'
+            f'<div style="padding:2px 4px 8px;">{sector_tags}</div>',
+            unsafe_allow_html=True
+        )
 
     with tab1:
         st.caption("📈 展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
@@ -2051,23 +2229,79 @@ def main():
                 display_df['市值'] = display_df['市值'].apply(lambda x: f"¥{x:,.0f}")
                 display_df['盈亏'] = display_df['盈亏'].apply(lambda x: f"¥{x:,.0f}")
                 display_df['收益率%'] = display_df['收益率%'].apply(lambda x: f"{x:+.2f}%")
+                # 技术信号列
+                signal_list = []
+                if technical is not None and not technical.empty:
+                    tech_by_code = technical.drop_duplicates('code', keep='first').set_index('code')
+                    for _, pos_row in positions.iterrows():
+                        code = str(pos_row['code'])
+                        if code in tech_by_code.index:
+                            tr = tech_by_code.loc[code]
+                            parts = []
+                            trend = tr.get('trend', '')
+                            if trend == '上涨':
+                                parts.append('<span style="color:#22c55e;">↑</span>')
+                            elif trend == '下跌':
+                                parts.append('<span style="color:#ef4444;">↓</span>')
+                            else:
+                                parts.append('<span style="color:#f59e0b;">→</span>')
+                            ma = tr.get('ma_signal', '')
+                            if ma == '多头排列':
+                                parts.append('<span style="color:#22c55e;">多</span>')
+                            elif ma == '空头排列':
+                                parts.append('<span style="color:#ef4444;">空</span>')
+                            macd = tr.get('macd_signal', '')
+                            if macd == '金叉':
+                                parts.append('<span style="color:#22c55e;">金</span>')
+                            elif macd == '死叉':
+                                parts.append('<span style="color:#ef4444;">死</span>')
+                            rsi_st = tr.get('rsi_status', '')
+                            if rsi_st in ('超买', '偏高'):
+                                parts.append('<span style="color:#ef4444;">R高</span>')
+                            elif rsi_st in ('超卖', '偏低'):
+                                parts.append('<span style="color:#22c55e;">R低</span>')
+                            signal_list.append(" ".join(parts))
+                        else:
+                            signal_list.append('<span style="color:#484f58;">--</span>')
+                else:
+                    signal_list = ['<span style="color:#484f58;">--</span>'] * len(positions)
 
-                # 交互式表格 + ETF 选择器（点击行查看详情）
-                selected_etf = st.selectbox(
-                    "选择ETF查看详情",
-                    options=[f"{row['name']}（{row['code']}）" for _, row in positions.iterrows()],
-                    key="etf_detail_select",
-                    label_visibility="collapsed",
+                display_df['技术信号'] = signal_list
+
+                # HTML表格渲染（st.dataframe不支持HTML标签）
+                html_rows = []
+                for idx, row_data in display_df.iterrows():
+                    zebra = 'background:#161b22;' if idx % 2 == 0 else ''
+                    html_rows.append(
+                        f'<tr style="{zebra}">'
+                        f'<td style="padding:5px 8px;color:#c9d1d9;border-bottom:1px solid #21262d;white-space:nowrap;">{row_data["名称"]}</td>'
+                        f'<td style="padding:5px 8px;color:#8b949e;border-bottom:1px solid #21262d;">{row_data["代码"]}</td>'
+                        f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["持仓量"]}</td>'
+                        f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["成本价"]}</td>'
+                        f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["现价"]}</td>'
+                        f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["市值"]}</td>'
+                        f'<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #21262d;">{row_data["盈亏"]}</td>'
+                        f'<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #21262d;">{row_data["收益率%"]}</td>'
+                        f'<td style="padding:5px 8px;text-align:center;border-bottom:1px solid #21262d;white-space:nowrap;">{row_data["技术信号"]}</td>'
+                        f'</tr>'
+                    )
+
+                st.markdown(
+                    f'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+                    f'<thead><tr style="background:#0d1117;">'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:left;font-size:11px;">名称</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:left;font-size:11px;">代码</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">持仓量</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">成本价</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">现价</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">市值</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">盈亏</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">收益率%</th>'
+                    f'<th style="padding:6px 8px;color:#8b949e;text-align:center;font-size:11px;">技术信号</th>'
+                    f'</tr></thead><tbody>{"".join(html_rows)}</tbody></table></div>',
+                    unsafe_allow_html=True
                 )
-                st.dataframe(
-                    display_df,
-                    height=420,
-                    
-                    hide_index=True,
-                    column_config={
-                        "收益率%": st.column_config.TextColumn(disabled=True),
-                    }
-                )
+
 
                 if selected_etf and not positions.empty:
                     match = positions[positions.apply(lambda r: f"{r['name']}（{r['code']}）" == selected_etf, axis=1)]
@@ -4010,11 +4244,31 @@ def main():
                 else:
                     st.error("PDF 导出失败，请确认 Dashboard 正在运行")
 
+        # 一键综合分析报告
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_exp5 = st.columns([1, 1, 1])[1]
+        with col_exp5:
+            if st.button("📋 一键导出综合分析报告 (HTML)", key="report_btn"):
+                with st.spinner("正在生成报告..."):
+                    report_html = _generate_oneclick_report(positions, summary, technical, selected_date, selected_benchmark)
+                if report_html:
+                    st.success("报告已生成！")
+                    st.download_button(
+                        label="📥 下载综合报告",
+                        data=report_html.encode("utf-8"),
+                        file_name=f"投资组合分析报告_{selected_date}.html",
+                        mime="text/html",
+                        key="download_report"
+                    )
+                else:
+                    st.error("报告生成失败，数据不足")
+
+
         # ========== 页脚 ==========
     st.markdown("---")
     st.markdown(
         f'<div style="text-align:center;color:#484f58;font-size:11px;">'
-        f'投资组合跟踪分析系统 v1.6 | 数据截至 {selected_date} | '
+        f'投资组合跟踪分析系统 v1.7 | 数据截至 {selected_date} | '
         f'共 {len(positions)} 只持仓</div>',
         unsafe_allow_html=True
     )
