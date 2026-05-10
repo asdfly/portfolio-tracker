@@ -1597,7 +1597,7 @@ td {{ padding: 5px 8px; }}
 <li>胜率 <b>{wr:.1f}%</b>，{'持仓中大部分标的处于盈利状态' if wr > 60 else '盈利标的占比较低，需关注'}</li>
 </ul></div>
 
-<div class="footer">投资组合跟踪分析系统 v1.7 | 本报告仅供参考，不构成投资建议</div>
+<div class="footer">投资组合跟踪分析系统 v1.8 | 本报告仅供参考，不构成投资建议</div>
 </body></html>"""
         return html
 
@@ -2184,9 +2184,382 @@ def main():
                 st.markdown(html_table, unsafe_allow_html=True)
 
 
+                # ========== 多基准对比 & 区间分析 ==========
+                st.markdown("---")
+                compare_tab1, compare_tab2 = st.tabs(["📊 多基准对比", "📅 区间收益分析"])
+        
+                with compare_tab1:
+                    st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+                                '多基准叠加对比'
+                                '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+                                '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+                                '将投资组合与多个基准指数归一化到同一起点，直观比较不同时间段的相对走势强弱。'
+                                '</span></div>', unsafe_allow_html=True)
+        
+                    # 多基准选择器
+                    bench_options = {k: v for k, v in INDEX_CODES.items()}
+                    default_benches = ["sh000300", "sz399006", "sh000852"]
+                    selected_benches = st.multiselect(
+                        "选择对比基准（最多5个）", options=list(bench_options.keys()),
+                        default=default_benches, format_func=lambda x: bench_options[x],
+                        max_selections=5, key="multi_bench_select"
+                    )
+        
+                    if not summary.empty and len(summary) > 1 and selected_benches:
+                        base_value = summary.iloc[0]['total_value']
+                        summary_plot = summary.copy()
+                        summary_plot['nav'] = summary_plot['total_value'] / base_value * 100
+                        chart_data = downsample(summary_plot, max_points=500)
+        
+                        fig_multi = go.Figure()
+                        # 组合线（粗线）
+                        fig_multi.add_trace(go.Scatter(
+                            x=chart_data['date'], y=chart_data['nav'],
+                            mode='lines', name='投资组合',
+                            line=dict(color='#58a6ff', width=2.5)
+                        ))
+                        _add_min_max_annotations(fig_multi, chart_data['date'], chart_data['nav'], y_label="净值")
+        
+                        # 基准线（虚线，不同颜色）
+                        bench_colors = ['#f59e0b', '#22c55e', '#ef4444', '#a855f7', '#06b6d4']
+                        bench_stats = []
+        
+                        for idx, bcode in enumerate(selected_benches):
+                            bname = bench_options.get(bcode, bcode)
+                            bdf = load_benchmark_comparison(bcode, show_days + 10, selected_date)
+                            if not bdf.empty:
+                                b_base = bdf.iloc[0]['close']
+                                b_plot = bdf.copy()
+                                b_plot['nav'] = b_plot['close'] / b_base * 100
+                                b_chart = downsample(b_plot, max_points=500)
+        
+                                fig_multi.add_trace(go.Scatter(
+                                    x=b_chart['date'], y=b_chart['nav'],
+                                    mode='lines', name=bname,
+                                    line=dict(color=bench_colors[idx % len(bench_colors)],
+                                              width=1.2, dash='dash')
+                                ))
+        
+                                # 计算基准统计
+                                b_start = bdf.iloc[0]['close']
+                                b_end = bdf.iloc[-1]['close']
+                                b_ret = (b_end / b_start - 1) * 100 if b_start > 0 else 0
+                                bench_stats.append({'基准': bname, '累计收益': f'{b_ret:+.2f}%'})
+        
+                        fig_multi.update_layout(
+                            height=350,
+                            plot_bgcolor='#0d1117', paper_bgcolor='#0d1117',
+                            font=dict(color='#c9d1d9', size=11),
+                            margin=dict(l=50, r=20, t=10, b=40),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                                        font=dict(size=10, color='#8b949e')),
+                            xaxis=dict(showgrid=False),
+                            yaxis=dict(title='净值 (基准100)', showgrid=True, gridcolor='#21262d'),
+                            hovermode='x unified'
+                        )
+                        st.plotly_chart(fig_multi, width='stretch')
+        
+                        # 多基准收益排行卡片
+                        if bench_stats:
+                            port_end = summary.iloc[-1]['total_value']
+                            port_ret = (port_end / base_value - 1) * 100 if base_value > 0 else 0
+                            all_items = [{'基准': '投资组合', '累计收益': f'{port_ret:+.2f}%'}] + bench_stats
+                            all_items.sort(key=lambda x: float(x['累计收益'].replace('%', '').replace('+', '')), reverse=True)
+                            n_cards = len(all_items)
+                            card_cols = st.columns(min(n_cards, 6))
+                            for i, item in enumerate(all_items):
+                                val = float(item['累计收益'].replace('%', '').replace('+', ''))
+                                c = '#22c55e' if val >= 0 else '#ef4444'
+                                rank_icon = '🥇' if i == 0 else '🥈' if i == 1 else '🥉' if i == 2 else f'{i+1}.'
+                                with card_cols[i % len(card_cols)]:
+                                    st.markdown(
+                                        f'<div style="padding:6px 10px;border-radius:6px;background:#161b22;'
+                                        f'border-left:3px solid {c};text-align:center;">'
+                                        f'<div style="font-size:10px;color:#8b949e;">{rank_icon} {item["基准"]}</div>'
+                                        f'<div style="font-size:14px;font-weight:bold;color:{c};">{item["累计收益"]}</div>'
+                                        f'</div>', unsafe_allow_html=True
+                                    )
+        
+                with compare_tab2:
+                    st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+                                '区间收益分析'
+                                '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+                                '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+                                '选择起止日期，查看该时间段内组合与基准的累计收益、年化收益、最大回撤、波动率等核心指标对比。'
+                                '</span></div>', unsafe_allow_html=True)
+        
+                    if not summary.empty and len(summary) > 1:
+                        all_dates_list = summary['date'].tolist()
+                        date_range = st.columns(2)
+                        with date_range[0]:
+                            start_dt = st.selectbox("起始日期", all_dates_list,
+                                                    index=min(len(all_dates_list) - 1, 60),
+                                                    key="range_start")
+                        with date_range[1]:
+                            end_dt = st.selectbox("结束日期", all_dates_list,
+                                                  index=0, key="range_end")
+        
+                        if start_dt < end_dt:
+                            mask = (summary['date'] >= start_dt) & (summary['date'] <= end_dt)
+                            range_data = summary[mask].copy()
+                            if len(range_data) > 1:
+                                import math as _math
+                                # 组合区间指标
+                                r_start_val = range_data.iloc[0]['total_value']
+                                r_end_val = range_data.iloc[-1]['total_value']
+                                r_cum_ret = (r_end_val / r_start_val - 1) * 100 if r_start_val > 0 else 0
+                                r_daily = range_data['daily_return'].dropna()
+                                n_days = len(r_daily)
+                                r_ann_ret = (r_daily.mean() * 252 * 100) if n_days > 0 else 0
+                                r_vol = (r_daily.std() * _math.sqrt(252) * 100) if n_days > 1 else 0
+                                r_sharpe = ((r_daily.mean() / r_daily.std() * _math.sqrt(252))
+                                            if r_daily.std() > 0 else 0)
+                                r_cummax = range_data['total_value'].cummax()
+                                r_dd = ((range_data['total_value'] - r_cummax) / r_cummax * 100).min()
+                                # 最大单日涨跌
+                                r_best_day = r_daily.max() if len(r_daily) > 0 else 0
+                                r_worst_day = r_daily.min() if len(r_daily) > 0 else 0
+                                # 正负天数
+                                r_up_days = (r_daily > 0).sum()
+                                r_dn_days = (r_daily < 0).sum()
+                                r_wr = (r_up_days / n_days * 100) if n_days > 0 else 0
+                                # 盈亏比
+                                avg_win = r_daily[r_daily > 0].mean() if r_up_days > 0 else 0
+                                avg_loss = abs(r_daily[r_daily < 0].mean()) if r_dn_days > 0 else 0.0001
+                                r_pnl_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+        
+                                # 基准区间指标
+                                bench_code = selected_benchmark
+                                bname = INDEX_CODES.get(bench_code, bench_code)
+                                bdf = load_benchmark_comparison(bench_code, show_days, selected_date)
+                                b_stats = {}
+                                if not bdf.empty:
+                                    b_mask = (bdf['date'] >= start_dt) & (bdf['date'] <= end_dt)
+                                    b_range = bdf[b_mask].copy()
+                                    if len(b_range) > 1:
+                                        b_start_c = b_range.iloc[0]['close']
+                                        b_end_c = b_range.iloc[-1]['close']
+                                        b_daily = b_range['close'].pct_change().dropna()
+                                        b_stats = {
+                                            'cum_ret': (b_end_c / b_start_c - 1) * 100 if b_start_c > 0 else 0,
+                                            'ann_ret': b_daily.mean() * 252 * 100 if len(b_daily) > 0 else 0,
+                                            'vol': b_daily.std() * _math.sqrt(252) * 100 if len(b_daily) > 1 else 0,
+                                            'sharpe': (b_daily.mean() / b_daily.std() * _math.sqrt(252)) if b_daily.std() > 0 else 0,
+                                            'dd': ((b_range['close'] - b_range['close'].cummax()) / b_range['close'].cummax() * 100).min(),
+                                        }
+        
+                                # 渲染区间分析卡片
+                                ic1, ic2, ic3, ic4 = st.columns(4)
+                                with ic1:
+                                    c = '#22c55e' if r_cum_ret >= 0 else '#ef4444'
+                                    st.markdown(
+                                        f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c};">'
+                                        f'<div style="font-size:10px;color:#8b949e;">累计收益</div>'
+                                        f'<div style="font-size:16px;font-weight:bold;color:{c};">{r_cum_ret:+.2f}%</div>'
+                                        f'</div>', unsafe_allow_html=True)
+                                with ic2:
+                                    c2 = '#22c55e' if r_sharpe >= 0.5 else '#f59e0b' if r_sharpe >= 0 else '#ef4444'
+                                    st.markdown(
+                                        f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c2};">'
+                                        f'<div style="font-size:10px;color:#8b949e;">区间夏普</div>'
+                                        f'<div style="font-size:16px;font-weight:bold;color:{c2};">{r_sharpe:.3f}</div>'
+                                        f'</div>', unsafe_allow_html=True)
+                                with ic3:
+                                    c3 = '#ef4444' if abs(r_dd) > 15 else '#f59e0b' if abs(r_dd) > 8 else '#22c55e'
+                                    st.markdown(
+                                        f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c3};">'
+                                        f'<div style="font-size:10px;color:#8b949e;">最大回撤</div>'
+                                        f'<div style="font-size:16px;font-weight:bold;color:{c3};">{r_dd:.2f}%</div>'
+                                        f'</div>', unsafe_allow_html=True)
+                                with ic4:
+                                    c4 = '#22c55e' if r_wr >= 60 else '#f59e0b' if r_wr >= 45 else '#ef4444'
+                                    st.markdown(
+                                        f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c4};">'
+                                        f'<div style="font-size:10px;color:#8b949e;">胜率 / 盈亏比</div>'
+                                        f'<div style="font-size:14px;font-weight:bold;color:{c4};">{r_wr:.0f}% / {r_pnl_ratio:.2f}</div>'
+                                        f'</div>', unsafe_allow_html=True)
+        
+                                # 详细对比表
+                                def _fmt(v, suffix='', dec=2, inv=False):
+                                    try:
+                                        fv = float(v)
+                                    except:
+                                        return '<span style="color:#8b949e;">--</span>'
+                                    c = '#22c55e' if (fv >= 0 and not inv) or (fv < 0 and inv) else '#ef4444'
+                                    if abs(fv) < 0.005:
+                                        c = '#c9d1d9'
+                                    return f'<span style="color:{c};font-weight:bold;">{fv:+.{dec}f}{suffix}</span>'
+        
+                                b_cum_s = _fmt(b_stats.get('cum_ret', 0), '%')
+                                b_ann_s = _fmt(b_stats.get('ann_ret', 0), '%')
+                                b_sh_s = f'<span style="color:#8b949e;">{b_stats.get("sharpe", 0):.3f}</span>'
+                                b_dd_s = f'<span style="color:#ef4444;">{b_stats.get("dd", 0):.2f}%</span>'
+                                b_vol_s = f'<span style="color:#8b949e;">{b_stats.get("vol", 0):.2f}%</span>'
+        
+                                alpha = r_cum_ret - b_stats.get('cum_ret', 0)
+                                alpha_c = '#22c55e' if alpha >= 0 else '#ef4444'
+        
+                                html_range = f'''
+                                <div style="overflow-x:auto;">
+                                <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                                <thead><tr style="background:#161b22;">
+                                <th style="padding:7px 10px;color:#8b949e;text-align:left;font-size:12px;">指标</th>
+                                <th style="padding:7px 10px;color:#58a6ff;text-align:center;font-size:12px;">投资组合</th>
+                                <th style="padding:7px 10px;color:#f59e0b;text-align:center;font-size:12px;">{bname}</th>
+                                <th style="padding:7px 10px;color:#c9d1d9;text-align:center;font-size:12px;">差异</th>
+                                </tr></thead><tbody>
+                                <tr style="border-bottom:1px solid #21262d;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">累计收益率</td>
+                                <td style="padding:6px 10px;text-align:center;">{_fmt(r_cum_ret, "%")}</td>
+                                <td style="padding:6px 10px;text-align:center;">{b_cum_s}</td>
+                                <td style="padding:6px 10px;text-align:center;font-weight:bold;color:{alpha_c};">{alpha:+.2f}%</td>
+                                </tr>
+                                <tr style="background:#161b22;border-bottom:1px solid #21262d;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">年化收益率</td>
+                                <td style="padding:6px 10px;text-align:center;">{_fmt(r_ann_ret, "%")}</td>
+                                <td style="padding:6px 10px;text-align:center;">{b_ann_s}</td>
+                                <td style="padding:6px 10px;text-align:center;">{_fmt(r_ann_ret - b_stats.get("ann_ret", 0), "%")}</td>
+                                </tr>
+                                <tr style="border-bottom:1px solid #21262d;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">夏普比率</td>
+                                <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_sharpe:.3f}</span></td>
+                                <td style="padding:6px 10px;text-align:center;">{b_sh_s}</td>
+                                <td style="padding:6px 10px;text-align:center;">{_fmt(r_sharpe - b_stats.get("sharpe", 0), dec=3)}</td>
+                                </tr>
+                                <tr style="background:#161b22;border-bottom:1px solid #21262d;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">最大回撤</td>
+                                <td style="padding:6px 10px;text-align:center;"><span style="color:#ef4444;">{r_dd:.2f}%</span></td>
+                                <td style="padding:6px 10px;text-align:center;">{b_dd_s}</td>
+                                <td style="padding:6px 10px;text-align:center;">{_fmt(r_dd - b_stats.get("dd", 0), "%", inv=True)}</td>
+                                </tr>
+                                <tr style="border-bottom:1px solid #21262d;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">年化波动率</td>
+                                <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_vol:.2f}%</span></td>
+                                <td style="padding:6px 10px;text-align:center;">{b_vol_s}</td>
+                                <td style="padding:6px 10px;text-align:center;">{_fmt(r_vol - b_stats.get("vol", 0), "%", inv=True)}</td>
+                                </tr>
+                                <tr style="background:#161b22;border-bottom:1px solid #21262d;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">胜率</td>
+                                <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_wr:.1f}%</span></td>
+                                <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
+                                </tr>
+                                <tr style="border-bottom:1px solid #21262d;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">盈亏比</td>
+                                <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_pnl_ratio:.2f}</span></td>
+                                <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
+                                </tr>
+                                <tr style="background:#161b22;">
+                                <td style="padding:6px 10px;color:#c9d1d9;">最佳/最差单日</td>
+                                <td style="padding:6px 10px;text-align:center;">{_fmt(r_best_day, "%")} / {_fmt(r_worst_day, "%")}</td>
+                                <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
+                                </tr>
+                                </tbody></table></div>'''
+                                st.markdown(html_range, unsafe_allow_html=True)
+                                st.caption(f'*区间: {start_dt} ~ {end_dt}，共 {n_days} 个交易日*')
+                            else:
+                                st.info("所选区间内交易日不足，请调整日期范围")
+                        else:
+                            st.warning("起始日期须早于结束日期")
+        
+        
+
+
 
     with tab2:
         st.caption("📊 展示持仓分布饼图、持仓明细表格、行业权重变化趋势及持仓相关性矩阵")
+
+        # ===== ETF 多维筛选器 =====
+        st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+                    'ETF 智能筛选'
+                    '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+                    '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+                    '按行业、收益表现、持仓规模等维度筛选和排序持仓ETF，快速定位关注品种。'
+                    '</span></div>', unsafe_allow_html=True)
+
+        if not positions.empty:
+            filter_col1, filter_col2, filter_col3 = st.columns(3)
+            with filter_col1:
+                held_sectors = set()
+                for _, pos in positions.iterrows():
+                    code = str(pos['code'])
+                    cat_info = ETF_CATEGORIES.get(code)
+                    if cat_info:
+                        held_sectors.add(cat_info['sector'])
+                filter_sector = st.selectbox(
+                    "行业筛选", ["全部"] + sorted(held_sectors),
+                    key="etf_filter_sector", label_visibility="collapsed",
+                    format_func=lambda x: f"\U0001f4cb 行业: {x}" if x != "全部" else "\U0001f4cb 全部行业"
+                )
+            with filter_col2:
+                filter_pnl = st.selectbox(
+                    "收益状态", ["全部", "盈利", "亏损", "高收益(>10%)", "深度亏损(<-10%)"],
+                    key="etf_filter_pnl", label_visibility="collapsed",
+                    format_func=lambda x: f"\U0001f4b0 {x}"
+                )
+            with filter_col3:
+                filter_sort = st.selectbox(
+                    "排序方式", ["市值\u2193", "市值\u2191", "收益率\u2193", "收益率\u2191", "盈亏\u2193", "盈亏\u2191", "持仓量\u2193", "持仓量\u2191"],
+                    key="etf_filter_sort", label_visibility="collapsed",
+                    format_func=lambda x: f"\U0001f522 {x}"
+                )
+
+            filtered = positions.copy()
+            if filter_sector != "全部":
+                filtered = filtered[filtered.apply(
+                    lambda r: ETF_CATEGORIES.get(str(r['code']), {}).get('sector') == filter_sector, axis=1)]
+            if filter_pnl == "盈利":
+                filtered = filtered[filtered['pnl'] > 0]
+            elif filter_pnl == "亏损":
+                filtered = filtered[filtered['pnl'] < 0]
+            elif filter_pnl == "高收益(>10%)":
+                filtered = filtered[filtered['pnl_rate'] > 10]
+            elif filter_pnl == "深度亏损(<-10%)":
+                filtered = filtered[filtered['pnl_rate'] < -10]
+
+            sort_map = {
+                "市值\u2193": ('market_value', False), "市值\u2191": ('market_value', True),
+                "收益率\u2193": ('pnl_rate', False), "收益率\u2191": ('pnl_rate', True),
+                "盈亏\u2193": ('pnl', False), "盈亏\u2191": ('pnl', True),
+                "持仓量\u2193": ('quantity', False), "持仓量\u2191": ('quantity', True),
+            }
+            if filter_sort in sort_map:
+                sort_col, ascending = sort_map[filter_sort]
+                filtered = filtered.sort_values(sort_col, ascending=ascending)
+
+            total_mv = positions['market_value'].sum()
+            filtered_mv = filtered['market_value'].sum() if not filtered.empty else 0
+            filter_ratio = filtered_mv / total_mv * 100 if total_mv > 0 else 0
+
+            st.markdown(
+                f'<div style="display:flex;gap:16px;padding:6px 0;font-size:12px;color:#8b949e;">'
+                f'<span>筛选结果: <b style="color:#c9d1d9;">{len(filtered)}只</b> / {len(positions)}只</span>'
+                f'<span>筛选市值: <b style="color:#c9d1d9;">\u00a5{filtered_mv:,.0f}</b> '
+                f'(占比 <b style="color:#58a6ff;">{filter_ratio:.1f}%</b>)</span>'
+                f'</div>', unsafe_allow_html=True)
+
+            if not filtered.empty:
+                n_show = min(len(filtered), 8)
+                card_cols = st.columns(min(n_show, 4))
+                for idx, (_, frow) in enumerate(filtered.head(8).iterrows()):
+                    code = str(frow['code'])
+                    pnl_r = frow.get('pnl_rate', 0)
+                    pnl_c = '#22c55e' if pnl_r >= 0 else '#ef4444'
+                    sector = ETF_CATEGORIES.get(code, {}).get('sector', '未知')
+                    s_color = SECTOR_COLORS.get(sector, '#8b949e')
+                    with card_cols[idx % len(card_cols)]:
+                        st.markdown(
+                            f'<div style="padding:6px 8px;border-radius:6px;background:#161b22;'
+                            f'border-left:3px solid {s_color};cursor:pointer;">'
+                            f'<div style="font-size:11px;color:#c9d1d9;font-weight:bold;'
+                            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{frow["name"]}</div>'
+                            f'<div style="font-size:10px;color:#484f58;margin:2px 0;">{sector} | \u00a5{frow["market_value"]:,.0f}</div>'
+                            f'<div style="font-size:12px;font-weight:bold;color:{pnl_c};">{pnl_r:+.2f}%</div>'
+                            f'</div>', unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        
+
         col_dist, col_table = st.columns([1, 1])
 
         with col_dist:
@@ -2797,6 +3170,166 @@ def main():
                     unsafe_allow_html=True
                 )
 
+
+
+        # ========== 告警中心 ==========
+        st.markdown("---")
+        alert_tab1, alert_tab2 = st.tabs(["🔔 告警中心", "📊 告警统计"])
+
+        with alert_tab1:
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+                        '实时告警监控</div>', unsafe_allow_html=True)
+
+            realtime_alerts = []
+            if not positions.empty and not summary.empty:
+                ls = summary.iloc[-1]
+                dr = ls.get('daily_return', 0)
+                if dr and not np.isnan(dr) and dr < -3:
+                    realtime_alerts.append({'level': 'error', 'rule': '单日暴跌',
+                        'message': f'组合单日跌幅 {dr:.2f}%，超过3%%警戒线', 'time': selected_date})
+                mdd = ls.get('max_drawdown', 0)
+                if mdd and not np.isnan(mdd) and abs(mdd) > 15:
+                    realtime_alerts.append({'level': 'error', 'rule': '深度回撤',
+                        'message': f'最大回撤 {abs(mdd):.2f}%%，超过15%%警戒线', 'time': selected_date})
+                elif mdd and not np.isnan(mdd) and abs(mdd) > 10:
+                    realtime_alerts.append({'level': 'warning', 'rule': '回撤预警',
+                        'message': f'最大回撤 {abs(mdd):.2f}%%，超过10%%关注线', 'time': selected_date})
+                vol_val = ls.get('volatility', 0)
+                if vol_val and not np.isnan(vol_val) and vol_val > 30:
+                    realtime_alerts.append({'level': 'warning', 'rule': '波动飙升',
+                        'message': f'年化波动率 {vol_val:.2f}%%，超过30%%警戒线', 'time': selected_date})
+                sp = ls.get('sharpe_ratio', 0)
+                if sp is not None and not np.isnan(sp) and sp < 0:
+                    realtime_alerts.append({'level': 'warning', 'rule': '夏普异常',
+                        'message': f'夏普比率 {sp:.3f}，风险调整后收益为负', 'time': selected_date})
+                for _, pos in positions.iterrows():
+                    pr = pos.get('pnl_rate', 0)
+                    if pr < -20:
+                        realtime_alerts.append({'level': 'error', 'rule': '个股暴跌',
+                            'message': f'「{pos["name"]}」亏损 {pr:.2f}%%，超过20%%止损线', 'time': selected_date})
+                    elif pr < -15:
+                        realtime_alerts.append({'level': 'warning', 'rule': '个股预警',
+                            'message': f'「{pos["name"]}」亏损 {pr:.2f}%%，接近止损线', 'time': selected_date})
+                if not positions.empty:
+                    total_mv = positions['market_value'].sum()
+                    max_w = positions['market_value'].max() / total_mv * 100 if total_mv > 0 else 0
+                    if max_w > 30:
+                        max_name = positions.loc[positions['market_value'].idxmax(), 'name']
+                        realtime_alerts.append({'level': 'warning', 'rule': '集中度风险',
+                            'message': f'「{max_name}」占比 {max_w:.1f}%%，超过30%%集中度警戒线', 'time': selected_date})
+
+            if realtime_alerts:
+                level_config = {
+                    'error': {'bg': 'rgba(239,68,68,0.08)', 'border': 'rgba(239,68,68,0.3)', 'icon': '🔴', 'label': '严重'},
+                    'warning': {'bg': 'rgba(245,158,11,0.08)', 'border': 'rgba(245,158,11,0.3)', 'icon': '🟡', 'label': '警告'},
+                    'info': {'bg': 'rgba(88,166,255,0.06)', 'border': 'rgba(88,166,255,0.2)', 'icon': '🔵', 'label': '提示'},
+                }
+                level_order = {'error': 0, 'warning': 1, 'info': 2}
+                realtime_alerts.sort(key=lambda x: level_order.get(x['level'], 99))
+                for alert in realtime_alerts:
+                    cfg = level_config.get(alert['level'], level_config['info'])
+                    st.markdown(
+                        f'<div style="background:{cfg["bg"]};border:1px solid {cfg["border"]};'
+                        f'border-radius:6px;padding:8px 12px;margin-bottom:4px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<span style="font-size:12px;font-weight:bold;color:#c9d1d9;">'
+                        f'{cfg["icon"]} [{cfg["label"]}] {alert["rule"]}</span>'
+                        f'<span style="font-size:10px;color:#484f58;">{alert["time"]}</span></div>'
+                        f'<div style="font-size:12px;color:#8b949e;margin-top:2px;">{alert["message"]}</div></div>',
+                        unsafe_allow_html=True)
+                n_error = sum(1 for a in realtime_alerts if a['level'] == 'error')
+                n_warning = sum(1 for a in realtime_alerts if a['level'] == 'warning')
+                st.markdown(
+                    f'<div style="font-size:11px;color:#484f58;padding:4px 0;">'
+                    f'当前触发: <span style="color:#ef4444;font-weight:bold;">{n_error} 严重</span> / '
+                    f'<span style="color:#f59e0b;font-weight:bold;">{n_warning} 警告</span></div>',
+                    unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    '<div style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);'
+                    'border-radius:6px;padding:10px 14px;">'
+                    '<div style="font-size:13px;color:#22c55e;font-weight:bold;">🟢 告警状态正常</div>'
+                    '<div style="font-size:12px;color:#8b949e;margin-top:3px;">'
+                    '当前未触发任何告警规则，所有指标处于安全范围内。</div></div>',
+                    unsafe_allow_html=True)
+
+            with st.expander("查看历史告警记录", expanded=False):
+                hist_alerts = load_alerts(limit=20)
+                if not hist_alerts.empty:
+                    for _, ha in hist_alerts.iterrows():
+                        ha_level = ha.get('level', 'info')
+                        ha_cfg = {'error': {'icon': '🔴'}, 'warning': {'icon': '🟡'}, 'info': {'icon': '🔵'}}.get(ha_level, {'icon': '🔵'})
+                        ack = '✅' if ha.get('acknowledged') else ''
+                        st.markdown(
+                            f'<div style="font-size:12px;padding:3px 0;color:#8b949e;">'
+                            f'{ha_cfg["icon"]} <span style="color:#c9d1d9;">{ha.get("rule_name", "未知")}</span> '
+                            f'{ha.get("message", "")} <span style="color:#484f58;font-size:10px;">{ha.get("created_at", "")}</span> {ack}</div>',
+                            unsafe_allow_html=True)
+                else:
+                    st.caption("暂无历史告警记录")
+
+        with alert_tab2:
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+                        '告警规则配置与统计</div>', unsafe_allow_html=True)
+
+            rules_display = [
+                {'name': '单日暴跌', 'condition': '日收益率 < -3%', 'level': '严重'},
+                {'name': '深度回撤', 'condition': '最大回撤 > 15%', 'level': '严重'},
+                {'name': '回撤预警', 'condition': '最大回撤 > 10%', 'level': '警告'},
+                {'name': '个股暴跌', 'condition': '单一ETF亏损 > 20%', 'level': '严重'},
+                {'name': '个股预警', 'condition': '单一ETF亏损 > 15%', 'level': '警告'},
+                {'name': '波动飙升', 'condition': '年化波动率 > 30%', 'level': '警告'},
+                {'name': '夏普异常', 'condition': '夏普比率 < 0', 'level': '警告'},
+                {'name': '集中度风险', 'condition': '单一持仓占比 > 30%', 'level': '警告'},
+            ]
+            html_rules = (
+                '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+                '<thead><tr style="background:#161b22;">'
+                '<th style="padding:6px 10px;color:#8b949e;text-align:left;font-size:11px;">状态</th>'
+                '<th style="padding:6px 10px;color:#8b949e;text-align:left;font-size:11px;">规则名称</th>'
+                '<th style="padding:6px 10px;color:#8b949e;text-align:left;font-size:11px;">触发条件</th>'
+                '<th style="padding:6px 10px;color:#8b949e;text-align:center;font-size:11px;">级别</th>'
+                '</tr></thead><tbody>')
+            for rule in rules_display:
+                triggered = any(a['rule'] == rule['name'] for a in realtime_alerts) if realtime_alerts else False
+                status_html = '<span style="color:#ef4444;">触发</span>' if triggered else '<span style="color:#22c55e;">正常</span>'
+                level_color = '#ef4444' if rule['level'] == '严重' else '#f59e0b'
+                html_rules += (
+                    f'<tr style="border-bottom:1px solid #21262d;">'
+                    f'<td style="padding:5px 10px;">{status_html}</td>'
+                    f'<td style="padding:5px 10px;color:#c9d1d9;">{rule["name"]}</td>'
+                    f'<td style="padding:5px 10px;color:#8b949e;">{rule["condition"]}</td>'
+                    f'<td style="padding:5px 10px;text-align:center;color:{level_color};font-weight:bold;">{rule["level"]}</td></tr>')
+            html_rules += '</tbody></table></div>'
+            st.markdown(html_rules, unsafe_allow_html=True)
+
+            hist_alerts = load_alerts(limit=50)
+            if not hist_alerts.empty:
+                ac1, ac2, ac3 = st.columns(3)
+                with ac1:
+                    st.metric("历史告警总数", f"{len(hist_alerts)} 条")
+                with ac2:
+                    st.metric("严重告警", f"{len(hist_alerts[hist_alerts['level'] == 'error'])} 条")
+                with ac3:
+                    st.metric("警告告警", f"{len(hist_alerts[hist_alerts['level'] == 'warning'])} 条")
+
+                rule_counts = hist_alerts['rule_name'].value_counts()
+                if not rule_counts.empty:
+                    fig_alert_dist = go.Figure(go.Bar(
+                        y=rule_counts.index, x=rule_counts.values, orientation='h',
+                        marker_color='#f59e0b',
+                        text=[str(v) for v in rule_counts.values], textposition='outside',
+                        textfont=dict(size=10, color='#c9d1d9')))
+                    fig_alert_dist.update_layout(
+                        height=max(200, len(rule_counts) * 30),
+                        plot_bgcolor='#0d1117', paper_bgcolor='#0d1117',
+                        font=dict(color='#c9d1d9', size=11),
+                        margin=dict(l=100, r=40, t=10, b=20),
+                        xaxis=dict(showgrid=True, gridcolor='#21262d'),
+                        yaxis=dict(showgrid=False, tickfont=dict(size=10)))
+                    st.plotly_chart(fig_alert_dist, width='stretch')
+
+        st.markdown("---")
 
     # ========== 收益日历 ==========
     with tab4:
@@ -3722,6 +4255,135 @@ def main():
             st.info("数据不足，暂无法生成综合评估")
 
 
+        # ===== 市场情绪仪表盘 =====
+        st.markdown("---")
+        st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+                    '市场情绪仪表盘'
+                    '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+                    '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+                    '基于持仓ETF的涨跌分布，计算市场宽度、涨跌比、情绪偏向等指标，辅助判断整体市场情绪。'
+                    '</span></div>', unsafe_allow_html=True)
+        st.caption("基于持仓ETF的涨跌分布，计算市场宽度、涨跌比、情绪偏向等指标")
+
+        if not positions.empty:
+            total_count = len(positions)
+            up_count = len(positions[positions['pnl'] > 0])
+            dn_count = len(positions[positions['pnl'] < 0])
+            flat_count = total_count - up_count - dn_count
+            up_ratio = up_count / total_count * 100 if total_count > 0 else 50
+
+            if up_ratio >= 75:
+                emotion = ('极度乐观', '#22c55e', '多数持仓上涨，市场情绪高涨，注意短期过热风险')
+            elif up_ratio >= 60:
+                emotion = ('偏乐观', '#4ade80', '多数持仓上涨，市场情绪偏暖')
+            elif up_ratio >= 45:
+                emotion = ('中性', '#f59e0b', '涨跌互现，市场情绪中性')
+            elif up_ratio >= 30:
+                emotion = ('偏悲观', '#fb923c', '多数持仓下跌，市场情绪偏冷，关注企稳信号')
+            else:
+                emotion = ('极度悲观', '#ef4444', '多数持仓下跌，市场情绪低迷，可能存在超跌反弹机会')
+
+            ec1, ec2, ec3, ec4 = st.columns(4)
+            with ec1:
+                st.markdown(
+                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {emotion[1]};text-align:center;">'
+                    f'<div style="font-size:10px;color:#8b949e;">市场情绪</div>'
+                    f'<div style="font-size:16px;font-weight:bold;color:{emotion[1]};">{emotion[0]}</div>'
+                    f'</div>', unsafe_allow_html=True)
+            with ec2:
+                st.markdown(
+                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid #58a6ff;text-align:center;">'
+                    f'<div style="font-size:10px;color:#8b949e;">涨跌比</div>'
+                    f'<div style="font-size:16px;font-weight:bold;">'
+                    f'<span style="color:#22c55e;">{up_count}</span>'
+                    f' / <span style="color:#ef4444;">{dn_count}</span>'
+                    f' / <span style="color:#8b949e;">{flat_count}</span>'
+                    f'</div></div>', unsafe_allow_html=True)
+            with ec3:
+                adv_color = '#22c55e' if up_ratio >= 50 else '#ef4444'
+                st.markdown(
+                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {adv_color};text-align:center;">'
+                    f'<div style="font-size:10px;color:#8b949e;">上涨占比</div>'
+                    f'<div style="font-size:16px;font-weight:bold;color:{adv_color};">{up_ratio:.0f}%</div>'
+                    f'</div>', unsafe_allow_html=True)
+            with ec4:
+                avg_pnl = positions['pnl_rate'].mean() if 'pnl_rate' in positions.columns else 0
+                avg_c = '#22c55e' if avg_pnl >= 0 else '#ef4444'
+                st.markdown(
+                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {avg_c};text-align:center;">'
+                    f'<div style="font-size:10px;color:#8b949e;">平均收益率</div>'
+                    f'<div style="font-size:16px;font-weight:bold;color:{avg_c};">{avg_pnl:+.2f}%</div>'
+                    f'</div>', unsafe_allow_html=True)
+
+            st.markdown(
+                f'<div style="padding:8px 12px;border-radius:6px;background:#161b22;font-size:12px;color:#8b949e;'
+                f'border:1px solid #21262d;margin:6px 0;">{emotion[2]}</div>',
+                unsafe_allow_html=True)
+
+            st.markdown('<div style="font-size:14px;color:#c9d1d9;font-weight:bold;margin:10px 0 6px 0;">行业涨跌热力图</div>')
+            sector_pnl = {}
+            for _, pos in positions.iterrows():
+                code = str(pos['code'])
+                cat_info = ETF_CATEGORIES.get(code)
+                if cat_info:
+                    sector = cat_info['sector']
+                    if sector not in sector_pnl:
+                        sector_pnl[sector] = {'total_mv': 0, 'total_pnl_rate': 0, 'count': 0}
+                    sector_pnl[sector]['total_mv'] += pos.get('market_value', 0)
+                    sector_pnl[sector]['total_pnl_rate'] += pos.get('pnl_rate', 0) * pos.get('market_value', 0)
+                    sector_pnl[sector]['count'] += 1
+            if sector_pnl:
+                sector_list = sorted(sector_pnl.items(), key=lambda x: x[1]['total_pnl_rate'], reverse=True)
+                html_bars = '<div style="display:flex;flex-direction:column;gap:6px;">'
+                for sector_name, sdata in sector_list:
+                    avg_s = sdata['total_pnl_rate'] / sdata['total_mv'] * 100 if sdata['total_mv'] > 0 else 0
+                    bar_c = '#22c55e' if avg_s >= 0 else '#ef4444'
+                    bar_width = min(abs(avg_s) * 2.5, 45)
+                    color = SECTOR_COLORS.get(sector_name, '#8b949e')
+                    if avg_s >= 0:
+                        bar_html = f'<div style="width:{bar_width}%;background:{bar_c};border-radius:0 3px 3px 0;margin-left:auto;"></div>'
+                    else:
+                        bar_html = f'<div style="width:{bar_width}%;background:{bar_c};border-radius:3px 0 0 3px;margin-right:auto;"></div>'
+                    html_bars += (
+                        f'<div style="display:flex;align-items:center;gap:8px;">'
+                        f'<div style="width:50px;font-size:12px;color:{color};font-weight:bold;flex-shrink:0;">{sector_name}</div>'
+                        f'<div style="flex:1;position:relative;height:20px;background:#161b22;border-radius:3px;overflow:hidden;">'
+                        f'<div style="position:absolute;top:0;left:50%;width:1px;height:100%;background:#484f58;"></div>'
+                        f'{bar_html}</div>'
+                        f'<div style="width:55px;text-align:right;font-size:12px;color:{bar_c};font-weight:bold;flex-shrink:0;">{avg_s:+.2f}%</div>'
+                        f'<div style="width:40px;text-align:right;font-size:10px;color:#484f58;flex-shrink:0;">{sdata["count"]}只</div></div>'
+                    )
+                html_bars += '</div>'
+                st.markdown(html_bars, unsafe_allow_html=True)
+
+            pc1, pc2 = st.columns([1, 2])
+            with pc1:
+                fig_pie = go.Figure(go.Pie(
+                    labels=['上涨', '下跌', '持平'], values=[up_count, dn_count, flat_count],
+                    marker_colors=['#22c55e', '#ef4444', '#8b949e'], hole=0.6,
+                    textinfo='label+percent', textfont=dict(size=11, color='#c9d1d9'),
+                    hovertemplate='%{label}: %{value}只 (%{percent})<extra></extra>'
+                ))
+                fig_pie.update_layout(height=220, plot_bgcolor='#0d1117', paper_bgcolor='#0d1117',
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    legend=dict(font=dict(size=10, color='#8b949e'), orientation='h', yanchor='bottom', y=-0.1))
+                st.plotly_chart(fig_pie, width='stretch')
+
+            with pc2:
+                if 'pnl_rate' in positions.columns and not positions.empty:
+                    pnl_rates = positions['pnl_rate'].dropna().values
+                    fig_pnl_dist = go.Figure()
+                    fig_pnl_dist.add_trace(go.Histogram(x=pnl_rates, nbinsx=max(5, min(20, total_count)), opacity=0.85,
+                        marker_color='#58a6ff'))
+                    fig_pnl_dist.update_layout(height=220, plot_bgcolor='#0d1117', paper_bgcolor='#0d1117',
+                        font=dict(color='#c9d1d9', size=11), margin=dict(l=40, r=20, t=10, b=30),
+                        xaxis=dict(title='收益率 (%)', showgrid=True, gridcolor='#21262d'),
+                        yaxis=dict(title='数量', showgrid=True, gridcolor='#21262d'), bargap=0.15)
+                    st.plotly_chart(fig_pnl_dist, width='stretch')
+
+
+
+
     # ========== Tab8: 操作建议 ==========
     with tab8:
         st.caption("💡 基于技术信号和持仓状态，生成具体操作建议")
@@ -4032,6 +4694,115 @@ def main():
 
         st.markdown("---")
 
+
+        # ----- 压力测试 -----
+        st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+                    '持仓压力测试</div>', unsafe_allow_html=True)
+        st.caption("基于历史波动率和持仓权重，模拟极端情景下的组合市值变化")
+
+        if not positions.empty and not summary.empty:
+            total_mv = positions['market_value'].sum()
+            current_weights = {}
+            for _, pos in positions.iterrows():
+                code = str(pos['code'])
+                current_weights[code] = {
+                    'weight': pos['market_value'] / total_mv if total_mv > 0 else 0,
+                    'name': pos['name'],
+                    'beta': pos.get('beta', 1.0) if pd.notna(pos.get('beta')) else 1.0,
+                    'sector': ETF_CATEGORIES.get(code, {}).get('sector', '未知'),
+                    'mv': pos['market_value'], 'pnl_rate': pos.get('pnl_rate', 0)}
+
+            scenarios = {
+                '温和下跌': {'market': -0.05, 'label': '基准跌5%', 'color': '#f59e0b', 'desc': '市场温和回调，宽基ETF领跌'},
+                '大幅下跌': {'market': -0.15, 'label': '基准跌15%', 'color': '#ef4444', 'desc': '市场大幅下跌，成长板块承压'},
+                '极端暴跌': {'market': -0.30, 'label': '基准跌30%', 'color': '#dc2626', 'desc': '类似股灾级别的系统性风险'},
+                '震荡盘整': {'market': -0.02, 'label': '基准±2%', 'color': '#8b949e', 'desc': '市场窄幅震荡，行业轮动加快'},
+                '结构牛市': {'market': 0.15, 'label': '基准涨15%', 'color': '#22c55e', 'desc': '市场结构性上涨，科技成长领涨'},
+            }
+            st_cols = st.columns(len(scenarios))
+            stress_results = []
+            for idx, (sname, sdata) in enumerate(scenarios.items()):
+                market_shock = sdata['market']
+                total_impact = 0
+                sector_impacts = {}
+                for code, wdata in current_weights.items():
+                    beta = wdata['beta'] if wdata['beta'] and not np.isnan(wdata['beta']) else 1.0
+                    sector = wdata['sector']
+                    if market_shock < -0.1:
+                        sector_adj = {'医药': 0.85, '债券': 0.6, '红利': 0.8, '军工': 0.9}.get(sector, 1.0)
+                    elif market_shock > 0.1:
+                        sector_adj = {'科技': 1.2, '新能源': 1.15, '军工': 1.1}.get(sector, 1.0)
+                    else:
+                        sector_adj = 1.0
+                    adj_shock = market_shock * beta * sector_adj
+                    total_impact += wdata['weight'] * adj_shock
+                    if sector not in sector_impacts:
+                        sector_impacts[sector] = 0
+                    sector_impacts[sector] += wdata['weight'] * adj_shock
+                est_loss = total_mv * total_impact
+                stress_results.append({'scenario': sname, 'market': sdata['label'],
+                    'est_loss': est_loss, 'est_value': total_mv + est_loss,
+                    'impact_pct': total_impact * 100, 'color': sdata['color'],
+                    'desc': sdata['desc'], 'sector_impacts': sector_impacts})
+                with st_cols[idx]:
+                    loss_c = '#22c55e' if est_loss >= 0 else '#ef4444'
+                    st.markdown(
+                        f'<div style="padding:8px;border-radius:6px;background:#161b22;'
+                        f'border-left:3px solid {sdata["color"]};text-align:center;">'
+                        f'<div style="font-size:10px;color:#8b949e;">{sname}</div>'
+                        f'<div style="font-size:10px;color:#484f58;">{sdata["label"]}</div>'
+                        f'<div style="font-size:14px;font-weight:bold;color:{loss_c};margin:4px 0;">'
+                        f'{"+" if est_loss >= 0 else ""}\u00a5{est_loss:,.0f}</div>'
+                        f'<div style="font-size:11px;color:{loss_c};">{total_impact*100:+.1f}%%</div></div>',
+                        unsafe_allow_html=True)
+
+            with st.expander("查看压力测试详情", expanded=False):
+                for sr in stress_results:
+                    loss_c = '#22c55e' if sr['est_loss'] >= 0 else '#ef4444'
+                    st.markdown(
+                        f'<div style="margin:8px 0;padding:10px 12px;border-radius:6px;background:#161b22;'
+                        f'border-left:3px solid {sr["color"]};">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<span style="font-size:14px;font-weight:bold;color:#c9d1d9;">{sr["scenario"]} '
+                        f'<span style="font-size:11px;color:#484f58;">({sr["market"]})</span></span>'
+                        f'<span style="font-size:16px;font-weight:bold;color:{loss_c};">'
+                        f'{sr["impact_pct"]:+.1f}%% ({"+" if sr["est_loss"] >= 0 else ""}\u00a5{sr["est_loss"]:,.0f})</span></div>'
+                        f'<div style="font-size:11px;color:#8b949e;margin-top:4px;">{sr["desc"]}</div>'
+                        f'<div style="font-size:11px;color:#c9d1d9;margin-top:6px;">'
+                        f'预估市值: <b>\u00a5{sr["est_value"]:,.0f}</b> (当前 \u00a5{total_mv:,.0f})</div></div>',
+                        unsafe_allow_html=True)
+                    if sr['sector_impacts']:
+                        si_cols = st.columns(min(len(sr['sector_impacts']), 4))
+                        for si_idx, (sec_name, sec_impact) in enumerate(
+                                sorted(sr['sector_impacts'].items(), key=lambda x: abs(x[1]), reverse=True)):
+                            si_c = '#22c55e' if sec_impact >= 0 else '#ef4444'
+                            sec_color = SECTOR_COLORS.get(sec_name, '#8b949e')
+                            with si_cols[si_idx % len(si_cols)]:
+                                st.markdown(
+                                    f'<div style="text-align:center;padding:4px 0;">'
+                                    f'<div style="font-size:10px;color:{sec_color};">{sec_name}</div>'
+                                    f'<div style="font-size:12px;font-weight:bold;color:{si_c};">{sec_impact*100:+.1f}%%</div></div>',
+                                    unsafe_allow_html=True)
+                    st.markdown('<div style="height:1px;background:#21262d;margin:6px 0;"></div>', unsafe_allow_html=True)
+                worst = min(stress_results, key=lambda x: x['est_value'])
+                st.markdown(
+                    f'<div style="padding:8px 12px;border-radius:6px;background:#2d1215;'
+                    f'border:1px solid #ef4444;font-size:12px;color:#c9d1d9;">'
+                    f'<b>极端情景预警:</b> 在「{worst["scenario"]}」({worst["market"]})情景下，'
+                    f'组合预估损失 <b style="color:#ef4444;">\u00a5{worst["est_loss"]:,.0f} ({worst["impact_pct"]:+.1f}%%)</b>，'
+                    f'预估市值 <b>\u00a5{worst["est_value"]:,.0f}</b>。</div>',
+                    unsafe_allow_html=True)
+        else:
+            st.info("暂无持仓数据，无法执行压力测试")
+
+        st.markdown("---")
+
+
+        st.markdown("---")
+
+
+
+
         # ----- 再平衡建议 -----
         st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">再平衡建议<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于各行业目标权重与实际权重的偏离度，自动生成调仓方案。超过偏离阈值的行业将给出买入/卖出建议和估算股数。</span></div>', unsafe_allow_html=True)
         st.caption("基于目标行业权重与实际权重的偏离，生成调仓方案")
@@ -4268,7 +5039,7 @@ def main():
     st.markdown("---")
     st.markdown(
         f'<div style="text-align:center;color:#484f58;font-size:11px;">'
-        f'投资组合跟踪分析系统 v1.7 | 数据截至 {selected_date} | '
+        f'投资组合跟踪分析系统 v1.8 | 数据截至 {selected_date} | '
         f'共 {len(positions)} 只持仓</div>',
         unsafe_allow_html=True
     )
