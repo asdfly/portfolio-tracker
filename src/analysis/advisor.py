@@ -155,10 +155,15 @@ class SmartAdvisor:
     def _check_risk_indicators(self, risk_data: Dict) -> List[InvestmentAdvice]:
         """检查风险指标"""
         advices = []
+        # risk_data 有两种来源格式，统一提取
         summary = risk_data.get('summary', {})
+        portfolio_metrics = risk_data.get('portfolio_metrics', {})
+        ram = portfolio_metrics.get('risk_adjusted_metrics', {})
+        dm = portfolio_metrics.get('drawdown_metrics', {})
+        vm = portfolio_metrics.get('volatility_metrics', {})
 
         # 检查最大回撤
-        max_drawdown = summary.get('max_drawdown', 0)
+        max_drawdown = dm.get('max_drawdown', summary.get('max_drawdown', 0))
         if max_drawdown < -15:
             advices.append(InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT,
@@ -176,7 +181,7 @@ class SmartAdvisor:
             ))
 
         # 检查夏普比率
-        sharpe = summary.get('sharpe_ratio', 0)
+        sharpe = ram.get('sharpe_ratio', summary.get('sharpe_ratio', 0))
         if sharpe < 0.5:
             advices.append(InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT,
@@ -194,7 +199,7 @@ class SmartAdvisor:
             ))
 
         # 检查VaR
-        var_95 = summary.get('var_95', 0)
+        var_95 = vm.get('var_95', summary.get('var_95', 0))
         if var_95 < -3:
             advices.append(InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT,
@@ -288,7 +293,8 @@ class SmartAdvisor:
     def _check_concentration(self, risk_data: Dict) -> Optional[InvestmentAdvice]:
         """检查持仓集中度"""
         summary = risk_data.get('summary', {})
-        hhi = summary.get('concentration_hhi', 0)
+        concentration = risk_data.get('concentration_risk', {})
+        hhi = concentration.get('hhi', summary.get('concentration_hhi', 0))
 
         if hhi > 0.5:
             return InvestmentAdvice(

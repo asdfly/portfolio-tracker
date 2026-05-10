@@ -4354,9 +4354,10 @@ def main():
                 sector_list = sorted(sector_pnl.items(), key=lambda x: x[1]['total_pnl_rate'], reverse=True)
                 html_bars = '<div style="display:flex;flex-direction:column;gap:6px;">'
                 for sector_name, sdata in sector_list:
-                    avg_s = sdata['total_pnl_rate'] / sdata['total_mv'] * 100 if sdata['total_mv'] > 0 else 0
+                    # pnl_rate 以百分比形式存储（如44.24=44.24%），加权平均后直接为百分比
+                    avg_s = sdata['total_pnl_rate'] / sdata['total_mv'] if sdata['total_mv'] > 0 else 0
                     bar_c = '#22c55e' if avg_s >= 0 else '#ef4444'
-                    bar_width = min(abs(avg_s) * 2.5, 45)
+                    bar_width = min(abs(avg_s) * 0.5, 45)
                     color = SECTOR_COLORS.get(sector_name, '#8b949e')
                     if avg_s >= 0:
                         bar_html = f'<div style="width:{bar_width}%;background:{bar_c};border-radius:0 3px 3px 0;margin-left:auto;"></div>'
