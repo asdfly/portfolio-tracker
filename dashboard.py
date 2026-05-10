@@ -4338,7 +4338,7 @@ def main():
                 f'border:1px solid #21262d;margin:6px 0;">{emotion[2]}</div>',
                 unsafe_allow_html=True)
 
-            st.markdown('<div style="font-size:14px;color:#c9d1d9;font-weight:bold;margin:10px 0 6px 0;">行业涨跌热力图</div>')
+            st.markdown('<div style="font-size:14px;color:#c9d1d9;font-weight:bold;margin:10px 0 6px 0;">行业涨跌热力图</div>', unsafe_allow_html=True)
             sector_pnl = {}
             for _, pos in positions.iterrows():
                 code = str(pos['code'])
@@ -4352,17 +4352,21 @@ def main():
                     sector_pnl[sector]['count'] += 1
             if sector_pnl:
                 sector_list = sorted(sector_pnl.items(), key=lambda x: x[1]['total_pnl_rate'], reverse=True)
+                # 预计算所有行业加权平均收益率，用于动态缩放
+                avg_values = [sd['total_pnl_rate'] / sd['total_mv'] if sd['total_mv'] > 0 else 0
+                              for _, sd in sector_list]
+                max_val = max(abs(v) for v in avg_values) if avg_values else 1
                 html_bars = '<div style="display:flex;flex-direction:column;gap:6px;">'
-                for sector_name, sdata in sector_list:
+                for (sector_name, sdata), avg_s in zip(sector_list, avg_values):
                     # pnl_rate 以百分比形式存储（如44.24=44.24%），加权平均后直接为百分比
-                    avg_s = sdata['total_pnl_rate'] / sdata['total_mv'] if sdata['total_mv'] > 0 else 0
                     bar_c = '#22c55e' if avg_s >= 0 else '#ef4444'
-                    bar_width = min(abs(avg_s) * 0.5, 45)
+                    # sqrt缩放：最大值映射到45%，最小3%，避免极端值压制小值
+                    bar_width = max(math.sqrt(abs(avg_s)) / math.sqrt(max_val) * 45, 3)
                     color = SECTOR_COLORS.get(sector_name, '#8b949e')
                     if avg_s >= 0:
-                        bar_html = f'<div style="width:{bar_width}%;background:{bar_c};border-radius:0 3px 3px 0;margin-left:auto;"></div>'
+                        bar_html = f'<div style="position:absolute;top:0;left:50%;width:{bar_width}%;height:100%;background:{bar_c};border-radius:0 3px 3px 0;"></div>'
                     else:
-                        bar_html = f'<div style="width:{bar_width}%;background:{bar_c};border-radius:3px 0 0 3px;margin-right:auto;"></div>'
+                        bar_html = f'<div style="position:absolute;top:0;right:50%;width:{bar_width}%;height:100%;background:{bar_c};border-radius:3px 0 0 3px;"></div>'
                     html_bars += (
                         f'<div style="display:flex;align-items:center;gap:8px;">'
                         f'<div style="width:50px;font-size:12px;color:{color};font-weight:bold;flex-shrink:0;">{sector_name}</div>'
