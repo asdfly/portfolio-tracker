@@ -50,12 +50,21 @@ class SmartReportGenerator:
         summary = portfolio_data.get('summary', {})
         risk = portfolio_data.get('risk', {})
 
+        # risk 数据有两种来源格式：
+        # 1. run_analysis.py 传入的是 analyze_portfolio_risk 的原始返回值（嵌套结构）
+        # 2. run_smart.py 传入的是扁平化的 dict（含 sharpe_ratio/max_drawdown/volatility 键）
+        # 统一从两种格式中提取
+        portfolio_metrics = risk.get('portfolio_metrics', {})
+        ram = portfolio_metrics.get('risk_adjusted_metrics', {})
+        dm = portfolio_metrics.get('drawdown_metrics', {})
+        vm = portfolio_metrics.get('volatility_metrics', {})
+
         return {
             'current_value': summary.get('total_value', 0),
             'total_return': summary.get('total_pnl', 0),
-            'sharpe_ratio': risk.get('sharpe_ratio', 0),
-            'max_drawdown': risk.get('max_drawdown', 0),
-            'volatility': risk.get('volatility', 0),
+            'sharpe_ratio': ram.get('sharpe_ratio', risk.get('sharpe_ratio', 0)),
+            'max_drawdown': dm.get('max_drawdown', risk.get('max_drawdown', 0)),
+            'volatility': vm.get('annual_volatility', risk.get('volatility', 0)),
         }
 
     def _build_report(self, advices: list, backtest: dict, portfolio: dict) -> str:
