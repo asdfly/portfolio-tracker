@@ -287,12 +287,14 @@ def get_available_dates():
 def load_calendar_data():
     """加载全部日历收益数据（年/月/日汇总）"""
     conn = get_db_connection()
-    query = "SELECT date, daily_pnl, daily_return FROM portfolio_summary ORDER BY date"
+    query = "SELECT date, daily_pnl, daily_return, total_value FROM portfolio_summary ORDER BY date"
     df = pd.read_sql_query(query, conn)
     conn.close()
     if df.empty:
         return df
     df['date'] = pd.to_datetime(df['date'])
+    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
+    df['daily_return'] = df['total_value'].pct_change()
     df['year'] = df['date'].dt.year
     df['month'] = df['date'].dt.month
     df['day'] = df['date'].dt.day
@@ -362,7 +364,8 @@ def compute_extended_risk_metrics(end_date=None):
     if len(df) < 10:
         return {}
 
-    returns = df['daily_return'].dropna()
+    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change() 获取正确的小数日收益率
+    returns = df['total_value'].pct_change().dropna()
     pnls = df['daily_pnl']
 
     # Sortino Ratio (downside deviation)
@@ -442,12 +445,14 @@ def compute_extended_risk_metrics(end_date=None):
 def compute_monthly_returns():
     """计算月度收益率矩阵（年份 x 月份，含年度合计列和汇总行）"""
     conn = get_db_connection()
-    query = "SELECT date, daily_return FROM portfolio_summary ORDER BY date"
+    query = "SELECT date, daily_return, total_value FROM portfolio_summary ORDER BY date"
     df = pd.read_sql_query(query, conn)
     conn.close()
     if df.empty:
         return pd.DataFrame()
     df['date'] = pd.to_datetime(df['date'])
+    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
+    df['daily_return'] = df['total_value'].pct_change()
     df['year'] = df['date'].dt.year
     df['month'] = df['date'].dt.month
     monthly = df.groupby(['year', 'month'])['daily_return'].sum().reset_index()
@@ -466,7 +471,7 @@ def compute_monthly_returns():
 def compute_rolling_metrics(window=60, end_date=None):
     """计算滚动夏普比率和滚动波动率（支持end_date过滤）"""
     conn = get_db_connection()
-    query = "SELECT date, daily_return FROM portfolio_summary ORDER BY date"
+    query = "SELECT date, daily_return, total_value FROM portfolio_summary ORDER BY date"
     df = pd.read_sql_query(query, conn)
     conn.close()
     if df.empty or len(df) < window:
@@ -476,7 +481,8 @@ def compute_rolling_metrics(window=60, end_date=None):
         df = df[df['date'] <= pd.Timestamp(end_date)]
     if len(df) < window:
         return pd.DataFrame()
-    ret = df['daily_return']
+    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
+    ret = df['total_value'].pct_change()
     rolling_sharpe = (ret.rolling(window).mean() / ret.rolling(window).std() * np.sqrt(252))
     rolling_vol = ret.rolling(window).std() * np.sqrt(252)
     result = pd.DataFrame({
@@ -975,7 +981,7 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         }
     """
     conn = get_db_connection()
-    query = "SELECT date, daily_return FROM portfolio_summary ORDER BY date"
+    query = "SELECT date, daily_return, total_value FROM portfolio_summary ORDER BY date"
     df = pd.read_sql(query, conn)
     conn.close()
 
@@ -995,6 +1001,8 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         return None
 
     last_value = float(last_row['total_value'].iloc[0])
+    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
+    df['daily_return'] = df['total_value'].pct_change()
     returns = df['daily_return'].dropna()
 
     # ===== 数据清洗（统一使用 _cleanse_daily_returns）=====
@@ -1492,7 +1500,7 @@ def format_value(val, prefix="", suffix="", decimals=2):
         total_pnl = positions['pnl'].sum()
         total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
 
-        port_daily = summary['daily_return'].dropna()
+        port_daily = summary['total_value'].pct_change().dropna()
         ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
         ann_vol = port_daily.std() * math.sqrt(252) * 100 if len(port_daily) > 1 else 0
         sharpe = (port_daily.mean() / port_daily.std() * math.sqrt(252)) if port_daily.std() > 0 else 0
@@ -1960,9 +1968,9 @@ def main():
 
         with col_right:
             st.markdown('<div class="tip-title" style="">日收益率分布<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">统计选定时间范围内每日收益率(%)的频率分布。橙色虚线为均值，黄色区间为±1个标准差范围，绿色虚线为±2个标准差。</span></div>', unsafe_allow_html=True)
-            if not summary.empty and 'daily_return' in summary.columns and len(summary) > 5:
-                # 用原始数据计算分布（不降采样，数据量不大）
-                daily_rets = summary['daily_return'].dropna().values
+            if not summary.empty and 'total_value' in summary.columns and len(summary) > 5:
+                # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
+                daily_rets = (summary['total_value'].pct_change().dropna() * 100).values
                 if len(daily_rets) > 0:
                     fig_hist = go.Figure()
                     fig_hist.add_trace(go.Histogram(
@@ -2080,7 +2088,8 @@ def main():
                 port_start_val = summary.iloc[0]['total_value']
                 port_end_val = summary.iloc[-1]['total_value']
                 port_total_ret = (port_end_val / port_start_val - 1) * 100 if port_start_val > 0 else 0
-                port_daily = summary['daily_return'].dropna()
+                # daily_return 在数据库中以百分比形式存储（如0.51表示51%），需除以100转为小数
+                port_daily = summary['total_value'].pct_change().dropna()
                 port_ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
                 port_vol = port_daily.std() * math.sqrt(252) * 100 if len(port_daily) > 1 else 0
                 port_sharpe = (port_daily.mean() / port_daily.std() * math.sqrt(252)) if port_daily.std() > 0 and port_daily.mean() > 0 else 0
@@ -2308,7 +2317,8 @@ def main():
                                 r_start_val = range_data.iloc[0]['total_value']
                                 r_end_val = range_data.iloc[-1]['total_value']
                                 r_cum_ret = (r_end_val / r_start_val - 1) * 100 if r_start_val > 0 else 0
-                                r_daily = range_data['daily_return'].dropna()
+                                # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
+                                r_daily = range_data['total_value'].pct_change().dropna()
                                 n_days = len(r_daily)
                                 r_ann_ret = (r_daily.mean() * 252 * 100) if n_days > 0 else 0
                                 r_vol = (r_daily.std() * _math.sqrt(252) * 100) if n_days > 1 else 0
@@ -2675,8 +2685,14 @@ def main():
                     unsafe_allow_html=True
                 )
 
-
-                if selected_etf and not positions.empty:
+                # ETF 详情选择器（点击持仓表格行或下拉框选择）
+                selected_etf = st.selectbox(
+                    "查看 ETF 详细分析",
+                    options=["-- 请选择 --"] + [f"{r['name']}（{r['code']}）" for _, r in positions.iterrows()],
+                    key="etf_detail_selector",
+                    label_visibility="collapsed"
+                )
+                if selected_etf and selected_etf != "-- 请选择 --" and not positions.empty:
                     match = positions[positions.apply(lambda r: f"{r['name']}（{r['code']}）" == selected_etf, axis=1)]
                     if not match.empty:
                         row = match.iloc[0]
@@ -3420,7 +3436,7 @@ def main():
                     st.markdown(
                         f'<div style="display:flex;{bg}border-bottom:1px solid #21262d;">'
                         f'<div style="flex:1;text-align:right;padding:6px 10px;color:{pnl_color};">¥{pnl:,.0f}</div>'
-                        f'<div style="flex:1;text-align:right;padding:6px 10px;color:{ret_color};">{ret:+.2f}%</div>'
+                        f'<div style="flex:1;text-align:right;padding:6px 10px;color:{ret_color};">{ret*100:+.2f}%</div>'
                         f'<div style="flex:1;text-align:center;padding:6px 10px;">{days}天</div>'
                         f'<div style="flex:1;text-align:center;padding:6px 10px;color:#22c55e;">{profit_d}天</div>'
                         f'<div style="flex:1;text-align:center;padding:6px 10px;color:#ef4444;">{loss_d}天</div>'
@@ -3435,7 +3451,7 @@ def main():
                 st.markdown(
                     f'<div style="display:flex;font-weight:bold;background:#161b22;border-top:2px solid #30363d;">'
                     f'<div style="flex:1;text-align:right;padding:8px 10px;color:{yr_pnl_color};">¥{yr_total_pnl:,.0f}</div>'
-                    f'<div style="flex:1;text-align:right;padding:8px 10px;color:{yr_ret_color};">{yr_total_ret:+.2f}%</div>'
+                    f'<div style="flex:1;text-align:right;padding:8px 10px;color:{yr_ret_color};">{yr_total_ret*100:+.2f}%</div>'
                     f'<div style="flex:1;text-align:center;padding:8px 10px;">{yr_total_days}天</div>'
                     f'<div style="flex:1;text-align:center;padding:8px 10px;color:#22c55e;">{yr_profit_days}天</div>'
                     f'<div style="flex:1;text-align:center;padding:8px 10px;color:#ef4444;">{yr_loss_days}天</div>'
@@ -3457,7 +3473,7 @@ def main():
             with sum_col1:
                 st.metric("月收益", f"¥{m_pnl:,.0f}")
             with sum_col2:
-                st.metric("月收益率", f"{m_return:.2f}%")
+                st.metric("月收益率", f"{m_return*100:.2f}%")
             with sum_col3:
                 st.metric("交易日", f"{m_trading}天")
             with sum_col4:
@@ -3547,7 +3563,7 @@ def main():
                     lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x:,.2f}</span>'
                 )
                 detail_df['日收益率 (%)'] = detail_df['日收益率 (%)'].apply(
-                    lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x:+.2f}%</span>'
+                    lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x*100:+.2f}%</span>'
                 )
                 st.markdown(detail_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
@@ -3556,18 +3572,20 @@ def main():
             st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">月度收益热力图<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以热力图形式展示12个月的月度收益，颜色深浅反映收益高低。</span></div>', unsafe_allow_html=True)
             monthly_pivot = compute_monthly_returns()
             if not monthly_pivot.empty:
+                # compute_monthly_returns 返回小数形式收益率，乘100转为百分比
+                heat_z = monthly_pivot.values * 100
                 fig_heat = go.Figure(go.Heatmap(
-                    z=monthly_pivot.values,
+                    z=heat_z,
                     x=monthly_pivot.columns.tolist(),
                     y=monthly_pivot.index.astype(str).tolist(),
-                    text=monthly_pivot.values,
-                    texttemplate='%{text:.2f}%' if monthly_pivot.abs().max().max() < 10 else '%{text:.1f}%',
+                    text=heat_z,
+                    texttemplate='%{text:.2f}%%' if abs(heat_z).max() < 100 else '%{text:.1f}%%',
                     textfont=dict(size=10),
                     colorscale=[[0, '#ef4444'], [0.5, '#0d1117'], [1, '#22c55e']],
-                    zmin=-monthly_pivot.abs().max().max(),
-                    zmax=monthly_pivot.abs().max().max(),
+                    zmin=-abs(heat_z).max(),
+                    zmax=abs(heat_z).max(),
                     xgap=2, ygap=2,
-                    hovertemplate='%{y}年%{x}<br>收益率: %{z:.2f}%<extra></extra>'
+                    hovertemplate='%{y}年%{x}<br>收益率: %{z:.2f}%%<extra></extra>'
                 ))
                 fig_heat.update_layout(
                     height=max(250, 40 * len(monthly_pivot)),
@@ -4094,7 +4112,7 @@ def main():
         if not summary.empty and not positions.empty:
             import math
             # 收益评分 (30分)
-            port_daily = summary['daily_return'].dropna()
+            port_daily = summary['total_value'].pct_change().dropna()
             total_ret = (summary['total_value'].iloc[-1] / summary['total_value'].iloc[0] - 1) if summary['total_value'].iloc[0] > 0 else 0
             ann_ret = port_daily.mean() * 252 if len(port_daily) > 0 else 0
             if total_ret > 0.1:
