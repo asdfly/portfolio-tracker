@@ -5736,10 +5736,13 @@ def main():
                 conn_ef = get_db_connection()
                 try:
                     etf_flow = pd.read_sql_query("""
-                        SELECT date, code, name, net_inflow, close
-                        FROM fund_flows
-                        WHERE category = 'etf'
-                        ORDER BY date DESC, code
+                        SELECT f.date, f.code, f.name, f.net_inflow,
+                               ps.current_price AS close
+                        FROM fund_flows f
+                        LEFT JOIN portfolio_snapshots ps
+                            ON f.code = ps.code AND f.date = ps.date
+                        WHERE f.category = 'etf'
+                        ORDER BY f.date DESC, f.code
                         LIMIT 2000
                     """, conn_ef)
                 finally:
