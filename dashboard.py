@@ -1113,7 +1113,7 @@ def compute_return_attribution(days=250, end_date=None):
 
     conn.close()
 
-    if df_prev1.empty:
+    if df_prev.empty:
         return None
 
     # 行业分类
@@ -1134,7 +1134,7 @@ def compute_return_attribution(days=250, end_date=None):
 
     # 计算每只ETF的N日收益率
     current_mv = df_snap.set_index('code')['market_value']
-    prev_mv = df_prev1.set_index('code')['prev_mv']
+    prev_mv = df_prev.set_index('code')['prev_mv']
 
     # 匹配代码
     common_codes = current_mv1.index.intersection(prev_mv1.index)
