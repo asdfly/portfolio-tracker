@@ -392,13 +392,15 @@ def save_news_to_db(db_path: str, news_data: Dict[str, Any], date_str: str = Non
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_date ON daily_news(date)")
+    # 按标题去重的唯一索引（忽略重复插入）
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_news_title ON daily_news(title)")
 
     # 保存新闻
     for topic_key, topic_data in news_data.items():
         label = topic_data.get("label", topic_key)
         for news in topic_data.get("news", []):
             cursor.execute("""
-                INSERT OR REPLACE INTO daily_news (date, category, title, source, url, summary, publish_time, created_at)
+                INSERT OR IGNORE INTO daily_news (date, category, title, source, url, summary, publish_time, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 date_str, label, news.get("title", ""), news.get("source", ""),
