@@ -248,7 +248,8 @@ class DatabaseManager:
             """, (days,))
 
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            # 按时间正序返回（DESC查询取最近N条后需反转，确保收益率计算方向正确）
+            return [dict(row) for row in reversed(rows)]
 
     def get_price_history(self, code: str, days: int = 60) -> List[Dict[str, Any]]:
         """获取价格历史"""

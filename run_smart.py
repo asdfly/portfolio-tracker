@@ -57,7 +57,7 @@ def run_smart_analysis():
         # 获取最近汇总数据
         summary = {}
         if history:
-            latest_summary = history[0]
+            latest_summary = history[-1]  # history 已按时间正序排列，取最新
             summary = {
                 "total_value": latest_summary.get("total_value", 0),
                 "total_pnl": latest_summary.get("total_pnl", 0),
