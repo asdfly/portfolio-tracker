@@ -1297,7 +1297,7 @@ def export_positions_csv(positions_df, filename="持仓数据"):
     import streamlit.components.v1 as components
 
     csv = positions_df.to_csv(index=False, encoding="utf-8-sig")
-    b64 = base64.b64encode(csv1.encode("utf-8-sig")).decode()
+    b64 = base64.b64encode(csv.encode("utf-8-sig")).decode()
     href = f'data:text/csv;charset=utf-8-sig;base64,{b64}'
     return href, f"{filename}.csv"
 
@@ -1305,7 +1305,7 @@ def export_positions_csv(positions_df, filename="持仓数据"):
 def export_summary_csv(summary_df, filename="收益数据"):
     """导出收益数据为CSV"""
     csv = summary_df.to_csv(index=False, encoding="utf-8-sig")
-    b64 = base64.b64encode(csv1.encode("utf-8-sig")).decode()
+    b64 = base64.b64encode(csv.encode("utf-8-sig")).decode()
     href = f'data:text/csv;charset=utf-8-sig;base64,{b64}'
     return href, f"{filename}.csv"
 
