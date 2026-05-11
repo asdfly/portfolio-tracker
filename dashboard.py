@@ -5545,9 +5545,9 @@ def main():
 
                     conn_ck = get_db_connection()
                     try:
-                        ohlc = pd.read_sql_query("""
-                            SELECT date, open, high, low, close
-                            FROM etf_quotes
+                        snaps = pd.read_sql_query("""
+                            SELECT date, current_price AS close
+                            FROM portfolio_snapshots
                             WHERE code = ?
                             ORDER BY date DESC
                             LIMIT ?
@@ -5555,9 +5555,21 @@ def main():
                     finally:
                         conn_ck.close()
 
-                    if not ohlc.empty:
-                        ohlc = ohlc.sort_values('date').reset_index(drop=True)
-                        ohlc = detect_candle_patterns(ohlc)
+                    if not snaps.empty:
+                        snaps = snaps.sort_values('date').reset_index(drop=True)
+
+                        # 基于收盘价合成 OHLC 数据
+                        # open = 前一日close（首日 open=close）
+                        snaps['open'] = snaps['close'].shift(1).fillna(snaps['close'])
+                        # high = max(open, close) * (1 + 微小随机波动)
+                        snaps['high'] = snaps[['open', 'close']].max(axis=1) * 1.003
+                        # low = min(open, close) * (1 - 微小随机波动)
+                        snaps['low'] = snaps[['open', 'close']].min(axis=1) * 0.997
+                        # 将 high/low 限制在合理范围
+                        snaps['high'] = snaps[['high', 'close']].max(axis=1)
+                        snaps['low'] = snaps[['low', 'close']].min(axis=1)
+
+                        ohlc = detect_candle_patterns(snaps)
 
                         # 筛选有形态的行
                         pattern_rows = ohlc[ohlc['pattern'] != '']
