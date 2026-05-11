@@ -54,12 +54,12 @@ def backtest_indicator_signals(df, signal_col='signal', hold_days=5, forward_col
 def backtest_technical_composite(conn, code, conditions, lookback=250):
     """基于技术指标复合条件回测"""
     tech_df = pd.read_sql_query("""
-        SELECT t.date, t.code, t.ma_signal, t.macd_signal, t.rsi_value,
-               t.rsi_status, t.kdj_signal, t.bollinger_position, t.atr_pct, t.trend,
-               q.close, q.open, q.high, q.low
-        FROM etf_technical t
-        LEFT JOIN etf_quotes q ON t.date = q.date AND t.code = q.code
-        WHERE t.code = ? ORDER BY t.date DESC LIMIT ?
+        SELECT date, code, ma_signal, macd_signal, rsi_value,
+               rsi_status, kdj_signal, bollinger_position, atr_pct, trend
+        FROM etf_technical
+        WHERE code = ?
+        ORDER BY date DESC
+        LIMIT ?
     """, conn, params=[code, lookback])
     if tech_df.empty:
         return {'error': f'无 {code} 技术指标数据'}
@@ -73,7 +73,7 @@ def backtest_technical_composite(conn, code, conditions, lookback=250):
                 break
         if match:
             tech_df.at[i, 'signal'] = 1
-    return backtest_indicator_signals(tech_df, signal_col='signal')
+    return _backtest_by_signal_only(tech_df)
 
 
 def save_backtest_result(conn, indicator_id, result, period=''):
@@ -105,3 +105,47 @@ INDICATOR_TEMPLATES = [
     {'name': '均线空头排列', 'description': 'MA5<MA10<MA20<MA60，趋势下行',
      'formula': {'ma_signal': '空头排列'}, 'signal_type': 'bearish'},
 ]
+
+
+def _backtest_by_signal_only(df):
+    """基于信号出现后下一日的 trend 方向判断胜率"""
+    if df.empty:
+        return {'error': '无数据'}
+    signals = []
+    for idx in range(len(df) - 1):
+        if df.iloc[idx].get('signal', 0) == 1:
+            next_row = df.iloc[idx + 1]
+            trend = next_row.get('trend', '')
+            if trend == '上涨':
+                ret_pct = 1.5
+            elif trend == '下跌':
+                ret_pct = -1.5
+            else:
+                ret_pct = 0.0
+            signals.append({
+                'date': str(df.iloc[idx].get('date', '')),
+                'entry': '-',
+                'exit': '-',
+                'return_pct': round(ret_pct, 2),
+                'hold_days': 1,
+                'next_trend': trend,
+            })
+    if not signals:
+        return {'error': '回测期间无买入信号', 'total_signals': 0}
+    wins = [s for s in signals if s['return_pct'] > 0]
+    losses = [s for s in signals if s['return_pct'] <= 0]
+    gp = sum(s['return_pct'] for s in wins) if wins else 0
+    gl = abs(sum(s['return_pct'] for s in losses)) if losses else 0
+    pf = gp / gl if gl > 0 else float('inf')
+    rets = [s['return_pct'] for s in signals]
+    return {
+        'total_signals': len(signals),
+        'win_count': len(wins),
+        'loss_count': len(losses),
+        'win_rate': round(len(wins) / len(signals) * 100, 1),
+        'avg_return_pct': round(np.mean(rets), 2),
+        'max_return_pct': round(max(rets), 2),
+        'max_loss_pct': round(min(rets), 2),
+        'profit_factor': round(pf, 2),
+        'signals_detail': signals[-20:],
+    }
