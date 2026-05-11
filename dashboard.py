@@ -1137,7 +1137,7 @@ def compute_return_attribution(days=250, end_date=None):
     prev_mv = df_prev.set_index('code')['prev_mv']
 
     # 匹配代码
-    common_codes = current_mv1.index.intersection(prev_mv1.index)
+    common_codes = current_mv.index.intersection(prev_mv.index)
     if len(common_codes) == 0:
         return None
 
