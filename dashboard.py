@@ -3122,6 +3122,122 @@ def main():
         else:
             st.info("历史数据不足（需要至少250个交易日），暂无法进行收益归因分析")
 
+        # ===== P2b: 多因子归因分析 =====
+        st.markdown("---")
+        st.markdown('<div class="tip-title" style="">多因子归因分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于 A 股公开指数构造市场/规模/价值/动量/质量五因子模型，量化各因子对组合收益的贡献。</span></div>', unsafe_allow_html=True)
+        st.caption("将组合日收益对五因子做 OLS 回归，分解为 Alpha（选股能力）和 Beta（因子暴露）贡献")
+
+        try:
+            from src.analysis.factor_attribution import (
+                run_full_attribution, FACTOR_NAME_MAP, FACTOR_DESCRIPTION
+            )
+            conn_attr = get_db_connection()
+            try:
+                attr_full = run_full_attribution(
+                    conn_attr, positions, ETF_CATEGORIES, lookback_days=250
+                )
+            finally:
+                conn_attr.close()
+
+            fa = attr_full.get('factor_attribution', {})
+            if fa and 'error' not in fa and fa.get('n_obs', 0) >= 30:
+                col_fa1, col_fa2, col_fa3 = st.columns(3)
+                with col_fa1:
+                    alpha_val = fa.get('alpha', 0)
+                    st.metric("Alpha (年化)", f"{alpha_val:+.2f}%",
+                              delta=f"贡献占比 {fa.get('alpha_contribution_pct', 0):+.1f}%")
+                with col_fa2:
+                    r2 = fa.get('r_squared', 0)
+                    st.metric("模型 R\u00b2", f"{r2:.1%}",
+                              help="因子模型解释力，越高说明收益越可被因子解释")
+                with col_fa3:
+                    n_obs = fa.get('n_obs', 0)
+                    st.metric("回归区间", f"{n_obs} 个交易日",
+                              help=fa.get('regression_period', ''))
+
+                beta_factors = fa.get('beta_factors', {})
+                if beta_factors:
+                    factor_names = [FACTOR_NAME_MAP.get(k, k) for k in beta_factors.keys()]
+                    factor_betas = list(beta_factors.values())
+                    factor_colors = ['#58a6ff','#f59e0b','#22c55e','#a855f7','#ef4444'][:len(factor_names)]
+                    fig_beta = go.Figure(go.Bar(
+                        orientation='h', y=factor_names, x=factor_betas,
+                        marker_color=factor_colors,
+                        text=[f"{v:.3f}" for v in factor_betas],
+                        textposition='auto',
+                        textfont=dict(size=11, color='#c9d1d9'),
+                    ))
+                    fig_beta.add_vline(x=0, line_dash='dash', line_color='#484f58', opacity=0.6)
+                    fig_beta.add_vline(x=1, line_dash='dot', line_color='#6e7681', opacity=0.3)
+                    fig_beta.update_layout(
+                        xaxis=dict(title='因子暴露度 (Beta)', gridcolor='#21262d',
+                                   tickfont=dict(size=10, color='#8b949e')),
+                        yaxis=dict(title='', tickfont=dict(size=11, color='#c9d1d9')),
+                        paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                        height=max(250, 35*len(factor_names)),
+                        margin=dict(l=100, r=30, t=10, b=30), bargap=0.3
+                    )
+                    st.plotly_chart(fig_beta, width='stretch')
+
+                contributions = fa.get('factor_contributions', {})
+                if contributions:
+                    col_pie, col_detail = st.columns([1, 1])
+                    with col_pie:
+                        pie_labels, pie_values, pie_colors_list = [], [], []
+                        color_map_pie = {
+                            'Rm_Rf':'#58a6ff','SMB':'#f59e0b',
+                            'HML':'#22c55e','MOM':'#a855f7','QMJ':'#ef4444'
+                        }
+                        for fname, finfo in contributions.items():
+                            cp = abs(finfo.get('contribution_pct', 0))
+                            if cp > 0.5:
+                                pie_labels.append(FACTOR_NAME_MAP.get(fname, fname))
+                                pie_values.append(cp)
+                                pie_colors_list.append(color_map_pie.get(fname, '#8b949e'))
+                        ap = abs(fa.get('alpha_contribution_pct', 0))
+                        if ap > 0.5:
+                            pie_labels.append('Alpha')
+                            pie_values.append(ap)
+                            pie_colors_list.append('#ffffff')
+                        if pie_labels:
+                            fig_pie = go.Figure(go.Pie(
+                                labels=pie_labels, values=pie_values,
+                                marker_colors=pie_colors_list,
+                                textinfo='label+percent',
+                                textfont=dict(size=11, color='#c9d1d9'),
+                                hole=0.4,
+                            ))
+                            fig_pie.update_layout(
+                                paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                                height=300, margin=dict(t=10,b=10,l=10,r=10),
+                                showlegend=False
+                            )
+                            st.plotly_chart(fig_pie, width='stretch')
+
+                    with col_detail:
+                        detail_rows = []
+                        for fname, finfo in contributions.items():
+                            detail_rows.append({
+                                '因子': FACTOR_NAME_MAP.get(fname, fname),
+                                'Beta': f"{finfo['beta']:.3f}",
+                                '收益贡献': f"{finfo['contribution']*100:+.2f}%",
+                                '贡献占比': f"{finfo['contribution_pct']:+.1f}%",
+                            })
+                        detail_rows.append({
+                            '因子': 'Alpha', 'Beta': '-',
+                            '收益贡献': f"{fa.get('alpha',0):+.2f}%(年化)",
+                            '贡献占比': f"{fa.get('alpha_contribution_pct',0):+.1f}%",
+                        })
+                        st.markdown(
+                            pd.DataFrame(detail_rows).to_html(index=False, escape=False),
+                            unsafe_allow_html=True
+                        )
+            else:
+                err_msg = fa.get('error', '数据不足') if fa else '因子归因计算失败'
+                st.info(f"多因子归因: {err_msg}")
+        except Exception as e:
+            st.info(f"多因子归因模块暂不可用: {str(e)[:80]}")
+
         # ---------- 风险提示面板 ----------
         if not positions.empty:
             st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">风险提示<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于当前持仓结构和风险指标，自动识别并提示需要关注的风险因素。</span></div>', unsafe_allow_html=True)
@@ -3222,6 +3338,184 @@ def main():
                 )
 
 
+
+        # ===== P2c: 风格暴露分析 =====
+        st.markdown("---")
+        st.markdown('<div class="tip-title" style="">风格暴露分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于持仓 ETF 的分类标签，加权计算组合在规模、风格、行业三个维度的暴露度。</span></div>', unsafe_allow_html=True)
+
+        try:
+            from src.analysis.factor_attribution import compute_style_exposure
+            style_exp = compute_style_exposure(positions, ETF_CATEGORIES)
+            if style_exp:
+                col_size, col_style, col_sect = st.columns([1, 1, 1])
+
+                # 规模暴露
+                with col_size:
+                    st.markdown("**规模维度**")
+                    size_exp = style_exp.get('size_exposure', {})
+                    if size_exp:
+                        fig_size = go.Figure(go.Pie(
+                            labels=list(size_exp.keys()),
+                            values=list(size_exp.values()),
+                            marker_colors=['#58a6ff', '#f59e0b', '#a855f7'],
+                            textinfo='label+percent',
+                            textfont=dict(size=11, color='#c9d1d9'),
+                            hole=0.5,
+                        ))
+                        fig_size.update_layout(
+                            paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                            height=220, margin=dict(t=5, b=5, l=5, r=5),
+                            showlegend=False
+                        )
+                        st.plotly_chart(fig_size, width='stretch')
+
+                # 风格暴露
+                with col_style:
+                    st.markdown("**风格维度**")
+                    style_exp_d = style_exp.get('style_exposure', {})
+                    if style_exp_d:
+                        fig_sty = go.Figure(go.Pie(
+                            labels=list(style_exp_d.keys()),
+                            values=list(style_exp_d.values()),
+                            marker_colors=['#22c55e', '#ef4444', '#8b949e'],
+                            textinfo='label+percent',
+                            textfont=dict(size=11, color='#c9d1d9'),
+                            hole=0.5,
+                        ))
+                        fig_sty.update_layout(
+                            paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                            height=220, margin=dict(t=5, b=5, l=5, r=5),
+                            showlegend=False
+                        )
+                        st.plotly_chart(fig_sty, width='stretch')
+
+                # 行业暴露
+                with col_sect:
+                    st.markdown("**行业维度**")
+                    sector_exp = style_exp.get('sector_exposure', {})
+                    if sector_exp:
+                        sec_labels = list(sector_exp.keys())[:8]
+                        sec_values = list(sector_exp.values())[:8]
+                        fig_sec = go.Figure(go.Bar(
+                            orientation='h',
+                            y=sec_labels,
+                            x=sec_values,
+                            marker_color='#58a6ff',
+                            text=[f"{v:.1f}%" for v in sec_values],
+                            textposition='auto',
+                            textfont=dict(size=10, color='#c9d1d9'),
+                        ))
+                        fig_sec.update_layout(
+                            xaxis=dict(title='权重%', gridcolor='#21262d',
+                                       tickfont=dict(size=9, color='#8b949e')),
+                            yaxis=dict(title='', tickfont=dict(size=9, color='#c9d1d9')),
+                            paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                            height=220, margin=dict(l=60, r=20, t=5, b=25),
+                            bargap=0.3,
+                        )
+                        st.plotly_chart(fig_sec, width='stretch')
+
+                # 风格雷达图
+                size_e = style_exp.get('size_exposure', {})
+                style_e = style_exp.get('style_exposure', {})
+                if size_e or style_e:
+                    radar_cats = []
+                    radar_vals = []
+                    for k, v in size_e.items():
+                        radar_cats.append(f"规模-{k}")
+                        radar_vals.append(v)
+                    for k, v in style_e.items():
+                        radar_cats.append(f"风格-{k}")
+                        radar_vals.append(v)
+
+                    fig_radar_style = go.Figure(go.Scatterpolar(
+                        r=radar_vals,
+                        theta=radar_cats,
+                        fill='toself',
+                        fillcolor='rgba(88,166,255,0.15)',
+                        line=dict(color='#58a6ff', width=2),
+                        marker=dict(size=6, color='#58a6ff'),
+                    ))
+                    fig_radar_style.update_layout(
+                        polar=dict(
+                            radialaxis=dict(visible=True, tickfont=dict(size=9, color='#6e7681'),
+                                            gridcolor='#21262d', range=[0, max(radar_vals)*1.3] if radar_vals else [0, 100]),
+                            angularaxis=dict(tickfont=dict(size=10, color='#c9d1d9'), gridcolor='#21262d'),
+                            bgcolor='#0d1117',
+                        ),
+                        paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                        height=300, margin=dict(t=10, b=10, l=10, r=10),
+                        showlegend=False,
+                    )
+                    st.plotly_chart(fig_radar_style, width='stretch')
+        except Exception as e:
+            st.info(f"风格暴露分析暂不可用: {str(e)[:80]}")
+
+        # ===== P2d: 行业轮动分析 =====
+        st.markdown("---")
+        st.markdown('<div class="tip-title" style="">行业轮动分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">追踪各行业指数在不同时间窗口的收益排名变化，衡量市场轮动速度。</span></div>', unsafe_allow_html=True)
+
+        try:
+            from src.analysis.factor_attribution import compute_sector_rotation
+            conn_rot = get_db_connection()
+            try:
+                rotation = compute_sector_rotation(conn_rot)
+            finally:
+                conn_rot.close()
+
+            if rotation and 'error' not in rotation:
+                # 轮动速度指标
+                rot_speed = rotation.get('rotation_speed', {})
+                if rot_speed:
+                    col_rs = st.columns(len(rot_speed))
+                    for ci, (period, speed) in enumerate(rot_speed.items()):
+                        with col_rs[ci]:
+                            st.metric(f"轮动速度 ({period})", f"{speed:.1f}",
+                                      help=f"行业收益标准差，值越大说明行业分化越明显")
+                    st.caption("轮动速度 = 行业收益率标准差，反映行业分化程度。高轮动速度意味着行业间表现差异大。")
+
+                # 行业排名变化表
+                period_returns = rotation.get('sector_period_returns', {})
+                if period_returns:
+                    periods = list(period_returns.keys())
+                    # 取最近两个时段做对比
+                    if len(periods) >= 2:
+                        p1, p2 = periods[0], periods[1]
+                        r1 = period_returns.get(p1, {})
+                        r2 = period_returns.get(p2, {})
+                        all_sectors = sorted(set(list(r1.keys()) + list(r2.keys())))
+                        table_rows = []
+                        for sec in all_sectors:
+                            ret1 = r1.get(sec, 0)
+                            ret2 = r2.get(sec, 0)
+                            rank1 = sorted(r1.items(), key=lambda x: -x[1])
+                            rank2 = sorted(r2.items(), key=lambda x: -x[1])
+                            rk1 = next((i+1 for i, (k, _) in enumerate(rank1) if k == sec), '-')
+                            rk2 = next((i+1 for i, (k, _) in enumerate(rank2) if k == sec), '-')
+                            rank_change = ''
+                            if isinstance(rk1, int) and isinstance(rk2, int):
+                                diff = rk1 - rk2
+                                if diff > 0:
+                                    rank_change = f'<span style="color:#22c55e">↑{diff}</span>'
+                                elif diff < 0:
+                                    rank_change = f'<span style="color:#ef4444">↓{abs(diff)}</span>'
+                                else:
+                                    rank_change = '-'
+                            table_rows.append({
+                                '行业/指数': sec,
+                                f'{p1}收益': f"{ret1:+.2f}%",
+                                f'{p1}排名': rk1,
+                                f'{p2}收益': f"{ret2:+.2f}%",
+                                f'{p2}排名': rk2,
+                                '排名变化': rank_change,
+                            })
+                        if table_rows:
+                            st.markdown(
+                                pd.DataFrame(table_rows).to_html(index=False, escape=False),
+                                unsafe_allow_html=True
+                            )
+        except Exception as e:
+            st.info(f"行业轮动分析暂不可用: {str(e)[:80]}")
 
         # ========== 告警中心 ==========
         st.markdown("---")
