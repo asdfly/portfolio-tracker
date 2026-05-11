@@ -411,8 +411,13 @@ def rebuild_portfolio_summary(db_path):
             avg_ret = statistics.mean(hist_returns)
             std_ret = statistics.stdev(hist_returns)
             if std_ret > 0:
-                sharpe = (avg_ret / std_ret) * (252 ** 0.5)
-            vol = std_ret * (252 ** 0.5)
+                # 夏普比率 = (年化收益 - 无风险利率) / 年化波动率
+                # daily_return 单位为百分比，需除以100转为小数
+                annual_ret = avg_ret / 100 * 252
+                annual_vol = std_ret / 100 * (252 ** 0.5)
+                risk_free_rate = 0.025
+                sharpe = round((annual_ret - risk_free_rate) / annual_vol, 4) if annual_vol > 0 else 0
+            vol = round(std_ret * (252 ** 0.5), 4)
 
         if len(hist_returns) >= 5:
             peak = total_value
