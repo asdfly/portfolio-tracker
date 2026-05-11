@@ -2720,19 +2720,21 @@ def main():
                     unsafe_allow_html=True
                 )
 
-                # ETF 详情选择器（点击持仓表格行或下拉框选择）
-                selected_etf = st.selectbox(
-                    "查看 ETF 详细分析",
-                    options=["-- 请选择 --"] + [f"{r['name']}（{r['code']}）" for _, r in positions.iterrows()],
-                    key="etf_detail_selector",
-                    label_visibility="collapsed"
-                )
-                if selected_etf and selected_etf != "-- 请选择 --" and not positions.empty:
-                    match = positions[positions.apply(lambda r: f"{r['name']}（{r['code']}）" == selected_etf, axis=1)]
-                    if not match.empty:
-                        row = match.iloc[0]
-                        with st.expander(f"**{row['name']}（{row['code']}）** 详细分析", expanded=True):
-                            _render_etf_detail_panel(row, selected_date, total_value)
+
+        # ETF 详情选择器（点击持仓表格行或下拉框选择）
+        if not positions.empty:
+            selected_etf = st.selectbox(
+                "查看 ETF 详细分析",
+                options=["-- 请选择 --"] + [f"{r['name']}（{r['code']}）" for _, r in positions.iterrows()],
+                key="etf_detail_selector",
+                label_visibility="collapsed"
+            )
+            if selected_etf and selected_etf != "-- 请选择 --":
+                match = positions[positions.apply(lambda r: f"{r['name']}（{r['code']}）" == selected_etf, axis=1)]
+                if not match.empty:
+                    row = match.iloc[0]
+                    st.markdown(f'<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">{row["name"]}（{row["code"]}）详细分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span></div>', unsafe_allow_html=True)
+                    _render_etf_detail_panel(row, selected_date, total_value)
 
         # ===== 行业权重堆叠面积图 =====
         st.markdown('<div class="tip-title" style="">行业权重变化趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以堆叠面积图展示各行业ETF在组合中的权重占比随时间的变化，可观察仓位配置的调整趋势。</span></div>', unsafe_allow_html=True)
