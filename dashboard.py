@@ -1620,7 +1620,7 @@ def _load_latest_news(_categories):
         return pd.read_sql_query(
             f"SELECT date, category, title, source, url, summary, publish_time "
             f"FROM daily_news WHERE category IN ({placeholders}) "
-            f"ORDER BY date DESC, publish_time DESC LIMIT 60",
+            f"ORDER BY date DESC, publish_time DESC LIMIT 30",
             conn, params=list(_categories))
     finally:
         conn.close()
@@ -4407,7 +4407,12 @@ def main():
                 "新能源": "#f59e0b",
             }
 
-            for _, row in filtered_news.iterrows():
+            # 每个分类最多显示 5 条，避免单一板块刷屏
+            if not filtered_news.empty:
+                _display = filtered_news.groupby('category').head(5).reset_index(drop=True)
+            else:
+                _display = filtered_news
+            for _, row in _display.iterrows():
                 cat_color = cat_color_map.get(row['category'], '#8b949e')
                 summary_text = row.get('summary', '') or ''
                 summary_html = f'<div style="font-size:12px;color:#6e7681;margin-top:4px;line-height:1.5;">{summary_text[:150]}{"..." if len(summary_text) > 150 else ""}</div>' if summary_text else ''
