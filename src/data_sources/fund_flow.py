@@ -18,6 +18,18 @@ for _proxy_key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
                     'all_proxy', 'ALL_PROXY']:
     os.environ.pop(_proxy_key, None)
 
+# Monkey-patch requests.Session: 所有新创建的 Session 默认禁用系统代理
+# 这确保 AKShare 内部创建的 Session 也不会走本地代理
+import requests as _requests
+_OrigSession = _requests.Session
+
+class _NoProxySession(_OrigSession):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.trust_env = False
+
+_requests.Session = _NoProxySession
+
 
 def get_db_connection() -> sqlite3.Connection:
     from config.settings import DATABASE_PATH
@@ -33,41 +45,30 @@ def _no_proxy_session():
 
 
 def fetch_sector_fund_flow(date_str: str = None) -> pd.DataFrame:
-    """获取行业板块资金流向（直接调用东方财富API，绕过AKShare兼容性问题）"""
+    """获取行业板块资金流向（使用AKShare stock_fund_flow_industry接口）"""
     try:
-        import requests as _req
-        _s = _req.Session()
-        _s.trust_env = False
-        url = 'https://push2.eastmoney.com/api/qt/clist/get'
-        params = {
-            'pn': '1', 'pz': '500', 'po': '1', 'np': '1',
-            'ut': 'b2884a393a59ad64002292a3e90d46a5',
-            'fltt': '2', 'invt': '2', 'fid0': 'f62',
-            'fs': 'm:90+t:2', 'stat': '1',
-            'fields': 'f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87',
-        }
-        r = _s.get(url, params=params, timeout=15)
-        data = r.json()
-        items = data.get('data', {}).get('diff', [])
-        if not items:
+        df = ak.stock_fund_flow_industry(symbol='即时')
+        if df is None or df.empty:
             return pd.DataFrame()
 
-        rows = []
-        for item in items:
-            rows.append({
-                'code': str(item.get('f12', '')),
-                'name': item.get('f14', ''),
-                'change_pct': item.get('f2', 0) or 0,
-                'net_inflow': item.get('f62', 0) or 0,
-                'net_inflow_pct': item.get('f184', 0) or 0,
-                'super_large_inflow': item.get('f66', 0) or 0,
-                'large_inflow': item.get('f69', 0) or 0,
-                'medium_inflow': item.get('f72', 0) or 0,
-                'small_inflow': item.get('f75', 0) or 0,
-            })
-        df = pd.DataFrame(rows)
+        # 列名映射（兼容不同版本 AKShare）
+        col_map = {
+            '序号': 'code',
+            '行业': 'name',
+            '行业-涨跌幅': 'change_pct',
+            '净额': 'net_inflow',
+            '流入资金': 'buy_amount',
+            '流出资金': 'sell_amount',
+        }
+        df = df.rename(columns=col_map)
+
         df['category'] = 'sector'
         df['date'] = date_str or datetime.now().strftime('%Y-%m-%d')
+
+        # 保留目标列
+        keep_cols = ['date', 'code', 'name', 'change_pct', 'net_inflow',
+                     'buy_amount', 'sell_amount', 'category']
+        df = df[[c for c in keep_cols if c in df.columns]]
         return df
     except Exception as e:
         logger.warning(f"获取行业资金流失败: {e}")
