@@ -1610,6 +1610,41 @@ td {{ padding: 5px 8px; }}
         return html
 
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_latest_news(_categories):
+    """加载最新新闻（带缓存）"""
+    conn = get_db_connection()
+    try:
+        placeholders = ','.join(['?' for _ in _categories])
+        return pd.read_sql_query(
+            f"SELECT date, category, title, source, url, summary, publish_time "
+            f"FROM daily_news WHERE category IN ({placeholders}) "
+            f"ORDER BY date DESC, publish_time DESC LIMIT 60",
+            conn, params=list(_categories))
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_tech_signals(_codes, _full=False):
+    """加载技术指标信号（带缓存）"""
+    if not _codes:
+        return pd.DataFrame()
+    conn = get_db_connection()
+    try:
+        ph = ','.join(['?' for _ in _codes])
+        if _full:
+            cols = "*"
+        else:
+            cols = "code, ma_signal, macd_signal, rsi_status, kdj_signal, bollinger_position, trend"
+        return pd.read_sql_query(
+            f"SELECT {cols} FROM etf_technical WHERE code IN ({ph}) ORDER BY date DESC",
+            conn, params=list(_codes))
+    finally:
+        conn.close()
+
+
 def main():
     # 自定义CSS
     st.markdown(
@@ -4059,15 +4094,7 @@ def main():
         else:
             news_cats_to_load = ["大盘行情", "ETF市场"]
 
-        conn = get_db_connection()
-        try:
-            placeholders = ','.join(['?' for _ in news_cats_to_load])
-            news_df = pd.read_sql_query(
-                f"SELECT date, category, title, source, url, summary, publish_time FROM daily_news WHERE category IN ({placeholders}) ORDER BY date DESC, publish_time DESC LIMIT 60",
-                conn, params=list(news_cats_to_load)
-            )
-        finally:
-            conn.close()
+        news_df = _load_latest_news(tuple(news_cats_to_load))
 
         if not news_df.empty:
             # Category filter
@@ -4153,13 +4180,12 @@ def main():
             try:
                 held_codes = positions['code'].tolist()[:5]
                 if held_codes:
-                    code_placeholders = ','.join(['?' for _ in held_codes])
-                    tech_df = pd.read_sql_query(
-                        f"SELECT code, ma_signal, macd_signal, rsi_status, kdj_signal, bollinger_position, trend FROM etf_technical WHERE code IN ({code_placeholders}) ORDER BY date DESC",
-                        conn2, params=held_codes
-                    )
+                    tech_df = _load_tech_signals(tuple(held_codes), _full=False)
                 else:
                     tech_df = pd.DataFrame()
+
+            except Exception:
+                tech_df = pd.DataFrame()
             finally:
                 conn2.close()
 
@@ -4416,13 +4442,12 @@ def main():
             try:
                 held_codes = positions['code'].tolist()
                 if held_codes:
-                    code_placeholders = ','.join(['?' for _ in held_codes])
-                    tech_df = pd.read_sql_query(
-                        f"SELECT * FROM etf_technical WHERE code IN ({code_placeholders}) ORDER BY date DESC",
-                        conn, params=held_codes
-                    )
+                    tech_df = _load_tech_signals(tuple(held_codes), _full=True)
                 else:
                     tech_df = pd.DataFrame()
+
+            except Exception:
+                tech_df = pd.DataFrame()
             finally:
                 conn.close()
 
@@ -4605,6 +4630,47 @@ def main():
                 st.info("暂无足够技术数据生成操作建议")
         else:
             st.info("暂无持仓数据")
+
+    # ========== 数据导出 ==========
+    st.markdown("---")
+    st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">数据导出<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">将当前投资组合数据导出为 Excel 专业报告，包含持仓明细、收益汇总、风险分析、技术指标和告警记录。</span></div>', unsafe_allow_html=True)
+
+    ec1, ec2 = st.columns(2)
+    with ec1:
+        if st.button("📊 导出 Excel 报告", use_container_width=True, type="primary"):
+            try:
+                from src.report.excel_report import ExcelReportGenerator
+                gen = ExcelReportGenerator(str(DATABASE_PATH))
+                output = gen.generate()
+                st.success(f"报告已生成: {output}")
+                with open(output, 'rb') as f:
+                    st.download_button(
+                        label="⬇ 下载 Excel 报告",
+                        data=f.read(),
+                        file_name=os.path.basename(output),
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+            except Exception as e:
+                st.error(f"导出失败: {e}")
+    with ec2:
+        if st.button("📄 导出 HTML 日报", use_container_width=True):
+            try:
+                from src.utils.email_report import EmailReportBuilder
+                builder = EmailReportBuilder(str(DATABASE_PATH))
+                html = builder.build_daily_report()
+                report_path = builder.save_report(html)
+                st.success(f"报告已生成: {report_path}")
+                with open(report_path, 'r', encoding='utf-8') as f:
+                    st.download_button(
+                        label="⬇ 下载 HTML 日报",
+                        data=f.read(),
+                        file_name=os.path.basename(report_path),
+                        mime="text/html",
+                        use_container_width=True
+                    )
+            except Exception as e:
+                st.error(f"导出失败: {e}")
 
     # ========== Tab5: 高级分析（Monte Carlo / 再平衡建议） ==========
     with tab5:
