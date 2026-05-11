@@ -1605,7 +1605,7 @@ td {{ padding: 5px 8px; }}
 <li>胜率 <b>{wr:.1f}%</b>，{'持仓中大部分标的处于盈利状态' if wr > 60 else '盈利标的占比较低，需关注'}</li>
 </ul></div>
 
-<div class="footer">投资组合跟踪分析系统 v2.0-beta | 本报告仅供参考，不构成投资建议</div>
+<div class="footer">投资组合跟踪分析系统 v2.0 | 本报告仅供参考，不构成投资建议</div>
 </body></html>"""
         return html
 
@@ -1885,7 +1885,7 @@ def main():
             f'</div>', unsafe_allow_html=True)
 
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析", "📡 技术信号", "📰 资讯与评估", "💡 操作建议", "🔬 自定义指标"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析", "📡 技术信号", "📰 资讯与评估", "💡 操作建议", "🔬 自定义指标", "💰 资金动向"])
 
 
     # ========== 快速指标条 ==========
@@ -5617,11 +5617,268 @@ def main():
             except Exception as e:
                 st.info(f"K线形态识别暂不可用: {str(e)[:80]}")
 
+    # ========== Tab10: 资金动向 ==========
+    with tab10:
+        st.caption("💰 行业/ETF资金流向分析，追踪主力资金动态，辅助判断市场热点切换")
+
+        tab10_sub1, tab10_sub2, tab10_sub3 = st.tabs(["📊 行业资金流", "📈 ETF资金流", "🌊 北向资金"])
+
+        # ----- 行业资金流 -----
+        with tab10_sub1:
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">行业资金流向<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">各行业板块主力资金净流入/流出排名与趋势。</span></div>', unsafe_allow_html=True)
+
+            try:
+                conn_ff = get_db_connection()
+                try:
+                    sector_df = pd.read_sql_query("""
+                        SELECT date, name, code, net_inflow
+                        FROM fund_flows
+                        WHERE category = 'sector'
+                        ORDER BY date DESC, net_inflow DESC
+                        LIMIT 500
+                    """, conn_ff)
+                finally:
+                    conn_ff.close()
+
+                if not sector_df.empty:
+                    # 最新日期的行业排名
+                    latest_date = sector_df['date'].iloc[0]
+                    latest = sector_df[sector_df['date'] == latest_date].head(20)
+
+                    if not latest.empty:
+                        fig_sf = go.Figure(go.Bar(
+                            orientation='h',
+                            y=latest['name'],
+                            x=latest['net_inflow'],
+                            marker_color=['#22c55e' if v > 0 else '#ef4444' for v in latest['net_inflow']],
+                            text=[f"{v/10000:.1f}亿" if abs(v) > 10000 else f"{v:.0f}万" for v in latest['net_inflow']],
+                            textposition='auto',
+                            textfont=dict(size=9, color='#c9d1d9'),
+                        ))
+                        fig_sf.update_layout(
+                            title=f"<span style='font-size:12px;color:#8b949e'>{latest_date} 行业资金净流入TOP20</span>",
+                            xaxis=dict(title='净流入(元)', gridcolor='#21262d',
+                                       tickfont=dict(size=9, color='#8b949e')),
+                            yaxis=dict(title='', tickfont=dict(size=10, color='#c9d1d9')),
+                            paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                            height=max(400, 22 * len(latest)),
+                            margin=dict(l=80, r=30, t=35, b=30), bargap=0.2,
+                        )
+                        st.plotly_chart(fig_sf, width='stretch')
+
+                    # 多日趋势热力图
+                    if sector_df['date'].nunique() >= 3:
+                        pivot = sector_df.pivot_table(index='name', columns='date', values='net_inflow', aggfunc='sum')
+                        top_names = sector_df.groupby('name')['net_inflow'].sum().nlargest(15).index
+                        pivot = pivot.loc[pivot.index.isin(top_names)]
+                        pivot = pivot.fillna(0) / 10000  # 转亿元
+
+                        fig_heat = go.Figure(go.Heatmap(
+                            z=pivot.values,
+                            x=[d[-5:] for d in pivot.columns],
+                            y=pivot.index,
+                            colorscale=[[0, '#ef4444'], [0.5, '#0d1117'], [1, '#22c55e']],
+                            zmid=0,
+                            text=[[f"{v:.1f}" for v in row] for row in pivot.values],
+                            texttemplate="%{text}", textfont=dict(size=9),
+                            hovertemplate="%{y}: %{x}<br>净流入: %{z:.1f}亿<extra></extra>",
+                        ))
+                        fig_heat.update_layout(
+                            title="<span style='font-size:12px;color:#8b949e'>行业资金流热力图(亿元)</span>",
+                            paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                            height=max(350, 25 * len(pivot)),
+                            margin=dict(l=80, r=20, t=35, b=30),
+                            xaxis=dict(side='bottom'),
+                        )
+                        st.plotly_chart(fig_heat, width='stretch')
+                else:
+                    st.info("暂无行业资金流数据，请先运行数据采集任务")
+                    if st.button("采集行业资金流", key="fetch_sector_flow"):
+                        with st.spinner("正在采集..."):
+                            try:
+                                from src.data_sources.fund_flow import fetch_sector_fund_flow, save_fund_flows
+                                conn_f = get_db_connection()
+                                try:
+                                    sdf = fetch_sector_fund_flow()
+                                    if not sdf.empty:
+                                        cnt = save_fund_flows(conn_f, sdf)
+                                        st.success(f"采集成功，写入 {cnt} 条记录")
+                                    else:
+                                        st.warning("采集返回空数据")
+                                finally:
+                                    conn_f.close()
+                            except Exception as e:
+                                st.error(f"采集失败: {str(e)[:100]}")
+                            st.rerun()
+
+            except Exception as e:
+                st.info(f"行业资金流模块暂不可用: {str(e)[:80]}")
+
+        # ----- ETF资金流 -----
+        with tab10_sub2:
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">ETF资金流向<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">持仓ETF的主力资金流入流出趋势。</span></div>', unsafe_allow_html=True)
+
+            try:
+                conn_ef = get_db_connection()
+                try:
+                    etf_flow = pd.read_sql_query("""
+                        SELECT date, code, name, net_inflow, close
+                        FROM fund_flows
+                        WHERE category = 'etf'
+                        ORDER BY date DESC, code
+                        LIMIT 2000
+                    """, conn_ef)
+                finally:
+                    conn_ef.close()
+
+                if not etf_flow.empty:
+                    etf_flow = etf_flow.sort_values('date').reset_index(drop=True)
+                    etf_list = etf_flow['code'].unique()
+
+                    selected_etf_flow = st.selectbox(
+                        "选择ETF", etf_list, format_func=lambda x: etf_flow[etf_flow['code']==x]['name'].iloc[0],
+                        key="etf_flow_sel"
+                    )
+                    etf_single = etf_flow[etf_flow['code'] == selected_etf_flow]
+
+                    if not etf_single.empty and 'close' in etf_single.columns:
+                        col_p1, col_p2 = st.columns([3, 1])
+                        with col_p1:
+                            fig_ef = go.Figure()
+                            fig_ef.add_trace(go.Bar(
+                                x=etf_single['date'], y=etf_single['net_inflow'],
+                                name='主力净流入',
+                                marker_color=['#22c55e' if v > 0 else '#ef4444' for v in etf_single['net_inflow']],
+                                yaxis='y',
+                            ))
+                            fig_ef.add_trace(go.Scatter(
+                                x=etf_single['date'], y=etf_single['close'],
+                                name='收盘价', mode='lines',
+                                line=dict(color='#58a6ff', width=1.5),
+                                yaxis='y2',
+                            ))
+                            fig_ef.update_layout(
+                                yaxis=dict(title='净流入(元)', gridcolor='#21262d',
+                                           tickfont=dict(size=9, color='#8b949e')),
+                                yaxis2=dict(title='收盘价', overlaying='y', side='right',
+                                            gridcolor='#21262d', tickfont=dict(size=9, color='#58a6ff')),
+                                xaxis=dict(gridcolor='#21262d', tickfont=dict(size=9, color='#8b949e')),
+                                paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                                height=350, margin=dict(l=50, r=50, t=10, b=30),
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                           font=dict(size=10, color='#8b949e')),
+                                showlegend=True,
+                            )
+                            st.plotly_chart(fig_ef, width='stretch')
+                        with col_p2:
+                            total_net = etf_single['net_inflow'].sum()
+                            st.metric("累计净流入", f"{total_net/10000:.1f}亿" if abs(total_net)>10000 else f"{total_net:.0f}万")
+                            flow_up = len(etf_single[etf_single['net_inflow'] > 0])
+                            st.metric("流入天数", f"{flow_up} / {len(etf_single)}",
+                                      delta=f"{flow_up/len(etf_single)*100:.0f}%")
+                else:
+                    st.info("暂无ETF资金流数据")
+                    if not positions.empty:
+                        if st.button("采集持仓ETF资金流", key="fetch_etf_flow"):
+                            with st.spinner("正在采集..."):
+                                try:
+                                    from src.data_sources.fund_flow import fetch_etf_fund_flow, save_fund_flows
+                                    conn_f2 = get_db_connection()
+                                    try:
+                                        for _, pos in positions.head(5).iterrows():
+                                            code = str(pos['code'])
+                                            name = pos['name']
+                                            st.caption(f"正在采集 {name}...")
+                                            edf = fetch_etf_fund_flow(code, name)
+                                            if not edf.empty:
+                                                save_fund_flows(conn_f2, edf)
+                                        st.success("采集完成")
+                                    finally:
+                                        conn_f2.close()
+                                except Exception as e:
+                                    st.error(f"采集失败: {str(e)[:100]}")
+                                st.rerun()
+
+            except Exception as e:
+                st.info(f"ETF资金流模块暂不可用: {str(e)[:80]}")
+
+        # ----- 北向资金 -----
+        with tab10_sub3:
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">北向资金<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">沪深港通北向资金净流入趋势，判断外资动向。</span></div>', unsafe_allow_html=True)
+
+            try:
+                conn_nf = get_db_connection()
+                try:
+                    north_df = pd.read_sql_query("""
+                        SELECT date, net_inflow, buy_amount, sell_amount
+                        FROM fund_flows
+                        WHERE category = 'north'
+                        ORDER BY date
+                    """, conn_nf)
+                finally:
+                    conn_nf.close()
+
+                if not north_df.empty:
+                    col_n1, col_n2, col_n3 = st.columns(3)
+                    latest_n = north_df.iloc[-1]
+                    with col_n1:
+                        st.metric("最新净流入", f"{latest_n['net_inflow']/10000:.1f}亿" if abs(latest_n['net_inflow'])>10000 else f"{latest_n['net_inflow']:.0f}万")
+                    with col_n2:
+                        st.metric("近5日累计", f"{north_df.tail(5)['net_inflow'].sum()/10000:.1f}亿")
+                    with col_n3:
+                        st.metric("近20日累计", f"{north_df.tail(20)['net_inflow'].sum()/10000:.1f}亿")
+
+                    fig_north = go.Figure()
+                    fig_north.add_trace(go.Bar(
+                        x=north_df['date'], y=north_df['net_inflow'],
+                        name='净流入', marker_color=['#22c55e' if v>0 else '#ef4444' for v in north_df['net_inflow']],
+                    ))
+                    fig_north.add_trace(go.Scatter(
+                        x=north_df['date'],
+                        y=north_df['net_inflow'].cumsum(),
+                        name='累计净流入', mode='lines',
+                        line=dict(color='#f59e0b', width=2),
+                        yaxis='y2',
+                    ))
+                    fig_north.add_hline(y=0, line_dash='dash', line_color='#484f58')
+                    fig_north.update_layout(
+                        yaxis=dict(title='日净流入', gridcolor='#21262d',
+                                   tickfont=dict(size=9, color='#8b949e')),
+                        yaxis2=dict(title='累计', overlaying='y', side='right',
+                                    gridcolor='#21262d', tickfont=dict(size=9, color='#f59e0b')),
+                        xaxis=dict(gridcolor='#21262d', tickfont=dict(size=9, color='#8b949e')),
+                        paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                        height=350, margin=dict(l=50, r=50, t=10, b=30),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                   font=dict(size=10, color='#8b949e')),
+                    )
+                    st.plotly_chart(fig_north, width='stretch')
+                else:
+                    st.info("暂无北向资金数据")
+                    if st.button("采集北向资金数据", key="fetch_north"):
+                        with st.spinner("正在采集..."):
+                            try:
+                                from src.data_sources.fund_flow import fetch_north_flow, save_fund_flows
+                                conn_f3 = get_db_connection()
+                                try:
+                                    ndf = fetch_north_flow(days=60)
+                                    if not ndf.empty:
+                                        cnt = save_fund_flows(conn_f3, ndf)
+                                        st.success(f"采集成功，写入 {cnt} 条记录")
+                                finally:
+                                    conn_f3.close()
+                            except Exception as e:
+                                st.error(f"采集失败: {str(e)[:100]}")
+                            st.rerun()
+
+            except Exception as e:
+                st.info(f"北向资金模块暂不可用: {str(e)[:80]}")
+
         # ========== 页脚 ==========
     st.markdown("---")
     st.markdown(
         f'<div style="text-align:center;color:#484f58;font-size:11px;">'
-        f'投资组合跟踪分析系统 v2.0-beta | 数据截至 {selected_date} | '
+        f'投资组合跟踪分析系统 v2.0 | 数据截至 {selected_date} | '
         f'共 {len(positions)} 只持仓</div>',
         unsafe_allow_html=True
     )
