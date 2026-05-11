@@ -1167,7 +1167,7 @@ def compute_return_attribution(days=250, end_date=None):
     conn3.close()
 
     benchmark_return = 0.0
-    if not bench_now.empty and not bench_prev1.empty:
+    if not bench_now.empty and not bench_prev.empty:
         benchmark_return = float(bench_now['close'].iloc[0] / bench_prev['close'].iloc[0] - 1)
 
     # Brinson 分解
