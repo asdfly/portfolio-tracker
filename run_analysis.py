@@ -25,6 +25,10 @@ from src.utils.notification import NotificationManager
 from src.utils.enhanced_report import EnhancedReportBuilder
 from src.utils.news_fetcher import NewsFetcher, save_news_to_db
 from src.report.smart_report import SmartReportGenerator
+from src.data_sources.fund_flow import (
+    fetch_sector_fund_flow, fetch_etf_fund_flow,
+    fetch_north_flow, save_fund_flows
+)
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 
 # ==================== 日志配置 ====================
@@ -133,6 +137,110 @@ def run_stage3_monitor(summary, risk_data):
 
     return alerts
 
+
+
+def run_stage_fund_flow():
+    """阶段3.2: 资金流数据采集 - 行业/ETF/北向资金
+    完全独立容错：任何采集失败均不影响主流程
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("[阶段3.2/5] 资金流数据采集")
+    logger.info("-" * 50)
+
+    stats = {"sector": 0, "etf": 0, "north": 0, "errors": []}
+
+    # 获取持仓 ETF 列表（从配置中读取，避免依赖阶段一结果）
+    from config.settings import ETF_CATEGORIES
+    etf_codes = list(ETF_CATEGORIES.keys())
+
+    # 获取数据库连接
+    from config.settings import DATABASE_PATH
+    import sqlite3
+    conn = sqlite3.connect(str(DATABASE_PATH))
+
+    try:
+        # --- 行业资金流 ---
+        try:
+            sector_df = fetch_sector_fund_flow()
+            if not sector_df.empty:
+                n = save_fund_flows(conn, sector_df)
+                stats["sector"] = n
+                logger.info(f"  行业资金流: {n} 条")
+            else:
+                logger.warning("  行业资金流: 无数据返回")
+        except Exception as e:
+            stats["errors"].append(f"行业资金流: {e}")
+            logger.warning(f"  行业资金流采集失败(不影响主流程): {e}")
+
+        # --- ETF 资金流（逐只采集，单只失败不中断） ---
+        for code in etf_codes:
+            try:
+                name = ETF_CATEGORIES[code].get("name", "")
+                df = fetch_etf_fund_flow(code, name)
+                if not df.empty:
+                    n = save_fund_flows(conn, df)
+                    stats["etf"] += n
+            except Exception as e:
+                logger.warning(f"  ETF {code} 资金流失败(跳过): {e}")
+                stats["errors"].append(f"ETF {code}: {e}")
+
+        if stats["etf"] > 0:
+            logger.info(f"  ETF资金流: {stats['etf']} 条 ({len(etf_codes)} 只)")
+        else:
+            logger.warning(f"  ETF资金流: 全部失败")
+
+        # --- 北向资金 ---
+        try:
+            north_df = fetch_north_flow(days=60)
+            if not north_df.empty:
+                n = save_fund_flows(conn, north_df)
+                stats["north"] = n
+                logger.info(f"  北向资金: {n} 条")
+            else:
+                logger.warning("  北向资金: 无数据返回")
+        except Exception as e:
+            stats["errors"].append(f"北向资金: {e}")
+            logger.warning(f"  北向资金采集失败(不影响主流程): {e}")
+
+        # --- ETF 当日实时资金流补充（fund_etf_spot_em 批量获取） ---
+        try:
+            import akshare as ak
+            spot_df = ak.fund_etf_spot_em()
+            if spot_df is not None and not spot_df.empty:
+                # 筛选持仓 ETF
+                spot_df['代码'] = spot_df['代码'].astype(str)
+                matched = spot_df[spot_df['代码'].isin(etf_codes)]
+                if not matched.empty:
+                    from datetime import datetime
+                    today_str = datetime.now().strftime('%Y-%m-%d')
+                    rows = []
+                    for _, row in matched.iterrows():
+                        rows.append({
+                            'date': today_str,
+                            'code': str(row['代码']),
+                            'name': str(row.get('名称', '')),
+                            'net_inflow': float(row.get('主力净流入-净额', 0) or 0),
+                            'buy_amount': 0,
+                            'sell_amount': 0,
+                            'category': 'etf',
+                        })
+                    import pandas as pd
+                    spot_save_df = pd.DataFrame(rows)
+                    n = save_fund_flows(conn, spot_save_df)
+                    logger.info(f"  ETF实时资金流: {n} 条（批量补充）")
+        except Exception as e:
+            logger.warning(f"  ETF实时资金流补充失败(跳过): {e}")
+
+        logger.info(f"资金流采集完成: 行业{stats['sector']}条 + ETF{stats['etf']}条 + 北向{stats['north']}条")
+        if stats["errors"]:
+            logger.warning(f"失败项: {len(stats['errors'])} 个")
+
+    except Exception as e:
+        logger.error(f"资金流采集阶段异常(不影响主流程): {e}")
+    finally:
+        conn.close()
+
+    return stats
 
 def run_stage_news(positions, summary, index_quotes=None):
     """阶段3.5: 行业新闻抓取与分析"""
@@ -400,6 +508,9 @@ def main():
         # === 阶段三: 监控告警 ===
         summary = results.get('summary', {})
         alerts = run_stage3_monitor(summary, risk_data)
+
+        # === 阶段3.2: 资金流数据采集 ===
+        fund_flow_stats = run_stage_fund_flow()
 
         # === 阶段三.五: 行业资讯与新闻分析 ===
         positions = results.get('positions', [])
