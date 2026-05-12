@@ -5692,7 +5692,33 @@ def main():
                             margin=dict(l=80, r=30, t=35, b=30), bargap=0.2,
                         )
                         st.plotly_chart(fig_sf, width='stretch')
+                        # TOP20行业资金净流入时间趋势
+                        if sector_df['date'].nunique() >= 3:
+                            top20_names = sector_df.groupby('name')['net_inflow'].sum().nlargest(10).index.tolist()
+                            trend_df = sector_df[sector_df['name'].isin(top20_names)].copy()
+                            trend_df['net_inflow_yi'] = trend_df['net_inflow'] / 1e8
 
+                            fig_trend = go.Figure()
+                            for name in top20_names:
+                                sub = trend_df[trend_df['name'] == name].sort_values('date')
+                                fig_trend.add_trace(go.Scatter(
+                                    x=sub['date'], y=sub['net_inflow_yi'],
+                                    name=name, mode='lines',
+                                    line=dict(width=1.5),
+                                ))
+                            fig_trend.add_hline(y=0, line_dash='dash', line_color='#484f58')
+                            fig_trend.update_layout(
+                                title="<span style='font-size:12px;color:#8b949e'>TOP10行业资金净流入趋势(亿元)</span>",
+                                yaxis=dict(title='净流入(亿元)', gridcolor='#21262d',
+                                           tickfont=dict(size=9, color='#8b949e')),
+                                xaxis=dict(gridcolor='#21262d', tickfont=dict(size=9, color='#8b949e')),
+                                paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                                height=400, margin=dict(l=50, r=30, t=35, b=30),
+                                legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                                           font=dict(size=9, color='#8b949e'),
+                                           groupclick='toggleitem'),
+                            )
+                            st.plotly_chart(fig_trend, width='stretch')
                     # 多日趋势热力图
                     if sector_df['date'].nunique() >= 3:
                         pivot = sector_df.pivot_table(index='name', columns='date', values='net_inflow', aggfunc='sum')
