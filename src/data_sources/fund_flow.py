@@ -19,10 +19,14 @@ logger = logging.getLogger(__name__)
 for _proxy_key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']:
     os.environ.pop(_proxy_key, None)
 
-_OrigSessionInit = _requests.sessions.Session.__init__
+# 禁用 requests 代理。
+# 使用 deepcopy 保存原始 __init__ 的完整副本，避免在共享 Python 进程中
+# （如 akshare 可能也 patch Session）形成递归调用链。
+import copy
+_OriginalSessionInit = copy.deepcopy(_requests.Session.__init__)
 
 def _NoProxySessionInit(self, *args, **kwargs):
-    _OrigSessionInit(self, *args, **kwargs)
+    _OriginalSessionInit(self, *args, **kwargs)
     self.trust_env = False
 
 _requests.Session.__init__ = _NoProxySessionInit
