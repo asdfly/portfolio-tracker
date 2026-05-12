@@ -1738,6 +1738,14 @@ def main():
         .cal-summary-profit { color: #22c55e; }
         .cal-summary-loss { color: #ef4444; }
 
+        /* 主标签栏换行 */
+        .stTabs [data-baseweb="tab-list"] {
+            display: flex; flex-wrap: wrap; gap: 2px 4px;
+            max-width: 100%; overflow: visible;
+        }
+        .stTabs [data-baseweb="tab"] {
+            flex: 0 0 auto !important;
+        }
         </style>
         """, unsafe_allow_html=True
     )
@@ -1885,8 +1893,7 @@ def main():
             f'</div>', unsafe_allow_html=True)
 
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析"])
-    tab6, tab7, tab8, tab9, tab10 = st.tabs(["📡 技术信号", "📰 资讯与评估", "💡 操作建议", "🔬 自定义指标", "💰 资金动向"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(["📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历", "💠 高级分析", "📡 技术信号", "📰 资讯与评估", "💡 操作建议", "🔬 自定义指标", "💰 资金动向"])
 
 
     # ========== 快速指标条 ==========
