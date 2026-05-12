@@ -5667,6 +5667,13 @@ def main():
                     conn_ff.close()
 
                 if not sector_df.empty:
+                    # 去除重复行业（如证券Ⅱ/Ⅲ、工程咨询服务Ⅱ/Ⅲ，数据相同只保留一个）
+                    # 去除重复行业（同板块不同层级代码，数据完全相同，只保留Ⅱ）
+                    sector_df = sector_df[~sector_df['code'].isin({
+                        'BK1366', 'BK1471'  # 证券Ⅲ→保留证券Ⅱ(BK0473), 工程咨询服务Ⅲ→保留Ⅱ(BK0726)
+                    })].copy()
+                    sector_df = sector_df[sector_df['code'].isin(_keep_codes)].copy()
+
                     # 最新日期的行业排名
                     latest_date = sector_df['date'].iloc[0]
                     latest = sector_df[sector_df['date'] == latest_date].head(20)
