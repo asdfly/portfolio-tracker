@@ -27,7 +27,7 @@ from src.utils.news_fetcher import NewsFetcher, save_news_to_db
 from src.report.smart_report import SmartReportGenerator
 from src.data_sources.fund_flow import (
     fetch_sector_fund_flow, fetch_etf_fund_flow,
-    fetch_north_flow, save_fund_flows
+    fetch_main_fund_flow, fetch_north_flow, save_fund_flows
 )
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 
@@ -147,7 +147,7 @@ def run_stage_fund_flow():
     logger.info("[阶段3.2/5] 资金流数据采集")
     logger.info("-" * 50)
 
-    stats = {"sector": 0, "etf": 0, "north": 0, "errors": []}
+    stats = {"sector": 0, "etf": 0, "main_fund": 0, "errors": []}
 
     # 获取持仓 ETF 列表（从配置中读取，避免依赖阶段一结果）
     from config.settings import ETF_CATEGORIES
@@ -189,18 +189,18 @@ def run_stage_fund_flow():
         else:
             logger.warning(f"  ETF资金流: 全部失败")
 
-        # --- 北向资金 ---
+        # --- 主力资金净流入（替代已停更的北向资金） ---
         try:
-            north_df = fetch_north_flow(days=60)
-            if not north_df.empty:
-                n = save_fund_flows(conn, north_df)
-                stats["north"] = n
-                logger.info(f"  北向资金: {n} 条")
+            main_df = fetch_main_fund_flow(days=120)
+            if not main_df.empty:
+                n = save_fund_flows(conn, main_df)
+                stats["main_fund"] = n
+                logger.info(f"  主力资金: {n} 条")
             else:
-                logger.warning("  北向资金: 无数据返回")
+                logger.warning("  主力资金: 无数据返回")
         except Exception as e:
-            stats["errors"].append(f"北向资金: {e}")
-            logger.warning(f"  北向资金采集失败(不影响主流程): {e}")
+            stats["errors"].append(f"主力资金: {e}")
+            logger.warning(f"  主力资金采集失败(不影响主流程): {e}")
 
         # --- ETF 当日实时资金流补充（fund_etf_spot_em 批量获取） ---
         try:
@@ -231,7 +231,7 @@ def run_stage_fund_flow():
         except Exception as e:
             logger.warning(f"  ETF实时资金流补充失败(跳过): {e}")
 
-        logger.info(f"资金流采集完成: 行业{stats['sector']}条 + ETF{stats['etf']}条 + 北向{stats['north']}条")
+        logger.info(f"资金流采集完成: 行业{stats['sector']}条 + ETF{stats['etf']}条 + 主力资金{stats['main_fund']}条")
         if stats["errors"]:
             logger.warning(f"失败项: {len(stats['errors'])} 个")
 
