@@ -5888,6 +5888,65 @@ def main():
                                    font=dict(size=10, color='#8b949e')),
                     )
                     st.plotly_chart(fig_mf, width='stretch')
+
+                    # ----- 持仓ETF合计主力资金净流入 -----
+                    st.markdown('<div class="tip-title" style="font-size:14px;border-bottom:none;padding:3px 0;">持仓ETF合计资金流</div>', unsafe_allow_html=True)
+
+                    try:
+                        conn_ef2 = get_db_connection()
+                        try:
+                            etf_total = pd.read_sql_query("""
+                                SELECT f.date, SUM(f.net_inflow) as total_net_inflow,
+                                       COUNT(DISTINCT f.code) as etf_count
+                                FROM fund_flows f
+                                WHERE f.category = 'etf'
+                                GROUP BY f.date
+                                ORDER BY f.date
+                            """, conn_ef2)
+                        finally:
+                            conn_ef2.close()
+
+                        if not etf_total.empty:
+                            col_e1, col_e2, col_e3 = st.columns(3)
+                            latest_et = etf_total.iloc[-1]
+                            with col_e1:
+                                st.metric("最新ETF合计净流入", f"{latest_et['total_net_inflow']/1e8:.1f}亿")
+                            with col_e2:
+                                st.metric("覆盖ETF数", f"{latest_et['etf_count']}只")
+                            with col_e3:
+                                ev5 = etf_total.tail(5)['total_net_inflow'].sum() / 1e8
+                                st.metric("近5日ETF累计", f"{ev5:.1f}亿")
+
+                            fig_etf_total = go.Figure()
+                            fig_etf_total.add_trace(go.Bar(
+                                x=etf_total['date'], y=etf_total['total_net_inflow'] / 1e8,
+                                name='ETF合计净流入(亿)',
+                                marker_color=['#22c55e' if v > 0 else '#ef4444' for v in etf_total['total_net_inflow'] / 1e8],
+                            ))
+                            fig_etf_total.add_trace(go.Scatter(
+                                x=etf_total['date'],
+                                y=(etf_total['total_net_inflow'] / 1e8).cumsum(),
+                                name='累计净流入(亿)', mode='lines',
+                                line=dict(color='#58a6ff', width=2),
+                                yaxis='y2',
+                            ))
+                            fig_etf_total.add_hline(y=0, line_dash='dash', line_color='#484f58')
+                            fig_etf_total.update_layout(
+                                yaxis=dict(title='日净流入(亿)', gridcolor='#21262d',
+                                           tickfont=dict(size=9, color='#8b949e')),
+                                yaxis2=dict(title='累计(亿)', overlaying='y', side='right',
+                                            gridcolor='#21262d', tickfont=dict(size=9, color='#58a6ff')),
+                                xaxis=dict(gridcolor='#21262d', tickfont=dict(size=9, color='#8b949e')),
+                                paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                                height=350, margin=dict(l=50, r=50, t=10, b=30),
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                           font=dict(size=10, color='#8b949e')),
+                            )
+                            st.plotly_chart(fig_etf_total, width='stretch')
+                        else:
+                            st.info("暂无ETF资金流数据")
+                    except Exception as e2:
+                        st.caption(f"ETF合计资金流: {str(e2)[:60]}")
                 else:
                     st.info("暂无主力资金数据")
                     if st.button("采集主力资金数据", key="fetch_main_fund"):
