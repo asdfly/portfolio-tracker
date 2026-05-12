@@ -5640,7 +5640,7 @@ def main():
     with tab10:
         st.caption("💰 行业/ETF资金流向分析，追踪主力资金动态，辅助判断市场热点切换")
 
-        tab10_sub1, tab10_sub2, tab10_sub3 = st.tabs(["📊 行业资金流", "📈 ETF资金流", "🌊 北向资金"])
+        tab10_sub1, tab10_sub2, tab10_sub3 = st.tabs(["📊 行业资金流", "📈 ETF资金流", "💰 主力资金"])
 
         # ----- 行业资金流 -----
         with tab10_sub1:
@@ -5824,49 +5824,54 @@ def main():
             except Exception as e:
                 st.info(f"ETF资金流模块暂不可用: {str(e)[:80]}")
 
-        # ----- 北向资金 -----
+        # ----- 主力资金净流入（替代已停更的北向资金） -----
         with tab10_sub3:
-            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">北向资金<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">沪深港通北向资金净流入趋势，判断外资动向。</span></div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">主力资金<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">A股主力资金净流入趋势（主力=超大单+大单），2024-08-19起替代北向资金。</span></div>', unsafe_allow_html=True)
 
             try:
                 conn_nf = get_db_connection()
                 try:
-                    north_df = pd.read_sql_query("""
-                        SELECT date, net_inflow, buy_amount, sell_amount
+                    mf_df = pd.read_sql_query("""
+                        SELECT date, net_inflow, super_large_inflow, large_inflow,
+                               medium_inflow, small_inflow, net_inflow_pct
                         FROM fund_flows
-                        WHERE category = 'north'
+                        WHERE category = 'main_fund'
                         ORDER BY date
                     """, conn_nf)
                 finally:
                     conn_nf.close()
 
-                if not north_df.empty:
+                if not mf_df.empty:
                     col_n1, col_n2, col_n3 = st.columns(3)
-                    latest_n = north_df.iloc[-1]
+                    latest_mf = mf_df.iloc[-1]
                     with col_n1:
-                        st.metric("最新净流入", f"{latest_n['net_inflow']/10000:.1f}亿" if abs(latest_n['net_inflow'])>10000 else f"{latest_n['net_inflow']:.0f}万")
+                        val = latest_mf['net_inflow'] / 1e8
+                        st.metric("最新主力净流入", f"{val:.1f}亿",
+                                  delta=f"{val/1e4:.2f}万亿" if abs(val) > 10000 else None)
                     with col_n2:
-                        st.metric("近5日累计", f"{north_df.tail(5)['net_inflow'].sum()/10000:.1f}亿")
+                        val5 = mf_df.tail(5)['net_inflow'].sum() / 1e8
+                        st.metric("近5日累计", f"{val5:.1f}亿")
                     with col_n3:
-                        st.metric("近20日累计", f"{north_df.tail(20)['net_inflow'].sum()/10000:.1f}亿")
+                        val20 = mf_df.tail(20)['net_inflow'].sum() / 1e8
+                        st.metric("近20日累计", f"{val20:.1f}亿")
 
-                    fig_north = go.Figure()
-                    fig_north.add_trace(go.Bar(
-                        x=north_df['date'], y=north_df['net_inflow'],
-                        name='净流入', marker_color=['#22c55e' if v>0 else '#ef4444' for v in north_df['net_inflow']],
+                    fig_mf = go.Figure()
+                    fig_mf.add_trace(go.Bar(
+                        x=mf_df['date'], y=mf_df['net_inflow'] / 1e8,
+                        name='主力净流入(亿)', marker_color=['#22c55e' if v > 0 else '#ef4444' for v in mf_df['net_inflow'] / 1e8],
                     ))
-                    fig_north.add_trace(go.Scatter(
-                        x=north_df['date'],
-                        y=north_df['net_inflow'].cumsum(),
-                        name='累计净流入', mode='lines',
+                    fig_mf.add_trace(go.Scatter(
+                        x=mf_df['date'],
+                        y=(mf_df['net_inflow'] / 1e8.cumsum()),
+                        name='累计净流入(亿)', mode='lines',
                         line=dict(color='#f59e0b', width=2),
                         yaxis='y2',
                     ))
-                    fig_north.add_hline(y=0, line_dash='dash', line_color='#484f58')
-                    fig_north.update_layout(
-                        yaxis=dict(title='日净流入', gridcolor='#21262d',
+                    fig_mf.add_hline(y=0, line_dash='dash', line_color='#484f58')
+                    fig_mf.update_layout(
+                        yaxis=dict(title='日净流入(亿)', gridcolor='#21262d',
                                    tickfont=dict(size=9, color='#8b949e')),
-                        yaxis2=dict(title='累计', overlaying='y', side='right',
+                        yaxis2=dict(title='累计(亿)', overlaying='y', side='right',
                                     gridcolor='#21262d', tickfont=dict(size=9, color='#f59e0b')),
                         xaxis=dict(gridcolor='#21262d', tickfont=dict(size=9, color='#8b949e')),
                         paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
@@ -5874,18 +5879,18 @@ def main():
                         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                    font=dict(size=10, color='#8b949e')),
                     )
-                    st.plotly_chart(fig_north, width='stretch')
+                    st.plotly_chart(fig_mf, width='stretch')
                 else:
-                    st.info("暂无北向资金数据")
-                    if st.button("采集北向资金数据", key="fetch_north"):
+                    st.info("暂无主力资金数据")
+                    if st.button("采集主力资金数据", key="fetch_main_fund"):
                         with st.spinner("正在采集..."):
                             try:
-                                from src.data_sources.fund_flow import fetch_north_flow, save_fund_flows
+                                from src.data_sources.fund_flow import fetch_main_fund_flow, save_fund_flows
                                 conn_f3 = get_db_connection()
                                 try:
-                                    ndf = fetch_north_flow(days=60)
-                                    if not ndf.empty:
-                                        cnt = save_fund_flows(conn_f3, ndf)
+                                    mdf = fetch_main_fund_flow(days=120)
+                                    if not mdf.empty:
+                                        cnt = save_fund_flows(conn_f3, mdf)
                                         st.success(f"采集成功，写入 {cnt} 条记录")
                                 finally:
                                     conn_f3.close()
@@ -5894,7 +5899,7 @@ def main():
                             st.rerun()
 
             except Exception as e:
-                st.info(f"北向资金模块暂不可用: {str(e)[:80]}")
+                st.info(f"主力资金模块暂不可用: {str(e)[:80]}")
 
         # ========== 页脚 ==========
     st.markdown("---")
