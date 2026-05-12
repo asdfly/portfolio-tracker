@@ -5662,7 +5662,6 @@ def main():
                         FROM fund_flows
                         WHERE category = 'sector'
                         ORDER BY date DESC, net_inflow DESC
-                        LIMIT 500
                     """, conn_ff)
                 finally:
                     conn_ff.close()
@@ -5676,8 +5675,8 @@ def main():
                         fig_sf = go.Figure(go.Bar(
                             orientation='h',
                             y=latest['name'],
-                            x=latest['net_inflow'],
-                            marker_color=['#22c55e' if v > 0 else '#ef4444' for v in latest['net_inflow']],
+                            x=latest['net_inflow']/1e8,
+                            marker_color=['#22c55e' if v > 0 else '#ef4444' for v in latest['net_inflow']/1e8],
                             text=[f"{v/1e8:.1f}亿" for v in latest['net_inflow']],
                             textposition='auto',
                             textfont=dict(size=9, color='#c9d1d9'),
@@ -5724,7 +5723,7 @@ def main():
                         pivot = sector_df.pivot_table(index='name', columns='date', values='net_inflow', aggfunc='sum')
                         top_names = sector_df.groupby('name')['net_inflow'].sum().nlargest(15).index
                         pivot = pivot.loc[pivot.index.isin(top_names)]
-                        pivot = pivot.fillna(0) / 10000  # 转亿元
+                        pivot = pivot.fillna(0) / 1e8  # 转亿元
 
                         fig_heat = go.Figure(go.Heatmap(
                             z=pivot.values,
@@ -5802,9 +5801,9 @@ def main():
                         with col_p1:
                             fig_ef = go.Figure()
                             fig_ef.add_trace(go.Bar(
-                                x=etf_single['date'], y=etf_single['net_inflow'],
+                                x=etf_single['date'], y=etf_single['net_inflow']/1e8,
                                 name='主力净流入',
-                                marker_color=['#22c55e' if v > 0 else '#ef4444' for v in etf_single['net_inflow']],
+                                marker_color=['#22c55e' if v > 0 else '#ef4444' for v in etf_single['net_inflow']/1e8],
                                 yaxis='y',
                             ))
                             fig_ef.add_trace(go.Scatter(
@@ -5814,7 +5813,7 @@ def main():
                                 yaxis='y2',
                             ))
                             fig_ef.update_layout(
-                                yaxis=dict(title='净流入(元)', gridcolor='#21262d',
+                                yaxis=dict(title='净流入(亿元)', gridcolor='#21262d',
                                            tickfont=dict(size=9, color='#8b949e')),
                                 yaxis2=dict(title='收盘价', overlaying='y', side='right',
                                             gridcolor='#21262d', tickfont=dict(size=9, color='#58a6ff')),
@@ -5828,7 +5827,7 @@ def main():
                             st.plotly_chart(fig_ef, width='stretch')
                         with col_p2:
                             total_net = etf_single['net_inflow'].sum()
-                            st.metric("累计净流入", f"{total_net/10000:.1f}亿" if abs(total_net)>10000 else f"{total_net:.0f}万")
+                            st.metric("累计净流入", f"{total_net/1e8:.1f}亿" if abs(total_net)>1e8 else f"{total_net/1e4:.0f}万")
                             flow_up = len(etf_single[etf_single['net_inflow'] > 0])
                             st.metric("流入天数", f"{flow_up} / {len(etf_single)}",
                                       delta=f"{flow_up/len(etf_single)*100:.0f}%")
@@ -5860,7 +5859,7 @@ def main():
 
         # ----- 主力资金净流入（替代已停更的北向资金） -----
         with tab10_sub3:
-            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">主力资金<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">A股主力资金净流入趋势（主力=超大单+大单），2024-08-19起替代北向资金。</span></div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">主力资金<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">A股主力资金净流入趋势（主力=超大单+大单），数据自2025-11-07起，替代已停更的北向资金。</span></div>', unsafe_allow_html=True)
 
             try:
                 conn_nf = get_db_connection()
