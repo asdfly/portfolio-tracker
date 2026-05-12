@@ -46,3 +46,16 @@ _run_*.py
 read_kline.py
 backfill_log.txt
 run_backfill.bat
+
+# 输出文件（报告、截图）
+output/
+
+# 日志文件
+dashboard_log.txt
+
+# 数据库文件（即使空文件）
+data/*.db
+data/*.txt
+
+# Dash环境
+.streamlit/secrets.toml
