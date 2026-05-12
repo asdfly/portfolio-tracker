@@ -5862,7 +5862,7 @@ def main():
                     ))
                     fig_mf.add_trace(go.Scatter(
                         x=mf_df['date'],
-                        y=(mf_df['net_inflow'] / 1e8.cumsum()),
+                        y=(mf_df['net_inflow'] / 1e8).cumsum(),
                         name='累计净流入(亿)', mode='lines',
                         line=dict(color='#f59e0b', width=2),
                         yaxis='y2',
