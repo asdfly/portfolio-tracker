@@ -5720,27 +5720,37 @@ def main():
                             st.plotly_chart(fig_trend, width='stretch')
                     # 多日趋势热力图
                     if sector_df['date'].nunique() >= 3:
-                        pivot = sector_df.pivot_table(index='name', columns='date', values='net_inflow', aggfunc='sum')
-                        top_names = sector_df.groupby('name')['net_inflow'].sum().nlargest(15).index
-                        pivot = pivot.loc[pivot.index.isin(top_names)]
-                        pivot = pivot.fillna(0) / 1e8  # 转亿元
+                        # 取最近30个交易日（避免120天日期过于密集）
+                        recent_dates = sorted(sector_df['date'].unique(), reverse=True)[:30]
+                        heat_df = sector_df[sector_df['date'].isin(recent_dates)].copy()
+
+                        pivot = heat_df.pivot_table(index='name', columns='date', values='net_inflow', aggfunc='sum')
+                        # 按最近5日日均净流入排序，正负各半选取更有对比度
+                        daily_avg = pivot.apply(lambda row: row.tail(5).mean(), axis=1).sort_values(ascending=False)
+                        top_pos = daily_avg.nlargest(8).index.tolist()
+                        top_neg = daily_avg.nsmallest(7).index.tolist()
+                        top_names = [n for n in top_pos + top_neg if n in pivot.index]
+                        pivot = pivot.loc[top_names]
+
+                        pivot_yi = pivot.fillna(0) / 1e8  # 转亿元
 
                         fig_heat = go.Figure(go.Heatmap(
-                            z=pivot.values,
-                            x=[d[-5:] for d in pivot.columns],
-                            y=pivot.index,
+                            z=pivot_yi.values,
+                            x=[d[-5:] for d in pivot_yi.columns],
+                            y=pivot_yi.index,
                             colorscale=[[0, '#ef4444'], [0.5, '#0d1117'], [1, '#22c55e']],
                             zmid=0,
-                            text=[[f"{v:.1f}" for v in row] for row in pivot.values],
-                            texttemplate="%{text}", textfont=dict(size=9),
+                            text=[[f"{v:.1f}" for v in row] for row in pivot_yi.values],
+                            texttemplate="%{text}", textfont=dict(size=8),
                             hovertemplate="%{y}: %{x}<br>净流入: %{z:.1f}亿<extra></extra>",
                         ))
                         fig_heat.update_layout(
-                            title="<span style='font-size:12px;color:#8b949e'>行业资金流热力图(亿元)</span>",
+                            title="<span style='font-size:12px;color:#8b949e'>近30日行业资金流热力图(亿元)</span>",
                             paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
-                            height=max(350, 25 * len(pivot)),
-                            margin=dict(l=80, r=20, t=35, b=30),
-                            xaxis=dict(side='bottom'),
+                            height=max(350, 30 * len(pivot_yi)),
+                            margin=dict(l=100, r=20, t=35, b=30),
+                            xaxis=dict(side='bottom', tickangle=45),
+                            yaxis=dict(tickfont=dict(size=10)),
                         )
                         st.plotly_chart(fig_heat, width='stretch')
                 else:
