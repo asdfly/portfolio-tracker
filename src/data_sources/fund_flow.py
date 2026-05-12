@@ -61,6 +61,10 @@ def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
             '净额': 'net_inflow', '流入资金': 'buy_amount', '流出资金': 'sell_amount',
         }
         df = df.rename(columns=col_map)
+        # 同花顺原始单位为亿元，数据库约定统一为元 → ×1e8
+        for _col in ['net_inflow', 'buy_amount', 'sell_amount']:
+            if _col in df.columns:
+                df[_col] = df[_col].apply(lambda v: float(v) * 1e8 if pd.notna(v) else None)
         df['category'] = 'sector'
         df['date'] = date_str or datetime.now().strftime('%Y-%m-%d')
         keep_cols = ['date', 'code', 'name', 'change_pct', 'net_inflow', 'buy_amount', 'sell_amount', 'category']
@@ -147,9 +151,10 @@ def fetch_main_fund_flow(days: int = 120) -> pd.DataFrame:
         return pd.DataFrame()
     if df is None or df.empty:
         return pd.DataFrame()
-    tb = pd.to_numeric(df.get('流入资金',0), errors='coerce').sum()
-    ts = pd.to_numeric(df.get('流出资金',0), errors='coerce').sum()
-    tn = pd.to_numeric(df.get('净额',0), errors='coerce').sum()
+    # 同花顺原始单位为亿元，数据库约定统一为元 -> x1e8
+    tb = pd.to_numeric(df.get('流入资金',0), errors='coerce').sum() * 1e8
+    ts = pd.to_numeric(df.get('流出资金',0), errors='coerce').sum() * 1e8
+    tn = pd.to_numeric(df.get('净额',0), errors='coerce').sum() * 1e8
     np_ = round(tn/tb*100,2) if tb > 0 else 0.0
     today = datetime.now().strftime('%Y-%m-%d')
     result = pd.DataFrame([{
@@ -162,7 +167,7 @@ def fetch_main_fund_flow(days: int = 120) -> pd.DataFrame:
         'small_inflow': round(-tn,2), 'small_pct': 0.0,
         'category': 'main_fund',
     }])
-    logger.info(f"主力资金(同花顺聚合): date={today}, 净流入={tn:.2f}亿")
+    logger.info(f"主力资金(同花顺聚合): date={today}, 净流入={tn/1e8:.2f}亿 -> {tn:.0f}元")
     return result
 
 
