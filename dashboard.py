@@ -5796,7 +5796,6 @@ def main():
                             ON f.code = ps.code AND f.date = ps.date
                         WHERE f.category = 'etf'
                         ORDER BY f.date DESC, f.code
-                        LIMIT 2000
                     """, conn_ef)
                 finally:
                     conn_ef.close()
@@ -5940,6 +5939,7 @@ def main():
                                        COUNT(DISTINCT f.code) as etf_count
                                 FROM fund_flows f
                                 WHERE f.category = 'etf'
+                                  AND f.date >= date('now', '-90 days')
                                 GROUP BY f.date
                                 ORDER BY f.date
                             """, conn_ef2)
