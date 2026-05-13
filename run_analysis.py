@@ -28,7 +28,7 @@ from src.report.smart_report import SmartReportGenerator
 from src.data_sources.fund_flow import (
     fetch_sector_fund_flow, fetch_etf_fund_flow,
     fetch_main_fund_flow, fetch_north_flow, save_fund_flows,
-    backfill_etf_fund_flow_from_kline,
+    backfill_etf_fund_flow_from_kline, backfill_sector_fund_flow,
 )
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 
@@ -172,6 +172,14 @@ def run_stage_fund_flow():
         except Exception as e:
             stats["errors"].append(f"行业资金流: {e}")
             logger.warning(f"  行业资金流采集失败(不影响主流程): {e}")
+
+        # --- 行业资金流历史回填（基于同花顺多周期排行差值估算） ---
+        try:
+            bf_sector = backfill_sector_fund_flow(conn)
+            if bf_sector > 0:
+                logger.info(f"  行业资金流回填: {bf_sector} 条")
+        except Exception as e:
+            logger.warning(f"  行业资金流回填失败(跳过): {e}")
 
         # --- ETF 资金流（逐只采集，单只失败不中断） ---
         for code in etf_codes:
