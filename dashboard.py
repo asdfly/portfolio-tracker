@@ -5696,68 +5696,81 @@ def main():
                             margin=dict(l=80, r=30, t=35, b=30), bargap=0.2,
                         )
                         st.plotly_chart(fig_sf, width='stretch')
-                        # TOP20行业资金净流入时间趋势
+# TOP10行业资金净流入时间趋势
                         if sector_df['date'].nunique() >= 3:
-                            top20_names = sector_df.groupby('name')['net_inflow'].sum().nlargest(10).index.tolist()
-                            trend_df = sector_df[sector_df['name'].isin(top20_names)].copy()
-                            trend_df['net_inflow_yi'] = trend_df['net_inflow'] / 1e8
+                            # 只选至少有30天数据的行业，避免单日行业被选中导致趋势线无意义
+                            days_per_name = sector_df.groupby('name')['date'].nunique()
+                            qualified = days_per_name[days_per_name >= 30].index
+                            if len(qualified) > 0:
+                                trend_df = sector_df[sector_df['name'].isin(qualified)].copy()
+                                # 按最近30天累计净流入排序选TOP10
+                                recent_cutoff = sorted(trend_df['date'].unique())[-min(30, trend_df['date'].nunique()):]
+                                recent_sum = trend_df[trend_df['date'].isin(recent_cutoff)].groupby('name')['net_inflow'].sum()
+                                top10_names = recent_sum.nlargest(10).index.tolist()
+                                trend_df = trend_df[trend_df['name'].isin(top10_names)].copy()
+                                trend_df['net_inflow_yi'] = trend_df['net_inflow'] / 1e8
 
-                            fig_trend = go.Figure()
-                            for name in top20_names:
-                                sub = trend_df[trend_df['name'] == name].sort_values('date')
-                                fig_trend.add_trace(go.Scatter(
-                                    x=sub['date'], y=sub['net_inflow_yi'],
-                                    name=name, mode='lines',
-                                    line=dict(width=1.5),
-                                ))
-                            fig_trend.add_hline(y=0, line_dash='dash', line_color='#484f58')
-                            fig_trend.update_layout(
-                                title="<span style='font-size:12px;color:#8b949e'>TOP10行业资金净流入趋势(亿元)</span>",
-                                yaxis=dict(title='净流入(亿元)', gridcolor='#21262d',
-                                           tickfont=dict(size=9, color='#8b949e')),
-                                xaxis=dict(gridcolor='#21262d', tickfont=dict(size=9, color='#8b949e')),
-                                paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
-                                height=400, margin=dict(l=50, r=30, t=50, b=30),
-                                legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                                           font=dict(size=9, color='#8b949e'),
-                                           groupclick='toggleitem'),
-                            )
-                            st.plotly_chart(fig_trend, width='stretch')
-                    # 多日趋势热力图
+                                fig_trend = go.Figure()
+                                for name in top10_names:
+                                    sub = trend_df[trend_df['name'] == name].sort_values('date')
+                                    fig_trend.add_trace(go.Scatter(
+                                        x=sub['date'], y=sub['net_inflow_yi'],
+                                        name=name, mode='lines',
+                                        line=dict(width=1.5),
+                                    ))
+                                fig_trend.add_hline(y=0, line_dash='dash', line_color='#484f58')
+                                fig_trend.update_layout(
+                                    title="<span style='font-size:12px;color:#8b949e'>TOP10行业资金净流入趋势(亿元)</span>",
+                                    yaxis=dict(title='净流入(亿元)', gridcolor='#21262d',
+                                               tickfont=dict(size=9, color='#8b949e')),
+                                    xaxis=dict(gridcolor='#21262d', tickfont=dict(size=9, color='#8b949e')),
+                                    paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                                    height=400, margin=dict(l=50, r=30, t=50, b=30),
+                                    legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                                               font=dict(size=9, color='#8b949e'),
+                                               groupclick='toggleitem'),
+                                )
+                                st.plotly_chart(fig_trend, width='stretch')
+# 多日趋势热力图
                     if sector_df['date'].nunique() >= 3:
-                        # 取最近30个交易日（避免120天日期过于密集）
+                        # 取最近30个交易日
                         recent_dates = sorted(sector_df['date'].unique(), reverse=True)[:30]
                         heat_df = sector_df[sector_df['date'].isin(recent_dates)].copy()
 
                         pivot = heat_df.pivot_table(index='name', columns='date', values='net_inflow', aggfunc='sum')
-                        # 按最近5日日均净流入排序，正负各半选取更有对比度
-                        daily_avg = pivot.apply(lambda row: row.tail(5).mean(), axis=1).sort_values(ascending=False)
-                        top_pos = daily_avg.nlargest(8).index.tolist()
-                        top_neg = daily_avg.nsmallest(7).index.tolist()
-                        top_names = [n for n in top_pos + top_neg if n in pivot.index]
-                        pivot = pivot.loc[top_names]
+                        # 过滤数据稀疏行业: 至少覆盖一半日期，避免NaN过多导致热力图失真
+                        min_coverage = max(5, len(pivot.columns) // 2)
+                        valid_mask = pivot.notna().sum(axis=1) >= min_coverage
+                        pivot = pivot.loc[valid_mask]
+                        if not pivot.empty:
+                            # 按最近5日日均净流入排序，正负各半选取更有对比度
+                            daily_avg = pivot.apply(lambda row: row.tail(5).mean(), axis=1).sort_values(ascending=False)
+                            top_pos = daily_avg.nlargest(8).index.tolist()
+                            top_neg = daily_avg.nsmallest(7).index.tolist()
+                            top_names = [n for n in top_pos + top_neg if n in pivot.index]
+                            pivot = pivot.loc[top_names]
 
-                        pivot_yi = pivot.fillna(0) / 1e8  # 转亿元
+                            pivot_yi = pivot / 1e8  # 转亿元，保留NaN
 
-                        fig_heat = go.Figure(go.Heatmap(
-                            z=pivot_yi.values,
-                            x=[d[-5:] for d in pivot_yi.columns],
-                            y=pivot_yi.index,
-                            colorscale=[[0, '#ef4444'], [0.5, '#0d1117'], [1, '#22c55e']],
-                            zmid=0,
-                            text=[[f"{v:.1f}" for v in row] for row in pivot_yi.values],
-                            texttemplate="%{text}", textfont=dict(size=8),
-                            hovertemplate="%{y}: %{x}<br>净流入: %{z:.1f}亿<extra></extra>",
-                        ))
-                        fig_heat.update_layout(
-                            title="<span style='font-size:12px;color:#8b949e'>近30日行业资金流热力图(亿元)</span>",
-                            paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
-                            height=max(350, 30 * len(pivot_yi)),
-                            margin=dict(l=100, r=20, t=35, b=30),
-                            xaxis=dict(side='bottom', tickangle=45),
-                            yaxis=dict(tickfont=dict(size=10)),
-                        )
-                        st.plotly_chart(fig_heat, width='stretch')
+                            fig_heat = go.Figure(go.Heatmap(
+                                z=pivot_yi.values,
+                                x=[str(d)[-5:] for d in pivot_yi.columns],
+                                y=pivot_yi.index,
+                                colorscale=[[0, '#ef4444'], [0.5, '#0d1117'], [1, '#22c55e']],
+                                zmid=0,
+                                text=[[f"{v:.1f}" if pd.notna(v) else "" for v in row] for row in pivot_yi.values],
+                                texttemplate="%{text}", textfont=dict(size=8),
+                                hovertemplate="%{y}: %{x}<br>净流入: %{z:.1f}亿<extra></extra>",
+                            ))
+                            fig_heat.update_layout(
+                                title="<span style='font-size:12px;color:#8b949e'>近30日行业资金流热力图(亿元)</span>",
+                                paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                                height=max(350, 30 * len(pivot_yi)),
+                                margin=dict(l=100, r=20, t=35, b=30),
+                                xaxis=dict(side='bottom', tickangle=45),
+                                yaxis=dict(tickfont=dict(size=10)),
+                            )
+                            st.plotly_chart(fig_heat, width='stretch')
                 else:
                     st.info("暂无行业资金流数据，请先运行数据采集任务")
                     if st.button("采集行业资金流", key="fetch_sector_flow"):
