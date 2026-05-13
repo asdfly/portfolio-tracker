@@ -5700,7 +5700,7 @@ def main():
                         if sector_df['date'].nunique() >= 3:
                             # 只选至少有30天数据的行业，避免单日行业被选中导致趋势线无意义
                             days_per_name = sector_df.groupby('name')['date'].nunique()
-                            qualified = days_per_name[days_per_name >= 30].index
+                            qualified = days_per_name[days_per_name >= 10].index
                             if len(qualified) > 0:
                                 trend_df = sector_df[sector_df['name'].isin(qualified)].copy()
                                 # 按最近30天累计净流入排序选TOP10

@@ -327,3 +327,109 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
         count += 1
     conn.commit()
     return count
+
+
+
+def backfill_sector_fund_flow(conn, trading_days=None):
+    """行业资金流历史回填，利用同花顺多周期排行(3/5/10/20日)差值分解估算每日数据。"""
+    import akshare as ak
+    from datetime import datetime, timedelta
+
+    try:
+        # 获取各周期排行数据
+        all_data = {}
+        for sym in ['即时', '3日排行', '5日排行', '10日排行', '20日排行']:
+            df = ak.stock_fund_flow_industry(symbol=sym)
+            if df is not None and not df.empty:
+                df = df.rename(columns={'行业': 'name', '净额': 'net'})
+                df['net'] = pd.to_numeric(df['net'], errors='coerce')
+                all_data[sym] = df[['name', 'net']].copy()
+                logger.info(f"  sector backfill: {sym} {len(df)}个行业")
+            else:
+                logger.warning(f"  sector backfill: {sym} 为空")
+                return 0
+
+        # 合并
+        m = all_data['即时'].copy()
+        m.columns = ['name', 'n1']
+        for sym, col in [('3日排行', 'n3'), ('5日排行', 'n5'), ('10日排行', 'n10'), ('20日排行', 'n20')]:
+            if sym in all_data:
+                tmp = all_data[sym].copy()
+                tmp.columns = ['name', col]
+                m = m.merge(tmp, on='name')
+
+        # 获取code映射
+        raw = ak.stock_fund_flow_industry(symbol='即时')
+        code_map = dict(zip(raw['行业'].values, raw['序号'].values))
+
+        # 构建交易日历(基于ETF数据的真实交易日)
+        today = datetime.now().strftime('%Y-%m-%d')
+        if trading_days is None:
+            cursor2 = conn.cursor()
+            etf_dates_raw = cursor2.execute(
+                "SELECT DISTINCT date FROM fund_flows WHERE category='etf' "
+                "ORDER BY date DESC LIMIT 25").fetchall()
+            trading_days = [datetime.strptime(r[0], '%Y-%m-%d').date() for r in etf_dates_raw]
+            trading_days.sort()
+
+        # 分解各天
+        records = []
+        for _, row in m.iterrows():
+            name = row['name']
+            code = str(code_map.get(name, ''))
+            n1 = float(row.get('n1', 0) or 0)
+            n3 = float(row.get('n3', 0) or 0)
+            n5 = float(row.get('n5', 0) or 0)
+            n10 = float(row.get('n10', 0) or 0)
+            n20 = float(row.get('n20', 0) or 0)
+
+            def _add(date_idx, net_yi, est=True):
+                if abs(date_idx) > len(trading_days):
+                    return
+                dt = str(trading_days[date_idx])
+                net = net_yi * 1e8
+                buy = abs(net) * 0.525 + max(net, 0)
+                sell = buy - net
+                records.append({
+                    'date': dt, 'code': code, 'name': name,
+                    'net_inflow': net, 'buy_amount': buy, 'sell_amount': sell,
+                    'category': 'sector',
+                })
+
+            if len(trading_days) >= 1:
+                _add(-1, n1, False)
+            if len(trading_days) >= 2:
+                _add(-2, n3 - n1, True)            # 昨天(精确)
+            if len(trading_days) >= 4:
+                _add(-3, (n5 - n3) / 2, True)      # 均分
+                _add(-4, (n5 - n3) / 2, True)
+            if len(trading_days) >= 9:
+                for i in range(-9, -4):
+                    _add(i, (n10 - n5) / 5, True)  # 前5天日均
+            if len(trading_days) >= 19:
+                for i in range(-19, -9):
+                    _add(i, (n20 - n10) / 10, True) # 前10天日均
+
+        if not records:
+            return 0
+
+        df_new = pd.DataFrame(records)
+
+        # 跳过已有日期
+        cursor = conn.cursor()
+        existing = {r[0] for r in cursor.execute(
+            "SELECT DISTINCT date FROM fund_flows WHERE category='sector'").fetchall()}
+        df_new = df_new[~df_new['date'].isin(existing)]
+
+        if df_new.empty:
+            logger.info(f"  sector backfill: 无新数据(已有{len(existing)}天)")
+            return 0
+
+        count = save_fund_flows(conn, df_new)
+        logger.info(f"  sector backfill: {count}条, {df_new['date'].nunique()}天, "
+                     f"{df_new['name'].nunique()}个行业")
+        return count
+
+    except Exception as e:
+        logger.error(f"行业资金流回填失败: {e}")
+        return 0
