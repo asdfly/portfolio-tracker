@@ -194,6 +194,97 @@ def fetch_north_flow(days: int = 60) -> pd.DataFrame:
     agg = agg.sort_values('date').tail(days).reset_index(drop=True)
     return agg
 
+def backfill_etf_fund_flow_from_kline(
+    conn, etf_map, target_days=120, estimate_ratio=0.15,
+) -> dict:
+    """ETF资金流历史回填。数据源: 腾讯日K线 > 新浪日K线。"""
+    import urllib.request
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    from datetime import datetime, timedelta
+    stats = {}
+    for code, name in etf_map.items():
+        try:
+            existing_dates = set(
+                r[0] for r in conn.execute(
+                    "SELECT DISTINCT date FROM fund_flows WHERE code=? AND category='etf'", (code,)
+                ).fetchall()
+            )
+            if len(existing_dates) >= target_days:
+                stats[code] = 0
+                continue
+            market = "sz" if code.startswith("1") else "sh"
+            end_dt = datetime.now()
+            start_dt = end_dt - timedelta(days=target_days + 60)
+            rows, source = [], ""
+            # 数据源1: 腾讯日K线
+            try:
+                url = (f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+                       f"?param={market}{code},day,{start_dt.strftime('%Y-%m-%d')},"
+                       f"{end_dt.strftime('%Y-%m-%d')},200,qfq")
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = opener.open(req, timeout=15)
+                data = json.loads(resp.read().decode("utf-8"))
+                klines = data.get("data", {}).get(f"{market}{code}", {}).get("qfqday", [])
+                if klines:
+                    source = "tencent"
+                    for k in reversed(klines):
+                        dv = str(k[0])
+                        if dv in existing_dates:
+                            continue
+                        op_, cp_ = float(k[1]), float(k[2])
+                        vol = float(k[5])
+                        to_ = (op_ + cp_) / 2 * vol * 100
+                        chg = (cp_ - op_) / op_ * 100 if op_ > 0 else 0.0
+                        ni = to_ * chg * estimate_ratio / 100
+                        rows.append({'date': dv, 'code': code, 'name': name,
+                                     'net_inflow': round(ni, 2),
+                                     'buy_amount': round(to_ / 2, 2),
+                                     'sell_amount': round(to_ / 2, 2),
+                                     'category': 'etf'})
+            except Exception:
+                pass
+            # 数据源2: 新浪日K线(fallback)
+            if not rows:
+                try:
+                    url = (f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+                           f"CN_MarketData.getKLineData?symbol={market}{code}"
+                           f"&scale=240&ma=no&datalen=200")
+                    req = urllib.request.Request(url, headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Referer": "https://finance.sina.com.cn"})
+                    resp = opener.open(req, timeout=15)
+                    klines = json.loads(resp.read().decode("utf-8"))
+                    if klines:
+                        source = "sina"
+                        for k in klines:
+                            dv = str(k["day"])
+                            if dv in existing_dates:
+                                continue
+                            op_, cp_ = float(k["open"]), float(k["close"])
+                            vol = float(k["volume"])
+                            to_ = cp_ * vol
+                            chg = (cp_ - op_) / op_ * 100 if op_ > 0 else 0.0
+                            ni = to_ * chg * estimate_ratio / 100
+                            rows.append({'date': dv, 'code': code, 'name': name,
+                                         'net_inflow': round(ni, 2),
+                                         'buy_amount': round(to_ / 2, 2),
+                                         'sell_amount': round(to_ / 2, 2),
+                                         'category': 'etf'})
+                except Exception:
+                    pass
+            if rows:
+                n = save_fund_flows(conn, pd.DataFrame(rows))
+                stats[code] = n
+                logger.info(f"  ETF回填 {code} {name}: {n}天({source})")
+            else:
+                stats[code] = 0
+        except Exception as e:
+            logger.warning(f"  ETF回填 {code} 失败: {e}")
+            stats[code] = -1
+    return stats
+
+
+
 def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
     """保存资金流数据到数据库（upsert），支持扩展列"""
     if df.empty:
