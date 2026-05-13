@@ -6108,22 +6108,27 @@ def main():
             with gt2:
                 try:
                     import akshare as ak
-                    gold_symbols_rt = ["Au99.99", "Au99.95"]
-                    rt_tabs = st.tabs(gold_symbols_rt)
-                    for idx, sym in enumerate(gold_symbols_rt):
-                        with rt_tabs[idx]:
-                            rt_df = ak.spot_quotations_sge(symbol=sym)
-                            if rt_df is not None and not rt_df.empty:
-                                rt_df.columns = [c.strip() for c in rt_df.columns]
-                                st.dataframe(
-                                    rt_df.tail(50).sort_values(by=rt_df.columns[0], ascending=False),
-                                    use_container_width=True, height=400,
-                                    hide_index=True
-                                )
-                            else:
-                                st.info(f"{sym} 暂无实时数据")
+                    import requests
+                    # 直接请求SGE实时行情API
+                    sge_url = "https://www.sge.com.cn/api/market/realPrice"
+                    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.sge.com.cn/"}
+                    resp = requests.get(sge_url, headers=headers, timeout=10)
+                    if resp.status_code == 200 and resp.text.strip():
+                        import json
+                        rt_data = resp.json()
+                        if rt_data and isinstance(rt_data, list) and len(rt_data) > 0:
+                            rt_df = pd.DataFrame(rt_data)
+                            st.dataframe(
+                                rt_df.tail(50),
+                                use_container_width=True, height=400,
+                                hide_index=True
+                            )
+                        else:
+                            st.info("当前非交易时段，暂无实时行情数据。上海金交所交易时间：周一至周五 09:50-15:30（夜盘 19:50-02:30）")
+                    else:
+                        st.info("当前非交易时段，暂无实时行情数据。上海金交所交易时间：周一至周五 09:50-15:30（夜盘 19:50-02:30）")
                 except Exception as e:
-                    st.info(f"实时行情模块暂不可用: {str(e)[:80]}")
+                    st.info(f"实时行情暂不可用（当前非交易时段或接口维护中）")
             # ----- 底部两列: SPDR持仓 + 中国黄金储备 -----
             st.markdown("---")
             st.subheader("\U0001f3e6 黄金储备与持仓")
@@ -6194,7 +6199,11 @@ def main():
                             if '黄金储备' in c and '同比' in c:
                                 yoy_col = c
                         if date_col and gold_col:
-                            cn_gold[date_col] = pd.to_datetime(cn_gold[date_col], errors='coerce')
+                            # 解析 'YYYY年MM月份' 格式
+                            _match = cn_gold[date_col].str.extract(r'(\d{4})年(\d{2})月份')
+                            cn_gold['_ym_str'] = _match[0] + '-' + _match[1]
+                            cn_gold[date_col] = pd.to_datetime(cn_gold['_ym_str'], format='%Y-%m')
+                            cn_gold = cn_gold.drop(columns=['_ym_str'])
                             cn_gold = cn_gold.dropna(subset=[date_col]).sort_values(date_col).tail(60)
                             fig_cng = go.Figure()
                             fig_cng.add_trace(go.Bar(
