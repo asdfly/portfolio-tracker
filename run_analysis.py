@@ -27,7 +27,8 @@ from src.utils.news_fetcher import NewsFetcher, save_news_to_db
 from src.report.smart_report import SmartReportGenerator
 from src.data_sources.fund_flow import (
     fetch_sector_fund_flow, fetch_etf_fund_flow,
-    fetch_main_fund_flow, fetch_north_flow, save_fund_flows
+    fetch_main_fund_flow, fetch_north_flow, save_fund_flows,
+    backfill_etf_fund_flow_from_kline,
 )
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 
@@ -188,6 +189,16 @@ def run_stage_fund_flow():
             logger.info(f"  ETF资金流: {stats['etf']} 条 ({len(etf_codes)} 只)")
         else:
             logger.warning(f"  ETF资金流: 全部失败")
+
+        # --- ETF资金流历史回填（基于K线估算，补充push2his封锁缺失的历史） ---
+        try:
+            etf_name_map = {c: ETF_CATEGORIES[c].get("name", "") for c in etf_codes}
+            bf_stats = backfill_etf_fund_flow_from_kline(conn, etf_name_map, target_days=120)
+            bf_count = sum(v for v in bf_stats.values() if v > 0)
+            if bf_count > 0:
+                logger.info(f"  ETF历史回填: {bf_count} 条")
+        except Exception as e:
+            logger.warning(f"  ETF历史回填失败(跳过): {e}")
 
         # --- 主力资金净流入（替代已停更的北向资金） ---
         try:
