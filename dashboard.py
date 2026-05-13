@@ -6158,15 +6158,17 @@ def main():
                                     name='增减持(吨)', mode='lines', line=dict(color='#00BCD4', width=1.5),
                                     yaxis='y2'
                                 ))
-                            fig_spdr.update_layout(
+                            spdr_layout = dict(
                                 height=350, barmode='relative',
                                 xaxis=dict(gridcolor='#333', tickformat='%Y-%m'),
-                                yaxis=dict(title='总库存(吨)', gridcolor='#333', titlefont=dict(color='#FFD700'), tickfont=dict(color='#ddd')),
-                                yaxis2=dict(title='增减持(吨)', overlaying='y', side='right', gridcolor='#333', titlefont=dict(color='#00BCD4'), tickfont=dict(color='#ddd')),
+                                yaxis=dict(title='总库存(吨)', title_font_color='#FFD700', gridcolor='#333', tickfont=dict(color='#ddd')),
                                 plot_bgcolor='#1a1a2e', paper_bgcolor='#1a1a2e',
                                 font=dict(color='#ddd'), margin=dict(l=50, r=60, t=20, b=30),
                                 legend=dict(orientation="h", yanchor="bottom", y=1.02)
                             )
+                            if change_col:
+                                spdr_layout['yaxis2'] = dict(title='增减持(吨)', title_font_color='#00BCD4', overlaying='y', side='right', gridcolor='#333', tickfont=dict(color='#ddd'))
+                            fig_spdr.update_layout(**spdr_layout)
                             st.plotly_chart(fig_spdr, use_container_width=True)
                         else:
                             st.info("SPDR数据列名不匹配，无法绘图")
@@ -6189,7 +6191,7 @@ def main():
                                 date_col = c
                             if '黄金储备' in c and '数值' in c:
                                 gold_col = c
-                            if '同比' in c:
+                            if '黄金储备' in c and '同比' in c:
                                 yoy_col = c
                         if date_col and gold_col:
                             cn_gold[date_col] = pd.to_datetime(cn_gold[date_col], errors='coerce')
@@ -6208,7 +6210,7 @@ def main():
                             fig_cng.update_layout(
                                 height=350,
                                 xaxis=dict(gridcolor='#333', tickformat='%Y-%m'),
-                                yaxis=dict(title='黄金储备(万盎司)', gridcolor='#333', titlefont=dict(color='#FFA726'), tickfont=dict(color='#ddd')),
+                                yaxis=dict(title='黄金储备(万盎司)', title_font_color='#FFA726', gridcolor='#333', tickfont=dict(color='#ddd')),
                                 plot_bgcolor='#1a1a2e', paper_bgcolor='#1a1a2e',
                                 font=dict(color='#ddd'), margin=dict(l=50, r=60, t=20, b=30),
                                 legend=dict(orientation="h", yanchor="bottom", y=1.02)
