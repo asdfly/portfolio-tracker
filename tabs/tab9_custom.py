@@ -15,9 +15,6 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
     volatility = kwargs.get('volatility', None)
     max_dd = kwargs.get('max_dd', None)
     sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
-
     """渲染Tab9: 自定义指标"""
     
     st.caption("🔬 自定义技术指标组合回测，K线形态识别，量化验证交易策略")

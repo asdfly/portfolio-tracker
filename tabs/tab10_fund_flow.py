@@ -15,9 +15,6 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
     volatility = kwargs.get('volatility', None)
     max_dd = kwargs.get('max_dd', None)
     sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
-
     """渲染Tab10: 资金动向"""
     
     st.caption("💰 行业/ETF资金流向分析，追踪主力资金动态，辅助判断市场热点切换")
