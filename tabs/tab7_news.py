@@ -6,6 +6,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+import math
 from config.settings import ETF_CATEGORIES, SECTOR_COLORS
 from tabs._helpers import _load_latest_news, _load_tech_signals
 from src.utils.database import get_db_connection
@@ -17,10 +18,8 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
     volatility = kwargs.get('volatility', None)
     max_dd = kwargs.get('max_dd', None)
     sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
 
-    """渲染Tab7: 资讯与评估"""
+    # """渲染Tab7: 资讯与评估"""
     
     st.caption("📰 持仓相关市场资讯与综合评估，帮助把握投资时机")
 
@@ -122,7 +121,6 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
     )
 
     if not summary.empty and not positions.empty:
-        import math
 
         # 收益评分 (30分)
         port_daily = summary["total_value"].pct_change().dropna()
@@ -191,18 +189,21 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
                     tech_signals.append(f"{etf_name}: 均线多头排列")
                 elif tr.get("ma_signal") == "空头排列":
                     etf_score -= 1
-                if tr.get("macd_signal") == "金叉":
+                macd_val = tr.get("macd_signal")
+                if macd_val in ("金叉", "多头", "看多"):
                     etf_score += 2
-                    tech_signals.append(f"{etf_name}: MACD金叉")
-                elif tr.get("macd_signal") == "死叉":
+                    tech_signals.append(f"{etf_name}: MACD{macd_val}")
+                elif macd_val in ("死叉", "空头"):
                     etf_score -= 1
-                if tr.get("rsi_status") in ("超卖", "偏低"):
+                rsi_st = tr.get("rsi_status")
+                if rsi_st in ("超卖", "严重超卖"):
                     etf_score += 1
-                elif tr.get("rsi_status") in ("超买", "偏高"):
+                elif rsi_st in ("超买", "严重超买"):
                     etf_score -= 1
-                if tr.get("trend") == "上涨":
+                _trend = str(tr.get("trend", ""))
+                if "上涨" in _trend:
                     etf_score += 2
-                elif tr.get("trend") == "下跌":
+                elif _trend in ("下跌", "温和下跌"):
                     etf_score -= 1
                 tech_score += etf_score
             tech_score = max(0, min(25, 10 + tech_score))

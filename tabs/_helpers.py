@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
 from src.utils.chart_utils import downsample, _add_min_max_annotations
+from config.settings import INDEX_CODES
 from datetime import datetime
 
 
