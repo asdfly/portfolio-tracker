@@ -512,7 +512,6 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
         except Exception as e:
             st.info(f"主力资金模块暂不可用: {str(e)[:80]}")
 
-    # ========== Tab11: 黄金市场分析 ==========
-        
+            
 
 

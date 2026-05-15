@@ -248,7 +248,6 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
         except Exception as e:
             st.info(f"K线形态识别暂不可用: {str(e)[:80]}")
 
-# ========== Tab10: 资金动向 ==========
     
 
 
