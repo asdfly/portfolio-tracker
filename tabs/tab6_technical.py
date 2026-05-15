@@ -6,18 +6,18 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
-from src.utils.chart_utils import _atr_c, _boll_c, _rsi_c, _sig
 from src.utils.database import get_db_connection
 
 
-def load_technical():
+def load_technical(end_date=None):
     """加载技术指标，关联ETF名称"""
     conn = get_db_connection()
-    query = """
+    date_filter = f"WHERE t.date = '{end_date}'" if end_date else "WHERE t.date = (SELECT MAX(date) FROM etf_technical)"
+    query = f"""
         SELECT t.*, p.name 
         FROM etf_technical t 
         LEFT JOIN portfolio_snapshots p ON t.code = p.code AND t.date = p.date
-        WHERE t.date = (SELECT MAX(date) FROM etf_technical)
+        {date_filter}
     """
     df = pd.read_sql_query(query, conn)
     if not df.empty:
@@ -29,11 +29,7 @@ def load_technical():
 def render_tab6(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
     # 从kwargs获取额外的变量
     technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
+    # 其他kwargs变量保留供未来扩展
 
     """渲染Tab6: 技术信号"""
     
@@ -42,7 +38,10 @@ def render_tab6(positions, summary, index_quotes, selected_date, selected_benchm
         unsafe_allow_html=True,
     )
 
-    tech_df = load_technical()
+    if not technical.empty and "name" in technical.columns:
+        tech_df = technical
+    else:
+        tech_df = load_technical(end_date=selected_date)
 
     if tech_df is None or tech_df.empty:
         st.info("暂无技术信号数据")
@@ -53,12 +52,12 @@ def render_tab6(positions, summary, index_quotes, selected_date, selected_benchm
         n_bearish_ma = len(tech_df[tech_df["ma_signal"].isin(["空头排列", "死叉"])])
         n_overbought = len(tech_df[tech_df["rsi_status"].isin(["超买", "严重超买"])])
         n_oversold = len(tech_df[tech_df["rsi_status"].isin(["超卖", "严重超卖"])])
-        n_bull_macd = len(tech_df[tech_df["macd_signal"].isin(["多头", "金叉", "看多"])])
         n_bear_macd = len(tech_df[tech_df["macd_signal"].isin(["空头", "死叉"])])
-        n_bull_kdj = len(tech_df[tech_df["kdj_signal"] == "金叉"])
+        n_bull_macd = n_total - n_bear_macd
         n_bear_kdj = len(tech_df[tech_df["kdj_signal"] == "死叉"])
+        n_bull_kdj = n_total - n_bear_kdj
         n_strong_up = len(tech_df[tech_df["trend"] == "强势上涨"])
-        n_weak_down = len(tech_df[tech_df["trend"] == "下跌"])
+        n_weak_down = len(tech_df[tech_df["trend"].isin(["下跌", "温和下跌"])])
 
         overview_cols = st.columns(6)
         with overview_cols[0]:
