@@ -105,6 +105,8 @@ INDEX_CODES = {
     "sz399989": "中证医疗",
     "sh000015": "红利指数"
 }
+# 反向映射：中文名 -> 代码（用于侧边栏选择器转code）
+BENCHMARK_NAME_TO_CODE = {v: k for k, v in INDEX_CODES.items()}
 
 # 主要持仓ETF（用于K线分析）
 MAJOR_ETFS = [

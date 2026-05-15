@@ -8,10 +8,10 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 import logging
 
+import streamlit as st
 from config.settings import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
-
 
 class DatabaseManager:
     """数据库管理器"""
@@ -267,3 +267,31 @@ class DatabaseManager:
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+_indexes_created = False
+
+def get_db_connection():
+    """获取数据库连接，首次调用时创建索引"""
+    global _indexes_created
+    import sqlite3
+    from config.settings import DATABASE_PATH
+    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+    if not _indexes_created:
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_snap_date ON portfolio_snapshots(date)",
+            "CREATE INDEX IF NOT EXISTS idx_snap_code_date ON portfolio_snapshots(code, date)",
+            "CREATE INDEX IF NOT EXISTS idx_summary_date ON portfolio_summary(date)",
+            "CREATE INDEX IF NOT EXISTS idx_idx_quote_code_date ON index_quotes(code, date)",
+            "CREATE INDEX IF NOT EXISTS idx_tech_date ON etf_technical(date)",
+            "CREATE INDEX IF NOT EXISTS idx_tech_code_date ON etf_technical(code, date)",
+        ]
+        for sql in indexes:
+            try:
+                conn.execute(sql)
+            except Exception:
+                pass
+        conn.commit()
+        _indexes_created = True
+    return conn
+

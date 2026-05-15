@@ -75,23 +75,42 @@ def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
     return pd.DataFrame()
 
 def fetch_etf_fund_flow(code: str, name: str = '') -> pd.DataFrame:
+    """获取单只ETF的资金流数据（东方财富push2his接口）。
+    
+    防御性设计：
+    - akshare 内部使用 requests.get 调用 push2his API，当系统代理开启或
+      东方财富封禁 IP 时，requests 可能抛出 ProxyError / ConnectionError，
+      或返回的 JSON 中 data 字段为 None（导致 NoneType subscriptable）。
+    - 本函数对所有异常路径做统一处理，仅输出 WARNING 级别日志，不中断主流程。
+    """
     try:
         import akshare as ak
         market = "sh" if code.startswith('5') or code.startswith('15') or code.startswith('56') or code.startswith('58') else "sz"
         df = ak.stock_individual_fund_flow(stock=code, market=market)
-        if df is not None and not df.empty:
-            df = df.rename(columns={
-                '日期': 'date', '收盘价': 'close', '涨跌幅': 'change_pct',
-                '主力净流入-净额': 'net_inflow', '主力净流入-净占比': 'net_inflow_pct',
-                '超大单净流入-净额': 'super_large_inflow', '大单净流入-净额': 'large_inflow',
-                '中单净流入-净额': 'medium_inflow', '小单净流入-净额': 'small_inflow',
-            })
-            df['code'] = code
-            df['name'] = name
-            df['category'] = 'etf'
-            keep_cols = ['date', 'code', 'name', 'close', 'change_pct', 'net_inflow', 'net_inflow_pct', 'category']
-            df = df[[c for c in keep_cols if c in df.columns]]
-            return df
+        # 空值检查：API 返回的 JSON 中 data 字段可能为 None
+        if df is None:
+            logger.debug(f"ETF {code} 资金流: API返回空数据(None)")
+            return pd.DataFrame()
+        if hasattr(df, 'empty') and df.empty:
+            logger.debug(f"ETF {code} 资金流: API返回空DataFrame")
+            return pd.DataFrame()
+        # 正常数据
+        df = df.rename(columns={
+            '日期': 'date', '收盘价': 'close', '涨跌幅': 'change_pct',
+            '主力净流入-净额': 'net_inflow', '主力净流入-净占比': 'net_inflow_pct',
+            '超大单净流入-净额': 'super_large_inflow', '大单净流入-净额': 'large_inflow',
+            '中单净流入-净额': 'medium_inflow', '小单净流入-净额': 'small_inflow',
+        })
+        df['code'] = code
+        df['name'] = name
+        df['category'] = 'etf'
+        keep_cols = ['date', 'code', 'name', 'close', 'change_pct', 'net_inflow', 'net_inflow_pct', 'category']
+        df = df[[c for c in keep_cols if c in df.columns]]
+        return df
+    except (ConnectionError, OSError) as e:
+        # 网络层错误：代理、封禁、连接中断等 —— 降级为 DEBUG 避免日志轰炸
+        logger.debug(f"ETF {code} 资金流: 网络错误({type(e).__name__}), "
+                      f"可能因代理或数据源封禁, 将由回填机制补充")
     except Exception as e:
         logger.warning(f"获取ETF {code} 资金流失败: {e}")
     return pd.DataFrame()
