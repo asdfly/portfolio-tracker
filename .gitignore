@@ -59,3 +59,11 @@ data/*.txt
 
 # Dash环境
 .streamlit/secrets.toml
+
+# 临时启动/测试文件（不纳入版本控制）
+_start_dash.py
+temp_start.py
+test_modular_structure.py
+test_split_dashboard.py
+dashboard.py.backup
+dashboard_main.py.bak2

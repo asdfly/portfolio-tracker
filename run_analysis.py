@@ -87,9 +87,22 @@ def run_stage2_risk(analyzer, results):
     risk_data = results.get('risk', {})
     summary = results.get('summary', {})
 
-    sharpe = summary.get('sharpe_ratio', 'N/A')
-    max_dd = summary.get('max_drawdown', 'N/A')
-    volatility = summary.get('volatility', 'N/A')
+    # 从嵌套结构中正确提取风险指标（与阶段三告警逻辑一致）
+    portfolio_metrics = risk_data.get('portfolio_metrics', {})
+    risk_adjusted = portfolio_metrics.get('risk_adjusted_metrics', {})
+    drawdown = portfolio_metrics.get('drawdown_metrics', {})
+    volatility_metrics = portfolio_metrics.get('volatility_metrics', {})
+    risk_summary = summary.get('risk_summary', {})
+
+    sharpe = risk_summary.get('sharpe_ratio',
+                risk_adjusted.get('sharpe_ratio',
+                    summary.get('sharpe_ratio', 'N/A')))
+    max_dd = risk_summary.get('max_drawdown',
+                drawdown.get('max_drawdown',
+                    summary.get('max_drawdown', 'N/A')))
+    volatility = risk_summary.get('annual_volatility',
+                volatility_metrics.get('annual_volatility',
+                    summary.get('volatility', 'N/A')))
 
     logger.info(f"夏普比率: {sharpe}")
     logger.info(f"最大回撤: {max_dd}%")
@@ -107,13 +120,24 @@ def run_stage3_monitor(summary, risk_data):
     monitor = Monitor(str(DATABASE_PATH), MONITOR_CONFIG)
     notifier = NotificationManager(NOTIFICATION_CONFIG)
 
-    # 告警检测
+    # 告警检测 - 从嵌套结构中正确提取风险指标
+    portfolio_metrics = risk_data.get('portfolio_metrics', {})
+    risk_adjusted = portfolio_metrics.get('risk_adjusted_metrics', {})
+    drawdown = portfolio_metrics.get('drawdown_metrics', {})
+    volatility = portfolio_metrics.get('volatility_metrics', {})
+    concentration = risk_data.get('concentration_risk', {})
+    risk_summary = summary.get('risk_summary', {})
+
     check_data = {
         'daily_return': summary.get('daily_return', 0),
-        'max_drawdown': risk_data.get('max_drawdown', summary.get('max_drawdown', 0)),
-        'concentration_hhi': risk_data.get('concentration_hhi', 0),
-        'volatility': risk_data.get('volatility', summary.get('volatility', 0)),
-        'sharpe_ratio': risk_data.get('sharpe_ratio', summary.get('sharpe_ratio', 0)),
+        'max_drawdown': risk_summary.get('max_drawdown',
+                    drawdown.get('max_drawdown', 0)),
+        'concentration_hhi': concentration.get('hhi', 0),
+        'volatility': risk_summary.get('annual_volatility',
+                    volatility.get('annual_volatility', 0)),
+        'sharpe_ratio': risk_summary.get('sharpe_ratio',
+                    risk_adjusted.get('sharpe_ratio',
+                        summary.get('sharpe_ratio', 0))),
     }
 
     alerts = monitor.check_alerts(check_data, check_data)
@@ -182,6 +206,11 @@ def run_stage_fund_flow():
             logger.warning(f"  行业资金流回填失败(跳过): {e}")
 
         # --- ETF 资金流（逐只采集，单只失败不中断） ---
+        # 增加请求间隔(0.5s)防止触发东方财富反爬，连续失败5只时提前终止
+        consecutive_failures = 0
+        max_consecutive_failures = 5
+        etf_success = 0
+        etf_skip = 0
         for code in etf_codes:
             try:
                 name = ETF_CATEGORIES[code].get("name", "")
@@ -189,14 +218,31 @@ def run_stage_fund_flow():
                 if not df.empty:
                     n = save_fund_flows(conn, df)
                     stats["etf"] += n
+                    etf_success += 1
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    etf_skip += 1
             except Exception as e:
+                consecutive_failures += 1
+                etf_skip += 1
                 logger.warning(f"  ETF {code} 资金流失败(跳过): {e}")
                 stats["errors"].append(f"ETF {code}: {e}")
+            # 请求间隔，降低触发反爬/封禁的概率
+            time.sleep(0.5)
+            # 连续失败熔断：避免无意义的大量请求
+            if consecutive_failures >= max_consecutive_failures:
+                remaining = len(etf_codes) - etf_success - etf_skip
+                logger.warning(f"  ETF资金流: 连续{consecutive_failures}只失败，"
+                               f"跳过剩余{remaining}只(可能因代理或数据源封禁)")
+                break
 
         if stats["etf"] > 0:
-            logger.info(f"  ETF资金流: {stats['etf']} 条 ({len(etf_codes)} 只)")
+            logger.info(f"  ETF资金流: {stats['etf']} 条 ({etf_success}/{len(etf_codes)} 只成功"
+                        f"{f', {etf_skip}只跳过' if etf_skip > 0 else ''})")
         else:
-            logger.warning(f"  ETF资金流: 全部失败")
+            logger.warning(f"  ETF资金流: 全部失败({etf_skip}只), "
+                           f"将由K线回填和实时资金流补充")
 
         # --- ETF资金流历史回填（基于K线估算，补充push2his封锁缺失的历史） ---
         try:
@@ -463,9 +509,22 @@ def print_summary(results, alerts, advice_summary):
     logger.info(f"vs 沪深300:   {summary.get('vs_hs300', 0):>+12.2f}%")
     logger.info(f"盈/亏品种:    {summary.get('profit_count', 0)}/{summary.get('loss_count', 0)}")
 
-    sharpe = summary.get('sharpe_ratio', risk.get('sharpe_ratio', 'N/A'))
-    max_dd = summary.get('max_drawdown', risk.get('max_drawdown', 'N/A'))
-    vol = summary.get('volatility', risk.get('volatility', 'N/A'))
+    # 从嵌套结构中正确提取风险指标
+    portfolio_metrics = risk.get('portfolio_metrics', {})
+    risk_adjusted = portfolio_metrics.get('risk_adjusted_metrics', {})
+    drawdown_metrics = portfolio_metrics.get('drawdown_metrics', {})
+    volatility_metrics = portfolio_metrics.get('volatility_metrics', {})
+    risk_summary = summary.get('risk_summary', {})
+
+    sharpe = risk_summary.get('sharpe_ratio',
+                risk_adjusted.get('sharpe_ratio',
+                    summary.get('sharpe_ratio', 'N/A')))
+    max_dd = risk_summary.get('max_drawdown',
+                drawdown_metrics.get('max_drawdown',
+                    summary.get('max_drawdown', 'N/A')))
+    vol = risk_summary.get('annual_volatility',
+                volatility_metrics.get('annual_volatility',
+                    summary.get('volatility', 'N/A')))
 
     logger.info(f"夏普比率:     {sharpe}")
     logger.info(f"最大回撤:     {max_dd}%")
