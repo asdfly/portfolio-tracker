@@ -2,6 +2,7 @@
 Tab8: 操作建议
 """
 
+import os
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -17,9 +18,6 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
     volatility = kwargs.get('volatility', None)
     max_dd = kwargs.get('max_dd', None)
     sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
-
     """渲染Tab8: 操作建议"""
     
     st.caption("💡 基于技术信号和持仓状态，生成具体操作建议")
@@ -81,22 +79,25 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
                     reasons.append("均线死叉")
 
                 # MACD信号
-                if tr.get("macd_signal") == "金叉":
+                macd = str(tr.get("macd_signal", ""))
+                if macd in ("金叉", "多头", "看多"):
                     buy_signals += 1.5
-                    reasons.append("MACD金叉")
-                elif tr.get("macd_signal") == "死叉":
+                    reasons.append(f"MACD{macd}")
+                elif macd in ("死叉", "空头"):
                     sell_signals += 1.5
-                    reasons.append("MACD死叉")
+                    reasons.append(f"MACD{macd}")
+                elif macd == "中性":
+                    pass
 
                 # RSI信号
                 rsi_val = tr.get("rsi_value", 50)
-                rsi_status = tr.get("rsi_status", "中性")
-                if rsi_status in ("超卖", "偏低"):
+                rsi_status = tr.get("rsi_status", "正常")
+                if rsi_status in ("超卖", "严重超卖"):
                     buy_signals += 1
-                    reasons.append(f"RSI偏低({rsi_val:.0f})")
-                elif rsi_status in ("超买", "偏高"):
+                    reasons.append(f"RSI{rsi_status}({rsi_val:.0f})")
+                elif rsi_status in ("超买", "严重超买"):
                     sell_signals += 1
-                    reasons.append(f"RSI偏高({rsi_val:.0f})")
+                    reasons.append(f"RSI{rsi_status}({rsi_val:.0f})")
 
                 # KDJ信号
                 kdj = tr.get("kdj_signal", "")
@@ -117,11 +118,13 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
                     reasons.append("触及布林上轨")
 
                 # 趋势
-                trend = tr.get("trend", "")
-                if trend == "上涨":
+                trend = str(tr.get("trend", ""))
+                if "上涨" in trend:
                     buy_signals += 1
-                elif trend == "下跌":
+                    reasons.append(f"趋势{trend}")
+                elif trend in ("下跌", "温和下跌"):
                     sell_signals += 1
+                    reasons.append(f"趋势{trend}")
 
                 # 盈亏状态调整
                 if pnl_rate < -10:
@@ -203,7 +206,15 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
         for s in suggestions:
             action_color = action_colors.get(s["action"], "#8b949e")
             sector_color = SECTOR_COLORS.get(s["sector"], "#8b949e")
-            trend_icon = {"上涨": "🟢", "下跌": "🔴", "震荡": "🟡"}.get(s["trend"], "⚪")
+            _t = s.get("trend", "")
+            if "上涨" in _t:
+                trend_icon = "🟢"
+            elif _t in ("下跌", "温和下跌"):
+                trend_icon = "🔴"
+            elif "震荡" in _t:
+                trend_icon = "🟡"
+            else:
+                trend_icon = "⚪"
             reasons_str = " | ".join(s["reasons"][:5]) if s["reasons"] else "暂无明显信号"
 
             st.markdown(
@@ -233,53 +244,49 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("暂无持仓数据")
 
-# ========== 数据导出 ==========
-st.markdown("---")
-st.markdown(
-    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">数据导出<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">将当前投资组合数据导出为 Excel 专业报告，包含持仓明细、收益汇总、风险分析、技术指标和告警记录。</span></div>',
-    unsafe_allow_html=True,
-)
+    # ========== 数据导出 ==========
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">数据导出<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">将当前投资组合数据导出为 Excel 专业报告，包含持仓明细、收益汇总、风险分析、技术指标和告警记录。</span></div>',
+        unsafe_allow_html=True,
+    )
 
-ec1, ec2 = st.columns(2)
-with ec1:
-    if st.button("📊 导出 Excel 报告", use_container_width=True, type="primary"):
-        try:
-            from src.report.excel_report import ExcelReportGenerator
+    ec1, ec2 = st.columns(2)
+    with ec1:
+        if st.button("📊 导出 Excel 报告", use_container_width=True, type="primary"):
+            try:
+                from src.report.excel_report import ExcelReportGenerator
 
-            gen = ExcelReportGenerator(str(DATABASE_PATH))
-            output = gen.generate()
-            st.success(f"报告已生成: {output}")
-            with open(output, "rb") as f:
-                st.download_button(
-                    label="⬇ 下载 Excel 报告",
-                    data=f.read(),
-                    file_name=os.path.basename(output),
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
-        except Exception as e:
-            st.error(f"导出失败: {e}")
-with ec2:
-    if st.button("📄 导出 HTML 日报", use_container_width=True):
-        try:
-            from src.utils.email_report import EmailReportBuilder
+                gen = ExcelReportGenerator(str(DATABASE_PATH))
+                output = gen.generate()
+                st.success(f"报告已生成: {output}")
+                with open(output, "rb") as f:
+                    st.download_button(
+                        label="⬇ 下载 Excel 报告",
+                        data=f.read(),
+                        file_name=os.path.basename(output),
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+            except Exception as e:
+                st.error(f"导出失败: {e}")
+    with ec2:
+        if st.button("📄 导出 HTML 日报", use_container_width=True):
+            try:
+                from src.utils.email_report import EmailReportBuilder
 
-            builder = EmailReportBuilder(str(DATABASE_PATH))
-            html = builder.build_daily_report()
-            report_path = builder.save_report(html)
-            st.success(f"报告已生成: {report_path}")
-            with open(report_path, "r", encoding="utf-8") as f:
-                st.download_button(
-                    label="⬇ 下载 HTML 日报",
-                    data=f.read(),
-                    file_name=os.path.basename(report_path),
-                    mime="text/html",
-                    use_container_width=True,
-                )
-        except Exception as e:
-            st.error(f"导出失败: {e}")
-
-# ========== Tab5: 高级分析（Monte Carlo / 再平衡建议） ==========
-    
-
+                builder = EmailReportBuilder(str(DATABASE_PATH))
+                html = builder.build_daily_report()
+                report_path = builder.save_report(html)
+                st.success(f"报告已生成: {report_path}")
+                with open(report_path, "r", encoding="utf-8") as f:
+                    st.download_button(
+                        label="⬇ 下载 HTML 日报",
+                        data=f.read(),
+                        file_name=os.path.basename(report_path),
+                        mime="text/html",
+                        use_container_width=True,
+                    )
+            except Exception as e:
+                st.error(f"导出失败: {e}")
 
