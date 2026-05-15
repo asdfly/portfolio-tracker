@@ -1037,7 +1037,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                     {
                         "level": "error",
                         "rule": "单日暴跌",
-                        "message": f"组合单日跌幅 {dr:.2f}%，超过3%%警戒线",
+                        "message": f"组合单日跌幅 {dr:.2f}%，超过3%警戒线",
                         "time": selected_date,
                     }
                 )
@@ -1047,7 +1047,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                     {
                         "level": "error",
                         "rule": "深度回撤",
-                        "message": f"最大回撤 {abs(mdd):.2f}%%，超过15%%警戒线",
+                        "message": f"最大回撤 {abs(mdd):.2f}%，超过15%警戒线",
                         "time": selected_date,
                     }
                 )
@@ -1056,7 +1056,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                     {
                         "level": "warning",
                         "rule": "回撤预警",
-                        "message": f"最大回撤 {abs(mdd):.2f}%%，超过10%%关注线",
+                        "message": f"最大回撤 {abs(mdd):.2f}%，超过10%关注线",
                         "time": selected_date,
                     }
                 )
@@ -1066,7 +1066,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                     {
                         "level": "warning",
                         "rule": "波动飙升",
-                        "message": f"年化波动率 {vol_val:.2f}%%，超过30%%警戒线",
+                        "message": f"年化波动率 {vol_val:.2f}%，超过30%警戒线",
                         "time": selected_date,
                     }
                 )
@@ -1087,7 +1087,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                         {
                             "level": "error",
                             "rule": "个股暴跌",
-                            "message": f'「{pos["name"]}」亏损 {pr:.2f}%%，超过20%%止损线',
+                            "message": f'「{pos["name"]}」亏损 {pr:.2f}%，超过20%止损线',
                             "time": selected_date,
                         }
                     )
@@ -1096,7 +1096,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                         {
                             "level": "warning",
                             "rule": "个股预警",
-                            "message": f'「{pos["name"]}」亏损 {pr:.2f}%%，接近止损线',
+                            "message": f'「{pos["name"]}」亏损 {pr:.2f}%，接近止损线',
                             "time": selected_date,
                         }
                     )
@@ -1109,7 +1109,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                         {
                             "level": "warning",
                             "rule": "集中度风险",
-                            "message": f"「{max_name}」占比 {max_w:.1f}%%，超过30%%集中度警戒线",
+                            "message": f"「{max_name}」占比 {max_w:.1f}%，超过30%集中度警戒线",
                             "time": selected_date,
                         }
                     )
