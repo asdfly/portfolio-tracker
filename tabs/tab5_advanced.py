@@ -7,6 +7,7 @@ import base64
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+from datetime import datetime
 from config.settings import ETF_CATEGORIES, SECTOR_COLORS, PROJECT_ROOT
 from tabs._helpers import _generate_oneclick_report
 from src.utils.database import get_db_connection
@@ -197,7 +198,7 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         # 加权 Bootstrap 采样
         indices = np.random.choice(n_hist, size=n_simulations, replace=True, p=weights)
         samples = hist_returns[indices]
-        paths[:, t] = paths[:, t - 1] * (1 + samples / 100)
+        paths[:, t] = paths[:, t - 1] * (1 + samples)
 
     # 计算百分位
     percentiles_data = {"day": list(range(days + 1))}
@@ -590,11 +591,17 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
         current_weights = {}
         for _, pos in positions.iterrows():
             code = str(pos["code"])
+            sector = ETF_CATEGORIES.get(code, {}).get("sector", "未知")
+            # 行业默认beta：基于各板块相对于沪深300的历史波动特征
+            _sector_beta = {
+                "宽基": 1.00, "科技": 1.25, "新能源": 1.20, "医药": 0.95,
+                "军工": 1.10, "金融": 0.90, "红利": 0.85, "债券": 0.15,
+            }
             current_weights[code] = {
                 "weight": pos["market_value"] / total_mv if total_mv > 0 else 0,
                 "name": pos["name"],
-                "beta": pos.get("beta", 1.0) if pd.notna(pos.get("beta")) else 1.0,
-                "sector": ETF_CATEGORIES.get(code, {}).get("sector", "未知"),
+                "beta": _sector_beta.get(sector, 1.0),
+                "sector": sector,
                 "mv": pos["market_value"],
                 "pnl_rate": pos.get("pnl_rate", 0),
             }
@@ -673,7 +680,7 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                     f'<div style="font-size:10px;color:#484f58;">{sdata["label"]}</div>'
                     f'<div style="font-size:14px;font-weight:bold;color:{loss_c};margin:4px 0;">'
                     f'{"+" if est_loss >= 0 else ""}\u00a5{est_loss:,.0f}</div>'
-                    f'<div style="font-size:11px;color:{loss_c};">{total_impact*100:+.1f}%%</div></div>',
+                    f'<div style="font-size:11px;color:{loss_c};">{total_impact*100:+.1f}%</div></div>',
                     unsafe_allow_html=True,
                 )
 
@@ -687,7 +694,7 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                     f'<span style="font-size:14px;font-weight:bold;color:#c9d1d9;">{sr["scenario"]} '
                     f'<span style="font-size:11px;color:#484f58;">({sr["market"]})</span></span>'
                     f'<span style="font-size:16px;font-weight:bold;color:{loss_c};">'
-                    f'{sr["impact_pct"]:+.1f}%% ({"+" if sr["est_loss"] >= 0 else ""}\u00a5{sr["est_loss"]:,.0f})</span></div>'
+                    f'{sr["impact_pct"]:+.1f}% ({"+" if sr["est_loss"] >= 0 else ""}\u00a5{sr["est_loss"]:,.0f})</span></div>'
                     f'<div style="font-size:11px;color:#8b949e;margin-top:4px;">{sr["desc"]}</div>'
                     f'<div style="font-size:11px;color:#c9d1d9;margin-top:6px;">'
                     f'预估市值: <b>\u00a5{sr["est_value"]:,.0f}</b> (当前 \u00a5{total_mv:,.0f})</div></div>',
@@ -704,7 +711,7 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                             st.markdown(
                                 f'<div style="text-align:center;padding:4px 0;">'
                                 f'<div style="font-size:10px;color:{sec_color};">{sec_name}</div>'
-                                f'<div style="font-size:12px;font-weight:bold;color:{si_c};">{sec_impact*100:+.1f}%%</div></div>',
+                                f'<div style="font-size:12px;font-weight:bold;color:{si_c};">{sec_impact*100:+.1f}%</div></div>',
                                 unsafe_allow_html=True,
                             )
                 st.markdown(
@@ -715,14 +722,12 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                 f'<div style="padding:8px 12px;border-radius:6px;background:#2d1215;'
                 f'border:1px solid #ef4444;font-size:12px;color:#c9d1d9;">'
                 f'<b>极端情景预警:</b> 在「{worst["scenario"]}」({worst["market"]})情景下，'
-                f'组合预估损失 <b style="color:#ef4444;">\u00a5{worst["est_loss"]:,.0f} ({worst["impact_pct"]:+.1f}%%)</b>，'
+                f'组合预估损失 <b style="color:#ef4444;">\u00a5{worst["est_loss"]:,.0f} ({worst["impact_pct"]:+.1f}%)</b>，'
                 f'预估市值 <b>\u00a5{worst["est_value"]:,.0f}</b>。</div>',
                 unsafe_allow_html=True,
             )
     else:
         st.info("暂无持仓数据，无法执行压力测试")
-
-    st.markdown("---")
 
     st.markdown("---")
 
