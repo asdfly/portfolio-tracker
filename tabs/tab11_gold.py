@@ -9,14 +9,6 @@ import numpy as np
 
 
 def render_tab11(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
-
     """渲染Tab11: 黄金市场"""
     
     st.markdown(
@@ -170,153 +162,152 @@ def render_tab11(positions, summary, index_quotes, selected_date, selected_bench
                 )
         except Exception as e:
             st.info(f"实时行情暂不可用（当前非交易时段或接口维护中）")
-    # ----- 底部两列: SPDR持仓 + 中国黄金储备 -----
-    st.markdown("---")
-    st.subheader("\U0001f3e6 黄金储备与持仓")
-    bottom_left, bottom_right = st.columns(2)
+        # ----- 底部两列: SPDR持仓 + 中国黄金储备 -----
+        st.markdown("---")
+        st.subheader("\U0001f3e6 黄金储备与持仓")
+        bottom_left, bottom_right = st.columns(2)
 
-    with bottom_left:
-        st.markdown("**SPDR Gold Trust 持仓趋势**")
-        try:
-            import akshare as ak
+        with bottom_left:
+            st.markdown("**SPDR Gold Trust 持仓趋势**")
+            try:
+                import akshare as ak
 
-            spdr_df = ak.macro_cons_gold()
-            if spdr_df is not None and not spdr_df.empty:
-                spdr_df.columns = [c.strip() for c in spdr_df.columns]
-                date_col = stock_col = change_col = None
-                for c in spdr_df.columns:
-                    if "日期" in c or "date" in c.lower():
-                        date_col = c
-                    if "总库存" in c or "库存" in c:
-                        stock_col = c
-                    if "增持" in c or "减持" in c or "变化" in c:
-                        change_col = c
-                if date_col and stock_col:
-                    spdr_df[date_col] = pd.to_datetime(spdr_df[date_col], errors="coerce")
-                    spdr_df = spdr_df.dropna(subset=[date_col]).sort_values(date_col).tail(180)
-                    fig_spdr = go.Figure()
-                    fig_spdr.add_trace(
-                        go.Bar(
-                            x=spdr_df[date_col],
-                            y=spdr_df[stock_col],
-                            name="总库存(吨)",
-                            marker_color="#FFD700",
-                            opacity=0.7,
-                            yaxis="y",
-                        )
-                    )
-                    if change_col:
+                spdr_df = ak.macro_cons_gold()
+                if spdr_df is not None and not spdr_df.empty:
+                    spdr_df.columns = [c.strip() for c in spdr_df.columns]
+                    date_col = stock_col = change_col = None
+                    for c in spdr_df.columns:
+                        if "日期" in c or "date" in c.lower():
+                            date_col = c
+                        if "总库存" in c or "库存" in c:
+                            stock_col = c
+                        if "增持" in c or "减持" in c or "变化" in c:
+                            change_col = c
+                    if date_col and stock_col:
+                        spdr_df[date_col] = pd.to_datetime(spdr_df[date_col], errors="coerce")
+                        spdr_df = spdr_df.dropna(subset=[date_col]).sort_values(date_col).tail(180)
+                        fig_spdr = go.Figure()
                         fig_spdr.add_trace(
-                            go.Scatter(
+                            go.Bar(
                                 x=spdr_df[date_col],
-                                y=spdr_df[change_col],
-                                name="增减持(吨)",
-                                mode="lines",
-                                line=dict(color="#00BCD4", width=1.5),
-                                yaxis="y2",
+                                y=spdr_df[stock_col],
+                                name="总库存(吨)",
+                                marker_color="#FFD700",
+                                opacity=0.7,
+                                yaxis="y",
                             )
                         )
-                    spdr_layout = dict(
-                        height=350,
-                        barmode="relative",
-                        xaxis=dict(gridcolor="#333", tickformat="%Y-%m"),
-                        yaxis=dict(
-                            title="总库存(吨)",
-                            title_font_color="#FFD700",
-                            gridcolor="#333",
-                            tickfont=dict(color="#ddd"),
-                        ),
-                        plot_bgcolor="#1a1a2e",
-                        paper_bgcolor="#1a1a2e",
-                        font=dict(color="#ddd"),
-                        margin=dict(l=50, r=60, t=20, b=30),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                    )
-                    if change_col:
-                        spdr_layout["yaxis2"] = dict(
-                            title="增减持(吨)",
-                            title_font_color="#00BCD4",
-                            overlaying="y",
-                            side="right",
-                            gridcolor="#333",
-                            tickfont=dict(color="#ddd"),
+                        if change_col:
+                            fig_spdr.add_trace(
+                                go.Scatter(
+                                    x=spdr_df[date_col],
+                                    y=spdr_df[change_col],
+                                    name="增减持(吨)",
+                                    mode="lines",
+                                    line=dict(color="#00BCD4", width=1.5),
+                                    yaxis="y2",
+                                )
+                            )
+                        spdr_layout = dict(
+                            height=350,
+                            barmode="relative",
+                            xaxis=dict(gridcolor="#333", tickformat="%Y-%m"),
+                            yaxis=dict(
+                                title="总库存(吨)",
+                                title_font_color="#FFD700",
+                                gridcolor="#333",
+                                tickfont=dict(color="#ddd"),
+                            ),
+                            plot_bgcolor="#1a1a2e",
+                            paper_bgcolor="#1a1a2e",
+                            font=dict(color="#ddd"),
+                            margin=dict(l=50, r=60, t=20, b=30),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
                         )
-                    fig_spdr.update_layout(**spdr_layout)
-                    st.plotly_chart(fig_spdr, use_container_width=True)
+                        if change_col:
+                            spdr_layout["yaxis2"] = dict(
+                                title="增减持(吨)",
+                                title_font_color="#00BCD4",
+                                overlaying="y",
+                                side="right",
+                                gridcolor="#333",
+                                tickfont=dict(color="#ddd"),
+                            )
+                        fig_spdr.update_layout(**spdr_layout)
+                        st.plotly_chart(fig_spdr, use_container_width=True)
+                    else:
+                        st.info("SPDR数据列名不匹配，无法绘图")
+                        st.dataframe(spdr_df.tail(5))
                 else:
-                    st.info("SPDR数据列名不匹配，无法绘图")
-                    st.dataframe(spdr_df.tail(5))
-            else:
-                st.info("暂无SPDR持仓数据")
-        except Exception as e:
-            st.info(f"SPDR持仓模块暂不可用: {str(e)[:80]}")
+                    st.info("暂无SPDR持仓数据")
+            except Exception as e:
+                st.info(f"SPDR持仓模块暂不可用: {str(e)[:80]}")
 
-    with bottom_right:
-        st.markdown("**中国黄金储备**")
-        try:
-            import akshare as ak
+        with bottom_right:
+            st.markdown("**中国黄金储备**")
+            try:
+                import akshare as ak
 
-            cn_gold = ak.macro_china_fx_gold()
-            if cn_gold is not None and not cn_gold.empty:
-                cn_gold.columns = [c.strip() for c in cn_gold.columns]
-                date_col = gold_col = yoy_col = None
-                for c in cn_gold.columns:
-                    if "月份" in c or "日期" in c:
-                        date_col = c
-                    if "黄金储备" in c and "数值" in c:
-                        gold_col = c
-                    if "黄金储备" in c and "同比" in c:
-                        yoy_col = c
-                if date_col and gold_col:
-                    # 解析 'YYYY年MM月份' 格式
-                    _match = cn_gold[date_col].str.extract(r"(\d{4})年(\d{2})月份")
-                    cn_gold["_ym_str"] = _match[0] + "-" + _match[1]
-                    cn_gold[date_col] = pd.to_datetime(cn_gold["_ym_str"], format="%Y-%m")
-                    cn_gold = cn_gold.drop(columns=["_ym_str"])
-                    cn_gold = cn_gold.dropna(subset=[date_col]).sort_values(date_col).tail(60)
-                    fig_cng = go.Figure()
-                    fig_cng.add_trace(
-                        go.Bar(
-                            x=cn_gold[date_col],
-                            y=cn_gold[gold_col],
-                            name="黄金储备(万盎司)",
-                            marker_color="#FFA726",
-                            opacity=0.8,
-                        )
-                    )
-                    if yoy_col and yoy_col in cn_gold.columns:
+                cn_gold = ak.macro_china_fx_gold()
+                if cn_gold is not None and not cn_gold.empty:
+                    cn_gold.columns = [c.strip() for c in cn_gold.columns]
+                    date_col = gold_col = yoy_col = None
+                    for c in cn_gold.columns:
+                        if "月份" in c or "日期" in c:
+                            date_col = c
+                        if "黄金储备" in c and "数值" in c:
+                            gold_col = c
+                        if "黄金储备" in c and "同比" in c:
+                            yoy_col = c
+                    if date_col and gold_col:
+                        # 解析 'YYYY年MM月份' 格式
+                        _match = cn_gold[date_col].str.extract(r"(\d{4})年(\d{2})月份")
+                        cn_gold["_ym_str"] = _match[0] + "-" + _match[1]
+                        cn_gold[date_col] = pd.to_datetime(cn_gold["_ym_str"], format="%Y-%m")
+                        cn_gold = cn_gold.drop(columns=["_ym_str"])
+                        cn_gold = cn_gold.dropna(subset=[date_col]).sort_values(date_col).tail(60)
+                        fig_cng = go.Figure()
                         fig_cng.add_trace(
-                            go.Scatter(
+                            go.Bar(
                                 x=cn_gold[date_col],
-                                y=cn_gold[yoy_col],
-                                name="同比(%)",
-                                mode="lines",
-                                line=dict(color="#66BB6A", width=2),
-                                yaxis="y2",
+                                y=cn_gold[gold_col],
+                                name="黄金储备(万盎司)",
+                                marker_color="#FFA726",
+                                opacity=0.8,
                             )
                         )
-                    fig_cng.update_layout(
-                        height=350,
-                        xaxis=dict(gridcolor="#333", tickformat="%Y-%m"),
-                        yaxis=dict(
-                            title="黄金储备(万盎司)",
-                            title_font_color="#FFA726",
-                            gridcolor="#333",
-                            tickfont=dict(color="#ddd"),
-                        ),
-                        plot_bgcolor="#1a1a2e",
-                        paper_bgcolor="#1a1a2e",
-                        font=dict(color="#ddd"),
-                        margin=dict(l=50, r=60, t=20, b=30),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                    )
-                    st.plotly_chart(fig_cng, use_container_width=True)
+                        if yoy_col and yoy_col in cn_gold.columns:
+                            fig_cng.add_trace(
+                                go.Scatter(
+                                    x=cn_gold[date_col],
+                                    y=cn_gold[yoy_col],
+                                    name="同比(%)",
+                                    mode="lines",
+                                    line=dict(color="#66BB6A", width=2),
+                                    yaxis="y2",
+                                )
+                            )
+                        fig_cng.update_layout(
+                            height=350,
+                            xaxis=dict(gridcolor="#333", tickformat="%Y-%m"),
+                            yaxis=dict(
+                                title="黄金储备(万盎司)",
+                                title_font_color="#FFA726",
+                                gridcolor="#333",
+                                tickfont=dict(color="#ddd"),
+                            ),
+                            plot_bgcolor="#1a1a2e",
+                            paper_bgcolor="#1a1a2e",
+                            font=dict(color="#ddd"),
+                            margin=dict(l=50, r=60, t=20, b=30),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                        )
+                        st.plotly_chart(fig_cng, use_container_width=True)
+                    else:
+                        st.info("中国黄金储备数据列名不匹配")
+                        st.dataframe(cn_gold.tail(5))
                 else:
-                    st.info("中国黄金储备数据列名不匹配")
-                    st.dataframe(cn_gold.tail(5))
-            else:
-                st.info("暂无中国黄金储备数据")
-        except Exception as e:
-            st.info(f"中国黄金储备模块暂不可用: {str(e)[:80]}")
+                    st.info("暂无中国黄金储备数据")
+            except Exception as e:
+                st.info(f"中国黄金储备模块暂不可用: {str(e)[:80]}")
 
-    # ========== 页脚 ==========
