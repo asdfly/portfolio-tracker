@@ -256,17 +256,23 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
                 trend_map = {
 
-                    "bullish": ("看多", "#22c55e"),
+                    "强势上涨": ("看多", "#22c55e"),
 
-                    "bearish": ("看空", "#ef4444"),
+                    "强势下跌": ("看空", "#ef4444"),
 
-                    "neutral": ("中性", "#f59e0b"),
+                    "震荡中性": ("中性", "#f59e0b"),
 
                     None: ("--", "#888"),
 
                 }
 
-                trend_label, trend_color = trend_map.get(latest.get("trend"), ("--", "#888"))
+                _trend = str(latest.get("trend", ""))
+                if "上涨" in _trend:
+                    trend_label, trend_color = ("看多", "#22c55e")
+                elif "下跌" in _trend:
+                    trend_label, trend_color = ("看空", "#ef4444")
+                else:
+                    trend_label, trend_color = trend_map.get(_trend if _trend else None, ("--", "#888"))
 
 
 
@@ -286,9 +292,9 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
                             "#22c55e"
 
-                            if latest.get("rsi_status") in ("oversold",)
+                            if latest.get("rsi_status") in ("超卖", "偏低")
 
-                            else "#ef4444" if latest.get("rsi_status") in ("overbought",) else "#c9d1d9"
+                            else "#ef4444" if latest.get("rsi_status") in ("超买", "偏高") else "#c9d1d9"
 
                         ),
 

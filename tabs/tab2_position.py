@@ -78,10 +78,10 @@ def load_sector_weights(days=250, end_date=None):
     query = """
         SELECT ps.date, ps.code, ps.market_value, ps.quantity, ps.current_price
         FROM portfolio_snapshots ps
-        WHERE ps.date >= (
+        WHERE ps.date IN (
             SELECT DISTINCT date FROM portfolio_snapshots
             ORDER BY date DESC
-            LIMIT 1 OFFSET ?
+            LIMIT ?
         )
     """
     if end_date:
@@ -89,14 +89,13 @@ def load_sector_weights(days=250, end_date=None):
     query += " ORDER BY ps.date, ps.code"
 
     try:
-        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn = get_db_connection()
         params = [days]
         if end_date:
             params.append(end_date)
         df = pd.read_sql_query(query, conn, params=params)
     except Exception as e:
         import logging
-
         logging.getLogger(__name__).warning(f"load_sector_weights 查询失败: {e}")
         return pd.DataFrame(), {}
 
@@ -339,9 +338,9 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
                         tr = tech_by_code.loc[code]
                         parts = []
                         trend = tr.get("trend", "")
-                        if trend == "上涨":
+                        if "上涨" in str(trend):
                             parts.append('<span style="color:#22c55e;">↑</span>')
-                        elif trend == "下跌":
+                        elif "下跌" in str(trend):
                             parts.append('<span style="color:#ef4444;">↓</span>')
                         else:
                             parts.append('<span style="color:#f59e0b;">→</span>')
@@ -370,7 +369,9 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
 
             # HTML表格渲染（st.dataframe不支持HTML标签）
             html_rows = []
-            for idx, row_data in display_df.iterrows():
+            for idx, (orig_idx, row_data) in enumerate(display_df.iterrows()):
+                pos_row = positions.iloc[idx]
+                pnl_c = "#22c55e" if pos_row["pnl"] >= 0 else "#ef4444"
                 zebra = "background:#161b22;" if idx % 2 == 0 else ""
                 html_rows.append(
                     f'<tr style="{zebra}">'
@@ -380,8 +381,8 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
                     f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["成本价"]}</td>'
                     f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["现价"]}</td>'
                     f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["市值"]}</td>'
-                    f'<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #21262d;">{row_data["盈亏"]}</td>'
-                    f'<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #21262d;">{row_data["收益率%"]}</td>'
+                    f'<td style="padding:5px 8px;text-align:right;color:{pnl_c};border-bottom:1px solid #21262d;">{row_data["盈亏"]}</td>'
+                    f'<td style="padding:5px 8px;text-align:right;color:{pnl_c};border-bottom:1px solid #21262d;">{row_data["收益率%"]}</td>'
                     f'<td style="padding:5px 8px;text-align:center;border-bottom:1px solid #21262d;white-space:nowrap;">{row_data["技术信号"]}</td>'
                     f"</tr>"
                 )

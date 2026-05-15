@@ -88,6 +88,40 @@ def load_index_quotes(benchmark_code):
         st.error(f"加载指数数据失败: {e}")
         return pd.DataFrame()
     
+@st.cache_data(ttl=300, show_spinner=False)
+def load_technical_signals():
+    """加载各ETF的技术指标信号"""
+    conn = get_db_connection()
+    try:
+        query = """
+        SELECT code, ma_signal, macd_signal, rsi_status, rsi_value,
+               kdj_signal, bollinger_position, atr_pct, trend, date
+        FROM etf_technical
+        WHERE date = (SELECT MAX(date) FROM etf_technical)
+        """
+        return pd.read_sql_query(query, conn)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_risk_metrics():
+    """从portfolio_summary加载最新风险指标"""
+    conn = get_db_connection()
+    try:
+        query = """
+        SELECT sharpe_ratio, volatility, max_drawdown
+        FROM portfolio_summary
+        ORDER BY date DESC
+        LIMIT 1
+        """
+        row = conn.execute(query).fetchone()
+        if row:
+            return row[0], row[1], row[2]
+        return None, None, None
+    except Exception:
+        return None, None, None
+
+
 def main():
     """主函数"""
     
@@ -146,6 +180,19 @@ def main():
     benchmark_code = BENCHMARK_NAME_TO_CODE.get(selected_benchmark, INDEX_CODES.get(selected_benchmark, "sh000300"))
     index_quotes = load_index_quotes(benchmark_code)
     
+    # 加载各Tab共享的补充数据
+    technical = load_technical_signals()
+    sharpe, volatility, max_dd = load_risk_metrics()
+    
+    # 构建共享kwargs
+    shared_kwargs = dict(
+        technical=technical,
+        tech_signals=technical,
+        sharpe=sharpe,
+        volatility=volatility,
+        max_dd=max_dd,
+    )
+
     # 创建Tab容器
     tab_names = [
         "📈 净值走势", "📊 持仓分布", "⚠️ 风险分析", "📅 收益日历",
@@ -157,37 +204,37 @@ def main():
     
     # 渲染各个Tab
     with tabs[0]:
-        render_tab1(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab1(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[1]:
-        render_tab2(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab2(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[2]:
-        render_tab3(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab3(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[3]:
-        render_tab4(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab4(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[4]:
-        render_tab5(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab5(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[5]:
-        render_tab6(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab6(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[6]:
-        render_tab7(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab7(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[7]:
-        render_tab8(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab8(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[8]:
-        render_tab9(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab9(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[9]:
-        render_tab10(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab10(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     with tabs[10]:
-        render_tab11(positions, summary, index_quotes, selected_date, selected_benchmark)
+        render_tab11(positions, summary, index_quotes, selected_date, selected_benchmark, **shared_kwargs)
     
     # 创建底部
     create_footer()
