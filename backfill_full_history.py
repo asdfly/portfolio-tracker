@@ -651,6 +651,86 @@ def run_backfill(etf_only=False, index_only=False, dry_run=False):
             time.sleep(0.2)  # 礼貌延迟
 
         print(f"\n  ETF回填完成: {etf_success}/{len(positions)}只成功, 新增 {etf_total} 条快照")
+    # === 阶段一B: ETF资金流补齐（按缺失天数降序） ===
+    if not index_only and not dry_run:
+        print(f"\n--- 阶段一B: ETF资金流补齐 ---")
+        try:
+            import sqlite3 as _sqlite3
+            from src.data_sources.fund_flow import fetch_etf_fund_flow, save_fund_flows
+
+            ff_conn = _sqlite3.connect(str(db_path))
+
+            # 1. 统计每只ETF资金流缺失天数
+            ff_conn.row_factory = _sqlite3.Row
+            _max_date = ff_conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()[0]
+            ff_cur = ff_conn.execute("""
+                SELECT ps.code, ps.name,
+                       COALESCE(ff.max_flow_date, '1970-01-01') AS max_flow_date,
+                       CAST(JULIANDAY(?) - JULIANDAY(COALESCE(ff.max_flow_date, '1970-01-01')) AS INTEGER) AS gap_days
+                FROM (SELECT DISTINCT code, name FROM portfolio_snapshots WHERE date = ?) ps
+                LEFT JOIN (
+                    SELECT code, MAX(date) AS max_flow_date
+                    FROM fund_flows WHERE category = 'etf'
+                    GROUP BY code
+                ) ff ON ps.code = ff.code
+                ORDER BY gap_days DESC
+            """, (_max_date, _max_date))
+            etf_gap = ff_cur.fetchall()
+
+            if etf_gap:
+                # 计算缺失天数并排序（缺失多的排前面）
+                gap_list = []
+                for row in etf_gap:
+                    max_held = row['max_held_date']
+                    max_flow = row['max_flow_date']
+                    # 将日期字符串转为date对象计算差值
+                    gap_days = row['gap_days']
+                    if row['gap_days'] > 1:
+                        gap_list.append({
+                            'code': row['code'],
+                            'name': row['name'],
+                            'gap_days': row['gap_days'],
+                            'max_flow_date': row['max_flow_date']
+                        })
+
+                if gap_list:
+                    print(f"  需要补齐的ETF: {len(gap_list)}只 (缺失1天以上的)")
+                    for item in gap_list:
+                        print(f"    {item['code']} {item['name']}: 缺失{item['gap_days']}天, 最后数据={item['max_flow_date']}")
+
+                    ff_success = 0
+                    ff_total_new = 0
+                    for i, item in enumerate(gap_list):
+                        code = item['code']
+                        name = item['name']
+                        print(f"  [{i+1}/{len(gap_list)}] 补齐 {code} {name} (缺失{item['gap_days']}天)...")
+
+                        df = fetch_etf_fund_flow(code, name)
+                        if df is not None and not df.empty:
+                            cnt = save_fund_flows(ff_conn, df)
+                            if cnt > 0:
+                                ff_total_new += cnt
+                                ff_success += 1
+                                actual_dates = df['date'].sort_values()
+                                print(f"    采集{len(df)}条, 写入{cnt}条 ({actual_dates.iloc[0]} ~ {actual_dates.iloc[-1]})")
+                            else:
+                                print(f"    无新数据写入")
+                        else:
+                            print(f"    采集失败或无数据")
+                        time.sleep(0.5)  # 礼貌延迟，避免被封
+
+                    print(f"  资金流补齐完成: {ff_success}/{len(gap_list)}只成功, 新增 {ff_total_new} 条")
+                else:
+                    print(f"  所有ETF资金流数据完整，无需补齐")
+            else:
+                print(f"  无持仓ETF数据，跳过资金流补齐")
+
+            ff_conn.close()
+        except Exception as ff_err:
+            logger.warning(f"ETF资金流补齐异常: {ff_err}")
+    elif dry_run and not index_only:
+        print(f"\n--- 阶段一B: ETF资金流补齐 (试运行, 跳过) ---")
+
 
     # === 阶段二: 指数历史K线 ===
     if not etf_only:
