@@ -31,9 +31,12 @@ def compute_extended_risk_metrics(end_date=None):
     # Sortino Ratio (downside deviation)
     neg_returns = returns[returns < 0]
     downside_std = neg_returns.std() * np.sqrt(252) if len(neg_returns) > 1 else np.nan
-    annual_return = returns.mean() * 252
+    n_years = len(returns) / 252
+    annual_return = (1 + returns).prod() ** (1 / n_years) - 1
     annual_std = returns.std() * np.sqrt(252)
-    sortino = annual_return / downside_std if downside_std and downside_std > 0 else np.nan
+    # Sharpe & Sortino use arithmetic mean for consistency with annual_std
+    mean_return = returns.mean() * 252
+    sortino = mean_return / downside_std if downside_std and downside_std > 0 else np.nan
 
     # Max Drawdown Duration (最大回撤持续时间)
     max_dd_duration = 0
@@ -46,14 +49,14 @@ def compute_extended_risk_metrics(end_date=None):
                 current_dd_duration += 1
                 max_dd_duration = max(max_dd_duration, current_dd_duration)
             else:
-                _current_dd_duration = 0
+                current_dd_duration = 0
 
     # Calmar Ratio (annual return / max drawdown)
     cummax = df["total_value"].cummax() if "total_value" in df.columns else None
     if cummax is not None:
         dd = (df["total_value"] - cummax) / cummax * 100
         max_dd_abs = abs(dd.min())
-        calmar = annual_return / max_dd_abs if max_dd_abs > 0 else np.nan
+        calmar = annual_return * 100 / max_dd_abs if max_dd_abs > 0 else np.nan
     else:
         calmar = np.nan
 
@@ -86,6 +89,10 @@ def compute_extended_risk_metrics(end_date=None):
     skewness = returns.skew()
     kurtosis = returns.kurtosis()
 
+    # 计算最大回撤并返回
+    cummax_val = df["total_value"].cummax()
+    max_drawdown_val = float(((df["total_value"] - cummax_val) / cummax_val * 100).min()) if len(df) > 0 else np.nan
+
     return {
         "sortino": sortino,
         "calmar": calmar,
@@ -94,6 +101,7 @@ def compute_extended_risk_metrics(end_date=None):
         "max_consec_win": max_consec_win,
         "max_consec_loss": max_consec_loss,
         "max_dd_duration": max_dd_duration,
+        "max_drawdown": max_drawdown_val,
         "skewness": skewness,
         "kurtosis": kurtosis,
         "annual_return": annual_return,
@@ -219,7 +227,8 @@ def compute_return_attribution(days=250, end_date=None):
         w_p = sector_weights.get(s, 0)  # 组合权重
         w_b = bench_weights.get(s, 0)  # 基准权重
         r_p = sector_returns.get(s, 0)  # 行业组合收益
-        r_b = sector_returns.get(s, 0)  # 行业基准收益（简化：使用同值）
+        # 行业基准收益（简化模型：使用等权组合收益率近似）
+        r_b = sector_returns.get(s, 0)  # 与 r_p 相同，选股效应为0（简化）
 
         allocation_effect[s] = (w_p - w_b) * r_b
         selection_effect[s] = w_p * (r_p - r_b)
@@ -346,8 +355,8 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
             ("夏普比率", sharpe, "衡量风险调整后收益，>1为优秀"),
             ("Sortino比率", ext_risk.get("sortino", np.nan), "仅考虑下行波动的风险调整收益"),
             ("Calmar比率", ext_risk.get("calmar", np.nan), "年化收益 / 最大回撤，越高越好"),
-            ("最大回撤", max_dd, "历史最大亏损幅度"),
-            ("年化波动率", volatility, "收益率的标准差，越高越不稳定"),
+            ("最大回撤", ext_risk.get("max_drawdown", max_dd), "历史最大亏损幅度"),
+            ("年化波动率", ext_risk.get("annual_std", volatility), "收益率的标准差，越高越不稳定"),
             ("胜率", ext_risk.get("win_rate", np.nan), "盈利天数 / 有盈亏交易天数"),
             ("盈亏比", ext_risk.get("pl_ratio", np.nan), "平均盈利 / 平均亏损，>1为优"),
             ("最大连续盈利", ext_risk.get("max_consec_win", 0), "历史最长连续盈利天数"),
@@ -428,7 +437,7 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
     )
     
 
-    attr_result = compute_return_attribution(days=show_days, end_date=selected_date)
+    attr_result = compute_return_attribution(days=min(show_days, 500), end_date=selected_date)
     if attr_result and attr_result.get("sector_returns"):
         ar = attr_result
 
@@ -1252,10 +1261,4 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                     yaxis=dict(showgrid=False, tickfont=dict(size=10)),
                 )
                 st.plotly_chart(fig_alert_dist, width="stretch")
-
-    st.markdown("---")
-
-# ========== 收益日历 ==========
-    
-
 

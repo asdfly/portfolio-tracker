@@ -23,13 +23,21 @@ def compute_monthly_returns():
     df["daily_return"] = df["total_value"].pct_change()
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
-    monthly = df.groupby(["year", "month"])["daily_return"].sum().reset_index()
-    pivot = monthly.pivot(index="year", columns="month", values="daily_return")
+    # 使用月首末日 total_value 计算正确的月度收益率
+    monthly = df.groupby(["year", "month"]).agg(
+        first_value=("total_value", "first"),
+        last_value=("total_value", "last"),
+    ).reset_index()
+    monthly["monthly_return"] = monthly["last_value"] / monthly["first_value"] - 1
+    pivot = monthly.pivot(index="year", columns="month", values="monthly_return")
     pivot.columns = [f"{m}月" for m in pivot.columns]
-    # 年度合计列（各月收益率简单求和作为年度累计收益率）
-    pivot["年累计"] = pivot.sum(axis=1)
-    # 汇总行（各年份同月收益率均值，作为月均收益率参考）
-    summary_row = pivot.mean(axis=0)
+    # 年度合计列
+    yearly = df.groupby("year").agg(first_value=("total_value", "first"), last_value=("total_value", "last")).reset_index()
+    yearly["yearly_return"] = yearly["last_value"] / yearly["first_value"] - 1
+    pivot = pivot.merge(yearly[["year", "yearly_return"]].rename(columns={"yearly_return": "年累计"}), left_index=True, right_on="year", how="left").set_index("year")
+    # 汇总行（各年份同月收益率均值，年累计为年均复合收益率）
+    summary_row = pivot.drop(columns=["年累计"]).mean(axis=0)
+    summary_row["年累计"] = (1 + pivot["年累计"]).prod() ** (1 / len(pivot)) - 1
     summary_row.name = "月均"
     pivot = pd.concat([pivot, summary_row.to_frame().T])
     return pivot
@@ -93,11 +101,15 @@ def render_tab4(positions, summary, index_quotes, selected_date, selected_benchm
         if sel_month not in months_in_year:
             sel_month = months_in_year[-1] if months_in_year else 1
 
-        yr_monthly = (
-            year_df.groupby("month")
-            .agg(pnl_sum=("daily_pnl", "sum"), ret_sum=("daily_return", "sum"), days=("day", "count"))
-            .reset_index()
-        )
+        # 使用月首末日计算正确的月度收益率
+        month_returns = year_df.groupby("month").agg(
+            pnl_sum=("daily_pnl", "sum"),
+            first_value=("total_value", "first"),
+            last_value=("total_value", "last"),
+            days=("day", "count"),
+        ).reset_index()
+        month_returns["ret_sum"] = month_returns["last_value"] / month_returns["first_value"] - 1
+        yr_monthly = month_returns
 
         yr_monthly["profit_days"] = (
             year_df[year_df["daily_pnl"] > 0]
@@ -116,7 +128,7 @@ def render_tab4(positions, summary, index_quotes, selected_date, selected_benchm
 
         # --- 年度月度概览（月份按钮在表格内） ---
         yr_total_pnl = year_df["daily_pnl"].sum()
-        yr_total_ret = year_df["daily_return"].sum()
+        yr_total_ret = year_df["total_value"].iloc[-1] / year_df["total_value"].iloc[0] - 1
         yr_total_days = len(year_df)
         yr_profit_days = len(year_df[year_df["daily_pnl"] > 0])
         yr_loss_days = len(year_df[year_df["daily_pnl"] < 0])
@@ -198,7 +210,7 @@ def render_tab4(positions, summary, index_quotes, selected_date, selected_benchm
 
         # --- 月度汇总 ---
         m_pnl = month_df["daily_pnl"].sum()
-        m_return = month_df["daily_return"].sum()
+        m_return = month_df["total_value"].iloc[-1] / month_df["total_value"].iloc[0] - 1 if len(month_df) > 0 else 0
         m_trading = len(month_df)
         m_profit = len(month_df[month_df["daily_pnl"] > 0])
         m_loss = len(month_df[month_df["daily_pnl"] < 0])
@@ -234,6 +246,22 @@ def render_tab4(positions, summary, index_quotes, selected_date, selected_benchm
 
         # 周标题
         week_headers = ["一", "二", "三", "四", "五", "六", "日"]
+
+        st.markdown("""<style>
+        .cal-table { width: 100%; border-collapse: collapse; }
+        .cal-table th { color: #8b949e; font-size: 12px; padding: 8px 4px; text-align: center; border-bottom: 1px solid #30363d; }
+        .cal-table td { padding: 4px; text-align: center; border-radius: 4px; min-height: 48px; vertical-align: top; }
+        .cal-non-trading { color: #30363d; }
+        .cal-trading { background: #161b22; }
+        .cal-profit { background: rgba(34,197,94,0.15); color: #22c55e; }
+        .cal-loss { background: rgba(239,68,68,0.15); color: #ef4444; }
+        .cal-today { outline: 2px solid #58a6ff; outline-offset: -2px; }
+        .cal-day { display: block; font-size: 14px; font-weight: bold; color: #c9d1d9; }
+        .cal-pnl { display: block; font-size: 10px; margin-top: 2px; }
+        .cal-pnl-profit { color: #22c55e; }
+        .cal-pnl-loss { color: #ef4444; }
+        .cal-pnl-zero { color: #484f58; }
+        </style>""", unsafe_allow_html=True)
 
         cal_html = '<table class="cal-table"><tr>'
         for h in week_headers:
@@ -311,17 +339,21 @@ def render_tab4(positions, summary, index_quotes, selected_date, selected_benchm
         if not monthly_pivot.empty:
             # compute_monthly_returns 返回小数形式收益率，乘100转为百分比
             heat_z = monthly_pivot.values * 100
+            # 使用百分位数限制极端值，避免个别异常月压缩整体色阶
+            valid_z = heat_z[~np.isnan(heat_z)]
+            z_cap = max(np.percentile(np.abs(valid_z), 98) if len(valid_z) > 0 else 50, 20)
+
             fig_heat = go.Figure(
                 go.Heatmap(
                     z=heat_z,
                     x=monthly_pivot.columns.tolist(),
                     y=monthly_pivot.index.astype(str).tolist(),
                     text=heat_z,
-                    texttemplate="%{text:.2f}%%" if abs(heat_z).max() < 100 else "%{text:.1f}%%",
+                    texttemplate="%{text:.2f}%%",
                     textfont=dict(size=10),
                     colorscale=[[0, "#ef4444"], [0.5, "#0d1117"], [1, "#22c55e"]],
-                    zmin=-abs(heat_z).max(),
-                    zmax=abs(heat_z).max(),
+                    zmin=-z_cap,
+                    zmax=z_cap,
                     xgap=2,
                     ygap=2,
                     hovertemplate="%{y}年%{x}<br>收益率: %{z:.2f}%%<extra></extra>",
