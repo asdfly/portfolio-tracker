@@ -19,21 +19,41 @@ from datetime import datetime
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_etf_detail(code, days=120, end_date=None):
-    """加载ETF详情数据（stub）"""
+    """加载ETF详情数据（从portfolio_snapshots获取历史持仓快照）"""
     conn = get_db_connection()
     try:
-        query = "SELECT * FROM etf_details WHERE code = ? ORDER BY date DESC LIMIT ?"
-        df = pd.read_sql_query(query, conn, params=(code, days))
-        return df, code
+        if end_date:
+            query = """SELECT date, code, name, quantity, cost_price, current_price,
+                              market_value, pnl, pnl_rate, beta
+                       FROM portfolio_snapshots WHERE code = ? AND date <= ?
+                       ORDER BY date DESC LIMIT ?"""
+            df = pd.read_sql_query(query, conn, params=(code, str(end_date), days))
+        else:
+            query = """SELECT date, code, name, quantity, cost_price, current_price,
+                              market_value, pnl, pnl_rate, beta
+                       FROM portfolio_snapshots WHERE code = ?
+                       ORDER BY date DESC LIMIT ?"""
+            df = pd.read_sql_query(query, conn, params=(code, days))
+        return df.sort_values("date"), code
     except Exception:
         return pd.DataFrame(), ""
 @st.cache_data(ttl=300, show_spinner=False)
 def load_etf_price_history(code, days=250, end_date=None):
-    """加载ETF价格历史（stub）"""
+    """加载ETF价格历史（从portfolio_snapshots获取收盘价）"""
     conn = get_db_connection()
     try:
-        query = "SELECT date, close, volume FROM etf_price_history WHERE code = ? ORDER BY date DESC LIMIT ?"
-        df = pd.read_sql_query(query, conn, params=(code, days))
+        if end_date:
+            query = """SELECT date, current_price as close, quantity
+                       FROM portfolio_snapshots WHERE code = ? AND date <= ?
+                       ORDER BY date DESC LIMIT ?"""
+            df = pd.read_sql_query(query, conn, params=(code, str(end_date), days))
+        else:
+            query = """SELECT date, current_price as close, quantity
+                       FROM portfolio_snapshots WHERE code = ?
+                       ORDER BY date DESC LIMIT ?"""
+            df = pd.read_sql_query(query, conn, params=(code, days))
+        # 去掉quantity列，只保留date/close（volume不可用，用None占位）
+        df = df[["date", "close"]].copy()
         return df.sort_values("date")
     except Exception:
         return pd.DataFrame()
