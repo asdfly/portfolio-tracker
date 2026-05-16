@@ -287,13 +287,29 @@ class PortfolioAnalyzer:
         total_pnl = sum(p.get('realtime_pnl', p['pnl']) for p in positions)
 
         # 计算日涨跌
-        # prev_value: 用每个持仓的current_price反推前日市值
-        # 优先使用新浪实时价格，fallback到通达信静态价格
-        prev_value = sum(
-            p.get('pre_close', p['current_price']) * p['quantity']
-            for p in positions if p.get('pre_close', 0) > 0
-        )
-        # 如果pre_close不可用，fallback到原始逻辑
+        # 优先使用DB中前一交易日的total_value（避免同日交易导致数量变化时prev_value计算错误）
+        prev_value = 0
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self.db.db_path))
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT total_value FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1",
+                (self.today,)
+            )
+            row = cur.fetchone()
+            conn.close()
+            if row and row[0] and row[0] > 0:
+                prev_value = row[0]
+        except Exception:
+            pass
+
+        # fallback: 用pre_close反推前日市值（仅当DB无历史数据时使用）
+        if prev_value <= 0:
+            prev_value = sum(
+                p.get('pre_close', p['current_price']) * p['quantity']
+                for p in positions if p.get('pre_close', 0) > 0
+            )
         if prev_value <= 0:
             prev_value = sum(p['market_value'] / (1 + p['daily_change_pct']/100)
                             for p in positions if p.get('daily_change_pct', 0) != 0)
