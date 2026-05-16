@@ -47,6 +47,8 @@ class PortfolioAnalyzer:
         
         通过比较持仓文件日期与数据库中最新持仓记录日期来判断。
         如果文件日期 > 数据库最新日期，说明有新的持仓文件需要导入。
+        同日文件更新检测：当file_date == db_date时，进一步比较文件修改时间
+        与DB记录的created_at，或比较持仓数量是否有变化。
         """
         from config.settings import _find_latest_position_file, _extract_position_file_date
 
@@ -68,9 +70,49 @@ class PortfolioAnalyzer:
         if file_date > db_date:
             logger.info(f"持仓文件日期 {file_date} > 数据库最新日期 {db_date}，需要更新持仓")
             return True
-        else:
-            logger.info(f"持仓文件日期 {file_date} <= 数据库最新日期 {db_date}，持仓无更新，保持不变")
-            return False
+
+        # 同日文件更新检测
+        if file_date == db_date:
+            # 方法1: 比较文件修改时间与DB快照时间
+            import sqlite3
+            try:
+                conn = sqlite3.connect(str(self.db.db_path))
+                cur = conn.cursor()
+                # 查询DB中当天snapshot的记录数和各code的数量
+                cur.execute(
+                    "SELECT code, quantity FROM portfolio_snapshots WHERE date=?",
+                    (db_date,)
+                )
+                db_rows = {r[0]: r[1] for r in cur.fetchall()}
+                conn.close()
+
+                # 读取文件中的持仓数量
+                positions = self.position_reader.read_positions()
+                file_rows = {p['code']: p['quantity'] for p in positions}
+
+                # 比较持仓列表是否一致
+                if set(file_rows.keys()) != set(db_rows.keys()):
+                    logger.info(f"同日持仓品种变化: 文件{len(file_rows)}只 vs DB{len(db_rows)}只，需要更新")
+                    return True
+
+                # 比较各品种数量
+                changed_codes = []
+                for code in file_rows:
+                    if file_rows[code] != db_rows.get(code):
+                        changed_codes.append(f"{code}({db_rows.get(code)}→{file_rows[code]})")
+
+                if changed_codes:
+                    logger.info(f"同日持仓数量变化: {', '.join(changed_codes)}，需要更新")
+                    return True
+                else:
+                    logger.info(f"持仓文件日期 {file_date} == 数据库最新日期 {db_date}，持仓数量一致，无需更新")
+                    return False
+            except Exception as e:
+                logger.warning(f"同日持仓比对失败，跳过更新检测: {e}")
+                return False
+
+        logger.info(f"持仓文件日期 {file_date} < 数据库最新日期 {db_date}，持仓无更新，保持不变")
+        return False
 
     def run_daily_analysis(self) -> Dict[str, Any]:
         """执行每日分析
