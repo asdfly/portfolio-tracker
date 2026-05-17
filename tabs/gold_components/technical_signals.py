@@ -22,7 +22,7 @@ def _get_gold_data(symbol, n_days):
         return None
     cutoff = pd.Timestamp.now() - pd.Timedelta(days=n_days)
     df = df[df["date"] >= cutoff].copy()
-    if df.empty:
+    if df is None or df.empty:
         return None
     return df
 
