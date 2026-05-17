@@ -138,8 +138,8 @@ def fetch_usdcny_hist(symbol="USDCNH"):
     return None
 
 
-def fetch_bond_yields():
-    """获取中美10年期国债收益率"""
+def fetch_bond_yields(years=3):
+    """获取中美10年期国债收益率（默认近3年）"""
     try:
         import akshare as ak
         df = ak.bond_zh_us_rate()
@@ -156,6 +156,8 @@ def fetch_bond_yields():
             if date_col:
                 df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
                 df = df.dropna(subset=[date_col]).sort_values(date_col).reset_index(drop=True)
+                cutoff = pd.Timestamp.now() - pd.DateOffset(years=years)
+                df = df[df[date_col] >= cutoff]
             result = df[[date_col]].copy() if date_col else df.copy()
             if cn_col:
                 result = result.join(df[cn_col])

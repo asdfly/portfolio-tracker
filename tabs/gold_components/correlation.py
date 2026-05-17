@@ -9,14 +9,14 @@ import pandas as pd
 import numpy as np
 
 from tabs.gold_components.gold_utils import (
-    fetch_sge_hist, fetch_usdcny_hist, fetch_bond_yields, fetch_china_cpi,
+    fetch_sge_hist, fetch_bond_yields,
     DARK_BG, DARK_FONT_COLOR, GRID_COLOR,
 )
 
 
 @st.cache_data(ttl=3600)
-def _load_all_factors(n_days):
-    """加载所有因子数据并对齐"""
+def _fetch_factor_gold(n_days):
+    """获取金价数据"""
     gold_df = fetch_sge_hist("Au99.99")
     if gold_df is None or gold_df.empty:
         return None
@@ -25,38 +25,43 @@ def _load_all_factors(n_days):
     if gold_df.empty:
         return None
     gold_df["date"] = pd.to_datetime(gold_df["date"])
-    gold_daily = gold_df[["date", "close"]].dropna().rename(columns={"close": "gold_price"})
+    return gold_df[["date", "close"]].dropna().rename(columns={"close": "gold_price"})
+
+
+@st.cache_data(ttl=3600)
+def _fetch_factor_bonds():
+    """获取中美国债收益率"""
+    bond_df = fetch_bond_yields()
+    if bond_df is None or bond_df.empty:
+        return None
+    bond_df["date"] = pd.to_datetime(bond_df["date"])
+    bond_daily = bond_df[["date", "cn_10y", "us_10y"]].dropna().set_index("date")
+    bond_daily["spread"] = bond_daily["cn_10y"] - bond_daily["us_10y"]
+    return bond_daily
+
+
+@st.cache_data(ttl=3600)
+def _load_all_factors(n_days):
+    """并发加载所有因子数据并对齐"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # 并发获取金价和国债
+    gold_daily = _fetch_factor_gold(n_days)
+    if gold_daily is None:
+        return None
     gold_daily = gold_daily.set_index("date")
 
-    usd_daily = None
-    usd_df = fetch_usdcny_hist("USDCNH")
-    if usd_df is not None and not usd_df.empty:
-        usd_df["date"] = pd.to_datetime(usd_df["date"])
-        usd_daily = usd_df[["date", "close"]].dropna().rename(columns={"close": "usdcny"})
-        usd_daily = usd_daily.set_index("date")
-
     bond_daily = None
-    bond_df = fetch_bond_yields()
-    if bond_df is not None and not bond_df.empty:
-        bond_df["date"] = pd.to_datetime(bond_df["date"])
-        bond_daily = bond_df[["date", "cn_10y", "us_10y"]].dropna()
-        bond_daily = bond_daily.set_index("date")
-        bond_daily["spread"] = bond_daily["cn_10y"] - bond_daily["us_10y"]
-
-    cpi_monthly = None
-    cpi_df = fetch_china_cpi()
-    if cpi_df is not None and not cpi_df.empty:
-        cpi_df["date"] = pd.to_datetime(cpi_df["date"])
-        cpi_monthly = cpi_df[["date", "cpi_yoy"]].dropna().set_index("date")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future_bond = pool.submit(_fetch_factor_bonds)
+        bond_daily = future_bond.result()
 
     merged = gold_daily.copy()
-    if usd_daily is not None:
-        merged = merged.join(usd_daily, how="outer")
     if bond_daily is not None:
         merged = merged.join(bond_daily, how="outer")
     merged = merged.sort_index().dropna(subset=["gold_price"])
 
-    return {"daily": merged, "cpi_monthly": cpi_monthly}
+    return {"daily": merged}
 
 
 def render_correlation():

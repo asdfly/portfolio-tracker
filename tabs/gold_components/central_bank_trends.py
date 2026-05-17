@@ -89,7 +89,7 @@ def _render_global_etf_trend(df):
 def _render_reserve_vs_etf(df_reserve, df_etf):
     if df_reserve.empty or df_etf.empty:
         return
-    em = df_etf.set_index("date").resample("M")["total_holdings"].mean().reset_index()
+    em = df_etf.set_index("date").resample("ME")["total_holdings"].mean().reset_index()
     em["month"] = em["date"].dt.to_period("M").dt.to_timestamp()
     dm = df_reserve[["month", "gold_reserve"]].merge(em[["month", "total_holdings"]], on="month", how="inner")
     if dm.empty:
