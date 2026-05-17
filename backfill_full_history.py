@@ -664,10 +664,12 @@ def run_backfill(etf_only=False, index_only=False, dry_run=False):
             ff_conn.row_factory = _sqlite3.Row
             _max_date = ff_conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()[0]
             ff_cur = ff_conn.execute("""
-                SELECT ps.code, ps.name,
+                SELECT ps.code, ps.name, ps.max_held_date,
                        COALESCE(ff.max_flow_date, '1970-01-01') AS max_flow_date,
                        CAST(JULIANDAY(?) - JULIANDAY(COALESCE(ff.max_flow_date, '1970-01-01')) AS INTEGER) AS gap_days
-                FROM (SELECT DISTINCT code, name FROM portfolio_snapshots WHERE date = ?) ps
+                FROM (SELECT DISTINCT code, name,
+                             MAX(date) AS max_held_date
+                      FROM portfolio_snapshots WHERE date = ?) ps
                 LEFT JOIN (
                     SELECT code, MAX(date) AS max_flow_date
                     FROM fund_flows WHERE category = 'etf'
