@@ -166,13 +166,13 @@
 | 3.1 | SGE多品种实时行情面板 | ⭐⭐ | 无 |
 | 3.2 | 图表交互优化（时间周期切换、品种切换） | ⭐⭐ | Phase 1+2 |
 
-### Phase 4：高级功能（预计3-5天，视需求）
+### Phase 4 ✅ 已完成 (2026-05-17)：高级功能（预计3-5天，视需求）
 
 | 序号 | 任务 | 优先级 | 依赖 |
 |------|------|--------|------|
-| 4.1 | 央行购金全球趋势追踪 | ⭐ | 需新增数据源（世界黄金协会） |
-| 4.2 | 黄金供需平衡分析 | ⭐ | 需新增数据源 |
-| 4.3 | 国际金价对比（伦敦金/COMEX vs 上海金溢价） | ⭐ | 需验证国际金价数据源 |
+| 4.1 | 央行购金全球趋势追踪 | ⭐ | 需新增数据源（世界黄金协会） | ✅ |
+| 4.2 | 黄金供需平衡分析 | ⭐ | 需新增数据源 | ✅ |
+| 4.3 | 国际金价对比（伦敦金/COMEX vs 上海金溢价） | ⭐ | 需验证国际金价数据源 | ✅ |
 
 ---
 
@@ -231,6 +231,9 @@ tabs/
 | Phase 1 | 2026-05-16 | 7ad361b | 基准价对比 + 季节性规律 + 储备分析 |
 | Phase 2 | 2026-05-16 | f102eac | 技术信号面板(MACD+RSI+Bollinger) + 定价因子相关性分析 |
 | Phase 3 | 2026-05-16 | d9a257a | SGE多品种行情面板 + 图表交互优化 |
+| Phase 4 | 2026-05-17 | 89a4512 | 央行购金趋势 + 供需平衡分析 + 国际金价对比 |
+| 性能优化 | 2026-05-17 | 1b0f5ea | 定价因子相关性模块效率优化 |
+| 测试完善 | 2026-05-17 | 1759d5d | 全部115个测试通过 + gold_components None guard |
 
 ### 模块文件清单
 
@@ -243,5 +246,8 @@ tabs/gold_components/
 ├── reserve_analysis.py    # Phase 1: 储备分析
 ├── technical_signals.py   # Phase 2: 技术信号(MACD+RSI+Bollinger)
 ├── correlation.py         # Phase 2: 定价因子相关性
-└── realtime_quotes.py     # Phase 3: SGE多品种行情面板
+├── realtime_quotes.py     # Phase 3: SGE多品种行情面板
+├── central_bank_trends.py  # Phase 4: 央行购金全球趋势
+├── supply_demand.py        # Phase 4: 黄金供需平衡分析
+└── international_comparison.py  # Phase 4: 国际金价对比
 ```

@@ -93,3 +93,32 @@
 - SQLite数据持久化
 - 通达信持仓文件解析
 - 自动异常处理与数据源切换
+
+## [v2.2] - 2026-05-17
+
+### 新增
+- **Tab11 黄金市场 Phase 4**: 央行购金全球趋势追踪、供需平衡分析、国际金价对比（上海金溢价）
+- **test_gold_utils.py**: 27个单元测试，覆盖calc_rsi/calc_macd/calc_bollinger/calc_monthly_returns纯函数和fetch_*异常处理
+- **Tab渲染测试扩展**: 新增tab4/tab8/tab9/tab10正常数据渲染测试、tab11空数据测试
+
+### 优化
+- **correlation.py**: 移除死调用(fetch_usdcny_hist)、移除未使用CPI加载、_load_all_factors并发化(ThreadPoolExecutor)、fetch_bond_yields添加years=3过滤
+- **central_bank_trends.py**: resample("M")迁移为resample("ME")避免FutureWarning
+
+### 修复
+- **gold_utils.py**: 添加import streamlit as st（@st.cache_data依赖）
+- **supply_demand.py**: 列名修复(交易时间->date, 晚盘价->close)
+- **gold_components全面None guard**: central_bank_trends/supply_demand/international_comparison/technical_signals所有df.empty检查添加None判断
+- **fetch_global_etf_holdings/fetch_china_reserve_data/fetch_comex_inventory**: 添加try/except异常处理
+- **test_gold_utils.py**: RSI测试用双向波动数据替代单调序列、FetchFunctions通过__wrapped__绕过st.cache_data缓存
+- **test_tab_render.py**: 修复函数签名语法错误、添加akshare mock防止tab11真实网络请求
+
+### 文档
+- **README.md**: 更新项目结构(tabs模块化拆分)、Tab11从4功能扩展为10子Tab、添加测试说明和开发指南
+- **CHANGELOG.md**: 添加v2.2变更记录
+- **gold_analysis_improvement_plan.md**: 标记Phase 4完成
+
+### 测试
+- 测试套件: 91 -> 115用例（删除3个冗余文件、新增test_gold_utils.py 27用例、扩展test_tab_render.py 8用例）
+- 全部115 passed, 0 failed
+
