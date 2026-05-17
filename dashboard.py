@@ -1903,8 +1903,9 @@ def main():
     daily_pnl = latest_summary.get("daily_pnl", 0)
     sharpe = latest_summary.get("sharpe_ratio")
     max_dd = latest_summary.get("max_drawdown")
-    # 使用基于持仓稳定后数据的max_drawdown（portfolio_summary.max_drawdown因回填伪造快照严重失真）
-    # 注意：此处先用max_dd作为fallback，tab3中会重新计算更精确的effective_max_dd
+    # early computation of effective_max_dd for use in overview cards (before tab3)
+    _early_ext = compute_extended_risk_metrics(end_date=selected_date)
+    effective_max_dd = _early_ext.get("max_drawdown", max_dd)
     volatility = latest_summary.get("volatility")
     profit_count = latest_summary.get("profit_count", 0)
     loss_count = latest_summary.get("loss_count", 0)
@@ -3139,10 +3140,8 @@ def main():
 
     with tab3:
         st.caption("⚠️ 展示风险评分仪表盘、风险指标详情、回撤曲线及Brinson收益归因分析")
-        # 计算基于持仓稳定后数据的扩展风险指标（在tab3作用域内，后续所有子块可用）
-        ext_risk = compute_extended_risk_metrics(end_date=selected_date)
-        # 用ext_risk的max_drawdown替代portfolio_summary.max_drawdown（后者因回填伪造快照严重失真）
-        effective_max_dd = ext_risk.get("max_drawdown", max_dd)
+        # 扩展风险指标（effective_max_dd已在main()顶部计算，此处更新ext_risk供tab3使用）
+        ext_risk = _early_ext
         col_risk_gauge, col_risk_detail = st.columns([1, 1])
 
         with col_risk_gauge:
