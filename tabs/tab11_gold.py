@@ -1,6 +1,4 @@
-"""
-Tab11: 黄金市场
-"""
+"""Tab11: 黄金市场"""
 
 import streamlit as st
 import plotly.graph_objects as go
@@ -13,28 +11,40 @@ from tabs.gold_components.reserve_analysis import render_reserve_analysis
 from tabs.gold_components.technical_signals import render_technical_signals
 from tabs.gold_components.correlation import render_correlation
 from tabs.gold_components.realtime_quotes import render_realtime_quotes
-
+from tabs.gold_components.central_bank_trends import render_central_bank_trends
+from tabs.gold_components.supply_demand import render_supply_demand
+from tabs.gold_components.international_comparison import render_international_comparison
 
 def render_tab11(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">黄金市场分析'
         '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
         '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
-        '上海金交所金价走势、技术信号、基准价对比、季节性规律、储备分析、定价因子、实时行情。</span></div>',
+        '金价走势、技术信号、基准价对比、季节性、储备分析、定价因子、实时行情、央行购金、供需平衡、国际金价。</span></div>',
         unsafe_allow_html=True,
     )
-    gt1, gt2, gt3, gt4, gt5, gt6, gt7 = st.tabs([
-        "\U0001f4c8 金价走势", "\U0001f4ca 技术信号", "\u2696\ufe0f 基准价对比", "\U0001f4ca 季节性规律",
-        "\U0001f3e6 储备分析", "\U0001f517 定价因子", "\U0001f4e1 实时行情",
+    tabs = st.tabs([
+        "\U0001f4c8 金价走势",
+        "\U0001f4ca 技术信号",
+        "\u2696\ufe0f 基准价对比",
+        "\U0001f4c8 季节性规律",
+        "\U0001f3e6 储备分析",
+        "\U0001f517 定价因子",
+        "\U0001f4e1 实时行情",
+        "\U0001f3e6 央行购金",
+        "\u2696\ufe0f 供需平衡",
+        "\U0001f310 国际金价",
     ])
-    with gt1: _render_gold_price_trend()
-    with gt2: render_technical_signals()
-    with gt3: render_price_comparison()
-    with gt4: render_seasonality()
-    with gt5: render_reserve_analysis()
-    with gt6: render_correlation()
-    with gt7: render_realtime_quotes()
-
+    with tabs[0]: _render_gold_price_trend()
+    with tabs[1]: render_technical_signals()
+    with tabs[2]: render_price_comparison()
+    with tabs[3]: render_seasonality()
+    with tabs[4]: render_reserve_analysis()
+    with tabs[5]: render_correlation()
+    with tabs[6]: render_realtime_quotes()
+    with tabs[7]: render_central_bank_trends()
+    with tabs[8]: render_supply_demand()
+    with tabs[9]: render_international_comparison()
 
 def _render_gold_price_trend():
     from tabs.gold_components.realtime_quotes import SYMBOL_GROUPS
@@ -44,7 +54,6 @@ def _render_gold_price_trend():
         if au_syms:
             all_options.append(f"--- {gname} ---")
             all_options.extend(au_syms)
-
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1:
         sel = st.selectbox("品种选择", all_options, index=1, key="gold_symbol")
@@ -53,7 +62,6 @@ def _render_gold_price_trend():
         gold_period = st.selectbox("周期选择", ["近30天", "近90天", "近180天", "近1年", "全部"], key="gold_period")
     with c3:
         show_ma = st.checkbox("显示均线", value=True, key="gold_show_ma")
-
     try:
         from tabs.gold_components.gold_utils import fetch_sge_hist
         gold_df = fetch_sge_hist(symbol=sel)
