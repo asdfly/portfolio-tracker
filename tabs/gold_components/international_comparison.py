@@ -50,7 +50,7 @@ def _render_intl_cards(df_etf, df_sge, df_sentiment):
     """顶部指标卡片"""
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        if not df_etf.empty:
+        if df_etf is not None and not df_etf.empty:
             tv = df_etf["total_value"].iloc[-1]
             tv_prev = df_etf["total_value"].iloc[-2] if len(df_etf) > 1 else None
             delta = None
@@ -60,7 +60,7 @@ def _render_intl_cards(df_etf, df_sge, df_sentiment):
         else:
             st.metric("ETF总价值", "N/A")
     with c2:
-        if not df_etf.empty:
+        if df_etf is not None and not df_etf.empty:
             th = df_etf["total_holdings"].iloc[-1]
             th_prev = df_etf["total_holdings"].iloc[-2] if len(df_etf) > 1 else None
             delta = None
@@ -70,13 +70,13 @@ def _render_intl_cards(df_etf, df_sge, df_sentiment):
         else:
             st.metric("全球ETF持仓", "N/A")
     with c3:
-        if not df_sge.empty:
+        if df_sge is not None and not df_sge.empty:
             lp = df_sge["close"].iloc[-1]
             st.metric("上海金基准价", f"¥{lp:,.2f}/g")
         else:
             st.metric("上海金基准价", "N/A")
     with c4:
-        if not df_sentiment.empty and "xauusd_sentiment" in df_sentiment.columns:
+        if df_sentiment is not None and not df_sentiment.empty and "xauusd_sentiment" in df_sentiment.columns:
             latest = df_sentiment["xauusd_sentiment"].iloc[-1]
             direction = "偏多" if latest > 55 else ("偏空" if latest < 45 else "中性")
             st.metric("XAUUSD情绪指数", f"{latest:.1f}", delta=direction)
@@ -86,7 +86,7 @@ def _render_intl_cards(df_etf, df_sge, df_sentiment):
 
 def _render_etf_holdings_trend(df_etf):
     """全球黄金ETF持仓趋势"""
-    if df_etf.empty:
+    if df_etf is None or df_etf.empty:
         st.info("暂无ETF持仓数据")
         return
     recent = df_etf[df_etf["date"] >= df_etf["date"].max() - pd.DateOffset(years=2)].copy()
@@ -117,7 +117,7 @@ def _render_etf_holdings_trend(df_etf):
 
 def _render_etf_value_vs_sge_price(df_etf, df_sge):
     """ETF总价值（国际金价代理） vs 上海金基准价"""
-    if df_etf.empty or df_sge.empty:
+    if df_etf is None or df_etf.empty or df_sge is None or df_sge.empty:
         st.info("国际金价或上海金数据不足，无法对比")
         return
     de = df_etf.copy()
@@ -134,7 +134,7 @@ def _render_etf_value_vs_sge_price(df_etf, df_sge):
     sge_m.columns = ["month", "sge_price"]
     sge_m["month_str"] = sge_m["month"].astype(str)
     merged = etf_m.merge(sge_m, on="month_str", how="inner").tail(24)
-    if merged.empty:
+    if merged is None or merged.empty:
         st.info("无重叠月度数据")
         return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -168,7 +168,7 @@ def _render_premium_discount(df_etf, df_sge):
     用ETF总价值/总持仓推算国际金价（美元/盎司），再转为美元/克，
     反推隐含汇率，用中位数汇率计算溢价。
     """
-    if df_etf.empty or df_sge.empty:
+    if df_etf is None or df_etf.empty or df_sge is None or df_sge.empty:
         return
     de = df_etf.copy()
     de = de[(de["total_value"] > 0) & (de["total_holdings"] > 0)].copy()
@@ -180,7 +180,7 @@ def _render_premium_discount(df_etf, df_sge):
     merged = de[["date", "est_gold_usd_g", "total_value"]].merge(
         ds[["date", "close"]], on="date", how="inner"
     ).dropna().tail(120)
-    if merged.empty:
+    if merged is None or merged.empty:
         st.info("数据不足，无法计算溢价")
         return
     merged["est_cnyusd"] = merged["close"] / merged["est_gold_usd_g"]
@@ -225,7 +225,7 @@ def _render_premium_discount(df_etf, df_sge):
 
 def _render_sentiment_analysis(df_sentiment):
     """XAUUSD / USDX 投机情绪分析"""
-    if df_sentiment.empty:
+    if df_sentiment is None or df_sentiment.empty:
         st.info("暂无外汇投机情绪数据")
         return
     if "xauusd_sentiment" not in df_sentiment.columns:
@@ -272,7 +272,7 @@ def _render_sentiment_analysis(df_sentiment):
 
 def _render_sentiment_analysis(df_sentiment):
     """XAUUSD / USDX 投机情绪分析"""
-    if df_sentiment.empty:
+    if df_sentiment is None or df_sentiment.empty:
         st.info("暂无外汇投机情绪数据")
         return
     if "xauusd_sentiment" not in df_sentiment.columns:
@@ -336,7 +336,7 @@ def render_international_comparison():
     with cr:
         _render_premium_discount(df_etf, df_sge)
     _render_etf_value_vs_sge_price(df_etf, df_sge)
-    if not df_sentiment.empty:
+    if df_sentiment is not None and not df_sentiment.empty:
         _render_sentiment_analysis(df_sentiment)
     with st.expander("数据来源与计算说明"):
         st.markdown(

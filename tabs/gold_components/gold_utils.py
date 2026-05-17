@@ -260,19 +260,24 @@ def fetch_china_reserve_data():
     """获取中国黄金储备和外汇储备月度数据（macro_china_fx_gold）
     Returns: DataFrame with columns [月份, 黄金储备, 外汇储备, 黄金储备同比, 黄金储备环比]
     """
-    import akshare as ak
-    df = ak.macro_china_fx_gold()
-    df = df.rename(columns={
-        '月份': 'month',
-        '黄金储备-数值': 'gold_reserve',
-        '黄金储备-同比': 'gold_reserve_yoy',
-        '黄金储备-环比': 'gold_reserve_mom',
-        '国家外汇储备-数值': 'fx_reserve',
-        '国家外汇储备-同比': 'fx_reserve_yoy',
-        '国家外汇储备-环比': 'fx_reserve_mom',
-    })
-    df['month'] = pd.to_datetime(df['month'].str.replace('年', '-').str.replace('月份', ''), format='%Y-%m')
-    return df
+    try:
+        import akshare as ak
+        df = ak.macro_china_fx_gold()
+        df = df.rename(columns={
+            '月份': 'month',
+            '黄金储备-数值': 'gold_reserve',
+            '黄金储备-同比': 'gold_reserve_yoy',
+            '黄金储备-环比': 'gold_reserve_mom',
+            '国家外汇储备-数值': 'fx_reserve',
+            '国家外汇储备-同比': 'fx_reserve_yoy',
+            '国家外汇储备-环比': 'fx_reserve_mom',
+        })
+        df['month'] = pd.to_datetime(df['month'].str.replace('年', '-').str.replace('月份', ''), format='%Y-%m')
+        return df
+    except Exception as e:
+        import streamlit as st
+        st.warning(f"获取中国储备数据失败: {e}")
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -280,18 +285,23 @@ def fetch_global_etf_holdings():
     """获取全球黄金ETF持仓数据（macro_cons_gold）
     Returns: DataFrame with columns [date, total_holdings, change, total_value]
     """
-    import akshare as ak
-    df = ak.macro_cons_gold()
-    df = df[df['商品'] == '黄金'].copy()
-    df = df.rename(columns={
-        '日期': 'date',
-        '总库存': 'total_holdings',
-        '增持/减持': 'change',
-        '总价值': 'total_value',
-    })
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date').reset_index(drop=True)
-    return df
+    try:
+        import akshare as ak
+        df = ak.macro_cons_gold()
+        df = df[df['商品'] == '黄金'].copy()
+        df = df.rename(columns={
+            '日期': 'date',
+            '总库存': 'total_holdings',
+            '增持/减持': 'change',
+            '总价值': 'total_value',
+        })
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        return df
+    except Exception as e:
+        import streamlit as st
+        st.warning(f"获取全球ETF持仓数据失败: {e}")
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -299,13 +309,18 @@ def fetch_comex_inventory():
     """获取COMEX黄金库存数据（futures_comex_inventory）
     Returns: DataFrame with columns [date, inventory_ton, inventory_oz]
     """
-    import akshare as ak
-    df = ak.futures_comex_inventory()
-    df = df.rename(columns={
-        '日期': 'date',
-        'COMEX黄金库存量-吨': 'inventory_ton',
-        'COMEX黄金库存量-盎司': 'inventory_oz',
-    })
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date').reset_index(drop=True)
-    return df
+    try:
+        import akshare as ak
+        df = ak.futures_comex_inventory()
+        df = df.rename(columns={
+            '日期': 'date',
+            'COMEX黄金库存量-吨': 'inventory_ton',
+            'COMEX黄金库存量-盎司': 'inventory_oz',
+        })
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        return df
+    except Exception as e:
+        import streamlit as st
+        st.warning(f"获取COMEX库存数据失败: {e}")
+        return None

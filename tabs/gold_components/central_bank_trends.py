@@ -8,7 +8,7 @@ from .gold_utils import fetch_china_reserve_data, fetch_global_etf_holdings
 
 
 def _render_reserve_cards(df_reserve, df_etf):
-    if df_reserve.empty:
+    if df_reserve is None or df_reserve.empty:
         return
     latest = df_reserve.iloc[-1]
     gold_res = latest.get("gold_reserve", 0)
@@ -17,8 +17,8 @@ def _render_reserve_cards(df_reserve, df_etf):
     gold_mom = latest.get("gold_reserve_mom", 0)
     recent_12 = df_reserve.tail(12)
     total_increase = recent_12["gold_reserve"].diff().dropna().sum()
-    etf_latest = df_etf["total_holdings"].iloc[-1] if not df_etf.empty else 0
-    etf_change = df_etf["change"].iloc[-1] if not df_etf.empty else 0
+    etf_latest = df_etf["total_holdings"].iloc[-1] if df_etf is not None and not df_etf.empty else 0
+    etf_change = df_etf["change"].iloc[-1] if df_etf is not None and not df_etf.empty else 0
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("黄金储备（万吨）", f"{gold_res:,.1f}", delta=f"{gold_mom:+.1f}%" if pd.notna(gold_mom) else None)
@@ -31,7 +31,7 @@ def _render_reserve_cards(df_reserve, df_etf):
 
 
 def _render_china_reserve_trend(df):
-    if df.empty:
+    if df is None or df.empty:
         st.info("暂无中国黄金储备数据"); return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     recent = df[df["month"] >= df["month"].max() - pd.DateOffset(years=5)].copy()
@@ -51,7 +51,7 @@ def _render_china_reserve_trend(df):
 
 
 def _render_reserve_ratio(df):
-    if df.empty:
+    if df is None or df.empty:
         return
     dc = df.dropna(subset=["gold_reserve", "fx_reserve"]).copy()
     dc["gold_ratio"] = dc["gold_reserve"] / dc["fx_reserve"] * 100
@@ -68,7 +68,7 @@ def _render_reserve_ratio(df):
 
 
 def _render_global_etf_trend(df):
-    if df.empty:
+    if df is None or df.empty:
         st.info("暂无全球黄金ETF持仓数据"); return
     recent = df[df["date"] >= df["date"].max() - pd.DateOffset(years=2)].copy()
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -87,12 +87,12 @@ def _render_global_etf_trend(df):
 
 
 def _render_reserve_vs_etf(df_reserve, df_etf):
-    if df_reserve.empty or df_etf.empty:
+    if df_reserve is None or df_reserve.empty or df_etf is None or df_etf.empty:
         return
     em = df_etf.set_index("date").resample("ME")["total_holdings"].mean().reset_index()
     em["month"] = em["date"].dt.to_period("M").dt.to_timestamp()
     dm = df_reserve[["month", "gold_reserve"]].merge(em[["month", "total_holdings"]], on="month", how="inner")
-    if dm.empty:
+    if dm is None or dm.empty:
         return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=dm["month"], y=dm["gold_reserve"], mode="lines+markers", name="中国黄金储备（万吨）",

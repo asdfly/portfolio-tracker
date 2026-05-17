@@ -9,30 +9,30 @@ from .gold_utils import fetch_comex_inventory, fetch_global_etf_holdings, fetch_
 
 def _render_supply_demand_cards(df_comex, df_etf, df_sge):
     c1, c2, c3, c4 = st.columns(4)
-    if not df_comex.empty:
+    if df_comex is not None and not df_comex.empty:
         cv = df_comex["inventory_ton"].iloc[-1]
         c1y = df_comex["inventory_ton"].iloc[-252] if len(df_comex) > 252 else df_comex["inventory_ton"].iloc[0]
         cc = (cv - c1y) / c1y * 100 if c1y else 0
         with c1:
             st.metric("COMEX库存（吨）", f"{cv:,.1f}", delta=f"{cc:+.1f}%")
-    if not df_etf.empty:
+    if df_etf is not None and not df_etf.empty:
         ev = df_etf["total_holdings"].iloc[-1]
         e1y = df_etf["total_holdings"].iloc[-252] if len(df_etf) > 252 else df_etf["total_holdings"].iloc[0]
         ec = (ev - e1y) / e1y * 100 if e1y else 0
         with c2:
             st.metric("全球ETF持仓（吨）", f"{ev:,.1f}", delta=f"{ec:+.1f}%")
-    if not df_etf.empty and len(df_etf) >= 30:
+    if df_etf is not None and not df_etf.empty and len(df_etf) >= 30:
         n30 = df_etf["change"].iloc[-30:].sum()
         with c3:
             st.metric("ETF近30日净流入", f"{n30:+,.1f} 吨")
-    if not df_sge.empty:
+    if df_sge is not None and not df_sge.empty:
         sp = df_sge["close"].iloc[-1]
         with c4:
             st.metric("上海金基准价", f"¥{sp:,.2f}/g")
 
 
 def _render_comex_inventory_trend(df):
-    if df.empty:
+    if df is None or df.empty:
         st.info("暂无COMEX库存数据"); return
     recent = df[df["date"] >= df["date"].max() - pd.DateOffset(years=2)].copy()
     fig = go.Figure()
@@ -45,7 +45,7 @@ def _render_comex_inventory_trend(df):
 
 
 def _render_etf_monthly_flow(df):
-    if df.empty:
+    if df is None or df.empty:
         st.info("暂无ETF持仓数据"); return
     df = df.copy()
     df["month"] = df["date"].dt.to_period("M")
@@ -62,7 +62,7 @@ def _render_etf_monthly_flow(df):
 
 
 def _render_etf_vs_price(df_etf, df_sge):
-    if df_etf.empty or df_sge.empty:
+    if df_etf is None or df_etf.empty or df_sge is None or df_sge.empty:
         return
     de = df_etf.copy()
     de["month"] = de["date"].dt.to_period("M").astype(str)
@@ -73,7 +73,7 @@ def _render_etf_vs_price(df_etf, df_sge):
     sm = ds.groupby("month")["close"].mean().reset_index()
     sm.columns = ["month", "sge_price"]
     dm = em.merge(sm, on="month", how="inner").tail(24)
-    if dm.empty:
+    if dm is None or dm.empty:
         return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     colors = ["#22c55e" if v >= 0 else "#ef4444" for v in dm["etf_net_flow"]]
