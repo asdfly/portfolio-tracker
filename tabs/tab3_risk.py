@@ -11,14 +11,23 @@ from config.settings import ETF_CATEGORIES
 from src.utils.database import get_db_connection
 
 
-def compute_extended_risk_metrics(end_date=None):
-    """计算扩展风险指标（基于全部历史日收益率）"""
+def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
+    """计算扩展风险指标（基于持仓稳定后的日收益率）
+    
+    Args:
+        end_date: 截止日期，None表示最新
+        min_date: 起始日期，默认2025-08-01（全部ETF覆盖日），
+                  因为回填脚本用当前quantity×历史price，早期持仓少时
+                  total_value极低导致风险指标严重失真
+    """
     conn = get_db_connection()
     query = "SELECT date, daily_return, daily_pnl, total_value FROM portfolio_summary ORDER BY date"
     df = pd.read_sql_query(query, conn)
     if df.empty or len(df) < 10:
         return {}
     df["date"] = pd.to_datetime(df["date"])
+    if min_date:
+        df = df[df["date"] >= pd.Timestamp(min_date)]
     if end_date:
         df = df[df["date"] <= pd.Timestamp(end_date)]
     if len(df) < 10:

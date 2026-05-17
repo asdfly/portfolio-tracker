@@ -368,8 +368,15 @@ def _cleanse_daily_returns(df, return_col="daily_return", threshold=5.0, max_tai
     return tailed_df, stats
 
 
-def compute_extended_risk_metrics(end_date=None):
-    """计算扩展风险指标（基于全部历史日收益率）"""
+def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
+    """计算扩展风险指标（基于持仓稳定后的日收益率）
+    
+    Args:
+        end_date: 截止日期，None表示最新
+        min_date: 起始日期，默认2025-08-01（全部ETF覆盖日），
+                  因为回填脚本用当前quantity×历史price，早期持仓少时
+                  total_value极低导致风险指标严重失真
+    """
     conn = get_db_connection()
     query = "SELECT date, daily_return, daily_pnl, total_value FROM portfolio_summary ORDER BY date"
     df = pd.read_sql_query(query, conn)
@@ -377,6 +384,8 @@ def compute_extended_risk_metrics(end_date=None):
     if df.empty or len(df) < 10:
         return {}
     df["date"] = pd.to_datetime(df["date"])
+    if min_date:
+        df = df[df["date"] >= pd.Timestamp(min_date)]
     if end_date:
         df = df[df["date"] <= pd.Timestamp(end_date)]
     if len(df) < 10:
@@ -1894,6 +1903,8 @@ def main():
     daily_pnl = latest_summary.get("daily_pnl", 0)
     sharpe = latest_summary.get("sharpe_ratio")
     max_dd = latest_summary.get("max_drawdown")
+    # 使用基于持仓稳定后数据的max_drawdown（portfolio_summary.max_drawdown因回填伪造快照严重失真）
+    # 注意：此处先用max_dd作为fallback，tab3中会重新计算更精确的effective_max_dd
     volatility = latest_summary.get("volatility")
     profit_count = latest_summary.get("profit_count", 0)
     loss_count = latest_summary.get("loss_count", 0)
@@ -1939,12 +1950,12 @@ def main():
         )
     with cols[4]:
         dd_color = (
-            "#ef4444" if (max_dd and abs(max_dd) > 10) else "#f59e0b" if (max_dd and abs(max_dd) > 5) else "#22c55e"
+            "#ef4444" if (effective_max_dd and abs(effective_max_dd) > 10) else "#f59e0b" if (effective_max_dd and abs(effective_max_dd) > 5) else "#22c55e"
         )
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dd_color};">'
             f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定时间段内，组合从历史最高点到最低点的最大跌幅(%)">最大回撤 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{dd_color};">{format_value(max_dd, suffix="%")}</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{dd_color};">{format_value(effective_max_dd, suffix="%")}</div>'
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -3128,6 +3139,10 @@ def main():
 
     with tab3:
         st.caption("⚠️ 展示风险评分仪表盘、风险指标详情、回撤曲线及Brinson收益归因分析")
+        # 计算基于持仓稳定后数据的扩展风险指标（在tab3作用域内，后续所有子块可用）
+        ext_risk = compute_extended_risk_metrics(end_date=selected_date)
+        # 用ext_risk的max_drawdown替代portfolio_summary.max_drawdown（后者因回填伪造快照严重失真）
+        effective_max_dd = ext_risk.get("max_drawdown", max_dd)
         col_risk_gauge, col_risk_detail = st.columns([1, 1])
 
         with col_risk_gauge:
@@ -3136,7 +3151,7 @@ def main():
                 unsafe_allow_html=True,
             )
 
-            # 风险评分
+            # 风险评分（使用基于持仓稳定后数据的指标）
             risk_score = 100
             if volatility and not np.isnan(volatility):
                 if volatility > 30:
@@ -3145,12 +3160,12 @@ def main():
                     risk_score -= 15
                 elif volatility > 15:
                     risk_score -= 5
-            if max_dd and not np.isnan(max_dd):
-                if abs(max_dd) > 15:
+            if effective_max_dd and not np.isnan(effective_max_dd):
+                if abs(effective_max_dd) > 15:
                     risk_score -= 30
-                elif abs(max_dd) > 10:
+                elif abs(effective_max_dd) > 10:
                     risk_score -= 20
-                elif abs(max_dd) > 5:
+                elif abs(effective_max_dd) > 5:
                     risk_score -= 10
             if sharpe and not np.isnan(sharpe):
                 if sharpe < 0:
@@ -3201,14 +3216,13 @@ def main():
                 unsafe_allow_html=True,
             )
 
-            # 计算扩展风险指标
-            ext_risk = compute_extended_risk_metrics(end_date=selected_date)
+            # 扩展风险指标已在上方计算（ext_risk）
 
             risk_metrics = [
                 ("夏普比率", sharpe, "衡量风险调整后收益，>1为优秀"),
                 ("Sortino比率", ext_risk.get("sortino", np.nan), "仅考虑下行波动的风险调整收益"),
                 ("Calmar比率", ext_risk.get("calmar", np.nan), "年化收益 / 最大回撤，越高越好"),
-                ("最大回撤", max_dd, "历史最大亏损幅度"),
+                ("最大回撤", effective_max_dd, "历史最大亏损幅度（持仓稳定后）"),
                 ("年化波动率", volatility, "收益率的标准差，越高越不稳定"),
                 ("胜率", ext_risk.get("win_rate", np.nan), "盈利天数 / 有盈亏交易天数"),
                 ("盈亏比", ext_risk.get("pl_ratio", np.nan), "平均盈利 / 平均亏损，>1为优"),
@@ -3588,9 +3602,9 @@ def main():
                         ("🔵", "Beta风险", f"组合加权Beta为 {port_beta:.2f}，低于市场1.0，防御性较强但可能错失上涨行情")
                     )
 
-            # 3. 回撤风险
-            if max_dd and not np.isnan(max_dd):
-                dd_pct = abs(max_dd)
+            # 3. 回撤风险（使用基于持仓稳定后数据的effective_max_dd）
+            if effective_max_dd and not np.isnan(effective_max_dd):
+                dd_pct = abs(effective_max_dd)
                 if dd_pct > 15:
                     warnings.append(("🔴", "回撤风险", f"历史最大回撤 {dd_pct:.2f}%，超过15%警戒线，注意控制下行风险"))
                 elif dd_pct > 10:
@@ -5055,8 +5069,8 @@ def main():
             else:
                 score_risk = 15
 
-            if max_dd and not np.isnan(max_dd):
-                dd = abs(max_dd)
+            if effective_max_dd and not np.isnan(effective_max_dd):
+                dd = abs(effective_max_dd)
                 if dd < 5:
                     score_risk = min(score_risk + 2, 30)
                 elif dd > 15:

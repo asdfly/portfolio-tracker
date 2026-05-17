@@ -395,11 +395,12 @@ def rebuild_portfolio_summary(db_path):
         if idx_row and idx_row[0]:
             vs_hs300 = daily_return - idx_row[0]
 
-        # 风险指标
+        # 风险指标（限制从全部ETF覆盖日期开始计算，避免早期持仓少导致失真）
+        min_risk_date = '2025-08-01'
         cur.execute("""
             SELECT daily_return FROM portfolio_summary
-            WHERE date < ? ORDER BY date DESC LIMIT 60
-        """, (dt,))
+            WHERE date < ? AND date >= ? ORDER BY date DESC LIMIT 60
+        """, (dt, min_risk_date))
         hist_returns = [r[0] for r in cur.fetchall() if r[0] is not None]
 
         sharpe = None
@@ -420,12 +421,14 @@ def rebuild_portfolio_summary(db_path):
             vol = round(std_ret * (252 ** 0.5), 4)
 
         if len(hist_returns) >= 5:
+            # 限制max_dd计算范围：从全部ETF覆盖日期开始，避免早期持仓少导致虚高
+            min_dd_date = '2025-08-01'
             peak = total_value
             dd = 0
             cur.execute("""
                 SELECT total_value FROM portfolio_summary
-                WHERE date <= ? ORDER BY date
-            """, (dt,))
+                WHERE date <= ? AND date >= ? ORDER BY date
+            """, (dt, min_dd_date))
             for vr in cur.fetchall():
                 if vr[0] and vr[0] > peak:
                     peak = vr[0]
