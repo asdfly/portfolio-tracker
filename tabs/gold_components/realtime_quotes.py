@@ -49,11 +49,12 @@ def _get_quotations():
     except Exception:
         pass
 
-    # 回退方案：从各品种历史K线中提取最新一日数据
+    # 回退方案：只获取5个核心品种，避免17次串行网络请求
+    # fetch_sge_hist 已有 @st.cache_data 缓存，同参数第二次调用命中缓存
     try:
+        core_symbols = ["Au99.99", "Au99.95", "Au(T+D)", "mAu(T+D)", "iAu99.99"]
         rows = []
-        all_symbols = [s for group in SYMBOL_GROUPS.values() for s in group]
-        for sym in all_symbols:
+        for sym in core_symbols:
             hist = fetch_sge_hist(symbol=sym)
             if hist is not None and not hist.empty:
                 latest = hist.iloc[-1]
@@ -76,10 +77,6 @@ def _get_quotations():
         if rows:
             import pandas as pd
             result = pd.DataFrame(rows)
-            # 按品种分组排序
-            group_order = {s: i for i, group in enumerate(SYMBOL_GROUPS.values()) for s in group}
-            result["_sort"] = result["品种"].map(group_order)
-            result = result.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
             return result
     except Exception:
         pass
