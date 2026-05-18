@@ -29,6 +29,7 @@ from src.data_sources.fund_flow import (
     fetch_sector_fund_flow, fetch_etf_fund_flow,
     fetch_main_fund_flow, fetch_north_flow, save_fund_flows,
     backfill_etf_fund_flow_from_kline, backfill_sector_fund_flow,
+    check_push2his_available, fetch_etf_fund_flow_batch,
 )
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 
@@ -205,44 +206,52 @@ def run_stage_fund_flow():
         except Exception as e:
             logger.warning(f"  行业资金流回填失败(跳过): {e}")
 
-        # --- ETF 资金流（逐只采集，单只失败不中断） ---
-        # 增加请求间隔(0.5s)防止触发东方财富反爬，连续失败5只时提前终止
-        consecutive_failures = 0
-        max_consecutive_failures = 5
-        etf_success = 0
-        etf_skip = 0
-        for code in etf_codes:
-            try:
-                name = ETF_CATEGORIES[code].get("name", "")
-                df = fetch_etf_fund_flow(code, name)
-                if not df.empty:
-                    n = save_fund_flows(conn, df)
-                    stats["etf"] += n
-                    etf_success += 1
-                    consecutive_failures = 0
-                else:
+        # --- ETF 资金流 ---
+        # 策略：先探测 push2his 可用性，可用则逐只采集（含历史数据）；
+        #       不可用时直接走 fund_etf_spot_em 批量方案（单次请求，含完整字段）
+        _push2his_ok = check_push2his_available()
+        if _push2his_ok:
+            # push2his 可用：逐只采集（返回完整历史资金流，含超大单/大单细分）
+            logger.info("  ETF资金流: push2his 可用，逐只采集")
+            consecutive_failures = 0
+            max_consecutive_failures = 5
+            etf_success = 0
+            etf_skip = 0
+            for code in etf_codes:
+                try:
+                    name = ETF_CATEGORIES[code].get("name", "")
+                    df = fetch_etf_fund_flow(code, name)
+                    if not df.empty:
+                        n = save_fund_flows(conn, df)
+                        stats["etf"] += n
+                        etf_success += 1
+                        consecutive_failures = 0
+                    else:
+                        consecutive_failures += 1
+                        etf_skip += 1
+                except Exception as e:
                     consecutive_failures += 1
                     etf_skip += 1
-            except Exception as e:
-                consecutive_failures += 1
-                etf_skip += 1
-                logger.warning(f"  ETF {code} 资金流失败(跳过): {e}")
-                stats["errors"].append(f"ETF {code}: {e}")
-            # 请求间隔，降低触发反爬/封禁的概率
-            time.sleep(0.5)
-            # 连续失败熔断：避免无意义的大量请求
-            if consecutive_failures >= max_consecutive_failures:
-                remaining = len(etf_codes) - etf_success - etf_skip
-                logger.warning(f"  ETF资金流: 连续{consecutive_failures}只失败，"
-                               f"跳过剩余{remaining}只(可能因代理或数据源封禁)")
-                break
-
-        if stats["etf"] > 0:
-            logger.info(f"  ETF资金流: {stats['etf']} 条 ({etf_success}/{len(etf_codes)} 只成功"
-                        f"{f', {etf_skip}只跳过' if etf_skip > 0 else ''})")
+                    logger.warning(f"  ETF {code} 资金流失败(跳过): {e}")
+                    stats["errors"].append(f"ETF {code}: {e}")
+                time.sleep(0.5)
+                if consecutive_failures >= max_consecutive_failures:
+                    remaining = len(etf_codes) - etf_success - etf_skip
+                    logger.warning(f"  ETF资金流: 连续{consecutive_failures}只失败，"
+                                   f"跳过剩余{remaining}只")
+                    break
+            if stats["etf"] > 0:
+                logger.info(f"  ETF资金流(push2his): {stats['etf']} 条 ({etf_success}/{len(etf_codes)} 只)")
         else:
-            logger.warning(f"  ETF资金流: 全部失败({etf_skip}只), "
-                           f"将由K线回填和实时资金流补充")
+            # push2his 不可用：走批量方案（单次请求，无逐只等待）
+            logger.info("  ETF资金流: push2his 不可用，走批量方案")
+            batch_df = fetch_etf_fund_flow_batch(etf_codes)
+            if not batch_df.empty:
+                n = save_fund_flows(conn, batch_df)
+                stats["etf"] = n
+                logger.info(f"  ETF资金流(批量): {n} 条 ({len(batch_df)} 只)")
+            else:
+                logger.warning("  ETF资金流: 批量方案也无数据")
 
         # --- ETF资金流历史回填（基于K线估算，补充push2his封锁缺失的历史） ---
         try:
@@ -267,34 +276,16 @@ def run_stage_fund_flow():
             stats["errors"].append(f"主力资金: {e}")
             logger.warning(f"  主力资金采集失败(不影响主流程): {e}")
 
-        # --- ETF 当日实时资金流补充（fund_etf_spot_em 批量获取） ---
-        try:
-            import akshare as ak
-            spot_df = ak.fund_etf_spot_em()
-            if spot_df is not None and not spot_df.empty:
-                # 筛选持仓 ETF
-                spot_df['代码'] = spot_df['代码'].astype(str)
-                matched = spot_df[spot_df['代码'].isin(etf_codes)]
-                if not matched.empty:
-                    from datetime import datetime
-                    today_str = datetime.now().strftime('%Y-%m-%d')
-                    rows = []
-                    for _, row in matched.iterrows():
-                        rows.append({
-                            'date': today_str,
-                            'code': str(row['代码']),
-                            'name': str(row.get('名称', '')),
-                            'net_inflow': float(row.get('主力净流入-净额', 0) or 0),
-                            'buy_amount': 0,
-                            'sell_amount': 0,
-                            'category': 'etf',
-                        })
-                    import pandas as pd
-                    spot_save_df = pd.DataFrame(rows)
-                    n = save_fund_flows(conn, spot_save_df)
-                    logger.info(f"  ETF实时资金流: {n} 条（批量补充）")
-        except Exception as e:
-            logger.warning(f"  ETF实时资金流补充失败(跳过): {e}")
+        # --- ETF 当日实时资金流补充 ---
+        # 仅在 push2his 可用且逐只采集时作为补充；批量方案已包含完整字段无需重复
+        if _push2his_ok:
+            try:
+                batch_df = fetch_etf_fund_flow_batch(etf_codes)
+                if not batch_df.empty:
+                    n = save_fund_flows(conn, batch_df)
+                    logger.info(f"  ETF实时资金流补充: {n} 条")
+            except Exception as e:
+                logger.warning(f"  ETF实时资金流补充失败(跳过): {e}")
 
         logger.info(f"资金流采集完成: 行业{stats['sector']}条 + ETF{stats['etf']}条 + 主力资金{stats['main_fund']}条")
         if stats["errors"]:
