@@ -116,25 +116,27 @@ def fetch_china_reserve():
 
 
 def fetch_usdcny_hist(symbol="USDCNH"):
-    """获取美元兑人民币汇率历史（日频）"""
+    """获取美元兑人民币汇率历史（日频）
+
+    数据来源：国家外汇管理局人民币汇率中间价（currency_boc_safe），
+    覆盖 1994 年至今，包含当日数据。
+    注：返回的是中间价（而非离岸 USDCNH 即时行情），用于趋势分析足够。
+    """
     try:
         import akshare as ak
-        df = ak.forex_hist_em(symbol=symbol)
-        if df is not None and not df.empty:
-            df.columns = [c.strip() for c in df.columns]
-            date_col = price_col = None
-            for c in df.columns:
-                if "日期" in c:
-                    date_col = c
-                if "最新价" in c:
-                    price_col = c
-            if date_col and price_col:
-                df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-                df = df.dropna(subset=[date_col]).sort_values(date_col).reset_index(drop=True)
-                return df.rename(columns={date_col: "date", price_col: "close"})
-        return df
+        df = ak.currency_boc_safe()
+        if df is not None and not df.empty and "日期" in df.columns and "美元" in df.columns:
+            df = df[["日期", "美元"]].copy()
+            df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
+            df = df.dropna(subset=["日期", "美元"])
+            # 中间价原始值以"100美元=X元人民币"计，需除以100得到1 USD = X CNY
+            df["美元"] = pd.to_numeric(df["美元"], errors="coerce") / 100
+            df = df.dropna(subset=["美元"])
+            df = df.rename(columns={"日期": "date", "美元": "close"})
+            df = df.sort_values("date").reset_index(drop=True)
+            return df
     except Exception as e:
-        logger.warning("[gold_utils] fetch_usdcny_hist 失败: %s", e)
+        logger.warning("[gold_utils] fetch_usdcny_hist (boc_safe) 失败: %s", e)
     return None
 
 
@@ -281,8 +283,10 @@ def fetch_china_reserve_data():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_global_etf_holdings():
+def fetch_global_etf_holdings(years=2):
     """获取全球黄金ETF持仓数据（macro_cons_gold）
+    默认只取近2年数据，足够支撑月度趋势和央行对比图表。
+    首次调用仍需 ~20s 下载数据，但过滤后返回量从 ~2800 rows 降至 ~375 rows。
     Returns: DataFrame with columns [date, total_holdings, change, total_value]
     """
     try:
@@ -295,8 +299,12 @@ def fetch_global_etf_holdings():
             '增持/减持': 'change',
             '总价值': 'total_value',
         })
+        df = df.drop(columns=['商品'], errors='ignore')
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values('date').reset_index(drop=True)
+        # 只保留近 N 年数据
+        cutoff = df["date"].max() - pd.DateOffset(years=years)
+        df = df[df["date"] >= cutoff].reset_index(drop=True)
         return df
     except Exception as e:
         import streamlit as st
