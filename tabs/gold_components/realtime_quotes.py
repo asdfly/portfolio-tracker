@@ -38,13 +38,49 @@ def _get_symbol_table():
 
 @st.cache_data(ttl=300)
 def _get_quotations():
-    """获取SGE实时行情"""
+    """获取SGE实时行情，失败时回退到历史数据最新交易日"""
+    # 尝试 akshare 实时接口
     try:
         import akshare as ak
         df = ak.spot_quotations_sge()
         if df is not None and not df.empty:
             df.columns = [c.strip() for c in df.columns]
             return df
+    except Exception:
+        pass
+
+    # 回退方案：从各品种历史K线中提取最新一日数据
+    try:
+        rows = []
+        all_symbols = [s for group in SYMBOL_GROUPS.values() for s in group]
+        for sym in all_symbols:
+            hist = fetch_sge_hist(symbol=sym)
+            if hist is not None and not hist.empty:
+                latest = hist.iloc[-1]
+                prev = hist.iloc[-2] if len(hist) > 1 else latest
+                close_val = float(latest["close"])
+                prev_close = float(prev["close"])
+                chg = close_val - prev_close
+                chg_pct = chg / prev_close * 100 if prev_close != 0 else 0
+                rows.append({
+                    "品种": sym,
+                    "最新价": close_val,
+                    "涨跌": chg,
+                    "涨跌幅(%)": chg_pct,
+                    "开盘": float(latest["open"]),
+                    "最高": float(latest["high"]),
+                    "最低": float(latest["low"]),
+                    "日期": str(latest["date"])[:10],
+                    "数据来源": "历史收盘",
+                })
+        if rows:
+            import pandas as pd
+            result = pd.DataFrame(rows)
+            # 按品种分组排序
+            group_order = {s: i for i, group in enumerate(SYMBOL_GROUPS.values()) for s in group}
+            result["_sort"] = result["品种"].map(group_order)
+            result = result.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
+            return result
     except Exception:
         pass
     return None
@@ -155,7 +191,7 @@ def render_realtime_quotes():
             # 美化显示
             st.dataframe(q_df, use_container_width=True, height=400, hide_index=True)
         else:
-            st.info("当前非交易时段，实时行情暂不可用。\n\n上海金交所交易时间：\n- 日盘：周一至周五 09:50-15:30\n- 夜盘：19:50-02:30")
+            st.info("SGE实时行情接口暂不可用，请稍后重试。\n\n上海金交所交易时间：\n- 日盘：周一至周五 09:50-15:30\n- 夜盘：19:50-02:30")
 
     st.markdown("---")
 
