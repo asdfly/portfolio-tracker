@@ -452,3 +452,81 @@ def backfill_sector_fund_flow(conn, trading_days=None):
     except Exception as e:
         logger.error(f"行业资金流回填失败: {e}")
         return 0
+
+def check_push2his_available(timeout=5) -> bool:
+    """快速探测 push2his API 是否可用（urllib 直连，绕过系统代理）。
+    Returns True if push2his returns valid data.
+    """
+    try:
+        url = (
+            "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+            "?lmt=1&klt=101&secid=1.000001&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55"
+            f"&ut=b2884a393a59ad64002292a3e90d46a5&_={int(time.time()*1000)}"
+        )
+        data = _urllib_get_json(url)
+        return bool(data and data.get("data", {}).get("klines"))
+    except Exception:
+        return False
+
+
+def fetch_etf_fund_flow_batch(etf_codes: list) -> pd.DataFrame:
+    """基于 fund_etf_spot_em 批量获取ETF当日资金流数据。
+    
+    优势：
+    - 单次请求获取全市场ETF数据（~1400只），无需逐只调用 push2his
+    - 返回完整字段：主力净流入/净占比、超大单、大单、中单、小单
+    - 数据源为东方财富 datacenter-web（与 push2his 不同端点），不受 push2his 封禁影响
+    
+    Args:
+        etf_codes: 需要筛选的ETF代码列表
+    
+    Returns:
+        DataFrame with columns: [date, code, name, close, change_pct, net_inflow,
+                                 net_inflow_pct, super_large_inflow, super_large_pct,
+                                 large_inflow, large_pct, medium_inflow, medium_pct,
+                                 small_inflow, small_pct, category]
+    """
+    try:
+        import akshare as ak
+        df = ak.fund_etf_spot_em()
+        if df is None or df.empty:
+            logger.debug("fund_etf_spot_em: 返回空数据")
+            return pd.DataFrame()
+        
+        # 筛选持仓 ETF
+        df['代码'] = df['代码'].astype(str)
+        matched = df[df['代码'].isin(etf_codes)]
+        if matched.empty:
+            logger.debug(f"fund_etf_spot_em: 无匹配ETF (请求{len(etf_codes)}只, 数据库{len(df)}只)")
+            return pd.DataFrame()
+        
+        from datetime import datetime
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        
+        rows = []
+        for _, row in matched.iterrows():
+            rows.append({
+                'date': today_str,
+                'code': str(row['代码']),
+                'name': str(row.get('名称', '')),
+                'close': float(row.get('最新价', 0) or 0),
+                'change_pct': float(row.get('涨跌幅', 0) or 0),
+                'net_inflow': float(row.get('主力净流入-净额', 0) or 0),
+                'net_inflow_pct': float(row.get('主力净流入-净占比', 0) or 0),
+                'super_large_inflow': float(row.get('超大单净流入-净额', 0) or 0),
+                'super_large_pct': float(row.get('超大单净流入-净占比', 0) or 0),
+                'large_inflow': float(row.get('大单净流入-净额', 0) or 0),
+                'large_pct': float(row.get('大单净流入-净占比', 0) or 0),
+                'medium_inflow': float(row.get('中单净流入-净额', 0) or 0),
+                'medium_pct': float(row.get('中单净流入-净占比', 0) or 0),
+                'small_inflow': float(row.get('小单净流入-净额', 0) or 0),
+                'small_pct': float(row.get('小单净流入-净占比', 0) or 0),
+                'category': 'etf',
+            })
+        
+        result = pd.DataFrame(rows)
+        logger.info(f"ETF资金流(批量): {len(result)} 只ETF, {today_str}")
+        return result
+    except Exception as e:
+        logger.warning(f"ETF批量资金流获取失败: {e}")
+        return pd.DataFrame()
