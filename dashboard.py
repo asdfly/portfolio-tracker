@@ -6750,20 +6750,31 @@ def main():
                             with st.spinner("正在采集..."):
                                 try:
                                     from src.data_sources.fund_flow import (
+                                        check_push2his_available,
                                         fetch_etf_fund_flow,
+                                        fetch_etf_fund_flow_batch,
                                         save_fund_flows,
                                     )
 
                                     conn_f2 = get_db_connection()
                                     try:
-                                        for _, pos in positions.head(5).iterrows():
-                                            code = str(pos["code"])
-                                            name = pos["name"]
-                                            st.caption(f"正在采集 {name}...")
-                                            edf = fetch_etf_fund_flow(code, name)
-                                            if not edf.empty:
-                                                save_fund_flows(conn_f2, edf)
-                                        st.success("采集完成")
+                                        if check_push2his_available():
+                                            for _, pos in positions.head(5).iterrows():
+                                                code = str(pos["code"])
+                                                name = pos["name"]
+                                                st.caption(f"正在采集 {name}...")
+                                                edf = fetch_etf_fund_flow(code, name)
+                                                if not edf.empty:
+                                                    save_fund_flows(conn_f2, edf)
+                                            st.success("采集完成(push2his逐只)")
+                                        else:
+                                            etf_codes = positions["code"].head(5).astype(str).tolist()
+                                            batch_df = fetch_etf_fund_flow_batch(etf_codes)
+                                            if not batch_df.empty:
+                                                save_fund_flows(conn_f2, batch_df)
+                                                st.success(f"采集完成(批量, {len(batch_df)}只)")
+                                            else:
+                                                st.warning("批量采集无数据返回")
                                     finally:
                                         conn_f2.close()
                                 except Exception as e:
