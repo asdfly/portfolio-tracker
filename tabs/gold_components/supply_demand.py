@@ -94,12 +94,21 @@ def _render_etf_vs_price(df_etf, df_sge):
 
 def render_supply_demand():
     st.markdown("#### 供需平衡分析")
-    with st.spinner("加载COMEX库存数据..."):
-        df_comex = fetch_comex_inventory()
-    with st.spinner("加载全球ETF持仓数据..."):
-        df_etf = fetch_global_etf_holdings()
-    with st.spinner("加载上海金基准价..."):
-        df_sge = fetch_sge_benchmark()
+    # 优先使用预加载数据
+    from tabs.gold_components.gold_preloader import get_preloaded
+    df_comex = get_preloaded("comex_inventory")
+    df_etf = get_preloaded("global_etf_holdings")
+    df_sge = get_preloaded("sge_benchmark")
+    # 缺失的数据源按需回退
+    if df_comex is None:
+        with st.spinner("加载COMEX库存数据..."):
+            df_comex = fetch_comex_inventory()
+    if df_etf is None:
+        with st.spinner("加载全球ETF持仓数据..."):
+            df_etf = fetch_global_etf_holdings()
+    if df_sge is None:
+        with st.spinner("加载上海金基准价..."):
+            df_sge = fetch_sge_benchmark()
     _render_supply_demand_cards(df_comex, df_etf, df_sge)
     st.markdown("---")
     cl, cr = st.columns(2)

@@ -23,6 +23,10 @@ def render_tab11(positions, summary, index_quotes, selected_date, selected_bench
         '金价走势、技术信号、基准价对比、季节性、储备分析、定价因子、实时行情、央行购金、供需平衡、国际金价。</span></div>',
         unsafe_allow_html=True,
     )
+    # 预加载共享数据源（并发 I/O，首次 ~22s，后续命中缓存 ~0s）
+    from tabs.gold_components.gold_preloader import preload_gold_data
+    preload_gold_data()
+
     tabs = st.tabs([
         "\U0001f4c8 金价走势",
         "\U0001f4ca 技术信号",
