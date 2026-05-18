@@ -319,10 +319,17 @@ def _render_sentiment_analysis(df_sentiment):
 def render_international_comparison():
     """国际金价对比分析主入口"""
     st.markdown("#### 国际金价对比")
-    with st.spinner("加载全球ETF持仓数据..."):
-        df_etf = fetch_global_etf_holdings()
-    with st.spinner("加载上海金基准价..."):
-        df_sge = fetch_sge_benchmark()
+    # 优先使用预加载数据
+    from tabs.gold_components.gold_preloader import get_preloaded
+    df_etf = get_preloaded("global_etf_holdings")
+    df_sge = get_preloaded("sge_benchmark")
+    # 缺失的数据源按需回退
+    if df_etf is None:
+        with st.spinner("加载全球ETF持仓数据..."):
+            df_etf = fetch_global_etf_holdings()
+    if df_sge is None:
+        with st.spinner("加载上海金基准价..."):
+            df_sge = fetch_sge_benchmark()
     load_sentiment = st.checkbox("加载投机情绪数据（较慢）", value=False, key="intl_load_sentiment")
     df_sentiment = pd.DataFrame()
     if load_sentiment:

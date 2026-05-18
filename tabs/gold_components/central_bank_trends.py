@@ -111,10 +111,14 @@ def _render_reserve_vs_etf(df_reserve, df_etf):
 
 def render_central_bank_trends():
     st.markdown("#### 央行购金全球趋势")
+    # 优先使用预加载数据
+    from tabs.gold_components.gold_preloader import get_preloaded
+    df_etf = get_preloaded("global_etf_holdings")
+    if df_etf is None:
+        with st.spinner("加载全球ETF持仓数据..."):
+            df_etf = fetch_global_etf_holdings()
     with st.spinner("加载央行储备数据..."):
         df_reserve = fetch_china_reserve_data()
-    with st.spinner("加载全球ETF持仓数据..."):
-        df_etf = fetch_global_etf_holdings()
     _render_reserve_cards(df_reserve, df_etf)
     st.markdown("---")
     _render_china_reserve_trend(df_reserve)
