@@ -1545,6 +1545,224 @@ def format_value(val, prefix="", suffix="", decimals=2):
 # ==================== 主页面 ====================
 
 
+
+def get_indicator_color(value, thresholds, default="#888"):
+    """通用阈值→颜色映射。
+
+    Args:
+        value: 数值（None/NaN 返回 default）
+        thresholds: list of (upper_bound, color)，按优先级从高到低
+        default: value 为 None 时的返回值
+
+    Example:
+        get_indicator_color(-12.5, [(10, "red"), (5, "yellow"), (0, "green")]) -> "red"
+        get_indicator_color(None, [(10, "red"), (0, "green")]) -> "#888"
+    """
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return default
+    for upper, color in thresholds:
+        if abs(value) > upper:
+            return color
+    return thresholds[-1][1]
+
+
+def get_risk_color(risk_score):
+    """风险评分→颜色。"""
+    return "#22c55e" if risk_score >= 70 else "#f59e0b" if risk_score >= 40 else "#ef4444"
+
+
+def get_risk_label(risk_score):
+    """风险评分→中文标签。"""
+    return "低风险" if risk_score >= 70 else "中等风险" if risk_score >= 40 else "高风险"
+
+def compute_risk_score(volatility, max_dd, sharpe):
+    """计算风险评分（0-100分）。满分=低风险。"""
+    score = 100
+    if volatility is not None and not np.isnan(volatility):
+        if volatility > 30: score -= 30
+        elif volatility > 20: score -= 15
+        elif volatility > 15: score -= 5
+    if max_dd is not None and not np.isnan(max_dd):
+        if abs(max_dd) > 15: score -= 30
+        elif abs(max_dd) > 10: score -= 20
+        elif abs(max_dd) > 5: score -= 10
+    if sharpe is not None and not np.isnan(sharpe):
+        if sharpe < 0: score -= 20
+        elif sharpe < 0.5: score -= 10
+    return max(0, min(100, score))
+
+
+
+
+
+
+def get_warnings(positions, max_dd, volatility, sharpe, profit_count, loss_count):
+    """Generate risk warning list. Returns list of (icon, title, desc)."""
+    warnings = []
+    if not positions.empty:
+        total_mv = positions["market_value"].sum()
+        if total_mv > 0:
+            max_pos = positions.loc[positions["market_value"].idxmax()]
+            max_weight = max_pos["market_value"] / total_mv * 100
+            if max_weight > 30:
+                warnings.append(("🔴", "集中度风险", f'「{max_pos["name"]}」占比 {max_weight:.1f}%，超过30%阈值'))
+            elif max_weight > 20:
+                warnings.append(("🟡", "集中度风险", f'「{max_pos["name"]}」占比 {max_weight:.1f}%，接近30%警戒线'))
+            top3_w = positions.nlargest(3, "market_value")["market_value"].sum() / total_mv
+            if top3_w > 60:
+                warnings.append(("🟡", "集中度风险", f"前3大持仓合计占比 {top3_w:.1f}%"))
+        beta_avail = positions[positions["beta"].notna() & (positions["beta"] > 0)]
+        if not beta_avail.empty:
+            port_beta = (beta_avail["beta"] * beta_avail["market_value"]).sum() / beta_avail["market_value"].sum()
+            if port_beta > 1.2:
+                warnings.append(("🟡", "Beta风险", f"组合加权Beta为 {port_beta:.2f}，系统性风险偏高"))
+            elif port_beta < 0.8:
+                warnings.append(("🔵", "Beta风险", f"组合加权Beta为 {port_beta:.2f}，防御性较强"))
+    if max_dd is not None and not np.isnan(max_dd):
+        dd_pct = abs(max_dd)
+        if dd_pct > 15:
+            warnings.append(("🔴", "回撤风险", f"历史最大回撤 {dd_pct:.2f}%，超过15%警戒线"))
+        elif dd_pct > 10:
+            warnings.append(("🟡", "回撤风险", f"历史最大回撤 {dd_pct:.2f}%，较高水平"))
+        elif dd_pct > 5:
+            warnings.append(("🔵", "回撤风险", f"历史最大回撤 {dd_pct:.2f}%，正常波动"))
+    if volatility is not None and not np.isnan(volatility):
+        if volatility > 25:
+            warnings.append(("🟡", "波动率风险", f"年化波动率 {volatility:.2f}%，波动较大"))
+        elif volatility < 8:
+            warnings.append(("🔵", "波动率风险", f"年化波动率 {volatility:.2f}%，波动较低"))
+    if profit_count is not None and loss_count is not None and (profit_count + loss_count) > 0:
+        wr = profit_count / (profit_count + loss_count) * 100
+        if wr < 40:
+            warnings.append(("🟡", "胜率偏低", f"当前胜率 {wr:.1f}%"))
+        elif wr > 70:
+            warnings.append(("🟢", "胜率优异", f"当前胜率 {wr:.1f}%"))
+    if not positions.empty:
+        loss_pos = positions[positions["pnl"] < 0]
+        if not loss_pos.empty:
+            max_loss = loss_pos.loc[loss_pos["pnl_rate"].idxmin()]
+            if max_loss["pnl_rate"] < -15:
+                warnings.append(("🔴", "个股预警", f'「{max_loss["name"]}」亏损 {max_loss["pnl_rate"]:.2f}%'))
+            elif len(loss_pos) > len(positions) * 0.5:
+                warnings.append(("🟡", "持仓预警", f"亏损标的 {len(loss_pos)} 只，占比 {len(loss_pos)/len(positions)*100:.0f}%"))
+        total_pnl = positions["pnl"].sum()
+        if total_pnl < 0:
+            warnings.append(("🟡", "组合亏损", f"当前总盈亏 ¥{total_pnl:,.0f}"))
+    return warnings
+
+
+def compute_comprehensive_score(positions, summary, volatility, effective_max_dd, tech_df):
+    """Compute comprehensive portfolio score (0-100) across 4 dimensions.
+    
+    Returns dict with keys:
+        score_return, score_risk, tech_score, score_health,
+        total_score, score_color, score_label, tech_signals
+    """
+    # 收益评分 (30分)
+    port_daily = summary["total_value"].pct_change().dropna()
+    total_ret = (
+        (summary["total_value"].iloc[-1] / summary["total_value"].iloc[0] - 1)
+        if summary["total_value"].iloc[0] > 0
+        else 0
+    )
+    ann_ret = port_daily.mean() * 252 if len(port_daily) > 0 else 0
+    if total_ret > 0.1:
+        score_return = 30
+    elif total_ret > 0.05:
+        score_return = 24
+    elif total_ret > 0:
+        score_return = 18
+    elif total_ret > -0.05:
+        score_return = 10
+    else:
+        score_return = 5
+
+    # 风险评分 (30分)
+    score_risk = 15
+    if volatility and not np.isnan(volatility):
+        if volatility < 10:
+            score_risk = 28
+        elif volatility < 15:
+            score_risk = 24
+        elif volatility < 20:
+            score_risk = 18
+        elif volatility < 25:
+            score_risk = 12
+        else:
+            score_risk = 6
+    else:
+        score_risk = 15
+
+    if effective_max_dd and not np.isnan(effective_max_dd):
+        dd = abs(effective_max_dd)
+        if dd < 5:
+            score_risk = min(score_risk + 2, 30)
+        elif dd > 15:
+            score_risk = max(score_risk - 5, 0)
+
+    # 技术面评分 (25分)
+    tech_score = 0
+    tech_signals = []
+    if not tech_df.empty:
+        latest_tech = tech_df.drop_duplicates("code", keep="first")
+        for _, tr in latest_tech.iterrows():
+            etf_name = ETF_CATEGORIES.get(str(tr["code"]), {}).get("name", tr["code"])
+            etf_score = 0
+            if tr.get("ma_signal") == "多头排列":
+                etf_score += 3
+                tech_signals.append(f"{etf_name}: 均线多头排列")
+            elif tr.get("ma_signal") == "空头排列":
+                etf_score -= 1
+            if tr.get("macd_signal") == "金叉":
+                etf_score += 2
+                tech_signals.append(f"{etf_name}: MACD金叉")
+            elif tr.get("macd_signal") == "死叉":
+                etf_score -= 1
+            if tr.get("rsi_status") in ("超卖", "偏低"):
+                etf_score += 1
+            elif tr.get("rsi_status") in ("超买", "偏高"):
+                etf_score -= 1
+            if tr.get("trend") == "上涨":
+                etf_score += 2
+            elif tr.get("trend") == "下跌":
+                etf_score -= 1
+            tech_score += etf_score
+        tech_score = max(0, min(25, 10 + tech_score))
+
+    # 持仓健康度评分 (15分)
+    score_health = 15
+    total_mv = positions["market_value"].sum()
+    max_weight = positions["market_value"].max() / total_mv if total_mv > 0 else 0
+    if max_weight > 30:
+        score_health -= 5
+    elif max_weight > 20:
+        score_health -= 2
+    loss_ratio = len(positions[positions["pnl"] < 0]) / len(positions) if len(positions) > 0 else 0
+    if loss_ratio > 0.6:
+        score_health -= 5
+    elif loss_ratio > 0.4:
+        score_health -= 2
+    score_health = max(0, score_health)
+
+    total_score = score_return + score_risk + tech_score + score_health
+    score_color = "#22c55e" if total_score >= 70 else "#f59e0b" if total_score >= 45 else "#ef4444"
+    score_label = (
+        "优秀"
+        if total_score >= 70
+        else "良好" if total_score >= 55 else "一般" if total_score >= 40 else "较差"
+    )
+
+    return {
+        "score_return": score_return,
+        "score_risk": score_risk,
+        "tech_score": tech_score,
+        "score_health": score_health,
+        "total_score": total_score,
+        "score_color": score_color,
+        "score_label": score_label,
+        "tech_signals": tech_signals,
+    }
+
 def _generate_oneclick_report(positions, summary, technical, selected_date, selected_benchmark):
     """生成综合分析报告 HTML"""
     import math
@@ -1931,7 +2149,7 @@ def main():
             unsafe_allow_html=True,
         )
     with cols[2]:
-        dr_color = "#22c55e" if daily_return >= 0 else "#ef4444"
+        dr_color = get_indicator_color(daily_return, [(0, "#ef4444"), (-1e-9, "#22c55e")], default="#888")
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dr_color};">'
             f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定日期相对于前一交易日的收益率(%)和盈亏金额(元)">日收益 ℹ</div>'
@@ -1941,7 +2159,7 @@ def main():
             unsafe_allow_html=True,
         )
     with cols[3]:
-        sharpe_color = "#22c55e" if (sharpe and sharpe > 0.5) else "#f59e0b" if sharpe else "#888"
+        sharpe_color = "#22c55e" if (sharpe and sharpe > 0.5) else "#f59e0b" if sharpe else "#888"  # get_indicator_color不适合此三元逻辑，保留
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {sharpe_color};">'
             f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="风险调整后收益指标 = (年化收益率 - 无风险利率) / 年化波动率。>1为优秀，>0.5为良好">夏普比率 ℹ</div>'
@@ -1950,9 +2168,7 @@ def main():
             unsafe_allow_html=True,
         )
     with cols[4]:
-        dd_color = (
-            "#ef4444" if (effective_max_dd and abs(effective_max_dd) > 10) else "#f59e0b" if (effective_max_dd and abs(effective_max_dd) > 5) else "#22c55e"
-        )
+        dd_color = get_indicator_color(effective_max_dd, [(10, "#ef4444"), (5, "#f59e0b"), (0, "#22c55e")])
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dd_color};">'
             f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定时间段内，组合从历史最高点到最低点的最大跌幅(%)">最大回撤 ℹ</div>'
@@ -1961,11 +2177,7 @@ def main():
             unsafe_allow_html=True,
         )
     with cols[5]:
-        vol_color = (
-            "#ef4444"
-            if (volatility and volatility > 25)
-            else "#f59e0b" if (volatility and volatility > 15) else "#22c55e"
-        )
+        vol_color = get_indicator_color(volatility, [(25, "#ef4444"), (15, "#f59e0b"), (0, "#22c55e")])
         st.markdown(
             f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {vol_color};">'
             f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="日收益率标准差的年化值，反映组合收益的波动幅度。值越高表示风险越大">年化波动率 ℹ</div>'
@@ -3151,30 +3363,9 @@ def main():
             )
 
             # 风险评分（使用基于持仓稳定后数据的指标）
-            risk_score = 100
-            if volatility and not np.isnan(volatility):
-                if volatility > 30:
-                    risk_score -= 30
-                elif volatility > 20:
-                    risk_score -= 15
-                elif volatility > 15:
-                    risk_score -= 5
-            if effective_max_dd and not np.isnan(effective_max_dd):
-                if abs(effective_max_dd) > 15:
-                    risk_score -= 30
-                elif abs(effective_max_dd) > 10:
-                    risk_score -= 20
-                elif abs(effective_max_dd) > 5:
-                    risk_score -= 10
-            if sharpe and not np.isnan(sharpe):
-                if sharpe < 0:
-                    risk_score -= 20
-                elif sharpe < 0.5:
-                    risk_score -= 10
-
-            risk_score = max(0, min(100, risk_score))
-            risk_color = "#22c55e" if risk_score >= 70 else "#f59e0b" if risk_score >= 40 else "#ef4444"
-            risk_label = "低风险" if risk_score >= 70 else "中等风险" if risk_score >= 40 else "高风险"
+            risk_score = compute_risk_score(volatility, effective_max_dd, sharpe)
+            risk_color = get_risk_color(risk_score)
+            risk_label = get_risk_label(risk_score)
 
             fig_gauge = go.Figure(
                 go.Indicator(
@@ -3561,92 +3752,7 @@ def main():
 
             warnings = []
             import math
-
-            # 1. 集中度风险 - 单一持仓占比过高
-            if not positions.empty:
-                total_mv = positions["market_value"].sum()
-                max_pos = positions.loc[positions["market_value"].idxmax()]
-                max_weight = max_pos["market_value"] / total_mv * 100 if total_mv > 0 else 0
-                if max_weight > 30:
-                    warnings.append(
-                        (
-                            "🔴",
-                            "集中度风险",
-                            f'「{max_pos["name"]}」占比 {max_weight:.1f}%，超过30%阈值，建议适当分散降低单一持仓集中度',
-                        )
-                    )
-                elif max_weight > 20:
-                    warnings.append(
-                        ("🟡", "集中度风险", f'「{max_pos["name"]}」占比 {max_weight:.1f}%，接近30%警戒线，需关注')
-                    )
-
-                # 前3大持仓集中度
-                top3_weight = positions.nlargest(3, "market_value")["market_value"].sum() / total_mv * 100
-                if top3_weight > 60:
-                    warnings.append(("🟡", "集中度风险", f"前3大持仓合计占比 {top3_weight:.1f}%，集中度偏高"))
-
-            # 2. Beta 系统性风险
-            beta_available = positions[positions["beta"].notna() & (positions["beta"] > 0)]
-            if not beta_available.empty:
-                port_beta = (
-                    (beta_available["beta"] * beta_available["market_value"]).sum()
-                    / beta_available["market_value"].sum()
-                    if beta_available["market_value"].sum() > 0
-                    else 1.0
-                )
-                if port_beta > 1.2:
-                    warnings.append(("🟡", "Beta风险", f"组合加权Beta为 {port_beta:.2f}，高于市场1.0，系统性风险偏高"))
-                elif port_beta < 0.8:
-                    warnings.append(
-                        ("🔵", "Beta风险", f"组合加权Beta为 {port_beta:.2f}，低于市场1.0，防御性较强但可能错失上涨行情")
-                    )
-
-            # 3. 回撤风险（使用基于持仓稳定后数据的effective_max_dd）
-            if effective_max_dd and not np.isnan(effective_max_dd):
-                dd_pct = abs(effective_max_dd)
-                if dd_pct > 15:
-                    warnings.append(("🔴", "回撤风险", f"历史最大回撤 {dd_pct:.2f}%，超过15%警戒线，注意控制下行风险"))
-                elif dd_pct > 10:
-                    warnings.append(("🟡", "回撤风险", f"历史最大回撤 {dd_pct:.2f}%，处于较高水平"))
-                elif dd_pct > 5:
-                    warnings.append(("🔵", "回撤风险", f"历史最大回撤 {dd_pct:.2f}%，处于正常波动范围"))
-
-            # 4. 波动率风险
-            if volatility and not np.isnan(volatility):
-                if volatility > 25:
-                    warnings.append(("🟡", "波动率风险", f"年化波动率 {volatility:.2f}%，组合波动较大，注意风险管理"))
-                elif volatility < 8:
-                    warnings.append(("🔵", "波动率风险", f"年化波动率 {volatility:.2f}%，组合波动较低"))
-
-            # 5. 胜率风险
-            if profit_count is not None and loss_count is not None and (profit_count + loss_count) > 0:
-                wr = profit_count / (profit_count + loss_count) * 100
-                if wr < 40:
-                    warnings.append(("🟡", "胜率偏低", f"当前胜率 {wr:.1f}%，持仓中盈利标的占比较低"))
-                elif wr > 70:
-                    warnings.append(("🟢", "胜率优异", f"当前胜率 {wr:.1f}%，持仓中大部分标的处于盈利状态"))
-
-            # 6. 亏损标的预警
-            loss_positions = positions[positions["pnl"] < 0]
-            if not loss_positions.empty:
-                max_loss = loss_positions.loc[loss_positions["pnl_rate"].idxmin()]
-                if max_loss["pnl_rate"] < -15:
-                    warnings.append(
-                        ("🔴", "个股预警", f'「{max_loss["name"]}」亏损 {max_loss["pnl_rate"]:.2f}%，建议关注止损')
-                    )
-                elif len(loss_positions) > len(positions) * 0.5:
-                    warnings.append(
-                        (
-                            "🟡",
-                            "持仓预警",
-                            f"亏损标的有 {len(loss_positions)} 只，占比 {len(loss_positions)/len(positions)*100:.0f}%",
-                        )
-                    )
-
-            # 7. 总盈亏趋势
-            total_pnl = positions["pnl"].sum()
-            if total_pnl < 0:
-                warnings.append(("🟡", "组合亏损", f"当前总盈亏 ¥{total_pnl:,.0f}，整体处于浮亏状态"))
+            warnings = get_warnings(positions, effective_max_dd, volatility, sharpe, profit_count, loss_count)
 
             # 渲染风险提示
             if warnings:
@@ -5034,48 +5140,7 @@ def main():
         if not summary.empty and not positions.empty:
             import math
 
-            # 收益评分 (30分)
-            port_daily = summary["total_value"].pct_change().dropna()
-            total_ret = (
-                (summary["total_value"].iloc[-1] / summary["total_value"].iloc[0] - 1)
-                if summary["total_value"].iloc[0] > 0
-                else 0
-            )
-            ann_ret = port_daily.mean() * 252 if len(port_daily) > 0 else 0
-            if total_ret > 0.1:
-                score_return = 30
-            elif total_ret > 0.05:
-                score_return = 24
-            elif total_ret > 0:
-                score_return = 18
-            elif total_ret > -0.05:
-                score_return = 10
-            else:
-                score_return = 5
-
-            # 风险评分 (30分)
-            if volatility and not np.isnan(volatility):
-                if volatility < 10:
-                    score_risk = 28
-                elif volatility < 15:
-                    score_risk = 24
-                elif volatility < 20:
-                    score_risk = 18
-                elif volatility < 25:
-                    score_risk = 12
-                else:
-                    score_risk = 6
-            else:
-                score_risk = 15
-
-            if effective_max_dd and not np.isnan(effective_max_dd):
-                dd = abs(effective_max_dd)
-                if dd < 5:
-                    score_risk = min(score_risk + 2, 30)
-                elif dd > 15:
-                    score_risk = max(score_risk - 5, 0)
-
-            # 技术面评分 (25分)
+            # 加载技术面信号数据
             conn2 = get_db_connection()
             try:
                 held_codes = positions["code"].tolist()[:5]
@@ -5083,62 +5148,24 @@ def main():
                     tech_df = _load_tech_signals(tuple(held_codes), _full=False)
                 else:
                     tech_df = pd.DataFrame()
-
             except Exception:
                 tech_df = pd.DataFrame()
             finally:
                 conn2.close()
 
-            tech_score = 0
-            tech_signals = []
-            if not tech_df.empty:
-                latest_tech = tech_df.drop_duplicates("code", keep="first")
-                for _, tr in latest_tech.iterrows():
-                    etf_name = ETF_CATEGORIES.get(str(tr["code"]), {}).get("name", tr["code"])
-                    etf_score = 0
-                    if tr.get("ma_signal") == "多头排列":
-                        etf_score += 3
-                        tech_signals.append(f"{etf_name}: 均线多头排列")
-                    elif tr.get("ma_signal") == "空头排列":
-                        etf_score -= 1
-                    if tr.get("macd_signal") == "金叉":
-                        etf_score += 2
-                        tech_signals.append(f"{etf_name}: MACD金叉")
-                    elif tr.get("macd_signal") == "死叉":
-                        etf_score -= 1
-                    if tr.get("rsi_status") in ("超卖", "偏低"):
-                        etf_score += 1
-                    elif tr.get("rsi_status") in ("超买", "偏高"):
-                        etf_score -= 1
-                    if tr.get("trend") == "上涨":
-                        etf_score += 2
-                    elif tr.get("trend") == "下跌":
-                        etf_score -= 1
-                    tech_score += etf_score
-                tech_score = max(0, min(25, 10 + tech_score))
-
-            # 持仓健康度评分 (15分)
-            score_health = 15
-            total_mv = positions["market_value"].sum()
-            max_weight = positions["market_value"].max() / total_mv if total_mv > 0 else 0
-            if max_weight > 30:
-                score_health -= 5
-            elif max_weight > 20:
-                score_health -= 2
-            loss_ratio = len(positions[positions["pnl"] < 0]) / len(positions) if len(positions) > 0 else 0
-            if loss_ratio > 0.6:
-                score_health -= 5
-            elif loss_ratio > 0.4:
-                score_health -= 2
-            score_health = max(0, score_health)
-
-            total_score = score_return + score_risk + tech_score + score_health
-            score_color = "#22c55e" if total_score >= 70 else "#f59e0b" if total_score >= 45 else "#ef4444"
-            score_label = (
-                "优秀"
-                if total_score >= 70
-                else "良好" if total_score >= 55 else "一般" if total_score >= 40 else "较差"
+            # 综合评分计算
+            scores = compute_comprehensive_score(
+                positions, summary, volatility, effective_max_dd, tech_df
             )
+            score_return = scores["score_return"]
+            score_risk = scores["score_risk"]
+            tech_score = scores["tech_score"]
+            score_health = scores["score_health"]
+            total_score = scores["total_score"]
+            score_color = scores["score_color"]
+            score_label = scores["score_label"]
+            tech_signals = scores["tech_signals"]
+
 
             # 渲染评分
             col_score1, col_score2 = st.columns([1, 2])
