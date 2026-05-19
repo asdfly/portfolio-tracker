@@ -253,7 +253,7 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
 
     ec1, ec2 = st.columns(2)
     with ec1:
-        if st.button("📊 导出 Excel 报告", use_container_width=True, type="primary"):
+        if st.button("📊 导出 Excel 报告", width='stretch', type="primary"):
             try:
                 from src.report.excel_report import ExcelReportGenerator
 
@@ -266,12 +266,12 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
                         data=f.read(),
                         file_name=os.path.basename(output),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
+                        width='stretch',
                     )
             except Exception as e:
                 st.error(f"导出失败: {e}")
     with ec2:
-        if st.button("📄 导出 HTML 日报", use_container_width=True):
+        if st.button("📄 导出 HTML 日报", width='stretch'):
             try:
                 from src.utils.email_report import EmailReportBuilder
 
@@ -285,7 +285,7 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
                         data=f.read(),
                         file_name=os.path.basename(report_path),
                         mime="text/html",
-                        use_container_width=True,
+                        width='stretch',
                     )
             except Exception as e:
                 st.error(f"导出失败: {e}")

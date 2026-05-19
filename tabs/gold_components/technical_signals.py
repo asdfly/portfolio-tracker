@@ -210,7 +210,7 @@ def render_technical_signals():
     fig.update_yaxes(gridcolor=GRID_COLOR, row=2, col=1)
     fig.update_yaxes(gridcolor=GRID_COLOR, row=3, col=1, range=[0, 100])
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     with st.expander("技术指标解读", expanded=False):
         col_a, col_b = st.columns(2)
@@ -310,7 +310,7 @@ def render_technical_signals():
     fig.update_yaxes(gridcolor=GRID_COLOR, row=1, col=1)
     fig.update_yaxes(gridcolor=GRID_COLOR, row=2, col=1)
     fig.update_yaxes(gridcolor=GRID_COLOR, row=3, col=1, range=[0, 100])
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     with st.expander("技术指标解读", expanded=False):
         col_a, col_b = st.columns(2)
