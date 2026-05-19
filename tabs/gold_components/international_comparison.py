@@ -172,7 +172,7 @@ def _render_premium_discount(df_etf, df_sge):
         return
     de = df_etf.copy()
     de = de[(de["total_value"] > 0) & (de["total_holdings"] > 0)].copy()
-    de["est_gold_usd_oz"] = de["total_value"] * 1e8 / (de["total_holdings"] * 32150.72)
+    de["est_gold_usd_oz"] = de["total_value"] * 1e8 / (de["total_holdings"] * 32150.72)  # 亿美元->美元
     de["est_gold_usd_g"] = de["est_gold_usd_oz"] / 31.1035
     ds = df_sge.copy()
     ds["date"] = pd.to_datetime(ds["date"], errors="coerce")

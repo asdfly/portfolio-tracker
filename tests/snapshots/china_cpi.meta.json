@@ -1,0 +1,25 @@
+{
+  "name": "china_cpi",
+  "rows": 220,
+  "columns": [
+    "date",
+    "cpi_yoy",
+    "cpi_mom"
+  ],
+  "dtypes": {
+    "date": "datetime64[ns]",
+    "cpi_yoy": "float64",
+    "cpi_mom": "float64"
+  },
+  "date_range": "2008-01-01 00:00:00 ~ 2026-04-01 00:00:00",
+  "sample_first": {
+    "date": "2008-01-01 00:00:00",
+    "cpi_yoy": 7.0781,
+    "cpi_mom": 1.2
+  },
+  "sample_last": {
+    "date": "2026-04-01 00:00:00",
+    "cpi_yoy": 1.2,
+    "cpi_mom": 0.3
+  }
+}

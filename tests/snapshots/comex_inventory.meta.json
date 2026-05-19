@@ -1,0 +1,29 @@
+{
+  "name": "comex_inventory",
+  "rows": 1241,
+  "columns": [
+    "序号",
+    "date",
+    "inventory_ton",
+    "inventory_oz"
+  ],
+  "dtypes": {
+    "序号": "int64",
+    "date": "datetime64[ns]",
+    "inventory_ton": "float64",
+    "inventory_oz": "float64"
+  },
+  "date_range": "1 ~ 1241",
+  "sample_first": {
+    "序号": 1,
+    "date": "2021-05-19 00:00:00",
+    "inventory_ton": 1073.449030767,
+    "inventory_oz": 34512162.0
+  },
+  "sample_last": {
+    "序号": 1241,
+    "date": "2026-05-14 00:00:00",
+    "inventory_ton": 895.096491025602,
+    "inventory_oz": 28777998.972
+  }
+}

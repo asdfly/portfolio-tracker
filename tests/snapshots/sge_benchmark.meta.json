@@ -1,0 +1,25 @@
+{
+  "name": "sge_benchmark",
+  "rows": 2446,
+  "columns": [
+    "date",
+    "晚盘价",
+    "close"
+  ],
+  "dtypes": {
+    "date": "datetime64[ns]",
+    "晚盘价": "float64",
+    "close": "float64"
+  },
+  "date_range": "2016-04-18 00:00:00 ~ 2026-05-14 00:00:00",
+  "sample_first": {
+    "date": "2016-04-18 00:00:00",
+    "晚盘价": 257.29,
+    "close": 256.92
+  },
+  "sample_last": {
+    "date": "2026-05-14 00:00:00",
+    "晚盘价": 1003.05,
+    "close": 1011.62
+  }
+}

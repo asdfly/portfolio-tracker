@@ -1,0 +1,25 @@
+{
+  "name": "bond_yields_3y",
+  "rows": 798,
+  "columns": [
+    "date",
+    "cn_10y",
+    "us_10y"
+  ],
+  "dtypes": {
+    "date": "datetime64[ns]",
+    "cn_10y": "float64",
+    "us_10y": "float64"
+  },
+  "date_range": "2023-05-22 00:00:00 ~ 2026-05-18 00:00:00",
+  "sample_first": {
+    "date": "2023-05-22 00:00:00",
+    "cn_10y": 0.4572,
+    "us_10y": -0.57
+  },
+  "sample_last": {
+    "date": "2026-05-18 00:00:00",
+    "cn_10y": 0.4901,
+    "us_10y": 0.54
+  }
+}
