@@ -1,0 +1,21 @@
+{
+  "name": "usdcny_hist",
+  "rows": 7965,
+  "columns": [
+    "date",
+    "close"
+  ],
+  "dtypes": {
+    "date": "datetime64[ns]",
+    "close": "float64"
+  },
+  "date_range": "1994-01-01 00:00:00 ~ 2026-05-19 00:00:00",
+  "sample_first": {
+    "date": "1994-01-01 00:00:00",
+    "close": 8.7
+  },
+  "sample_last": {
+    "date": "2026-05-19 00:00:00",
+    "close": 6.8375
+  }
+}

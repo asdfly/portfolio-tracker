@@ -21,11 +21,11 @@ def _render_reserve_cards(df_reserve, df_etf):
     etf_change = df_etf["change"].iloc[-1] if df_etf is not None and not df_etf.empty else 0
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("黄金储备（万吨）", f"{gold_res:,.1f}", delta=f"{gold_mom:+.1f}%" if pd.notna(gold_mom) else None)
+        st.metric("黄金储备（万盎司）", f"{gold_res:,.1f}", delta=f"{gold_mom:+.1f}%" if pd.notna(gold_mom) else None)
     with c2:
         st.metric("占外汇储备", f"{gold_ratio:.1f}%")
     with c3:
-        st.metric("近12月累计增持", f"{total_increase:+,.1f} 万吨")
+        st.metric("近12月累计增持", f"{total_increase:+,.1f} 万盎司")
     with c4:
         st.metric("全球ETF持仓（吨）", f"{etf_latest:,.1f}", delta=f"{etf_change:+.2f} 吨" if pd.notna(etf_change) else None)
 
@@ -35,18 +35,18 @@ def _render_china_reserve_trend(df):
         st.info("暂无中国黄金储备数据"); return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     recent = df[df["month"] >= df["month"].max() - pd.DateOffset(years=5)].copy()
-    fig.add_trace(go.Scatter(x=recent["month"], y=recent["gold_reserve"], mode="lines+markers", name="黄金储备（万吨）",
+    fig.add_trace(go.Scatter(x=recent["month"], y=recent["gold_reserve"], mode="lines+markers", name="黄金储备（万盎司）",
         fill="tozeroy", fillcolor="rgba(250,204,21,0.15)", line=dict(color="#facc15", width=2), marker=dict(size=3),
-        hovertemplate="%{x|%Y-%m}<br>储备: %{y:.1f} 万吨<extra></extra>"), secondary_y=False)
+        hovertemplate="%{x|%Y-%m}<br>储备: %{y:.1f} 万盎司<extra></extra>"), secondary_y=False)
     mc = recent["gold_reserve"].diff()
     colors = ["#22c55e" if v >= 0 else "#ef4444" for v in mc.fillna(0)]
     fig.add_trace(go.Bar(x=recent["month"], y=mc, name="月度增持/减持", marker_color=colors, opacity=0.7,
-        hovertemplate="%{x|%Y-%m}<br>变动: %{y:+.1f} 万吨<extra></extra>"), secondary_y=True)
+        hovertemplate="%{x|%Y-%m}<br>变动: %{y:+.1f} 万盎司<extra></extra>"), secondary_y=True)
     fig.update_layout(title="中国黄金储备月度趋势", height=380, template="plotly_dark",
         margin=dict(l=50, r=50, t=40, b=30), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         xaxis=dict(rangeslider=dict(visible=False)))
-    fig.update_yaxes(title_text="储备量（万吨）", secondary_y=False, side="left")
-    fig.update_yaxes(title_text="增持/减持（万吨）", secondary_y=True, side="right")
+    fig.update_yaxes(title_text="储备量（万盎司）", secondary_y=False, side="left")
+    fig.update_yaxes(title_text="增持/减持（万盎司）", secondary_y=True, side="right")
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -95,7 +95,7 @@ def _render_reserve_vs_etf(df_reserve, df_etf):
     if dm is None or dm.empty:
         return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Scatter(x=dm["month"], y=dm["gold_reserve"], mode="lines+markers", name="中国黄金储备（万吨）",
+    fig.add_trace(go.Scatter(x=dm["month"], y=dm["gold_reserve"], mode="lines+markers", name="中国黄金储备（万盎司）",
         line=dict(color="#facc15", width=2), marker=dict(size=4), hovertemplate="%{x|%Y-%m}<br>储备: %{y:.1f}<extra></extra>"),
         secondary_y=False)
     fig.add_trace(go.Scatter(x=dm["month"], y=dm["total_holdings"], mode="lines+markers", name="全球ETF持仓（吨）",
@@ -104,7 +104,7 @@ def _render_reserve_vs_etf(df_reserve, df_etf):
     fig.update_layout(title="中国央行储备 vs 全球黄金ETF持仓", height=320, template="plotly_dark",
         margin=dict(l=50, r=50, t=40, b=30), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         xaxis=dict(rangeslider=dict(visible=False)))
-    fig.update_yaxes(title_text="储备（万吨）", secondary_y=False, side="left")
+    fig.update_yaxes(title_text="储备（万盎司）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="ETF持仓（吨）", secondary_y=True, side="right")
     st.plotly_chart(fig, use_container_width=True)
 

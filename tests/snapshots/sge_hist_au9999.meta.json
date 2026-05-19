@@ -1,0 +1,33 @@
+{
+  "name": "sge_hist_au9999",
+  "rows": 2280,
+  "columns": [
+    "date",
+    "open",
+    "close",
+    "low",
+    "high"
+  ],
+  "dtypes": {
+    "date": "datetime64[ns]",
+    "open": "float64",
+    "close": "float64",
+    "low": "float64",
+    "high": "float64"
+  },
+  "date_range": "2016-12-19 00:00:00 ~ 2026-05-18 00:00:00",
+  "sample_first": {
+    "date": "2016-12-19 00:00:00",
+    "open": 262.45,
+    "close": 262.76,
+    "low": 262.02,
+    "high": 263.5
+  },
+  "sample_last": {
+    "date": "2026-05-18 00:00:00",
+    "open": 1000.01,
+    "close": 999.69,
+    "low": 980.02,
+    "high": 1005.0
+  }
+}

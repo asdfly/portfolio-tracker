@@ -1,0 +1,41 @@
+{
+  "name": "china_reserve_data",
+  "rows": 220,
+  "columns": [
+    "month",
+    "gold_reserve",
+    "gold_reserve_yoy",
+    "gold_reserve_mom",
+    "fx_reserve",
+    "fx_reserve_yoy",
+    "fx_reserve_mom"
+  ],
+  "dtypes": {
+    "month": "datetime64[ns]",
+    "gold_reserve": "float64",
+    "gold_reserve_yoy": "float64",
+    "gold_reserve_mom": "float64",
+    "fx_reserve": "float64",
+    "fx_reserve_yoy": "float64",
+    "fx_reserve_mom": "float64"
+  },
+  "date_range": "2008-01-01 00:00:00 ~ 2026-04-01 00:00:00",
+  "sample_first": {
+    "month": "2008-01-01 00:00:00",
+    "gold_reserve": NaN,
+    "gold_reserve_yoy": NaN,
+    "gold_reserve_mom": NaN,
+    "fx_reserve": 15898.104,
+    "fx_reserve_yoy": 43.91438669,
+    "fx_reserve_mom": 4.02822351
+  },
+  "sample_last": {
+    "month": "2026-04-01 00:00:00",
+    "gold_reserve": 3441.72,
+    "gold_reserve_yoy": 41.29441468,
+    "gold_reserve_mom": 0.41107121,
+    "fx_reserve": 34105.47,
+    "fx_reserve_yoy": 3.92743067,
+    "fx_reserve_mom": 2.04732142
+  }
+}

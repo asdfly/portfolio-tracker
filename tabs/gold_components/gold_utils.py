@@ -302,6 +302,8 @@ def fetch_global_etf_holdings(years=2):
         df = df.drop(columns=['商品'], errors='ignore')
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values('date').reset_index(drop=True)
+        # total_value 原始单位为美元，转为亿美元
+        df['total_value'] = df['total_value'] / 1e8
         # 只保留近 N 年数据
         cutoff = df["date"].max() - pd.DateOffset(years=years)
         df = df[df["date"] >= cutoff].reset_index(drop=True)

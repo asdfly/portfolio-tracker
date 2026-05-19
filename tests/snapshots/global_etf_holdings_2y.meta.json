@@ -1,0 +1,29 @@
+{
+  "name": "global_etf_holdings_2y",
+  "rows": 376,
+  "columns": [
+    "date",
+    "total_holdings",
+    "change",
+    "total_value"
+  ],
+  "dtypes": {
+    "date": "datetime64[ns]",
+    "total_holdings": "float64",
+    "change": "float64",
+    "total_value": "float64"
+  },
+  "date_range": "2024-05-23 00:00:00 ~ 2026-05-18 00:00:00",
+  "sample_first": {
+    "date": "2024-05-23 00:00:00",
+    "total_holdings": 833.36,
+    "change": -5.18,
+    "total_value": 631.4579218759
+  },
+  "sample_last": {
+    "date": "2026-05-18 00:00:00",
+    "total_holdings": 1038.851,
+    "change": 1.428,
+    "total_value": 1524.5418045508
+  }
+}
