@@ -1998,338 +1998,9 @@ def _render_overview(positions, summary, technical, effective_max_dd):
             unsafe_allow_html=True,
         )
 
-def main():
-    # 自定义CSS
-    st.markdown(
-        """
-        <style>
-        .stApp { background-color: #0d1117; }
-        .main-header {
-            font-size: 28px; font-weight: bold; color: #58a6ff;
-            text-align: center; padding: 20px 0 10px 0;
-        }
-        .sub-header {
-            font-size: 14px; color: #8b949e; text-align: center; padding-bottom: 15px;
-        }
-        .section-title {
-            font-size: 18px; font-weight: bold; color: #c9d1d9;
-            padding: 10px 0 5px 0; border-bottom: 1px solid #30363d;
-        }
-        .tip-title {
-            font-size: 18px; font-weight: bold; color: #c9d1d9;
-            padding: 10px 0 5px 0; border-bottom: 1px solid #30363d;
-            display: inline-block; cursor: help;
-        }
-        .tip-title::after {
-            content: ' ℹ';
-            font-size: 11px; color: #58a6ff; font-weight: normal;
-        }
-        .tip-title .tip-text {
-            visibility: hidden; opacity: 0;
-            position: absolute; z-index: 999;
-            background: #1c2333; color: #c9d1d9;
-            border: 1px solid #30363d; border-radius: 6px;
-            padding: 8px 12px; font-size: 12px; font-weight: normal;
-            line-height: 1.5; width: max-content; max-width: 360px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-            transition: opacity 0.2s, visibility 0.2s;
-            margin-top: 6px; margin-left: 0;
-        }
-        .tip-title:hover .tip-text {
-            visibility: visible; opacity: 1;
-        }
-        .tip-title .tip-arrow {
-            visibility: hidden; opacity: 0;
-            position: absolute; z-index: 999;
-            border-left: 6px solid transparent;
-            border-right: 6px solid transparent;
-            border-bottom: 6px solid #30363d;
-            transition: opacity 0.2s, visibility 0.2s;
-        }
-        .tip-title:hover .tip-arrow {
-            visibility: visible; opacity: 1;
-        }
 
-
-        .cal-table { border-collapse: collapse; margin: 0 auto; }
-        .cal-table th { padding: 6px 8px; font-size: 12px; color: #8b949e; font-weight: normal; }
-        .cal-table td {
-            width: 50px; height: 44px; text-align: center; vertical-align: middle;
-            border: 1px solid #21262d; border-radius: 4px; cursor: default;
-            position: relative; padding: 2px;
-        }
-        .cal-table td.cal-today { border: 2px solid #58a6ff; }
-        .cal-table td.cal-non-trading {
-            background: #0d1117; color: #30363d;
-        }
-        .cal-table td.cal-trading {
-            background: #161b22;
-        }
-        .cal-table td.cal-profit { background: #0d2818; }
-        .cal-table td.cal-loss { background: #2d1215; }
-        .cal-day { font-size: 12px; color: #c9d1d9; }
-        .cal-pnl { font-size: 10px; display: block; line-height: 1.2; }
-        .cal-pnl-profit { color: #22c55e; }
-        .cal-pnl-loss { color: #ef4444; }
-        .cal-pnl-zero { color: #484f58; }
-        .yr-pill {
-            display: inline-block; padding: 4px 14px; margin: 2px;
-            border-radius: 14px; font-size: 13px; cursor: pointer;
-            background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
-        }
-        .yr-pill.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
-        .mo-pill {
-            display: inline-block; padding: 3px 12px; margin: 2px;
-            border-radius: 12px; font-size: 12px; cursor: pointer;
-            background: #161b22; color: #8b949e; border: 1px solid #21262d;
-        }
-        .mo-pill.active { background: #238636; color: #ffffff; border-color: #238636; }
-        .cal-summary {
-            display: inline-block; padding: 4px 12px; margin: 2px 6px;
-            border-radius: 6px; font-size: 12px; background: #161b22;
-        }
-        .cal-summary-profit { color: #22c55e; }
-        .cal-summary-loss { color: #ef4444; }
-
-        /* 主标签栏换行 */
-        .stTabs [data-baseweb="tab-list"] {
-            display: flex; flex-wrap: wrap; gap: 2px 4px;
-            max-width: 100%; overflow: visible;
-        }
-        .stTabs [data-baseweb="tab"] {
-            flex: 0 0 auto !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # 标题
-    st.markdown('<div class="main-header">📊 投资组合跟踪分析系统</div>', unsafe_allow_html=True)
-
-    # 获取数据
-    available_dates = get_available_dates()
-    if not available_dates:
-        st.warning("暂无数据，请先运行 run_analysis.py")
-        return
-
-    # 侧边栏
-    with st.sidebar:
-        st.markdown("### 🔧 控制面板")
-
-        selected_date = st.selectbox(
-            "选择日期",
-            available_dates,
-            index=0,
-            format_func=lambda x: f"{x} {'(最新)' if x == available_dates[0] else ''}",
-        )
-
-        # 快捷预设
-        preset = st.radio(
-            "时间范围", ["3个月", "6个月", "1年", "2年", "5年", "全部", "自定义"], horizontal=True, index=2
-        )
-        preset_days = {"3个月": 60, "6个月": 120, "1年": 250, "2年": 500, "5年": 1250, "全部": 4000}
-        if preset == "自定义":
-            show_days = st.slider("自定义天数", min_value=10, max_value=4000, value=250, step=10)
-        else:
-            show_days = preset_days[preset]
-
-        st.markdown("---")
-        st.markdown("### 📋 系统信息")
-
-        logs = load_execution_logs(5)
-        if not logs.empty:
-            for _, log in logs.iterrows():
-                status_icon = "✅" if log["status"] == "success" else "❌" if log["status"] == "failed" else "⏳"
-                st.markdown(f"{status_icon} `{log['task_name']}` - {log['status']}")
-                if pd.notna(log.get("duration_seconds")):
-                    st.caption(f"  耗时: {log['duration_seconds']:.1f}s")
-
-        # 基准指数选择（P1改进）
-        st.markdown("### 📌 基准指数")
-        benchmark_options = {k: v for k, v in INDEX_CODES.items()}
-        # 默认选中沪深300
-        default_bench = "sh000300"
-        benchmark_keys = list(benchmark_options.keys())
-        default_idx = benchmark_keys.index(default_bench) if default_bench in benchmark_keys else 0
-        selected_benchmark = st.selectbox(
-            "对比基准",
-            options=benchmark_keys,
-            index=default_idx,
-            format_func=lambda x: benchmark_options[x],
-            key="benchmark_select",
-        )
-
-        st.markdown("---")
-        st.markdown(f"*数据更新: {available_dates[0]}*")
-
-        st.markdown("---")
-        st.markdown("### 📊 快速指标")
-        st.markdown('<span style="font-size:11px;color:#484f58;">↓ 详见下方概览指标条</span>', unsafe_allow_html=True)
-
-    # 加载数据（带缓存，相同参数不重复查询）
-    positions = load_positions(selected_date)
-    summary = load_summary(show_days, selected_date)
-    technical = load_technical()
-
-    # 预生成缓存：最近10个交易日 x 各时间预设，后台静默触发一次
-    _preset_days_list = [60, 120, 250, 500, 1250, 4000]
-    _recent = available_dates[:10]  # 最近10个交易日
-    with st.spinner(""):
-        for _d in _recent:
-            load_positions(_d)
-            load_summary(show_days, _d)
-            load_benchmark_comparison(selected_benchmark, show_days, _d)
-        for _days in _preset_days_list:
-            load_summary(_days, available_dates[0])
-            load_benchmark_comparison(selected_benchmark, _days, available_dates[0])
-
-    if positions.empty:
-        st.warning(f"{selected_date} 无持仓数据")
-        return
-
-    # ========== 概览指标 ==========
-    latest_summary = summary.iloc[-1] if not summary.empty else {}
-    total_value = latest_summary.get("total_value", 0)
-    total_cost = latest_summary.get("total_cost", 0)
-    total_pnl = latest_summary.get("total_pnl", 0)
-    total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
-    daily_return = latest_summary.get("daily_return", 0)
-    daily_pnl = latest_summary.get("daily_pnl", 0)
-    sharpe = latest_summary.get("sharpe_ratio")
-    max_dd = latest_summary.get("max_drawdown")
-    # early computation of effective_max_dd for use in overview cards (before tab3)
-    _early_ext = compute_extended_risk_metrics(end_date=selected_date)
-    effective_max_dd = _early_ext.get("max_drawdown", max_dd)
-    volatility = latest_summary.get("volatility")
-    profit_count = latest_summary.get("profit_count", 0)
-    loss_count = latest_summary.get("loss_count", 0)
-
-    # 概览卡片行
-    cols = st.columns(6)
-    with cols[0]:
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid #58a6ff;">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="当前所有持仓证券的市值总和">总市值 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:#58a6ff;">¥{format_value(total_value)}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[1]:
-        pnl_color = "#22c55e" if total_pnl >= 0 else "#ef4444"
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {pnl_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="所有持仓的累计盈亏金额和收益率，基于买入成本计算">总盈亏 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{pnl_color};">{format_value(total_pnl, prefix="¥")}</div>'
-            f'<div style="font-size:11px;color:#8b949e;">{format_value(total_return, suffix="%")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[2]:
-        dr_color = get_indicator_color(daily_return, [(0, "#ef4444"), (-1e-9, "#22c55e")], default="#888")
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dr_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定日期相对于前一交易日的收益率(%)和盈亏金额(元)">日收益 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{dr_color};">{format_value(daily_return, suffix="%")}</div>'
-            f'<div style="font-size:11px;color:#8b949e;">{format_value(daily_pnl, prefix="¥")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[3]:
-        sharpe_color = "#22c55e" if (sharpe and sharpe > 0.5) else "#f59e0b" if sharpe else "#888"  # get_indicator_color不适合此三元逻辑，保留
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {sharpe_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="风险调整后收益指标 = (年化收益率 - 无风险利率) / 年化波动率。>1为优秀，>0.5为良好">夏普比率 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{sharpe_color};">{format_value(sharpe, decimals=3)}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[4]:
-        dd_color = get_indicator_color(effective_max_dd, [(10, "#ef4444"), (5, "#f59e0b"), (0, "#22c55e")])
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dd_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定时间段内，组合从历史最高点到最低点的最大跌幅(%)">最大回撤 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{dd_color};">{format_value(effective_max_dd, suffix="%")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[5]:
-        vol_color = get_indicator_color(volatility, [(25, "#ef4444"), (15, "#f59e0b"), (0, "#22c55e")])
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {vol_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="日收益率标准差的年化值，反映组合收益的波动幅度。值越高表示风险越大">年化波动率 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{vol_color};">{format_value(volatility, suffix="%")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-    # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
-        [
-            "📈 净值走势",
-            "📊 持仓分布",
-            "⚠️ 风险分析",
-            "📅 收益日历",
-            "💠 高级分析",
-            "📡 技术信号",
-            "📰 资讯与评估",
-            "💡 操作建议",
-            "🔬 自定义指标",
-            "💰 资金动向",
-            "🥇 黄金市场",
-        ]
-    )
-
-    # ========== 快速指标条 ==========
-    if not positions.empty:
-        total_mv = positions["market_value"].sum()
-        pc = profit_count if profit_count else 0
-        lc = loss_count if loss_count else 0
-        total_held = pc + lc
-        wr = (pc / total_held * 100) if total_held > 0 else 0
-        wr_color = "#22c55e" if wr >= 60 else "#f59e0b" if wr >= 40 else "#ef4444"
-
-        # 最大持仓
-        max_pos = positions.loc[positions["market_value"].idxmax()]
-        max_wt = (max_pos["market_value"] / total_mv * 100) if total_mv > 0 else 0
-        wt_color = "#ef4444" if max_wt > 30 else "#f59e0b" if max_wt > 20 else "#22c55e"
-
-        # 技术信号统计
-        buy_sig = sell_sig = 0
-        if technical is not None and not technical.empty:
-            for _, tr in technical.iterrows():
-                if tr.get("ma_signal") in ("多头排列", "金叉") or tr.get("macd_signal") == "金叉":
-                    buy_sig += 1
-                if tr.get("ma_signal") in ("空头排列", "死叉") or tr.get("macd_signal") == "死叉":
-                    sell_sig += 1
-        sig_color = "#22c55e" if buy_sig > sell_sig else "#ef4444" if sell_sig > buy_sig else "#f59e0b"
-
-        # 行业分布
-        sector_dist = {}
-        for _, pos in positions.iterrows():
-            code = str(pos["code"])
-            cat_info = ETF_CATEGORIES.get(code)
-            if cat_info:
-                sec = cat_info["sector"]
-                sector_dist[sec] = sector_dist.get(sec, 0) + pos["market_value"]
-        sector_tags = ""
-        if sector_dist and total_mv > 0:
-            top_sec = sorted(sector_dist.items(), key=lambda x: x[1], reverse=True)[:4]
-            sector_tags = " ".join(
-                f'<span style="font-size:11px;color:{SECTOR_COLORS.get(s, "#8b949e")};background:{SECTOR_COLORS.get(s, "#8b949e")}15;padding:2px 6px;border-radius:3px;">{s} {(v/total_mv*100):.0f}%</span>'
-                for s, v in top_sec
-            )
-
-        st.markdown(
-            f'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 4px;margin-bottom:4px;font-size:13px;">'
-            f'<span style="color:#8b949e;">胜率: <b style="color:{wr_color};">{wr:.1f}%</b> <span style="color:#484f58;font-size:11px;">({pc}盈/{lc}亏)</span></span>'
-            f'<span style="color:#8b949e;">最大持仓: <b style="color:{wt_color};">{max_pos["name"]}</b> <span style="color:#484f58;font-size:11px;">{max_wt:.1f}%</span></span>'
-            f'<span style="color:#8b949e;">技术信号: <b style="color:{sig_color};">{buy_sig}多 / {sell_sig}空</b></span>'
-            f"</div>"
-            f'<div style="padding:2px 4px 8px;">{sector_tags}</div>',
-            unsafe_allow_html=True,
-        )
-
+def _render_tab1_body(tab1, positions, summary, selected_date, show_days, selected_benchmark, rolling_data, effective_max_dd):
+    """Extracted from main() - tab1 renderer"""
     with tab1:
         st.caption("📈 展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
         col_left, col_right = st.columns([2, 1])
@@ -3002,6 +2673,11 @@ def main():
                         else:
                             st.warning("起始日期须早于结束日期")
 
+
+
+
+def _render_tab2_position(tab2, positions, summary, selected_date):
+    """Extracted from main() - tab2 renderer"""
     with tab2:
         st.caption("📊 展示持仓分布饼图、持仓明细表格、行业权重变化趋势及持仓相关性矩阵")
 
@@ -3427,10 +3103,13 @@ def main():
                 unsafe_allow_html=True,
             )
 
+
+
+
+def _render_tab3_risk(tab3, positions, summary, technical, selected_date, ext_risk):
+    """Extracted from main() - tab3 renderer"""
     with tab3:
         st.caption("⚠️ 展示风险评分仪表盘、风险指标详情、回撤曲线及Brinson收益归因分析")
-        # 扩展风险指标（effective_max_dd已在main()顶部计算，此处更新ext_risk供tab3使用）
-        ext_risk = _early_ext
         col_risk_gauge, col_risk_detail = st.columns([1, 1])
 
         with col_risk_gauge:
@@ -3483,7 +3162,6 @@ def main():
                 unsafe_allow_html=True,
             )
 
-            # 扩展风险指标已在上方计算（ext_risk）
 
             risk_metrics = [
                 ("夏普比率", sharpe, "衡量风险调整后收益，>1为优秀"),
@@ -4315,6 +3993,11 @@ def main():
         st.markdown("---")
 
     # ========== 收益日历 ==========
+
+
+
+def _render_tab4_calendar(tab4, positions, summary):
+    """Extracted from main() - tab4 renderer"""
     with tab4:
         st.caption("📅 以日历热力图形式展示每月每个交易日的收益情况，支持按年/月切换查看")
         cal_data = load_calendar_data()
@@ -4739,6 +4422,11 @@ def main():
                 st.info("近90天内暂无关键日期事件")
 
     # ========== Tab6: 技术信号 ==========
+
+
+
+def _render_tab6_technical(tab6, technical):
+    """Extracted from main() - tab6 renderer"""
     with tab6:
         st.markdown(
             '<div class="tip-title" style="">技术信号总览<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于MA均线排列、MACD、KDJ、RSI、布林带位置等技术指标，对持仓品种进行全面信号检测，辅助判断短期走势。</span></div>',
@@ -5114,6 +4802,11 @@ def main():
             st.plotly_chart(fig_rsi, width="stretch")
 
     # ========== Tab7: 资讯与评估 ==========
+
+
+
+def _render_tab7_news(tab7, positions, summary, technical):
+    """Extracted from main() - tab7 renderer"""
     with tab7:
         st.caption("📰 持仓相关市场资讯与综合评估，帮助把握投资时机")
 
@@ -5480,6 +5173,11 @@ def main():
                     st.plotly_chart(fig_pnl_dist, width="stretch")
 
     # ========== Tab8: 操作建议 ==========
+
+
+
+def _render_tab8_advice(tab8, positions, summary, technical):
+    """Extracted from main() - tab8 renderer"""
     with tab8:
         st.caption("💡 基于技术信号和持仓状态，生成具体操作建议")
 
@@ -5742,6 +5440,11 @@ def main():
                 st.error(f"导出失败: {e}")
 
     # ========== Tab5: 高级分析（Monte Carlo / 再平衡建议） ==========
+
+
+
+def _render_tab5_advanced(tab5, positions, summary, technical):
+    """Extracted from main() - tab5 renderer"""
     with tab5:
         st.markdown(
             '<div class="tip-title" style="">高级分析工具<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">包含Monte Carlo模拟（基于历史收益率随机采样预测未来收益区间）和再平衡建议（基于目标权重偏离度生成调仓方案）两种高级分析工具。</span></div>',
@@ -6304,6 +6007,11 @@ def main():
                     st.error("报告生成失败，数据不足")
 
     # ========== Tab9: 自定义指标工作台 ==========
+
+
+
+def _render_tab9_custom(tab9, positions):
+    """Extracted from main() - tab9 renderer"""
     with tab9:
         st.caption("🔬 自定义技术指标组合回测，K线形态识别，量化验证交易策略")
 
@@ -6537,6 +6245,11 @@ def main():
                 st.info(f"K线形态识别暂不可用: {str(e)[:80]}")
 
     # ========== Tab10: 资金动向 ==========
+
+
+
+def _render_tab10_fund_flow(tab10, positions, summary):
+    """Extracted from main() - tab10 renderer"""
     with tab10:
         st.caption("💰 行业/ETF资金流向分析，追踪主力资金动态，辅助判断市场热点切换")
 
@@ -7045,19 +6758,359 @@ def main():
                 st.info(f"主力资金模块暂不可用: {str(e)[:80]}")
 
         # ========== Tab11: 黄金市场分析 ==========
-        with tab11:
-            from tabs.tab11_gold import render_tab11
-            render_tab11(positions, summary, None, selected_date, selected_benchmark)
 
-        # ========== 页脚 ==========
-    st.markdown("---")
+
+def main():
+    # 自定义CSS
     st.markdown(
-        f'<div style="text-align:center;color:#484f58;font-size:11px;">'
-        f"投资组合跟踪分析系统 v2.0 | 数据截至 {selected_date} | "
-        f"共 {len(positions)} 只持仓</div>",
+        """
+        <style>
+        .stApp { background-color: #0d1117; }
+        .main-header {
+            font-size: 28px; font-weight: bold; color: #58a6ff;
+            text-align: center; padding: 20px 0 10px 0;
+        }
+        .sub-header {
+            font-size: 14px; color: #8b949e; text-align: center; padding-bottom: 15px;
+        }
+        .section-title {
+            font-size: 18px; font-weight: bold; color: #c9d1d9;
+            padding: 10px 0 5px 0; border-bottom: 1px solid #30363d;
+        }
+        .tip-title {
+            font-size: 18px; font-weight: bold; color: #c9d1d9;
+            padding: 10px 0 5px 0; border-bottom: 1px solid #30363d;
+            display: inline-block; cursor: help;
+        }
+        .tip-title::after {
+            content: ' ℹ';
+            font-size: 11px; color: #58a6ff; font-weight: normal;
+        }
+        .tip-title .tip-text {
+            visibility: hidden; opacity: 0;
+            position: absolute; z-index: 999;
+            background: #1c2333; color: #c9d1d9;
+            border: 1px solid #30363d; border-radius: 6px;
+            padding: 8px 12px; font-size: 12px; font-weight: normal;
+            line-height: 1.5; width: max-content; max-width: 360px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            transition: opacity 0.2s, visibility 0.2s;
+            margin-top: 6px; margin-left: 0;
+        }
+        .tip-title:hover .tip-text {
+            visibility: visible; opacity: 1;
+        }
+        .tip-title .tip-arrow {
+            visibility: hidden; opacity: 0;
+            position: absolute; z-index: 999;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 6px solid #30363d;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+        .tip-title:hover .tip-arrow {
+            visibility: visible; opacity: 1;
+        }
+
+
+        .cal-table { border-collapse: collapse; margin: 0 auto; }
+        .cal-table th { padding: 6px 8px; font-size: 12px; color: #8b949e; font-weight: normal; }
+        .cal-table td {
+            width: 50px; height: 44px; text-align: center; vertical-align: middle;
+            border: 1px solid #21262d; border-radius: 4px; cursor: default;
+            position: relative; padding: 2px;
+        }
+        .cal-table td.cal-today { border: 2px solid #58a6ff; }
+        .cal-table td.cal-non-trading {
+            background: #0d1117; color: #30363d;
+        }
+        .cal-table td.cal-trading {
+            background: #161b22;
+        }
+        .cal-table td.cal-profit { background: #0d2818; }
+        .cal-table td.cal-loss { background: #2d1215; }
+        .cal-day { font-size: 12px; color: #c9d1d9; }
+        .cal-pnl { font-size: 10px; display: block; line-height: 1.2; }
+        .cal-pnl-profit { color: #22c55e; }
+        .cal-pnl-loss { color: #ef4444; }
+        .cal-pnl-zero { color: #484f58; }
+        .yr-pill {
+            display: inline-block; padding: 4px 14px; margin: 2px;
+            border-radius: 14px; font-size: 13px; cursor: pointer;
+            background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+        }
+        .yr-pill.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
+        .mo-pill {
+            display: inline-block; padding: 3px 12px; margin: 2px;
+            border-radius: 12px; font-size: 12px; cursor: pointer;
+            background: #161b22; color: #8b949e; border: 1px solid #21262d;
+        }
+        .mo-pill.active { background: #238636; color: #ffffff; border-color: #238636; }
+        .cal-summary {
+            display: inline-block; padding: 4px 12px; margin: 2px 6px;
+            border-radius: 6px; font-size: 12px; background: #161b22;
+        }
+        .cal-summary-profit { color: #22c55e; }
+        .cal-summary-loss { color: #ef4444; }
+
+        /* 主标签栏换行 */
+        .stTabs [data-baseweb="tab-list"] {
+            display: flex; flex-wrap: wrap; gap: 2px 4px;
+            max-width: 100%; overflow: visible;
+        }
+        .stTabs [data-baseweb="tab"] {
+            flex: 0 0 auto !important;
+        }
+        </style>
+        """,
         unsafe_allow_html=True,
     )
 
+    # 标题
+    st.markdown('<div class="main-header">📊 投资组合跟踪分析系统</div>', unsafe_allow_html=True)
+
+    # 获取数据
+    available_dates = get_available_dates()
+    if not available_dates:
+        st.warning("暂无数据，请先运行 run_analysis.py")
+        return
+
+    # 侧边栏
+    with st.sidebar:
+        st.markdown("### 🔧 控制面板")
+
+        selected_date = st.selectbox(
+            "选择日期",
+            available_dates,
+            index=0,
+            format_func=lambda x: f"{x} {'(最新)' if x == available_dates[0] else ''}",
+        )
+
+        # 快捷预设
+        preset = st.radio(
+            "时间范围", ["3个月", "6个月", "1年", "2年", "5年", "全部", "自定义"], horizontal=True, index=2
+        )
+        preset_days = {"3个月": 60, "6个月": 120, "1年": 250, "2年": 500, "5年": 1250, "全部": 4000}
+        if preset == "自定义":
+            show_days = st.slider("自定义天数", min_value=10, max_value=4000, value=250, step=10)
+        else:
+            show_days = preset_days[preset]
+
+        st.markdown("---")
+        st.markdown("### 📋 系统信息")
+
+        logs = load_execution_logs(5)
+        if not logs.empty:
+            for _, log in logs.iterrows():
+                status_icon = "✅" if log["status"] == "success" else "❌" if log["status"] == "failed" else "⏳"
+                st.markdown(f"{status_icon} `{log['task_name']}` - {log['status']}")
+                if pd.notna(log.get("duration_seconds")):
+                    st.caption(f"  耗时: {log['duration_seconds']:.1f}s")
+
+        # 基准指数选择（P1改进）
+        st.markdown("### 📌 基准指数")
+        benchmark_options = {k: v for k, v in INDEX_CODES.items()}
+        # 默认选中沪深300
+        default_bench = "sh000300"
+        benchmark_keys = list(benchmark_options.keys())
+        default_idx = benchmark_keys.index(default_bench) if default_bench in benchmark_keys else 0
+        selected_benchmark = st.selectbox(
+            "对比基准",
+            options=benchmark_keys,
+            index=default_idx,
+            format_func=lambda x: benchmark_options[x],
+            key="benchmark_select",
+        )
+
+        st.markdown("---")
+        st.markdown(f"*数据更新: {available_dates[0]}*")
+
+        st.markdown("---")
+        st.markdown("### 📊 快速指标")
+        st.markdown('<span style="font-size:11px;color:#484f58;">↓ 详见下方概览指标条</span>', unsafe_allow_html=True)
+
+    # 加载数据（带缓存，相同参数不重复查询）
+    positions = load_positions(selected_date)
+    summary = load_summary(show_days, selected_date)
+    technical = load_technical()
+
+    # 预生成缓存：最近10个交易日 x 各时间预设，后台静默触发一次
+    _preset_days_list = [60, 120, 250, 500, 1250, 4000]
+    _recent = available_dates[:10]  # 最近10个交易日
+    with st.spinner(""):
+        for _d in _recent:
+            load_positions(_d)
+            load_summary(show_days, _d)
+            load_benchmark_comparison(selected_benchmark, show_days, _d)
+        for _days in _preset_days_list:
+            load_summary(_days, available_dates[0])
+            load_benchmark_comparison(selected_benchmark, _days, available_dates[0])
+
+    if positions.empty:
+        st.warning(f"{selected_date} 无持仓数据")
+        return
+
+    # ========== 概览指标 ==========
+    latest_summary = summary.iloc[-1] if not summary.empty else {}
+    total_value = latest_summary.get("total_value", 0)
+    total_cost = latest_summary.get("total_cost", 0)
+    total_pnl = latest_summary.get("total_pnl", 0)
+    total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+    daily_return = latest_summary.get("daily_return", 0)
+    daily_pnl = latest_summary.get("daily_pnl", 0)
+    sharpe = latest_summary.get("sharpe_ratio")
+    max_dd = latest_summary.get("max_drawdown")
+    # early computation of effective_max_dd for use in overview cards (before tab3)
+    _early_ext = compute_extended_risk_metrics(end_date=selected_date)
+    effective_max_dd = _early_ext.get("max_drawdown", max_dd)
+    volatility = latest_summary.get("volatility")
+    profit_count = latest_summary.get("profit_count", 0)
+    loss_count = latest_summary.get("loss_count", 0)
+
+    # 概览卡片行
+    cols = st.columns(6)
+    with cols[0]:
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid #58a6ff;">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="当前所有持仓证券的市值总和">总市值 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:#58a6ff;">¥{format_value(total_value)}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[1]:
+        pnl_color = "#22c55e" if total_pnl >= 0 else "#ef4444"
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {pnl_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="所有持仓的累计盈亏金额和收益率，基于买入成本计算">总盈亏 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{pnl_color};">{format_value(total_pnl, prefix="¥")}</div>'
+            f'<div style="font-size:11px;color:#8b949e;">{format_value(total_return, suffix="%")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[2]:
+        dr_color = get_indicator_color(daily_return, [(0, "#ef4444"), (-1e-9, "#22c55e")], default="#888")
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dr_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定日期相对于前一交易日的收益率(%)和盈亏金额(元)">日收益 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{dr_color};">{format_value(daily_return, suffix="%")}</div>'
+            f'<div style="font-size:11px;color:#8b949e;">{format_value(daily_pnl, prefix="¥")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[3]:
+        sharpe_color = "#22c55e" if (sharpe and sharpe > 0.5) else "#f59e0b" if sharpe else "#888"  # get_indicator_color不适合此三元逻辑，保留
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {sharpe_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="风险调整后收益指标 = (年化收益率 - 无风险利率) / 年化波动率。>1为优秀，>0.5为良好">夏普比率 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{sharpe_color};">{format_value(sharpe, decimals=3)}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[4]:
+        dd_color = get_indicator_color(effective_max_dd, [(10, "#ef4444"), (5, "#f59e0b"), (0, "#22c55e")])
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dd_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定时间段内，组合从历史最高点到最低点的最大跌幅(%)">最大回撤 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{dd_color};">{format_value(effective_max_dd, suffix="%")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[5]:
+        vol_color = get_indicator_color(volatility, [(25, "#ef4444"), (15, "#f59e0b"), (0, "#22c55e")])
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {vol_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="日收益率标准差的年化值，反映组合收益的波动幅度。值越高表示风险越大">年化波动率 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{vol_color};">{format_value(volatility, suffix="%")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ========== 图表行1: 净值曲线 + 收益分布 ==========
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
+        [
+            "📈 净值走势",
+            "📊 持仓分布",
+            "⚠️ 风险分析",
+            "📅 收益日历",
+            "💠 高级分析",
+            "📡 技术信号",
+            "📰 资讯与评估",
+            "💡 操作建议",
+            "🔬 自定义指标",
+            "💰 资金动向",
+            "🥇 黄金市场",
+        ]
+    )
+
+    # ========== 快速指标条 ==========
+    if not positions.empty:
+        total_mv = positions["market_value"].sum()
+        pc = profit_count if profit_count else 0
+        lc = loss_count if loss_count else 0
+        total_held = pc + lc
+        wr = (pc / total_held * 100) if total_held > 0 else 0
+        wr_color = "#22c55e" if wr >= 60 else "#f59e0b" if wr >= 40 else "#ef4444"
+
+        # 最大持仓
+        max_pos = positions.loc[positions["market_value"].idxmax()]
+        max_wt = (max_pos["market_value"] / total_mv * 100) if total_mv > 0 else 0
+        wt_color = "#ef4444" if max_wt > 30 else "#f59e0b" if max_wt > 20 else "#22c55e"
+
+        # 技术信号统计
+        buy_sig = sell_sig = 0
+        if technical is not None and not technical.empty:
+            for _, tr in technical.iterrows():
+                if tr.get("ma_signal") in ("多头排列", "金叉") or tr.get("macd_signal") == "金叉":
+                    buy_sig += 1
+                if tr.get("ma_signal") in ("空头排列", "死叉") or tr.get("macd_signal") == "死叉":
+                    sell_sig += 1
+        sig_color = "#22c55e" if buy_sig > sell_sig else "#ef4444" if sell_sig > buy_sig else "#f59e0b"
+
+        # 行业分布
+        sector_dist = {}
+        for _, pos in positions.iterrows():
+            code = str(pos["code"])
+            cat_info = ETF_CATEGORIES.get(code)
+            if cat_info:
+                sec = cat_info["sector"]
+                sector_dist[sec] = sector_dist.get(sec, 0) + pos["market_value"]
+        sector_tags = ""
+        if sector_dist and total_mv > 0:
+            top_sec = sorted(sector_dist.items(), key=lambda x: x[1], reverse=True)[:4]
+            sector_tags = " ".join(
+                f'<span style="font-size:11px;color:{SECTOR_COLORS.get(s, "#8b949e")};background:{SECTOR_COLORS.get(s, "#8b949e")}15;padding:2px 6px;border-radius:3px;">{s} {(v/total_mv*100):.0f}%</span>'
+                for s, v in top_sec
+            )
+
+        st.markdown(
+            f'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 4px;margin-bottom:4px;font-size:13px;">'
+            f'<span style="color:#8b949e;">胜率: <b style="color:{wr_color};">{wr:.1f}%</b> <span style="color:#484f58;font-size:11px;">({pc}盈/{lc}亏)</span></span>'
+            f'<span style="color:#8b949e;">最大持仓: <b style="color:{wt_color};">{max_pos["name"]}</b> <span style="color:#484f58;font-size:11px;">{max_wt:.1f}%</span></span>'
+            f'<span style="color:#8b949e;">技术信号: <b style="color:{sig_color};">{buy_sig}多 / {sell_sig}空</b></span>'
+            f"</div>"
+            f'<div style="padding:2px 4px 8px;">{sector_tags}</div>',
+            unsafe_allow_html=True,
+        )
+
+    _render_tab1_body(tab1, positions, summary, selected_date, show_days, selected_benchmark, rolling_data, effective_max_dd)
+
+    _render_tab2_position(tab2, positions, summary, selected_date)
+
+    _render_tab3_risk(tab3, positions, summary, technical, selected_date, ext_risk)
+
+    _render_tab4_calendar(tab4, positions, summary)
+
+    _render_tab6_technical(tab6, technical)
+
+    _render_tab7_news(tab7, positions, summary, technical)
+
+    _render_tab8_advice(tab8, positions, summary, technical)
+
+    _render_tab5_advanced(tab5, positions, summary, technical)
+
+    _render_tab9_custom(tab9, positions)
+
+    _render_tab10_fund_flow(tab10, positions, summary)
 
 if __name__ == "__main__":
     main()
