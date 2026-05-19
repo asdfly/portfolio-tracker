@@ -1921,6 +1921,83 @@ def _load_tech_signals(_codes, _full=False):
         conn.close()
 
 
+def _render_overview(positions, summary, technical, effective_max_dd):
+    """概览指标区：卡片行 + 快速指标条"""
+    _render_overview(positions, summary, technical, effective_max_dd)
+    latest_summary = summary.iloc[-1] if not summary.empty else {}
+    total_value = latest_summary.get("total_value", 0)
+    total_cost = latest_summary.get("total_cost", 0)
+    total_pnl = latest_summary.get("total_pnl", 0)
+    total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+    daily_return = latest_summary.get("daily_return", 0)
+    daily_pnl = latest_summary.get("daily_pnl", 0)
+    sharpe = latest_summary.get("sharpe_ratio")
+    max_dd = latest_summary.get("max_drawdown")
+    # early computation of effective_max_dd for use in overview cards (before tab3)
+    _early_ext = compute_extended_risk_metrics(end_date=selected_date)
+    effective_max_dd = _early_ext.get("max_drawdown", max_dd)
+    volatility = latest_summary.get("volatility")
+    profit_count = latest_summary.get("profit_count", 0)
+    loss_count = latest_summary.get("loss_count", 0)
+
+    # 概览卡片行
+    cols = st.columns(6)
+    with cols[0]:
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid #58a6ff;">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="当前所有持仓证券的市值总和">总市值 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:#58a6ff;">¥{format_value(total_value)}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[1]:
+        pnl_color = "#22c55e" if total_pnl >= 0 else "#ef4444"
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {pnl_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="所有持仓的累计盈亏金额和收益率，基于买入成本计算">总盈亏 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{pnl_color};">{format_value(total_pnl, prefix="¥")}</div>'
+            f'<div style="font-size:11px;color:#8b949e;">{format_value(total_return, suffix="%")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[2]:
+        dr_color = get_indicator_color(daily_return, [(0, "#ef4444"), (-1e-9, "#22c55e")], default="#888")
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dr_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定日期相对于前一交易日的收益率(%)和盈亏金额(元)">日收益 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{dr_color};">{format_value(daily_return, suffix="%")}</div>'
+            f'<div style="font-size:11px;color:#8b949e;">{format_value(daily_pnl, prefix="¥")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[3]:
+        sharpe_color = "#22c55e" if (sharpe and sharpe > 0.5) else "#f59e0b" if sharpe else "#888"  # get_indicator_color不适合此三元逻辑，保留
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {sharpe_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="风险调整后收益指标 = (年化收益率 - 无风险利率) / 年化波动率。>1为优秀，>0.5为良好">夏普比率 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{sharpe_color};">{format_value(sharpe, decimals=3)}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[4]:
+        dd_color = get_indicator_color(effective_max_dd, [(10, "#ef4444"), (5, "#f59e0b"), (0, "#22c55e")])
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dd_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定时间段内，组合从历史最高点到最低点的最大跌幅(%)">最大回撤 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{dd_color};">{format_value(effective_max_dd, suffix="%")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with cols[5]:
+        vol_color = get_indicator_color(volatility, [(25, "#ef4444"), (15, "#f59e0b"), (0, "#22c55e")])
+        st.markdown(
+            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {vol_color};">'
+            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="日收益率标准差的年化值，反映组合收益的波动幅度。值越高表示风险越大">年化波动率 ℹ</div>'
+            f'<div style="font-size:20px;font-weight:bold;color:{vol_color};">{format_value(volatility, suffix="%")}</div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
 def main():
     # 自定义CSS
     st.markdown(
