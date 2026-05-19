@@ -55,7 +55,7 @@ def _render_ratio_chart(df):
         yaxis=dict(title="占比(%)", gridcolor="#333"),
         height=350, **base_layout(margin=dict(l=50, r=30, t=40, b=30)),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_increase_chart(df):
@@ -85,7 +85,7 @@ def _render_increase_chart(df):
         height=350,
         **base_layout(margin=dict(l=50, r=60, t=40, b=30)),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     total_increase = df_recent["gold_change"].sum()
     increase_months = df_recent["is_increase"].sum()
@@ -106,4 +106,4 @@ def _render_gold_only_chart(df):
         yaxis=dict(title="万盎司", gridcolor="#333"),
         height=350, **base_layout(),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')

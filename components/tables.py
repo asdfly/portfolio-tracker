@@ -7,11 +7,11 @@ import streamlit as st
 import pandas as pd
 
 
-def display_dataframe(df, use_container_width=True, hide_index=False):
+def display_dataframe(df, width='stretch', hide_index=False):
     """显示DataFrame"""
     st.dataframe(
         df,
-        use_container_width=use_container_width,
+        width=width,
         hide_index=hide_index
     )
 
@@ -36,7 +36,7 @@ def display_portfolio_table(portfolio_data):
     
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
 
@@ -57,6 +57,6 @@ def display_alert_table(alerts_data):
     
     st.dataframe(
         alerts_data,
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )

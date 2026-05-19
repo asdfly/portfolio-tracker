@@ -41,7 +41,7 @@ def _render_comex_inventory_trend(df):
         line=dict(color="#a855f7", width=2), hovertemplate="%{x|%Y-%m-%d}<br>库存: %{y:,.1f} 吨<extra></extra>"))
     fig.update_layout(title="COMEX黄金库存趋势（近2年）", height=350, template="plotly_dark",
         margin=dict(l=50, r=50, t=40, b=30), xaxis=dict(rangeslider=dict(visible=False)))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_etf_monthly_flow(df):
@@ -58,7 +58,7 @@ def _render_etf_monthly_flow(df):
         hovertemplate="%{x}<br>净流入: %{y:+.1f} 吨<extra></extra>"))
     fig.update_layout(title="全球黄金ETF月度净流入（吨）", height=350, template="plotly_dark",
         margin=dict(l=50, r=50, t=40, b=30), xaxis=dict(tickangle=-45))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_etf_vs_price(df_etf, df_sge):
@@ -89,7 +89,7 @@ def _render_etf_vs_price(df_etf, df_sge):
         xaxis=dict(tickangle=-45))
     fig.update_yaxes(title_text="净流入（吨）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="¥/g", secondary_y=True, side="right")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_supply_demand():

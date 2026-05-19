@@ -96,7 +96,7 @@ def render_price_comparison():
         yaxis=dict(title="价格(元/克)", gridcolor="#333"),
         height=400, **base_layout(),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # 价差图
     if show_spread:
@@ -118,4 +118,4 @@ def render_price_comparison():
             yaxis=dict(title="价差(元/克)", gridcolor="#333"),
             height=300, **base_layout(),
         )
-        st.plotly_chart(fig_sp, use_container_width=True)
+        st.plotly_chart(fig_sp, width='stretch')

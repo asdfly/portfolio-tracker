@@ -113,7 +113,7 @@ def _render_etf_holdings_trend(df_etf):
     )
     fig.update_yaxes(title_text="持仓（吨）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="日增减（吨）", secondary_y=True, side="right")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 def _render_etf_value_vs_sge_price(df_etf, df_sge):
     """ETF总价值（国际金价代理） vs 上海金基准价"""
@@ -159,7 +159,7 @@ def _render_etf_value_vs_sge_price(df_etf, df_sge):
     )
     fig.update_yaxes(title_text="亿美元", secondary_y=False, side="left")
     fig.update_yaxes(title_text="¥/g", secondary_y=True, side="right")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_premium_discount(df_etf, df_sge):
@@ -215,7 +215,7 @@ def _render_premium_discount(df_etf, df_sge):
     )
     fig.update_yaxes(title_text="溢价率%", secondary_y=False, side="left")
     fig.update_yaxes(title_text="\u00a5/g", secondary_y=True, side="right")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     c1, c2, c3 = st.columns(3)
     c1.metric("当前溢价率", f"{latest['premium_pct']:+.2f}%")
     c2.metric("平均溢价率", f"{avg_prem:+.2f}%")
@@ -249,7 +249,7 @@ def _render_sentiment_analysis(df_sentiment):
         xaxis=dict(rangeslider=dict(visible=False)),
         yaxis=dict(range=[30, 70]),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     if "usdx_sentiment" in df_sentiment.columns:
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
@@ -266,7 +266,7 @@ def _render_sentiment_analysis(df_sentiment):
             xaxis=dict(rangeslider=dict(visible=False)),
             yaxis=dict(range=[30, 70]),
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
 
 
@@ -296,7 +296,7 @@ def _render_sentiment_analysis(df_sentiment):
         xaxis=dict(rangeslider=dict(visible=False)),
         yaxis=dict(range=[30, 70]),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     if "usdx_sentiment" in df_sentiment.columns:
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
@@ -313,7 +313,7 @@ def _render_sentiment_analysis(df_sentiment):
             xaxis=dict(rangeslider=dict(visible=False)),
             yaxis=dict(range=[30, 70]),
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
 
 def render_international_comparison():
