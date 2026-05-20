@@ -6782,11 +6782,8 @@ def _render_tab13_data_quality(tab13):
         render_tab13()
 
 
-def main():
-    global sharpe, volatility, max_dd, effective_max_dd, total_return, total_value, total_pnl, daily_return, daily_pnl, profit_count, loss_count, total_mv, show_days, technical
-    import pandas as pd
-    rolling_data = pd.DataFrame()
-    ext_risk = {}
+def _inject_custom_css():
+    """Inject custom dark-theme CSS styles."""
     # 自定义CSS
     st.markdown(
         """
@@ -6892,16 +6889,8 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # 标题
-    st.markdown('<div class="main-header">📊 投资组合跟踪分析系统</div>', unsafe_allow_html=True)
-
-    # 获取数据
-    available_dates = get_available_dates()
-    if not available_dates:
-        st.warning("暂无数据，请先运行 run_analysis.py")
-        return
-
-    # 侧边栏
+def _render_sidebar(available_dates):
+    """Render sidebar controls. Returns (selected_date, show_days, selected_benchmark)."""
     with st.sidebar:
         st.markdown("### 🔧 控制面板")
 
@@ -6955,44 +6944,11 @@ def main():
         st.markdown("### 📊 快速指标")
         st.markdown('<span style="font-size:11px;color:#484f58;">↓ 详见下方概览指标条</span>', unsafe_allow_html=True)
 
-    # 加载数据（带缓存，相同参数不重复查询）
-    positions = load_positions(selected_date)
-    summary = load_summary(show_days, selected_date)
-    technical = load_technical()
+    return selected_date, show_days, selected_benchmark
 
-    # 预生成缓存：最近10个交易日 x 各时间预设，后台静默触发一次
-    _preset_days_list = [60, 120, 250, 500, 1250, 4000]
-    _recent = available_dates[:10]  # 最近10个交易日
-    with st.spinner(""):
-        for _d in _recent:
-            load_positions(_d)
-            load_summary(show_days, _d)
-            load_benchmark_comparison(selected_benchmark, show_days, _d)
-        for _days in _preset_days_list:
-            load_summary(_days, available_dates[0])
-            load_benchmark_comparison(selected_benchmark, _days, available_dates[0])
-
-    if positions.empty:
-        st.warning(f"{selected_date} 无持仓数据")
-        return
-
-    # ========== 概览指标 ==========
-    latest_summary = summary.iloc[-1] if not summary.empty else {}
-    total_value = latest_summary.get("total_value", 0)
-    total_cost = latest_summary.get("total_cost", 0)
-    total_pnl = latest_summary.get("total_pnl", 0)
-    total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
-    daily_return = latest_summary.get("daily_return", 0)
-    daily_pnl = latest_summary.get("daily_pnl", 0)
-    sharpe = latest_summary.get("sharpe_ratio")
-    max_dd = latest_summary.get("max_drawdown")
-    # early computation of effective_max_dd for use in overview cards (before tab3)
-    _early_ext = compute_extended_risk_metrics(end_date=selected_date)
-    effective_max_dd = _early_ext.get("max_drawdown", max_dd)
-    volatility = latest_summary.get("volatility")
-    profit_count = latest_summary.get("profit_count", 0)
-    loss_count = latest_summary.get("loss_count", 0)
-
+def _render_overview_cards(total_value, total_pnl, total_return, daily_return, daily_pnl,
+                              sharpe, effective_max_dd, volatility):
+    """Render the 6-column overview metric cards row."""
     # 概览卡片行
     cols = st.columns(6)
     with cols[0]:
@@ -7051,25 +7007,9 @@ def main():
             unsafe_allow_html=True,
         )
 
-    # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs(
-        [
-            "📈 净值走势",
-            "📊 持仓分布",
-            "⚠️ 风险分析",
-            "📅 收益日历",
-            "💠 高级分析",
-            "📡 技术信号",
-            "📰 资讯与评估",
-            "💡 操作建议",
-            "🔬 自定义指标",
-            "💰 资金动向",
-            "🥇 黄金市场",
-            "🌐 宏观市场",
-            "📊 数据质量",
-        ]
-    )
 
+def _render_quick_stats(positions, profit_count, loss_count, technical):
+    """Render the quick stats summary bar below overview cards."""
     # ========== 快速指标条 ==========
     if not positions.empty:
         total_mv = positions["market_value"].sum()
@@ -7120,6 +7060,84 @@ def main():
             unsafe_allow_html=True,
         )
 
+
+def main():
+    global sharpe, volatility, max_dd, effective_max_dd, total_return, total_value, total_pnl, daily_return, daily_pnl, profit_count, loss_count, total_mv, show_days, technical
+    import pandas as pd
+    rolling_data = pd.DataFrame()
+    ext_risk = {}
+    _inject_custom_css()
+
+    # 标题
+    st.markdown('<div class="main-header">📊 投资组合跟踪分析系统</div>', unsafe_allow_html=True)
+
+    # 获取数据
+    available_dates = get_available_dates()
+    if not available_dates:
+        st.warning("暂无数据，请先运行 run_analysis.py")
+        return
+
+    selected_date, show_days, selected_benchmark = _render_sidebar(available_dates)
+    # 加载数据（带缓存，相同参数不重复查询）
+    positions = load_positions(selected_date)
+    summary = load_summary(show_days, selected_date)
+    technical = load_technical()
+
+    # 预生成缓存：最近10个交易日 x 各时间预设，后台静默触发一次
+    _preset_days_list = [60, 120, 250, 500, 1250, 4000]
+    _recent = available_dates[:10]  # 最近10个交易日
+    with st.spinner(""):
+        for _d in _recent:
+            load_positions(_d)
+            load_summary(show_days, _d)
+            load_benchmark_comparison(selected_benchmark, show_days, _d)
+        for _days in _preset_days_list:
+            load_summary(_days, available_dates[0])
+            load_benchmark_comparison(selected_benchmark, _days, available_dates[0])
+
+    if positions.empty:
+        st.warning(f"{selected_date} 无持仓数据")
+        return
+
+    # ========== 概览指标 ==========
+    latest_summary = summary.iloc[-1] if not summary.empty else {}
+    total_value = latest_summary.get("total_value", 0)
+    total_cost = latest_summary.get("total_cost", 0)
+    total_pnl = latest_summary.get("total_pnl", 0)
+    total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+    daily_return = latest_summary.get("daily_return", 0)
+    daily_pnl = latest_summary.get("daily_pnl", 0)
+    sharpe = latest_summary.get("sharpe_ratio")
+    max_dd = latest_summary.get("max_drawdown")
+    # early computation of effective_max_dd for use in overview cards (before tab3)
+    _early_ext = compute_extended_risk_metrics(end_date=selected_date)
+    effective_max_dd = _early_ext.get("max_drawdown", max_dd)
+    volatility = latest_summary.get("volatility")
+    profit_count = latest_summary.get("profit_count", 0)
+    loss_count = latest_summary.get("loss_count", 0)
+
+    _render_overview_cards(total_value, total_pnl, total_return, daily_return, daily_pnl,
+                            sharpe, effective_max_dd, volatility)
+    # ========== 图表行1: 净值曲线 + 收益分布 ==========
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs(
+        [
+            "📈 净值走势",
+            "📊 持仓分布",
+            "⚠️ 风险分析",
+            "📅 收益日历",
+            "💠 高级分析",
+            "📡 技术信号",
+            "📰 资讯与评估",
+            "💡 操作建议",
+            "🔬 自定义指标",
+            "💰 资金动向",
+            "🥇 黄金市场",
+            "🌐 宏观市场",
+            "📊 数据质量",
+        ]
+    )
+
+    _render_quick_stats(positions, profit_count, loss_count, technical)
     _render_tab1_body(tab1, positions, summary, selected_date, show_days, selected_benchmark, rolling_data, effective_max_dd)
 
     _render_tab2_position(tab2, positions, summary, selected_date, technical)
