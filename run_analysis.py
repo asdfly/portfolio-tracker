@@ -24,6 +24,7 @@ from src.utils.monitor import Monitor
 from src.utils.notification import NotificationManager
 from src.utils.enhanced_report import EnhancedReportBuilder
 from src.utils.news_fetcher import NewsFetcher, save_news_to_db
+from src.data_sources.macro_daily import collect_all_macro_data, collect_market_sentiment
 from src.report.smart_report import SmartReportGenerator
 from src.data_sources.fund_flow import (
     fetch_sector_fund_flow, fetch_etf_fund_flow,
@@ -584,6 +585,15 @@ def main():
         # === 阶段三.五: 行业资讯与新闻分析 ===
         positions = results.get('positions', [])
         news_result = run_stage_news(positions, summary, results.get('indices', {}))
+
+
+        # === 阶段三.六: 宏观数据采集 ===
+        try:
+            macro_count = collect_all_macro_data()
+            sentiment_count = collect_market_sentiment()
+            logger.info(f"宏观数据采集完成: macro_daily={macro_count}条, market_sentiment={sentiment_count}条")
+        except Exception as e:
+            logger.warning(f"宏观数据采集失败: {e}")
 
         # === 阶段四: 智能分析 ===
         advice_summary = run_stage4_smart(results, summary, risk_data)
