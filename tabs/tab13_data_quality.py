@@ -152,7 +152,7 @@ def render_tab13(**kwargs):
             ("回测度", report["backtest_score"], 30, "#f59e0b"),
         ]
         for name, score, max_score, color in dims:
-            pct = score / max_score if max_score > 0 else 0
+            pct = (score if score is not None else 0) / max_score if max_score > 0 else 0
             bar_bg = "#21262d"
             st.markdown(
                 f'''

@@ -2676,7 +2676,7 @@ def _render_tab1_body(tab1, positions, summary, selected_date, show_days, select
 
 
 
-def _render_tab2_position(tab2, positions, summary, selected_date):
+def _render_tab2_position(tab2, positions, summary, selected_date, technical=None):
     """Extracted from main() - tab2 renderer"""
     with tab2:
         st.caption("📊 展示持仓分布饼图、持仓明细表格、行业权重变化趋势及持仓相关性矩阵")
@@ -5443,7 +5443,7 @@ def _render_tab8_advice(tab8, positions, summary, technical):
 
 
 
-def _render_tab5_advanced(tab5, positions, summary, technical):
+def _render_tab5_advanced(tab5, positions, summary, technical, selected_date=None, selected_benchmark=None):
     """Extracted from main() - tab5 renderer"""
     with tab5:
         st.markdown(
@@ -6761,11 +6761,11 @@ def _render_tab10_fund_flow(tab10, positions, summary):
 
 
 
-def _render_tab11_gold(tab11):
+def _render_tab11_gold(tab11, positions, summary, selected_date, selected_benchmark):
     """Tab11: 黄金市场分析"""
     from tabs.tab11_gold import render_tab11
     with tab11:
-        render_tab11()
+        render_tab11(positions, summary, selected_date=selected_date, selected_benchmark=selected_benchmark)
 
 
 def _render_tab12_macro(tab12):
@@ -6783,6 +6783,10 @@ def _render_tab13_data_quality(tab13):
 
 
 def main():
+    global sharpe, volatility, max_dd, effective_max_dd, total_return, total_value, total_pnl, daily_return, daily_pnl, profit_count, loss_count, total_mv, show_days, technical
+    import pandas as pd
+    rolling_data = pd.DataFrame()
+    ext_risk = {}
     # 自定义CSS
     st.markdown(
         """
@@ -7118,7 +7122,7 @@ def main():
 
     _render_tab1_body(tab1, positions, summary, selected_date, show_days, selected_benchmark, rolling_data, effective_max_dd)
 
-    _render_tab2_position(tab2, positions, summary, selected_date)
+    _render_tab2_position(tab2, positions, summary, selected_date, technical)
 
     _render_tab3_risk(tab3, positions, summary, technical, selected_date, ext_risk)
 
@@ -7130,12 +7134,12 @@ def main():
 
     _render_tab8_advice(tab8, positions, summary, technical)
 
-    _render_tab5_advanced(tab5, positions, summary, technical)
+    _render_tab5_advanced(tab5, positions, summary, technical, selected_date, selected_benchmark)
 
     _render_tab9_custom(tab9, positions)
 
     _render_tab10_fund_flow(tab10, positions, summary)
-    _render_tab11_gold(tab11)
+    _render_tab11_gold(tab11, positions, summary, selected_date, selected_benchmark)
     _render_tab12_macro(tab12)
     _render_tab13_data_quality(tab13)
 
