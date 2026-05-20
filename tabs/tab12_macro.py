@@ -127,12 +127,12 @@ def _render_exchange_rate(days: int):
     change = latest.get("change_pct", 0)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("最新汇率", f"{latest['value']:.4f}", f"{change:+.2f}%")
+    c1.metric("最新汇率", f"{(latest['value'] or 0):.4f}", f"{change:+.2f}%")
     c2.metric("数据跨度", f"{df['date'].min().strftime('%Y-%m-%d')} ~ {df['date'].max().strftime('%Y-%m-%d')}")
     c3.metric("数据点", f"{len(df)}条")
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["date"], y=df["value"], mode="lines",
+    fig.add_trace(go.Scatter(x=df["date"], y=df["value"].fillna(method="ffill"), mode="lines",
                              name="USD/CNY", line=dict(color="#58a6ff", width=2),
                              hovertemplate="%{x|%Y-%m-%d}<br>汇率: %{y:.4f}<extra></extra>"))
     fig = _style_fig(fig, "USD/CNY 美元兑人民币汇率")
@@ -156,13 +156,13 @@ def _render_bond_yields(days: int):
         latest = pivot.iloc[-1]
         c1, c2, c3, c4 = st.columns(4)
         if "CN_10Y_BOND" in pivot.columns:
-            c1.metric("中国10Y", f"{latest['CN_10Y_BOND']:.2f}%")
+            c1.metric("中国10Y", f"{(latest['CN_10Y_BOND'] or 0):.2f}%")
         if "US_10Y_BOND" in pivot.columns:
-            c2.metric("美国10Y", f"{latest['US_10Y_BOND']:.2f}%")
+            c2.metric("美国10Y", f"{(latest['US_10Y_BOND'] or 0):.2f}%")
         if "CN_2Y_BOND" in pivot.columns:
-            c3.metric("中国2Y", f"{latest['CN_2Y_BOND']:.2f}%")
+            c3.metric("中国2Y", f"{(latest['CN_2Y_BOND'] or 0):.2f}%")
         if "US_2Y_BOND" in pivot.columns:
-            c4.metric("美国2Y", f"{latest['US_2Y_BOND']:.2f}%")
+            c4.metric("美国2Y", f"{(latest['US_2Y_BOND'] or 0):.2f}%")
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -170,7 +170,7 @@ def _render_bond_yields(days: int):
     for code, color, name in [("CN_10Y_BOND", "#ef4444", "中国10Y"),
                                 ("US_10Y_BOND", "#58a6ff", "美国10Y")]:
         if code in pivot.columns:
-            fig.add_trace(go.Scatter(x=pivot["date"], y=pivot[code], mode="lines",
+            fig.add_trace(go.Scatter(x=pivot["date"], y=pivot[code].ffill(), mode="lines",
                                      name=name, line=dict(color=color, width=2)), secondary_y=False)
 
     # 中美利差
@@ -271,10 +271,10 @@ def _render_interest_rates(days: int):
         else:
             shibor_df = shibor_df.sort_values("date")
             latest = shibor_df.iloc[-1]
-            st.metric("最新Shibor ON", f"{latest['value']:.3f}%", f"{latest.get('change_pct', 0):+.3f}%")
+            st.metric("最新Shibor ON", f"{(latest['value'] or 0):.3f}%", f"{latest.get('change_pct', 0):+.3f}%")
 
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=shibor_df["date"], y=shibor_df["value"], mode="lines",
+            fig.add_trace(go.Scatter(x=shibor_df["date"], y=shibor_df["value"].fillna(method="ffill"), mode="lines",
                                      name="Shibor ON", line=dict(color="#22c55e", width=1.5),
                                      fill="tozeroy", fillcolor="rgba(34,197,94,0.1)"))
             fig = _style_fig(fig, "")
