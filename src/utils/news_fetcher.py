@@ -30,12 +30,17 @@ class NewsFetcher:
 
     # 新闻搜索关键词分组（与灵犀任务对应）
     NEWS_TOPICS = [
-        {"key": "market", "keywords": ["A股 市场行情"], "label": "大盘行情"},
+        {"key": "market", "keywords": ["A股 大盘 行情"], "label": "大盘行情"},
         {"key": "pharma", "keywords": ["医药 创新药 行业"], "label": "医药板块"},
         {"key": "broker", "keywords": ["券商 证券 行业"], "label": "券商板块"},
-        {"key": "ai", "keywords": ["人工智能 AI 行业"], "label": "AI板块"},
+        {"key": "ai", "keywords": ["人工智能 芯片 半导体"], "label": "科技AI板块"},
         {"key": "military", "keywords": ["军工 航天 国防"], "label": "军工板块"},
         {"key": "etf", "keywords": ["ETF 基金 市场"], "label": "ETF市场"},
+        {"key": "new_energy", "keywords": ["新能源 锂电池 光伏"], "label": "新能源板块"},
+        {"key": "gold", "keywords": ["黄金 金价 贵金属"], "label": "黄金贵金属"},
+        {"key": "macro", "keywords": ["央行 降息 宏观经济"], "label": "宏观经济"},
+        {"key": "consumption", "keywords": ["消费 白酒 红利 高股息"], "label": "消费红利"},
+        {"key": "global", "keywords": ["美股 美联储 海外市场"], "label": "海外市场"},
     ]
 
     # 每个分组取的新闻条数
@@ -45,7 +50,7 @@ class NewsFetcher:
     TIMEOUT = 8
 
     # 请求间隔（秒）
-    DELAY = 0.5
+    DELAY = 1.5
 
     def __init__(self):
         self.session = requests.Session()
