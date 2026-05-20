@@ -6760,6 +6760,28 @@ def _render_tab10_fund_flow(tab10, positions, summary):
         # ========== Tab11: 黄金市场分析 ==========
 
 
+
+def _render_tab11_gold(tab11):
+    """Tab11: 黄金市场分析"""
+    from tabs.tab11_gold import render_tab11
+    with tab11:
+        render_tab11()
+
+
+def _render_tab12_macro(tab12):
+    """Tab12: 宏观市场数据面板"""
+    from tabs.tab12_macro import render_tab12
+    with tab12:
+        render_tab12()
+
+
+def _render_tab13_data_quality(tab13):
+    """Tab13: 数据质量监控面板"""
+    from tabs.tab13_data_quality import render_tab13
+    with tab13:
+        render_tab13()
+
+
 def main():
     # 自定义CSS
     st.markdown(
@@ -7026,7 +7048,7 @@ def main():
         )
 
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs(
         [
             "📈 净值走势",
             "📊 持仓分布",
@@ -7039,6 +7061,8 @@ def main():
             "🔬 自定义指标",
             "💰 资金动向",
             "🥇 黄金市场",
+            "🌐 宏观市场",
+            "📊 数据质量",
         ]
     )
 
@@ -7111,6 +7135,9 @@ def main():
     _render_tab9_custom(tab9, positions)
 
     _render_tab10_fund_flow(tab10, positions, summary)
+    _render_tab11_gold(tab11)
+    _render_tab12_macro(tab12)
+    _render_tab13_data_quality(tab13)
 
 if __name__ == "__main__":
     main()
