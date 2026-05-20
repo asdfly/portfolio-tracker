@@ -298,23 +298,27 @@ def _render_margin_data(days: int):
         latest = total.iloc[-1]
         change = latest.get("change_value", 0)
         c1, c2, c3 = st.columns(3)
-        c1.metric("两融余额合计", f"{latest['value']/1e4:.0f}亿元", f"{change/1e4:+.0f}亿元")
+        val = latest['value'] or 0
+        chg = change if change is not None else 0
+        c1.metric("两融余额合计", f"{val/1e4:.0f}亿元", f"{chg/1e4:+.0f}亿元")
         if not sh.empty:
-            c2.metric("沪市", f"{sh.iloc[-1]['value']/1e4:.0f}亿元")
+            sh_val = sh.iloc[-1]['value'] or 0
+            c2.metric("沪市", f"{sh_val/1e4:.0f}亿元")
         if not sz.empty:
-            c3.metric("深市", f"{sz.iloc[-1]['value']/1e4:.0f}亿元")
+            sz_val = sz.iloc[-1]['value'] or 0
+            c3.metric("深市", f"{sz_val/1e4:.0f}亿元")
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
     # 合计余额（左轴）
     if not total.empty:
-        fig.add_trace(go.Scatter(x=total["date"], y=total["value"]/1e4, mode="lines",
+        fig.add_trace(go.Scatter(x=total["date"], y=total["value"].fillna(0)/1e4, mode="lines",
                                  name="两融合计", line=dict(color="#58a6ff", width=2)),
                       secondary_y=False)
 
     # 变化额（右轴，柱状图）
     if not total.empty and "change_value" in total.columns:
-        fig.add_trace(go.Bar(x=total["date"], y=total["change_value"]/1e4,
+        fig.add_trace(go.Bar(x=total["date"], y=total["change_value"].fillna(0)/1e4,
                              name="日变化(亿元)", marker_color="#f59e0b", opacity=0.5,
                              yaxis="y2"),
                       secondary_y=True)
