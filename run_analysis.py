@@ -24,7 +24,7 @@ from src.utils.monitor import Monitor
 from src.utils.notification import NotificationManager
 from src.utils.enhanced_report import EnhancedReportBuilder
 from src.utils.news_fetcher import NewsFetcher, save_news_to_db
-from src.data_sources.macro_daily import collect_all_macro_data, collect_market_sentiment
+from src.data_sources.macro_daily import fetch_all_macro_daily
 from src.report.smart_report import SmartReportGenerator
 from src.data_sources.fund_flow import (
     fetch_sector_fund_flow, fetch_etf_fund_flow,
@@ -589,9 +589,9 @@ def main():
 
         # === 阶段三.六: 宏观数据采集 ===
         try:
-            macro_count = collect_all_macro_data()
-            sentiment_count = collect_market_sentiment()
-            logger.info(f"宏观数据采集完成: macro_daily={macro_count}条, market_sentiment={sentiment_count}条")
+            macro_stats = fetch_all_macro_daily()
+            macro_count = sum(macro_stats.values())
+            logger.info(f"宏观数据采集完成: {macro_stats}")
         except Exception as e:
             logger.warning(f"宏观数据采集失败: {e}")
 

@@ -132,7 +132,7 @@ def _render_exchange_rate(days: int):
     c3.metric("数据点", f"{len(df)}条")
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["date"], y=df["value"].fillna(method="ffill"), mode="lines",
+    fig.add_trace(go.Scatter(x=df["date"], y=df["value"].ffill(), mode="lines",
                              name="USD/CNY", line=dict(color="#58a6ff", width=2),
                              hovertemplate="%{x|%Y-%m-%d}<br>汇率: %{y:.4f}<extra></extra>"))
     fig = _style_fig(fig, "USD/CNY 美元兑人民币汇率")
@@ -274,7 +274,7 @@ def _render_interest_rates(days: int):
             st.metric("最新Shibor ON", f"{(latest['value'] or 0):.3f}%", f"{latest.get('change_pct', 0):+.3f}%")
 
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=shibor_df["date"], y=shibor_df["value"].fillna(method="ffill"), mode="lines",
+            fig.add_trace(go.Scatter(x=shibor_df["date"], y=shibor_df["value"].ffill(), mode="lines",
                                      name="Shibor ON", line=dict(color="#22c55e", width=1.5),
                                      fill="tozeroy", fillcolor="rgba(34,197,94,0.1)"))
             fig = _style_fig(fig, "")
@@ -318,7 +318,7 @@ def _render_margin_data(days: int):
 
     # 变化额（右轴，柱状图）
     if not total.empty and "change_value" in total.columns:
-        fig.add_trace(go.Bar(x=total["date"], y=total["change_value"].fillna(0)/1e4,
+        fig.add_trace(go.Bar(x=total["date"], y=total["change_value"].infer_objects(copy=False).fillna(0)/1e4,
                              name="日变化(亿元)", marker_color="#f59e0b", opacity=0.5,
                              yaxis="y2"),
                       secondary_y=True)
