@@ -102,36 +102,10 @@ class Monitor:
                 self.rules.append(AlertRule(**custom))
 
     def _init_tables(self):
-        """初始化监控表"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # 告警记录表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rule_name TEXT,
-                level TEXT,
-                message TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                acknowledged BOOLEAN DEFAULT 0
-            )
-        ''')
-
-        # 运行日志表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS execution_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_name TEXT,
-                status TEXT,
-                message TEXT,
-                duration_seconds REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        conn.commit()
-        conn.close()
+        """初始化监控表（委托 db_schema 统一管理）"""
+        # 表结构由 DatabaseManager._init_db() -> db_schema.init_all_tables() 统一创建
+        # 此方法保留为空以维持接口兼容
+        pass
 
     def check_alerts(self, portfolio_data: dict, risk_data: dict) -> List[Alert]:
         """检查告警条件"""

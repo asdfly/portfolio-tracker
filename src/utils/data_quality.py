@@ -12,6 +12,8 @@ from typing import Dict, List, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
+from src.utils.db_schema import QUALITY_CHECK_TABLES
+
 
 class DataQualityChecker:
     """数据质量检查器"""
@@ -31,19 +33,10 @@ class DataQualityChecker:
         conn = self._conn()
         cur = conn.cursor()
 
-        checks = [
-            ("portfolio_snapshots", "date", "交易日快照"),
-            ("etf_technical", "date", "技术指标"),
-            ("fund_flows", "date", "资金流"),
-            ("index_quotes", "date", "指数行情"),
-            ("daily_news", "date", "新闻资讯"),
-            ("macro_daily", "date", "宏观数据"),
-            ("market_sentiment", "date", "市场情绪"),
-            ("portfolio_summary", "date", "组合摘要"),
-        ]
-
         results = []
-        for table, date_col, label in checks:
+        for table, info in QUALITY_CHECK_TABLES.items():
+            date_col = info["date_col"]
+            label = info["label"]
             try:
                 cur.execute(f"SELECT MAX({date_col}) FROM {table}")
                 row = cur.fetchone()
@@ -85,18 +78,8 @@ class DataQualityChecker:
         conn = self._conn()
         cur = conn.cursor()
 
-        tables_info = {
-            "portfolio_snapshots": {"code_col": "code", "date_col": "date"},
-            "etf_technical": {"code_col": "code", "date_col": "date"},
-            "fund_flows": {"code_col": "code", "date_col": "date"},
-            "index_quotes": {"code_col": "code", "date_col": "date"},
-            "macro_daily": {"code_col": None, "date_col": "date"},
-            "market_sentiment": {"code_col": None, "date_col": "date"},
-            "daily_news": {"code_col": None, "date_col": "date"},
-        }
-
         results = {}
-        for table, info in tables_info.items():
+        for table, info in QUALITY_CHECK_TABLES.items():
             try:
                 cur.execute(f"SELECT COUNT(*) FROM {table}")
                 total = cur.fetchone()[0]
