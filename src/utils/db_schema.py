@@ -211,6 +211,123 @@ TABLE_DEFS = [
             FOREIGN KEY (indicator_id) REFERENCES custom_indicators(id)
         )
     """, []),
+
+    # --- 市场事件 (Phase 1) ---
+    ("stock_lhb", """
+        CREATE TABLE IF NOT EXISTS stock_lhb (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            name TEXT,
+            close REAL,
+            change_pct REAL,
+            lhb_net_buy REAL,
+            lhb_buy_amount REAL,
+            lhb_sell_amount REAL,
+            lhb_volume REAL,
+            market_volume REAL,
+            net_buy_ratio REAL,
+            volume_ratio REAL,
+            turnover_rate REAL,
+            float_mv REAL,
+            reason TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, code)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_lhb_date ON stock_lhb(date)",
+        "CREATE INDEX IF NOT EXISTS idx_lhb_code_date ON stock_lhb(code, date)",
+    ]),
+
+    ("stock_margin", """
+        CREATE TABLE IF NOT EXISTS stock_margin (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            name TEXT,
+            margin_balance REAL,
+            margin_buy REAL,
+            margin_repay REAL,
+            short_volume REAL,
+            short_sell REAL,
+            short_repay REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, code)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_margin_date ON stock_margin(date)",
+        "CREATE INDEX IF NOT EXISTS idx_margin_code_date ON stock_margin(code, date)",
+    ]),
+
+    ("stock_holder_change", """
+        CREATE TABLE IF NOT EXISTS stock_holder_change (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            holder_name TEXT NOT NULL,
+            holder_type TEXT,
+            code TEXT NOT NULL,
+            name TEXT,
+            report_period TEXT,
+            holding_qty REAL,
+            qty_change REAL,
+            qty_change_pct REAL,
+            change_type TEXT,
+            float_mv REAL,
+            announce_date TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, holder_name, code)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_holder_change_date ON stock_holder_change(date)",
+        "CREATE INDEX IF NOT EXISTS idx_holder_change_code ON stock_holder_change(code)",
+    ]),
+
+    ("stock_institution_research", """
+        CREATE TABLE IF NOT EXISTS stock_institution_research (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            name TEXT,
+            price REAL,
+            change_pct REAL,
+            institution TEXT,
+            inst_type TEXT,
+            researchers TEXT,
+            receive_method TEXT,
+            receive_person TEXT,
+            receive_location TEXT,
+            research_date TEXT,
+            announce_date TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, code, institution)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_jgdy_date ON stock_institution_research(date)",
+        "CREATE INDEX IF NOT EXISTS idx_jgdy_code ON stock_institution_research(code)",
+    ]),
+
+    ("stock_block_trade", """
+        CREATE TABLE IF NOT EXISTS stock_block_trade (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            name TEXT,
+            change_pct REAL,
+            close REAL,
+            trade_price REAL,
+            premium_rate REAL,
+            volume REAL,
+            amount REAL,
+            amount_to_float_mv REAL,
+            buyer_broker TEXT,
+            seller_broker TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, code, buyer_broker, seller_broker)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_block_date ON stock_block_trade(date)",
+        "CREATE INDEX IF NOT EXISTS idx_block_code ON stock_block_trade(code)",
+    ]),
 ]
 
 # ============================================================
@@ -228,6 +345,11 @@ QUALITY_CHECK_TABLES = {
     "macro_daily": {"date_col": "date", "code_col": None, "label": "宏观数据"},
     "market_sentiment": {"date_col": "date", "code_col": None, "label": "市场情绪"},
     "portfolio_summary": {"date_col": "date", "code_col": None, "label": "组合摘要"},
+    "stock_lhb": {"date_col": "date", "code_col": "code", "label": "龙虎榜"},
+    "stock_margin": {"date_col": "date", "code_col": "code", "label": "融资融券"},
+    "stock_holder_change": {"date_col": "date", "code_col": "code", "label": "股东增减持"},
+    "stock_institution_research": {"date_col": "date", "code_col": "code", "label": "机构调研"},
+    "stock_block_trade": {"date_col": "date", "code_col": "code", "label": "大宗交易"},
 }
 
 # ============================================================
