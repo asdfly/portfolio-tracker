@@ -281,6 +281,69 @@ def fetch_margin_balance(days: int = 5) -> list:
     return records
 
 
+
+def fetch_pledge_profile(days: int = 8) -> list:
+    """股权质押市场概况（周频）。
+    
+    数据来源: akshare stock_gpzy_profile_em
+    包含指标: A股质押总比例、质押公司数、质押笔数、质押总股数、质押总市值
+    """
+    import akshare as ak
+    records = []
+    try:
+        df = ak.stock_gpzy_profile_em()
+        if df is None or df.empty:
+            return records
+        
+        col_map = {
+            '交易日期': 'date', 'A股质押总比例': 'pledge_ratio',
+            '质押公司数量': 'pledge_company_count', '质押笔数': 'pledge_count',
+            '质押总股数': 'pledge_total_shares', '质押总市值': 'pledge_total_mv',
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        df = df.tail(days)  # 取最近N条（周频数据）
+        
+        for _, row in df.iterrows():
+            dt = str(row['date'])
+            if isinstance(row['date'], (datetime, date)):
+                dt = row['date'].strftime('%Y-%m-%d')
+            
+            # 质押比例（核心指标，单位%）
+            ratio = row.get('pledge_ratio')
+            if pd.notna(ratio):
+                records.append({
+                    'date': dt, 'indicator_code': 'PLEDGE_RATIO',
+                    'name': 'A股质押总比例',
+                    'value': round(float(ratio), 4),
+                    'change_value': None, 'change_pct': None,
+                    'source': 'EASTMONEY',
+                })
+            
+            # 质押公司数
+            cc = row.get('pledge_company_count')
+            if pd.notna(cc):
+                records.append({
+                    'date': dt, 'indicator_code': 'PLEDGE_COMPANY_COUNT',
+                    'name': '质押公司数量',
+                    'value': float(cc),
+                    'change_value': None, 'change_pct': None,
+                    'source': 'EASTMONEY',
+                })
+            
+            # 质押总市值（亿元）
+            mv = row.get('pledge_total_mv')
+            if pd.notna(mv):
+                records.append({
+                    'date': dt, 'indicator_code': 'PLEDGE_TOTAL_MV',
+                    'name': '质押总市值',
+                    'value': round(float(mv), 2),
+                    'change_value': None, 'change_pct': None,
+                    'source': 'EASTMONEY',
+                })
+    except Exception as e:
+        logger.warning(f"股权质押数据采集失败: {e}")
+    return records
+
 # ==================== 保存函数 ====================
 
 def save_macro_daily(conn: sqlite3.Connection, records: list) -> int:
@@ -353,6 +416,7 @@ def fetch_all_macro_daily() -> dict:
     # market_sentiment 指标
     sentiment_fetchers = [
         ('MARGIN', fetch_margin_balance, {'days': 5}),
+        ('PLEDGE', fetch_pledge_profile, {'days': 8}),
     ]
     
     for name, func, kwargs in sentiment_fetchers:
