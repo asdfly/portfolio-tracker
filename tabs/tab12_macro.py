@@ -318,7 +318,7 @@ def _render_margin_data(days: int):
 
     # 变化额（右轴，柱状图）
     if not total.empty and "change_value" in total.columns:
-        fig.add_trace(go.Bar(x=total["date"], y=total["change_value"].infer_objects(copy=False).fillna(0)/1e4,
+        fig.add_trace(go.Bar(x=total["date"], y=total["change_value"].fillna(0)/1e4,
                              name="日变化(亿元)", marker_color="#f59e0b", opacity=0.5,
                              yaxis="y2"),
                       secondary_y=True)

@@ -21,85 +21,12 @@ class DatabaseManager:
         self._init_db()
 
     def _init_db(self):
-        """初始化数据库表结构"""
+        """初始化数据库表结构（统一从 db_schema 执行全部 DDL）"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
+        from src.utils.db_schema import init_all_tables
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-
-            # 持仓快照表
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT NOT NULL,
-                    code TEXT NOT NULL,
-                    name TEXT,
-                    quantity REAL,
-                    cost_price REAL,
-                    current_price REAL,
-                    market_value REAL,
-                    pnl REAL,
-                    pnl_rate REAL,
-                    ytd_return REAL,
-                    beta REAL,
-                    UNIQUE(date, code)
-                )
-            """)
-
-            # 组合汇总表
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS portfolio_summary (
-                    date TEXT PRIMARY KEY,
-                    total_value REAL,
-                    total_cost REAL,
-                    total_pnl REAL,
-                    daily_pnl REAL,
-                    daily_return REAL,
-                    vs_hs300 REAL,
-                    profit_count INTEGER,
-                    loss_count INTEGER,
-                    sharpe_ratio REAL,
-                    max_drawdown REAL,
-                    volatility REAL
-                )
-            """)
-
-            # 指数行情表
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS index_quotes (
-                    date TEXT NOT NULL,
-                    code TEXT NOT NULL,
-                    name TEXT,
-                    close REAL,
-                    change_pct REAL,
-                    volume REAL,
-                    amount REAL,
-                    PRIMARY KEY (date, code)
-                )
-            """)
-
-            # ETF技术指标表
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS etf_technical (
-                    date TEXT NOT NULL,
-                    code TEXT NOT NULL,
-                    ma_signal TEXT,
-                    macd_signal TEXT,
-                    rsi_value REAL,
-                    rsi_status TEXT,
-                    kdj_signal TEXT,
-                    bollinger_position REAL,
-                    atr_pct REAL,
-                    trend TEXT,
-                    PRIMARY KEY (date, code)
-                )
-            """)
-
-            # 创建索引
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshot_date ON portfolio_snapshots(date)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_index_date ON index_quotes(date)")
-
-            conn.commit()
+            init_all_tables(conn)
             logger.info("数据库初始化完成")
 
     def save_portfolio_snapshot(self, date_str: str, holdings: List[Dict[str, Any]]):

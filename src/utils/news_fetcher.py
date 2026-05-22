@@ -382,23 +382,7 @@ def save_news_to_db(db_path: str, news_data: Dict[str, Any], date_str: str = Non
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # 创建新闻表（如果不存在）
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS daily_news (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT,
-            category TEXT,
-            title TEXT,
-            source TEXT,
-            url TEXT,
-            summary TEXT,
-            publish_time TEXT,
-            created_at TEXT
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_date ON daily_news(date)")
-    # 按标题去重的唯一索引（忽略重复插入）
-    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_news_title ON daily_news(title)")
+    # daily_news 表由 DatabaseManager._init_db() -> db_schema.init_all_tables() 统一创建
 
     # 保存新闻
     for topic_key, topic_data in news_data.items():
