@@ -32,6 +32,7 @@ from src.data_sources.fund_flow import (
     backfill_etf_fund_flow_from_kline, backfill_sector_fund_flow,
     check_push2his_available, fetch_etf_fund_flow_batch,
 )
+from src.data_sources.market_events import run_market_events_collection
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 
 # ==================== 日志配置 ====================
@@ -594,6 +595,14 @@ def main():
             logger.info(f"宏观数据采集完成: {macro_stats}")
         except Exception as e:
             logger.warning(f"宏观数据采集失败: {e}")
+
+        # === 阶段三.七: 市场事件数据采集（龙虎榜/融资融券/股东增减持/机构调研/大宗交易）===
+        try:
+            me_stats = run_market_events_collection()
+            me_total = sum(v for k, v in me_stats.items() if k != 'errors')
+            logger.info(f"市场事件采集完成: {me_total} 条 ({me_stats})")
+        except Exception as e:
+            logger.warning(f"市场事件采集失败(不影响主流程): {e}")
 
         # === 阶段四: 智能分析 ===
         advice_summary = run_stage4_smart(results, summary, risk_data)
