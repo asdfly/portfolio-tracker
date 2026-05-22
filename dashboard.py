@@ -7119,7 +7119,7 @@ def main():
     _render_overview_cards(total_value, total_pnl, total_return, daily_return, daily_pnl,
                             sharpe, effective_max_dd, volatility)
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs(
         [
             "📈 净值走势",
             "📊 持仓分布",
@@ -7134,6 +7134,7 @@ def main():
             "🥇 黄金市场",
             "🌐 宏观市场",
             "📊 数据质量",
+            "📋 市场事件",
         ]
     )
 
@@ -7160,6 +7161,7 @@ def main():
     _render_tab11_gold(tab11, positions, summary, selected_date, selected_benchmark)
     _render_tab12_macro(tab12)
     _render_tab13_data_quality(tab13)
+    _render_tab14_market_events(tab14)
 
 if __name__ == "__main__":
     main()
