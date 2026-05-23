@@ -50,7 +50,7 @@ def fetch_lhb_data(date_str: str) -> pd.DataFrame:
         if '_seq' in df.columns:
             df = df.drop(columns=['_seq'])
         
-        df['date'] = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+        df['date'] = pd.to_datetime(df['research_date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d'))
         
         # 仅保留DB列
         keep = ['date', 'code', 'name', 'close', 'change_pct', 'lhb_net_buy',
@@ -137,7 +137,7 @@ def fetch_holder_change_data(date_str: str) -> pd.DataFrame:
         if '_seq' in df.columns:
             df = df.drop(columns=['_seq'])
         
-        df['date'] = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+        df['date'] = pd.to_datetime(df['research_date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d'))
         
         keep = ['date', 'holder_name', 'holder_type', 'code', 'name', 'report_period',
                 'holding_qty', 'qty_change', 'qty_change_pct', 'change_type',
@@ -164,7 +164,11 @@ def fetch_institution_research_data(date_str: str) -> pd.DataFrame:
     """
     try:
         import akshare as ak
-        df = ak.stock_jgdy_detail_em(date=date_str)
+        try:
+            df = ak.stock_jgdy_detail_em(date=date_str)
+        except (TypeError, KeyError):
+            # AKShare API返回None result (无数据或日期超出范围)
+            return pd.DataFrame()
         if df is None or df.empty:
             return pd.DataFrame()
         
@@ -181,7 +185,7 @@ def fetch_institution_research_data(date_str: str) -> pd.DataFrame:
         if '_seq' in df.columns:
             df = df.drop(columns=['_seq'])
         
-        df['date'] = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+        df['date'] = pd.to_datetime(df['research_date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d'))
         
         keep = ['date', 'code', 'name', 'price', 'change_pct', 'institution',
                 'inst_type', 'researchers', 'receive_method', 'receive_person',
