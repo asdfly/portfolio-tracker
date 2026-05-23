@@ -577,6 +577,124 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("历史数据不足（需要至少30个交易日），暂无法进行 Monte Carlo 模拟")
 
+    # --- 蒙特卡洛收敛诊断（Phase 5C新增）---
+    if mc_result is not None:
+        with st.expander("模拟收敛诊断", expanded=False):
+            # Run short convergence test with increasing simulation counts
+            n_runs = [100, 200, 500, 1000, 2000]
+            p50_finals = []
+            p5_finals = []
+            for nr in n_runs:
+                conv = run_monte_carlo(days=min(mc_days, 126), n_simulations=nr, end_date=selected_date)
+                if conv is not None:
+                    p50_finals.append(conv["percentiles"]["p50"].iloc[-1])
+                    p5_finals.append(conv["percentiles"]["p5"].iloc[-1])
+                else:
+                    p50_finals.append(None)
+                    p5_finals.append(None)
+
+            fig_conv = go.Figure()
+            fig_conv.add_trace(go.Scatter(
+                x=[str(n) for n in n_runs],
+                y=p50_finals, mode="lines+markers", name="P50 终值",
+                line=dict(color="#58a6ff", width=2), marker=dict(size=8),
+            ))
+            fig_conv.add_trace(go.Scatter(
+                x=[str(n) for n in n_runs],
+                y=p5_finals, mode="lines+markers", name="P5 终值",
+                line=dict(color="#ef4444", width=2), marker=dict(size=8),
+            ))
+            fig_conv.update_layout(
+                height=220,
+                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                font=dict(color="#c9d1d9", size=11),
+                margin=dict(l=40, r=20, t=10, b=30),
+                xaxis=dict(title="模拟路径数", showgrid=True, gridcolor="#21262d"),
+                yaxis=dict(title="终值 (¥)", showgrid=True, gridcolor="#21262d"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                            font=dict(size=10, color="#8b949e")),
+            )
+            st.plotly_chart(fig_conv, width="stretch")
+            st.caption(f"*采样池: {mc_result['sample_count']} 条，过滤异常值: {mc_result['filtered_count']} 条，起始: {mc_result['sample_start']}")
+
+    # --- 风险归因分析（Phase 5C新增）---
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
+        '风险归因分析'
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '基于近60日数据，分解各持仓对组合总风险的贡献度。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    if not positions.empty:
+        conn_ra = get_db_connection()
+        try:
+            pos_risk = []
+            for _, pos in positions.iterrows():
+                pc = str(pos["code"])
+                # Get recent daily returns for this position from snapshots
+                snap_ret = pd.read_sql_query(
+                    f"SELECT date, market_value FROM portfolio_snapshots "
+                    f"WHERE code = ? AND date >= date('now', '-90 days') ORDER BY date",
+                    conn_ra, params=(pc,)
+                )
+                if len(snap_ret) >= 20:
+                    daily_ret = snap_ret["market_value"].pct_change().dropna()
+                    vol = float(daily_ret.std()) * np.sqrt(252) * 100  # annualized vol %
+                    weight = pos["market_value"] / positions["market_value"].sum() * 100 if positions["market_value"].sum() > 0 else 0
+                    risk_contrib = weight * vol / 100  # marginal risk contribution
+                    pos_risk.append({
+                        "name": pos["name"], "code": pc,
+                        "weight": weight, "volatility": vol,
+                        "risk_contrib": risk_contrib * 100,
+                    })
+            if pos_risk:
+                risk_df = pd.DataFrame(pos_risk).sort_values("risk_contrib", ascending=True)
+                total_rc = risk_df["risk_contrib"].sum()
+
+                fig_risk = go.Figure()
+                bar_colors = risk_df["risk_contrib"].apply(
+                    lambda x: "#ef4444" if x > 0 else "#22c55e"
+                )
+                fig_risk.add_trace(go.Bar(
+                    x=risk_df["risk_contrib"],
+                    y=risk_df["name"],
+                    orientation="h",
+                    marker_color=bar_colors,
+                    text=[f"{v:.1f}%" for v in risk_df["risk_contrib"]],
+                    textposition="auto",
+                ))
+                fig_risk.update_layout(
+                    height=max(200, len(risk_df) * 35),
+                    plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                    font=dict(color="#c9d1d9", size=11),
+                    margin=dict(l=120, r=40, t=10, b=30),
+                    xaxis=dict(title="风险贡献度 (%)", showgrid=True, gridcolor="#21262d"),
+                    yaxis=dict(autorange="reversed"),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_risk, width="stretch")
+
+                # Risk attribution summary
+                ra_c1, ra_c2, ra_c3 = st.columns(3)
+                with ra_c1:
+                    top_risk = risk_df.iloc[-1] if len(risk_df) > 0 else None
+                    if top_risk is not None:
+                        st.metric("最大风险贡献", f"{top_risk['name']}", delta=f"{top_risk['risk_contrib']:.1f}%")
+                with ra_c2:
+                    avg_vol = risk_df["volatility"].mean()
+                    st.metric("平均年化波动率", f"{avg_vol:.1f}%")
+                with ra_c3:
+                    hhi = (risk_df["risk_contrib"]**2).sum() / (total_rc**2) if total_rc > 0 else 0
+                    st.metric("集中度 (HHI)", f"{hhi:.2f}")
+        finally:
+            conn_ra.close()
+    else:
+        st.info("暂无持仓数据")
+
     st.markdown("---")
 
     # ----- 压力测试 -----
