@@ -6778,6 +6778,7 @@ def _render_tab12_macro(tab12):
 def _render_tab13_data_quality(tab13):
     """Tab13: 数据质量监控面板"""
     from tabs.tab13_data_quality import render_tab13
+    from tabs.tab14_market_events import render_tab14 as _render_tab14_market_events
     with tab13:
         render_tab13()
 
