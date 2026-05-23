@@ -473,64 +473,101 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
         '新闻情感分析'
         '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
         '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
-        '基于关键词对近7天新闻标题进行情感打分，分析各板块情绪偏向。'
+        '基于SnowNLP+金融词典混合评分，对近7天新闻进行情感分析。'
         '</span></div>',
         unsafe_allow_html=True,
     )
 
     try:
+        from snownlp import SnowNLP
+        import jieba
+
         conn_sent = get_db_connection()
         try:
             sent_df = pd.read_sql_query(
-                "SELECT date, category, title FROM daily_news WHERE date >= date('now', '-7 days') ORDER BY date DESC",
+                "SELECT date, category, title, summary FROM daily_news WHERE date >= date('now', '-7 days') ORDER BY date DESC",
                 conn_sent)
         finally:
             conn_sent.close()
 
         if not sent_df.empty:
-            pos_w = ['上涨', '增长', '突破', '新高', '反弹', '利好', '强势', '大涨', '净流入', '增持', '景气', '复苏', '超预期', '回暖', '看多', '金叉', '多头', '盈利', '创新高', '加速']
-            neg_w = ['下跌', '暴跌', '跌破', '风险', '减持', '净流出', '利空', '疲软', '收紧', '回调', '崩盘', '空头', '死叉', '缩量', '亏损', '下行', '承压', '警惕', '放缓']
+            # 金融情感词典（SnowNLP对金融文本偏差大，需校正）
+            FIN_POS = {"上涨": 2, "大涨": 2, "增长": 1.5, "突破": 1.5, "新高": 2, "反弹": 1.5,
+                        "利好": 2, "强势": 1.5, "净流入": 2, "增持": 1.5, "景气": 1, "复苏": 1.5,
+                        "超预期": 2, "回暖": 1.5, "看多": 2, "金叉": 1.5, "多头": 1.5,
+                        "盈利": 1.5, "创新高": 2, "加速": 1, "涨停": 2, "降准": 1.5, "降息": 1.5,
+                        "放量": 1, "收红": 1.5, "领涨": 1.5, "走强": 1.5, "企稳": 1, "触底": 1}
+            FIN_NEG = {"下跌": 1, "暴跌": 2, "大跌": 2, "跌破": 2, "风险": 1, "减持": 1.5,
+                        "净流出": 2, "利空": 2, "疲软": 1.5, "收紧": 1, "回调": 1, "崩盘": 2,
+                        "空头": 1.5, "死叉": 1.5, "缩量": 1, "亏损": 1.5, "下行": 1, "承压": 1.5,
+                        "警惕": 1, "放缓": 1, "跌停": 2, "加息": 1, "抛售": 2, "恐慌": 2,
+                        "熊市": 2, "破位": 1.5, "阴跌": 1.5, "杀跌": 2, "跳水": 2, "收绿": 1}
 
-            def _sent_score(text):
-                if not isinstance(text, str): return 0
-                return sum(1 for w in pos_w if w in text) - sum(1 for w in neg_w if w in text)
+            def _fin_sentiment(text):
+                if not isinstance(text, str) or not text.strip():
+                    return 0.5
+                # 基础SnowNLP分
+                base = SnowNLP(text).sentiments
+                # jieba分词 + 金融词典校正
+                words = list(jieba.cut(text))
+                fin_score = sum(FIN_POS.get(w, 0) - FIN_NEG.get(w, 0) for w in words)
+                # 混合: base权重0.3, 金融词典权重0.7, 归一化到0~1
+                adjusted = base * 0.3 + (fin_score / 4.0) * 0.7 + 0.5
+                return max(0.0, min(1.0, adjusted))
 
-            sent_df["sentiment"] = sent_df["title"].apply(_sent_score)
+            # 对title+summary合并评分
+            sent_df["text"] = (sent_df["title"].fillna("") + " " + sent_df["summary"].fillna("")).str.strip()
+            sent_df["sentiment"] = sent_df["text"].apply(_fin_sentiment)
+
+            # 各板块平均情绪
             cat_sent = sent_df.groupby("category").agg(
                 cnt=("title", "count"),
                 avg_s=("sentiment", "mean"),
-                pos=("sentiment", lambda x: (x > 0).sum()),
-                neg=("sentiment", lambda x: (x < 0).sum()),
+                pos=("sentiment", lambda x: (x > 0.6).sum()),
+                neg=("sentiment", lambda x: (x < 0.4).sum()),
             ).sort_values("avg_s", ascending=True).reset_index()
 
-            colors_s = ["#22c55e" if v > 0 else "#ef4444" if v < 0 else "#8b949e" for v in cat_sent["avg_s"]]
+            # 情绪对比图（0=负面, 0.5=中性, 1=正面）
+            colors_s = ["#22c55e" if v > 0.55 else "#f59e0b" if v >= 0.45 else "#ef4444"
+                        for v in cat_sent["avg_s"]]
             fig_sent = go.Figure(go.Bar(
                 x=cat_sent["avg_s"], y=cat_sent["category"], orientation="h",
                 marker_color=colors_s,
-                text=[f"{v:+.1f}" for v in cat_sent["avg_s"]], textposition="auto",
+                text=[f"{v:.2f}" for v in cat_sent["avg_s"]], textposition="auto",
             ))
             fig_sent.update_layout(height=max(200, len(cat_sent)*30),
                                    margin=dict(l=110, r=20, t=5, b=10),
-                                   xaxis_title="情绪得分(+正面/-负面)",
+                                   xaxis_title="情绪得分(0负面~0.5中性~1正面)", range=[0, 1],
                                    yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_sent, width='stretch')
 
-            sc1, sc2, sc3 = st.columns(3)
-            tp = sent_df[sent_df["sentiment"] > 0].shape[0]
-            tn = sent_df[sent_df["sentiment"] < 0].shape[0]
-            sc1.metric("正面新闻", tp)
-            sc2.metric("负面新闻", tn)
-            sc3.metric("中性新闻", len(sent_df) - tp - tn)
+            # 情绪概要卡片
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            avg_all = sent_df["sentiment"].mean()
+            tp = (sent_df["sentiment"] > 0.6).sum()
+            tn = (sent_df["sentiment"] < 0.4).sum()
+            sc1.metric("平均情绪", f"{avg_all:.2f}")
+            sc2.metric("正面新闻", tp)
+            sc3.metric("负面新闻", tn)
+            sc4.metric("中性新闻", len(sent_df) - tp - tn)
 
-            neg_news = sent_df[sent_df["sentiment"] < 0].nlargest(5, "sentiment", keep="last")
+            # 各板块情绪明细表
+            with st.expander("各板块情绪明细", expanded=False):
+                disp_s = cat_sent[["category", "cnt", "avg_s", "pos", "neg"]].copy()
+                disp_s.columns = ["板块", "新闻数", "平均情绪", "正面数", "负面数"]
+                st.dataframe(disp_s, use_container_width=True, hide_index=True, height=250)
+
+            # 负面新闻列表
+            neg_news = sent_df[sent_df["sentiment"] < 0.4].nsmallest(5, "sentiment")
             if not neg_news.empty:
                 with st.expander("负面新闻 TOP5", expanded=False):
                     for _, nr in neg_news.iterrows():
-                        st.markdown(f'<div style="font-size:12px;color:#ef4444;padding:2px 0;">[{nr["category"]}] {nr["date"]} - {nr["title"]}</div>', unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div style="font-size:12px;color:#ef4444;padding:2px 0;">'
+                            f'[{nr["category"]}] {nr["date"]} (情绪:{nr["sentiment"]:.2f}) - {nr["title"]}</div>',
+                            unsafe_allow_html=True)
         else:
             st.info("近7天无新闻数据")
     except Exception:
-        st.info("新闻情感分析暂不可用")
+        st.info("新闻情感分析暂不可用（需安装snownlp和jieba）")
 
-
-# ========== Tab8: 操作建议 ==========
