@@ -154,7 +154,8 @@ TABLE_DEFS = [
             url TEXT,
             summary TEXT,
             publish_time TEXT,
-            created_at TEXT
+            created_at TEXT,
+            sentiment_score REAL DEFAULT NULL
         )
     """, [
         "CREATE INDEX IF NOT EXISTS idx_news_date ON daily_news(date)",

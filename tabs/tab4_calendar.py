@@ -370,7 +370,87 @@ def render_tab4(positions, summary, index_quotes, selected_date, selected_benchm
             )
             st.plotly_chart(fig_heat, width="stretch")
 
-        # --- 事件日历：关键日期提醒 ---
+        # --- 年化收益走势图（Phase 5B新增）---
+        st.markdown("---")
+        st.markdown(
+            '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">年化收益走势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">组合累计收益率与年化收益率趋势。</span></div>',
+            unsafe_allow_html=True,
+        )
+        all_cal = load_calendar_data()
+        if not all_cal.empty:
+            yearly_cumret = all_cal.groupby("year").apply(
+                lambda g: g["total_value"].iloc[-1] / g["total_value"].iloc[0] - 1
+            )
+            cumret_by_date = all_cal.groupby("date").agg(
+                first_v=("total_value", "first"), last_v=("total_value", "last")
+            ).reset_index()
+            cumret_by_date["cum_return"] = cumret_by_date["last_v"] / cumret_by_date["first_v"].iloc[0] - 1
+            # Annualized return (CAGR)
+            cumret_by_date["years_elapsed"] = (cumret_by_date["date"] - cumret_by_date["date"].iloc[0]).dt.days / 365.25
+            cumret_by_date["ann_return"] = (1 + cumret_by_date["cum_return"]) ** (1 / cumret_by_date["years_elapsed"].clip(lower=0.01)) - 1
+
+            fig_cum = go.Figure()
+            fig_cum.add_trace(go.Scatter(
+                x=cumret_by_date["date"], y=cumret_by_date["cum_return"] * 100,
+                mode="lines", name="累计收益率",
+                line=dict(color="#58a6ff", width=2),
+                fill="tozeroy", fillcolor="rgba(88,166,255,0.08)",
+            ))
+            fig_cum.add_trace(go.Scatter(
+                x=cumret_by_date["date"], y=cumret_by_date["ann_return"] * 100,
+                mode="lines", name="年化收益率",
+                line=dict(color="#f59e0b", width=1.5, dash="dot"),
+                yaxis="y2",
+            ))
+            fig_cum.update_layout(
+                height=280,
+                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                font=dict(color="#c9d1d9", size=11),
+                margin=dict(l=60, r=60, t=10, b=30),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                            font=dict(size=10, color="#8b949e")),
+                xaxis=dict(title="", showgrid=True, gridcolor="#21262d"),
+                yaxis=dict(title="累计收益率 (%)", showgrid=True, gridcolor="#21262d"),
+                yaxis2=dict(title="年化收益率 (%)", overlaying="y", side="right",
+                            gridcolor="rgba(255,255,255,0.05)"),
+            )
+            st.plotly_chart(fig_cum, width="stretch")
+
+        # --- 月度收益分布箱线图（Phase 5B新增）---
+        st.markdown("---")
+        st.markdown(
+            '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">月度收益分布<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">各月份日收益率分布箱线图，展示收益波动范围。</span></div>',
+            unsafe_allow_html=True,
+        )
+        if not all_cal.empty and "daily_return" in all_cal.columns:
+            all_cal["month_label"] = all_cal["month"].apply(lambda m: f"{m}月")
+            month_order = [f"{m}月" for m in range(1, 13)]
+            monthly_groups = [all_cal.loc[all_cal["month"] == m, "daily_return"].dropna() * 100 for m in range(1, 13)]
+            valid_groups = [(label, grp) for label, grp in zip(month_order, monthly_groups) if len(grp) > 0]
+
+            if valid_groups:
+                fig_box = go.Figure()
+                for label, grp in valid_groups:
+                    fig_box.add_trace(go.Box(
+                        y=grp.values, name=label,
+                        marker_color="#58a6ff",
+                        line_color="#58a6ff",
+                        fillcolor="rgba(88,166,255,0.15)",
+                        boxmean="sd",
+                    ))
+                fig_box.update_layout(
+                    height=300,
+                    plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                    font=dict(color="#c9d1d9", size=11),
+                    margin=dict(l=40, r=20, t=10, b=30),
+                    xaxis=dict(title="", showgrid=False),
+                    yaxis=dict(title="日收益率 (%)", showgrid=True, gridcolor="#21262d"),
+                    showlegend=False,
+                    boxmode="group",
+                )
+                st.plotly_chart(fig_box, width="stretch")
+
+                # --- 事件日历：关键日期提醒 ---
         st.markdown("---")
         st.markdown(
             '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">关键日期提醒<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">自动检测持仓中的关键事件日期，如财报季、期权到期日等。</span></div>',

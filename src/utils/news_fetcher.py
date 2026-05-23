@@ -13,6 +13,39 @@ from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
+def _compute_sentiment_score(text):
+    """计算新闻情感分数（SnowNLP+jieba混合评分），失败返回0.5"""
+    try:
+        import sys
+        venv_site = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                 "venv", "Lib", "site-packages")
+        if venv_site not in sys.path:
+            sys.path.insert(0, venv_site)
+        from snownlp import SnowNLP
+        import jieba
+        if not isinstance(text, str) or not text.strip():
+            return 0.5
+        FIN_POS = {"上涨": 2, "大涨": 2, "增长": 1.5, "突破": 1.5, "新高": 2, "反弹": 1.5,
+                    "利好": 2, "强势": 1.5, "净流入": 2, "增持": 1.5, "景气": 1, "复苏": 1.5,
+                    "超预期": 2, "回暖": 1.5, "看多": 2, "金叉": 1.5, "多头": 1.5,
+                    "盈利": 1.5, "创新高": 2, "加速": 1, "涨停": 2, "降准": 1.5, "降息": 1.5,
+                    "放量": 1, "收红": 1.5, "领涨": 1.5, "走强": 1.5, "企稳": 1, "触底": 1}
+        FIN_NEG = {"下跌": 1, "暴跌": 2, "大跌": 2, "跌破": 2, "风险": 1, "减持": 1.5,
+                    "净流出": 2, "利空": 2, "疲软": 1.5, "收紧": 1, "回调": 1, "崩盘": 2,
+                    "空头": 1.5, "死叉": 1.5, "缩量": 1, "亏损": 1.5, "下行": 1, "承压": 1.5,
+                    "警惕": 1, "放缓": 1, "跌停": 2, "加息": 1, "抛售": 2, "恐慌": 2,
+                    "熊市": 2, "破位": 1.5, "阴跌": 1.5, "杀跌": 2, "跳水": 2, "收绿": 1}
+        base = SnowNLP(text).sentiments
+        words = list(jieba.cut(text))
+        fin_score = sum(FIN_POS.get(w, 0) - FIN_NEG.get(w, 0) for w in words)
+        adjusted = base * 0.3 + (fin_score / 4.0) * 0.7 + 0.5
+        return round(max(0.0, min(1.0, adjusted)), 4)
+    except Exception:
+        return 0.5
+
+
+
+
 
 @dataclass
 class NewsItem:
@@ -388,14 +421,22 @@ def save_news_to_db(db_path: str, news_data: Dict[str, Any], date_str: str = Non
     for topic_key, topic_data in news_data.items():
         label = topic_data.get("label", topic_key)
         for news in topic_data.get("news", []):
+            title_text = news.get("title", "")
+            summary_text = news.get("summary", "")
+            sentiment_val = _compute_sentiment_score(f"{title_text} {summary_text}".strip())
             cursor.execute("""
-                INSERT OR IGNORE INTO daily_news (date, category, title, source, url, summary, publish_time, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO daily_news (date, category, title, source, url, summary, publish_time, created_at, sentiment_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                date_str, label, news.get("title", ""), news.get("source", ""),
-                news.get("url", ""), news.get("summary", ""), news.get("publish_time", ""),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                date_str, label, title_text, news.get("source", ""),
+                news.get("url", ""), summary_text, news.get("publish_time", ""),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sentiment_val
             ))
+            # Backfill sentiment for rows inserted without score
+            cursor.execute(
+                "UPDATE daily_news SET sentiment_score = ? WHERE title = ? AND sentiment_score IS NULL",
+                (sentiment_val, title_text)
+            )
 
     conn.commit()
     conn.close()
