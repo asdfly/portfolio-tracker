@@ -19,7 +19,7 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
     
     st.caption("🔬 自定义技术指标组合回测，K线形态识别，量化验证交易策略")
 
-    tab9_sub1, tab9_sub2 = st.tabs(["📊 指标回测", "🕯️ K线形态"])
+    tab9_sub1, tab9_sub2, tab9_sub3 = st.tabs(["📊 指标回测", "🕯️ K线形态", "📈 回测历史"])
 
     # ----- 指标回测子Tab -----
     with tab9_sub1:
@@ -247,6 +247,67 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
                         st.info(f"近 {n_candle} 日未检测到经典K线形态")
         except Exception as e:
             st.info(f"K线形态识别暂不可用: {str(e)[:80]}")
+    # ----- 回测历史子Tab -----
+    with tab9_sub3:
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">回测历史记录</div>',
+            unsafe_allow_html=True,
+        )
+        try:
+            conn_h = get_db_connection()
+            try:
+                hdf = pd.read_sql_query("""
+                    SELECT br.id, ci.name as indicator_name, ci.description,
+                           br.test_period, br.total_signals, br.win_count, br.loss_count,
+                           br.win_rate, br.avg_pnl, br.sharpe, br.created_at
+                    FROM indicator_backtest_results br
+                    JOIN custom_indicators ci ON br.indicator_id = ci.id
+                    ORDER BY br.created_at DESC
+                """, conn_h)
+            finally:
+                conn_h.close()
+            if hdf.empty:
+                st.info("暂无回测历史记录")
+            else:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("回测记录", len(hdf))
+                c2.metric("平均胜率", f"{hdf['win_rate'].mean():.1f}%")
+                c3.metric("最佳胜率", f"{hdf['win_rate'].max():.1f}%")
+                # 各指标胜率对比
+                ist = hdf.groupby('indicator_name').agg(
+                    avg_wr=('win_rate', 'mean'), cnt=('id', 'count'),
+                    avg_pnl=('avg_pnl', 'mean')
+                ).sort_values('avg_wr', ascending=True).reset_index()
+                colors = ['#22c55e' if v >= 50 else '#f59e0b' if v >= 45 else '#ef4444' for v in ist['avg_wr']]
+                fig_wr = go.Figure(go.Bar(
+                    x=ist['avg_wr'], y=ist['indicator_name'], orientation='h',
+                    marker_color=colors,
+                    text=[f"{v:.1f}%" for v in ist['avg_wr']], textposition='auto',
+                ))
+                fig_wr.update_layout(height=max(200, len(ist)*35), margin=dict(l=130, r=20, t=5, b=10),
+                                     xaxis_title="平均胜率(%)", xaxis_range=[0, 70],
+                                     yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_wr, width='stretch')
+                # 胜率箱线图
+                fig_box = go.Figure()
+                for _, row in ist.iterrows():
+                    yd = hdf[hdf['indicator_name'] == row['indicator_name']]['win_rate']
+                    fig_box.add_trace(go.Box(y=yd, name=row['indicator_name']))
+                fig_box.update_layout(height=280, margin=dict(l=20, r=20, t=5, b=60),
+                                      boxmode='group', yaxis_title="胜率(%)",
+                                      legend=dict(orientation="h", yanchor="bottom", y=-0.3, font=dict(size=9)))
+                st.plotly_chart(fig_box, width='stretch')
+                # 明细表
+                sel = st.selectbox("筛选指标", ["全部"] + sorted(hdf['indicator_name'].unique()), key="hist_sel")
+                sdf = hdf if sel == "全部" else hdf[hdf['indicator_name'] == sel]
+                disp = sdf[['indicator_name', 'test_period', 'total_signals', 'win_count', 'loss_count', 'win_rate', 'avg_pnl', 'created_at']].copy()
+                disp['win_rate'] = disp['win_rate'].apply(lambda x: f"{x:.1f}%")
+                disp['avg_pnl'] = disp['avg_pnl'].apply(lambda x: f"{x:+.3f}%")
+                disp['created_at'] = disp['created_at'].str[:16]
+                st.dataframe(disp, use_container_width=True, hide_index=True, height=350)
+        except Exception as e:
+            st.info(f"回测历史加载失败: {str(e)[:80]}")
+
 
     
 
