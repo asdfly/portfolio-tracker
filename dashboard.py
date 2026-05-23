@@ -7061,6 +7061,13 @@ def _render_quick_stats(positions, profit_count, loss_count, technical):
         )
 
 
+def _render_tab14_market_events(tab14):
+    """Tab14: 市场事件面板"""
+    from tabs.tab14_market_events import render_tab14
+    with tab14:
+        render_tab14()
+
+
 def main():
     global sharpe, volatility, max_dd, effective_max_dd, total_return, total_value, total_pnl, daily_return, daily_pnl, profit_count, loss_count, total_mv, show_days, technical
     import pandas as pd
@@ -7161,8 +7168,6 @@ def main():
     _render_tab11_gold(tab11, positions, summary, selected_date, selected_benchmark)
     _render_tab12_macro(tab12)
     _render_tab13_data_quality(tab13)
-
-    from tabs.tab14_market_events import render_tab14 as _render_tab14_market_events
     _render_tab14_market_events(tab14)
 
 if __name__ == "__main__":
