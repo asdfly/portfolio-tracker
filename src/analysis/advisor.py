@@ -430,3 +430,65 @@ class SmartAdvisor:
                 lines.append(f"*置信度: {advice.confidence*100:.0f}%*\n")
 
         return "\n".join(lines)
+
+
+    # ============================================================
+    #  市场事件驱动建议（Phase 2）
+    # ============================================================
+    def analyze_market_event_signals(self, signals) -> List["InvestmentAdvice"]:
+        """基于市场事件信号生成投资建议。
+
+        Args:
+            signals: List[MarketSignal] from MarketEventSignalEngine
+
+        Returns:
+            建议列表
+        """
+        from src.analysis.market_event_signals import SignalType, SignalLevel
+
+        advices = []
+        seen = set()  # 去重: (title, code)
+
+        for signal in signals:
+            key = (signal.title, signal.code)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            if signal.signal_type == SignalType.RISK and signal.level == SignalLevel.HIGH:
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.CAUTION, priority=AdvicePriority.HIGH,
+                    title=signal.title, description=signal.description,
+                    action_items=["关注该标的风险变化", "评估是否需要减仓或设置止损"],
+                    related_codes=[signal.code], confidence=signal.confidence,
+                    created_at=datetime.now()
+                ))
+            elif signal.signal_type == SignalType.RISK and signal.level == SignalLevel.MEDIUM:
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                    title=signal.title, description=signal.description,
+                    action_items=["持续关注市场动态", "结合技术面判断"],
+                    related_codes=[signal.code], confidence=signal.confidence,
+                    created_at=datetime.now()
+                ))
+            elif signal.signal_type == SignalType.OPPORTUNITY and signal.level == SignalLevel.HIGH:
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.OPPORTUNITY, priority=AdvicePriority.HIGH,
+                    title=signal.title, description=signal.description,
+                    action_items=["深入研究基本面", "评估入场时机和仓位"],
+                    related_codes=[signal.code], confidence=signal.confidence,
+                    created_at=datetime.now()
+                ))
+            elif signal.signal_type == SignalType.OPPORTUNITY and signal.level == SignalLevel.MEDIUM:
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+                    title=signal.title, description=signal.description,
+                    action_items=["加入观察列表", "等待技术面确认"],
+                    related_codes=[signal.code], confidence=signal.confidence,
+                    created_at=datetime.now()
+                ))
+
+        # 按优先级排序
+        po = {AdvicePriority.HIGH: 0, AdvicePriority.MEDIUM: 1, AdvicePriority.LOW: 2}
+        advices.sort(key=lambda x: po.get(x.priority, 3))
+        return advices

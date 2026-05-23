@@ -244,6 +244,68 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("暂无持仓数据")
 
+    # ========== 市场事件驱动信号 ==========
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;">'
+        '<span>📡 市场事件信号（近5个交易日）</span></div>',
+        unsafe_allow_html=True,
+    )
+    try:
+        import sqlite3
+        from src.analysis.market_event_signals import MarketEventSignalEngine
+        ev_conn = sqlite3.connect(str(DATABASE_PATH))
+        ev_engine = MarketEventSignalEngine(ev_conn)
+        ev_signals = ev_engine.generate_all_signals(lookback_days=5)
+        ev_summary = ev_engine.get_signal_summary(ev_signals)
+        ev_conn.close()
+
+        # Summary cards
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.metric("总信号", ev_summary["total"])
+        sc2.metric("风险信号", ev_summary["by_type"]["risk"], delta=None)
+        sc3.metric("机会信号", ev_summary["by_type"]["opp"], delta=None)
+        sc4.metric("高优先级", ev_summary["by_level"]["high"], delta=None)
+
+        # Source breakdown
+        if ev_summary["by_source"]:
+            src_df = pd.DataFrame([
+                {"来源": {"lhb":"龙虎榜","margin":"融资融券","holder_change":"股东增减持",
+                          "block_trade":"大宗交易","institution":"机构调研"}.get(k,k),
+                 "信号数": v}
+                for k, v in ev_summary["by_source"].items()
+            ])
+            st.bar_chart(src_df, x="来源", y="信号数", height=200)
+
+        # Top signals
+        if ev_summary["top_risk"]:
+            with st.expander("🔴 Top 风险信号", expanded=False):
+                for s in ev_summary["top_risk"][:10]:
+                    st.markdown(f"**{s.title}** ({s.date}) — {s.description}")
+        if ev_summary["top_opportunity"]:
+            with st.expander("🟢 Top 机会信号", expanded=False):
+                for s in ev_summary["top_opportunity"][:10]:
+                    st.markdown(f"**{s.title}** ({s.date}) — {s.description}")
+
+        # Portfolio impact
+        if not positions.empty:
+            held = positions["code"].tolist()
+            rpt = ev_engine.get_portfolio_signal_report(ev_signals, held)
+            if rpt["related_count"] > 0:
+                level_map = {"high": "🔴 高", "medium": "🟡 中", "low": "🟢 低"}
+                st.markdown(f"**持仓关联信号: {rpt['related_count']}条** "
+                            f"（组合风险等级: {level_map.get(rpt['portfolio_risk_level'], '?')}）")
+                for pos in rpt["affected_positions"][:5]:
+                    lv_tag = level_map.get(pos["highest_level"], "")
+                    st.markdown(f"- {lv_tag} **{pos['name']}** ({pos['code']}): "
+                                f"{pos['signal_count']}条信号")
+            else:
+                st.success("近5日无持仓关联的市场事件信号")
+        else:
+            st.info("无持仓数据，跳过关联分析")
+    except Exception as e:
+        st.warning(f"市场事件信号加载失败: {e}")
+
     # ========== 数据导出 ==========
     st.markdown("---")
     st.markdown(

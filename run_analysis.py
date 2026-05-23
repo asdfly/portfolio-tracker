@@ -604,6 +604,43 @@ def main():
         except Exception as e:
             logger.warning(f"市场事件采集失败(不影响主流程): {e}")
 
+        # === 阶段三.八: 市场事件信号分析 + 告警 ===
+        try:
+            import sqlite3 as _sqlite3
+            from src.analysis.market_event_signals import MarketEventSignalEngine
+            _me_conn = _sqlite3.connect(str(DATABASE_PATH))
+            _me_engine = MarketEventSignalEngine(_me_conn)
+            _me_signals = _me_engine.generate_all_signals(lookback_days=3)
+            _me_summary = _me_engine.get_signal_summary(_me_signals)
+            _me_conn.close()
+
+            # 持仓关联信号告警
+            _positions = results.get('positions', [])
+            if _positions:
+                _held = [str(p.get('code', '')) for p in _positions if isinstance(p, dict)]
+                if _held:
+                    _me_conn2 = _sqlite3.connect(str(DATABASE_PATH))
+                    _me_engine2 = MarketEventSignalEngine(_me_conn2)
+                    _rpt = _me_engine2.get_portfolio_signal_report(_me_signals, _held)
+                    _me_conn2.close()
+                    if _rpt['portfolio_risk_level'] == 'high':
+                        _risk_codes = ", ".join(set(s.code for s in _rpt['related_signals']
+                                                     if s.signal_type.value == 'risk'))
+                        _notifier.send_alert(
+                            "市场事件风险预警",
+                            f"持仓标的触发高风险信号: {_risk_codes}。请及时关注。",
+                            "error"
+                        )
+                        logger.warning(f"市场事件风险预警: {_rpt['related_count']}条关联信号")
+                    elif _rpt['related_count'] > 0:
+                        logger.info(f"市场事件信号: {_rpt['related_count']}条关联, "
+                                    f"级别={_rpt['portfolio_risk_level']}")
+            logger.info(f"市场事件信号: 总计 {_me_summary['total']} 条 "
+                        f"(风险 {_me_summary['by_type']['risk']}, "
+                        f"机会 {_me_summary['by_type']['opp']})")
+        except Exception as e:
+            logger.warning(f"市场事件信号分析失败(不影响主流程): {e}")
+
         # === 阶段四: 智能分析 ===
         advice_summary = run_stage4_smart(results, summary, risk_data)
 
