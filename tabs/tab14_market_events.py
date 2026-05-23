@@ -6,6 +6,7 @@ Tab14: 市场事件监控面板
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -89,6 +90,32 @@ def _render_lhb_panel():
         reasons = day_df['reason'].value_counts()
         st.metric("上榜原因数", len(reasons))
     
+    # 深度分析: 近30日上榜频率TOP10
+    st.markdown("**近30日上榜频率 TOP10**")
+    freq = df.groupby(['code', 'name']).size().reset_index(name='上榜次数')
+    freq = freq.sort_values('上榜次数', ascending=False).head(10)
+    if not freq.empty:
+        fig_freq = go.Figure(go.Bar(
+            x=freq['上榜次数'].values, y=freq['name'].values,
+            orientation='h', marker_color='#1f6feb',
+            text=freq['上榜次数'].values, textposition='auto',
+        ))
+        fig_freq.update_layout(height=max(200, len(freq)*30), margin=dict(l=120, r=20, t=5, b=10),
+                               xaxis_title="上榜次数", yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_freq, width='stretch')
+
+    # 深度分析: 净买入金额趋势(近30日合计)
+    if 'lhb_net_buy' in df.columns and not df.empty:
+        st.markdown("**净买入金额趋势**")
+        daily_net = df.groupby('date')['lhb_net_buy'].sum().reset_index()
+        daily_net = daily_net.sort_values('date')
+        colors = ['#22c55e' if v >= 0 else '#ef4444' for v in daily_net['lhb_net_buy']]
+        fig_trend = go.Figure(go.Bar(x=daily_net['date'], y=daily_net['lhb_net_buy']/1e8,
+                                     marker_color=colors, opacity=0.8))
+        fig_trend.update_layout(height=220, margin=dict(l=40, r=20, t=5, b=30),
+                                xaxis_title="", yaxis_title="净买入(亿)", bargap=0.3)
+        st.plotly_chart(fig_trend, width='stretch')
+
     # 数据表
     show_cols = ['code', 'name', 'close', 'change_pct', 'lhb_net_buy',
                  'lhb_buy_amount', 'lhb_sell_amount', 'net_buy_ratio', 'reason']
@@ -146,6 +173,39 @@ def _render_margin_panel():
         total_short = day_df['short_volume'].sum() / 1e8 if day_df['short_volume'].notna().any() else 0
         st.metric("融券余量(万)", f"{total_short:.0f}")
     
+    # 深度分析: 融资余额TOP10
+    st.markdown("**融资余额 TOP10**")
+    if 'margin_balance' in df.columns and not df.empty:
+        latest_date = df['date'].max()
+        latest_df = df[df['date'] == latest_date]
+        top10 = latest_df.nlargest(10, 'margin_balance')
+        if not top10.empty:
+            fig_top = go.Figure(go.Bar(
+                x=top10['margin_balance']/1e8, y=top10['name'].values,
+                orientation='h', marker_color='#f59e0b',
+                text=[f"{v/1e8:.1f}亿" for v in top10['margin_balance'].values],
+                textposition='auto',
+            ))
+            fig_top.update_layout(height=max(200, len(top10)*30), margin=dict(l=120, r=20, t=5, b=10),
+                                  xaxis_title="融资余额(亿)", yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_top, width='stretch')
+
+    # 深度分析: 融资余额日变化趋势
+    if 'margin_balance' in df.columns and not df.empty:
+        st.markdown("**融资余额变化趋势**")
+        daily_total = df.groupby('date').agg(
+            total_balance=('margin_balance', 'sum'),
+            total_buy=('margin_buy', 'sum'),
+            stock_count=('code', 'nunique')
+        ).reset_index().sort_values('date')
+        fig_mt = go.Figure()
+        fig_mt.add_trace(go.Scatter(x=daily_total['date'], y=daily_total['total_balance']/1e8,
+                                     mode='lines+markers', name='融资余额合计(亿)',
+                                     line=dict(color='#58a6ff', width=2), marker=dict(size=4)))
+        fig_mt.update_layout(height=220, margin=dict(l=40, r=20, t=5, b=30),
+                             xaxis_title="", yaxis_title="融资余额(亿)")
+        st.plotly_chart(fig_mt, width='stretch')
+
     # 数据表
     show_cols = ['code', 'name', 'margin_balance', 'margin_buy', 'margin_repay',
                  'short_volume', 'short_sell', 'short_repay']
@@ -192,6 +252,40 @@ def _render_holder_change_panel():
         decrease = len(day_df[day_df['qty_change'].fillna(0) < 0])
         st.metric("减持", decrease)
     
+    # 深度分析: 增减持规模趋势
+    st.markdown("**增减持规模趋势**")
+    if not df.empty and 'qty_change' in df.columns:
+        daily_chg = df.groupby('date').agg(
+            increase_vol=('qty_change', lambda x: x[x > 0].sum()),
+            decrease_vol=('qty_change', lambda x: x[x < 0].sum()),
+            record_count=('qty_change', 'count')
+        ).reset_index().sort_values('date')
+        fig_hc = go.Figure()
+        fig_hc.add_trace(go.Bar(x=daily_chg['date'], y=daily_chg['increase_vol']/1e4,
+                                name='增持(万股)', marker_color='#22c55e', opacity=0.8))
+        fig_hc.add_trace(go.Bar(x=daily_chg['date'], y=daily_chg['decrease_vol'].abs()/1e4,
+                                name='减持(万股)', marker_color='#ef4444', opacity=0.8))
+        fig_hc.update_layout(height=220, margin=dict(l=40, r=20, t=5, b=30),
+                             xaxis_title="", yaxis_title="变动量(万股)", barmode='relative')
+        st.plotly_chart(fig_hc, width='stretch')
+
+    # 深度分析: 减持规模TOP10
+    st.markdown("**减持规模 TOP10**")
+    if not df.empty and 'qty_change' in df.columns:
+        dec = df[df['qty_change'].fillna(0) < 0].copy()
+        if not dec.empty:
+            dec['abs_qty'] = dec['qty_change'].abs()
+            top_dec = dec.groupby(['code', 'name'])['abs_qty'].sum().nlargest(10).reset_index()
+            fig_dec = go.Figure(go.Bar(
+                x=top_dec['abs_qty']/1e4, y=top_dec['name'].values,
+                orientation='h', marker_color='#ef4444',
+                text=[f"{v/1e4:.0f}万" for v in top_dec['abs_qty'].values],
+                textposition='auto',
+            ))
+            fig_dec.update_layout(height=max(200, len(top_dec)*30), margin=dict(l=120, r=20, t=5, b=10),
+                                  xaxis_title="减持量(万股)", yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_dec, width='stretch')
+
     # 数据表
     show_cols = ['code', 'name', 'holder_name', 'holder_type', 'qty_change',
                  'qty_change_pct', 'change_type', 'float_mv']
@@ -261,6 +355,39 @@ def _render_institution_panel():
         )
         st.plotly_chart(fig, use_container_width=True)
     
+    # 深度分析: 调研热度趋势(被调研公司数)
+    st.markdown("**调研热度趋势**")
+    if not df.empty:
+        daily_stats = df.groupby('date').agg(
+            companies=('code', 'nunique'),
+            institutions=('institution', 'nunique'),
+            records=('id', 'count') if 'id' in df.columns else ('code', 'count')
+        ).reset_index().sort_values('date')
+        fig_jt = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_jt.add_trace(go.Bar(x=daily_stats['date'], y=daily_stats['companies'],
+                                name='被调研公司', marker_color='#1f6feb', opacity=0.7),
+                         secondary_y=False)
+        fig_jt.add_trace(go.Scatter(x=daily_stats['date'], y=daily_stats['institutions'],
+                                    mode='lines+markers', name='调研机构数',
+                                    line=dict(color='#f59e0b', width=2), marker=dict(size=4)),
+                         secondary_y=True)
+        fig_jt.update_layout(height=220, margin=dict(l=40, r=40, t=5, b=30),
+                             legend=dict(orientation="h", yanchor="bottom", y=1.02))
+        fig_jt.update_yaxes(title_text="公司数", secondary_y=False)
+        fig_jt.update_yaxes(title_text="机构数", secondary_y=True)
+        st.plotly_chart(fig_jt, width='stretch')
+
+    # 深度分析: 机构类型分布
+    if not df.empty and 'inst_type' in df.columns:
+        type_dist = df['inst_type'].dropna().value_counts().head(8)
+        if not type_dist.empty:
+            fig_pie = go.Figure(go.Pie(labels=type_dist.index, values=type_dist.values,
+                                        hole=0.4, textinfo='label+percent',
+                                        marker_colors=px.colors.qualitative.Set2[:len(type_dist)]))
+            fig_pie.update_layout(height=250, margin=dict(l=20, r=20, t=5, b=5),
+                                  legend=dict(font=dict(size=10), orientation="h", yanchor="bottom", y=-0.1))
+            st.plotly_chart(fig_pie, width='stretch')
+
     # 数据表
     show_cols = ['code', 'name', 'price', 'change_pct', 'institution',
                  'inst_type', 'receive_method', 'research_date']
@@ -329,6 +456,43 @@ def _render_block_trade_panel():
             )
             st.plotly_chart(fig, use_container_width=True)
     
+    # 深度分析: 买方营业部TOP10（按成交额）
+    st.markdown("**买方营业部 TOP10（按成交额）**")
+    if not df.empty and 'buyer_broker' in df.columns and 'amount' in df.columns:
+        broker_buy = df.groupby('buyer_broker')['amount'].sum().nlargest(10).reset_index()
+        fig_broker = go.Figure(go.Bar(
+            x=broker_buy['amount']/1e8, y=broker_buy['buyer_broker'].apply(lambda x: x[:20] if len(x)>20 else x).values,
+            orientation='h', marker_color='#8b5cf6',
+            text=[f"{v/1e8:.1f}亿" for v in broker_buy['amount'].values],
+            textposition='auto',
+        ))
+        fig_broker.update_layout(height=max(200, len(broker_buy)*30),
+                                 margin=dict(l=200, r=20, t=5, b=10),
+                                 xaxis_title="成交额(亿)", yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_broker, width='stretch')
+
+    # 深度分析: 日成交额趋势
+    if not df.empty and 'amount' in df.columns:
+        st.markdown("**成交额趋势**")
+        daily_amt = df.groupby('date').agg(
+            total_amount=('amount', 'sum'),
+            trade_count=('code', 'count'),
+            avg_premium=('premium_rate', 'mean')
+        ).reset_index().sort_values('date')
+        fig_bt = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_bt.add_trace(go.Bar(x=daily_amt['date'], y=daily_amt['total_amount']/1e8,
+                                name='成交额(亿)', marker_color='#58a6ff', opacity=0.7),
+                         secondary_y=False)
+        fig_bt.add_trace(go.Scatter(x=daily_amt['date'], y=daily_amt['avg_premium'],
+                                    mode='lines+markers', name='平均折溢率(%)',
+                                    line=dict(color='#f85149', width=2), marker=dict(size=4)),
+                         secondary_y=True)
+        fig_bt.update_layout(height=220, margin=dict(l=40, r=40, t=5, b=30),
+                             legend=dict(orientation="h", yanchor="bottom", y=1.02))
+        fig_bt.update_yaxes(title_text="成交额(亿)", secondary_y=False)
+        fig_bt.update_yaxes(title_text="折溢率(%)", secondary_y=True)
+        st.plotly_chart(fig_bt, width='stretch')
+
     # 数据表
     show_cols = ['code', 'name', 'close', 'trade_price', 'premium_rate',
                  'volume', 'amount', 'buyer_broker', 'seller_broker']
