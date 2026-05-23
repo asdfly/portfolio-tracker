@@ -225,3 +225,78 @@ def render_tab13(**kwargs):
         st.markdown(pd.DataFrame(overview_rows).to_html(index=False, escape=False), unsafe_allow_html=True)
     finally:
         conn.close()
+
+    # === 采集执行日志 ===
+    st.markdown("---")
+    st.subheader("采集执行统计")
+    conn_el = get_db_connection()
+    try:
+        el_df = pd.read_sql_query("""
+            SELECT task_name, status, 
+                   COUNT(*) as run_count,
+                   ROUND(AVG(duration_seconds), 1) as avg_duration,
+                   MIN(created_at) as first_run,
+                   MAX(created_at) as last_run
+            FROM execution_logs
+            GROUP BY task_name, status
+            ORDER BY last_run DESC
+        """, conn_el)
+    finally:
+        conn_el.close()
+
+    if not el_df.empty:
+        # 成功率
+        success_df = el_df[el_df['status'] == 'success']
+        fail_df = el_df[el_df['status'].isin(['error', 'failed'])]
+        running_df = el_df[el_df['status'] == 'running']
+        total_success = success_df['run_count'].sum()
+        total_fail = fail_df['run_count'].sum()
+        total_all = total_success + total_fail
+        success_rate = (total_success / total_all * 100) if total_all > 0 else 0
+
+        c_el1, c_el2, c_el3, c_el4 = st.columns(4)
+        c_el1.metric("总执行次数", total_all)
+        c_el2.metric("成功次数", total_success)
+        c_el3.metric("失败次数", total_fail)
+        c_el4.metric("成功率", f"{success_rate:.0f}%",
+                     delta_color="normal" if success_rate >= 80 else "inverse")
+
+        # 执行耗时趋势（近30天）
+        conn_el2 = get_db_connection()
+        try:
+            recent_el = pd.read_sql_query("""
+                SELECT date(created_at) as run_date, status, 
+                       AVG(duration_seconds) as avg_duration, COUNT(*) as cnt
+                FROM execution_logs
+                WHERE status = 'success'
+                GROUP BY date(created_at)
+                ORDER BY run_date DESC
+                LIMIT 30
+            """, conn_el2)
+        finally:
+            conn_el2.close()
+
+        if not recent_el.empty:
+            recent_el = recent_el.sort_values('run_date')
+            fig_el = go.Figure()
+            fig_el.add_trace(go.Bar(x=recent_el['run_date'], y=recent_el['cnt'],
+                                   name='执行次数', marker_color='#58a6ff', opacity=0.7,
+                                   yaxis='y'))
+            fig_el.add_trace(go.Scatter(x=recent_el['run_date'], y=recent_el['avg_duration'],
+                                        mode='lines+markers', name='平均耗时(秒)',
+                                        line=dict(color='#f59e0b', width=2), marker=dict(size=4),
+                                        yaxis='y2'))
+            fig_el.update_layout(height=250, margin=dict(l=40, r=40, t=10, b=30),
+                                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                                 yaxis=dict(title="次数", gridcolor="#21262d"),
+                                 yaxis2=dict(title="耗时(秒)", gridcolor="#21262d", overlaying="y", side="right"))
+            st.plotly_chart(fig_el, width='stretch')
+
+        # 详细表
+        disp_el = el_df[['task_name', 'status', 'run_count', 'avg_duration', 'first_run', 'last_run']].copy()
+        disp_el['avg_duration'] = disp_el['avg_duration'].apply(lambda x: f"{x:.1f}s" if x > 0 else "-")
+        disp_el['first_run'] = disp_el['first_run'].str[:16]
+        disp_el['last_run'] = disp_el['last_run'].str[:16]
+        st.dataframe(disp_el, use_container_width=True, hide_index=True, height=200)
+    else:
+        st.info("暂无执行日志记录")
