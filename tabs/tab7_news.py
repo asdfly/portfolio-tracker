@@ -466,4 +466,71 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
                 )
                 st.plotly_chart(fig_pnl_dist, width="stretch")
 
+    # ===== 新闻情感分析 =====
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '新闻情感分析'
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '基于关键词对近7天新闻标题进行情感打分，分析各板块情绪偏向。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        conn_sent = get_db_connection()
+        try:
+            sent_df = pd.read_sql_query(
+                "SELECT date, category, title FROM daily_news WHERE date >= date('now', '-7 days') ORDER BY date DESC",
+                conn_sent)
+        finally:
+            conn_sent.close()
+
+        if not sent_df.empty:
+            pos_w = ['上涨', '增长', '突破', '新高', '反弹', '利好', '强势', '大涨', '净流入', '增持', '景气', '复苏', '超预期', '回暖', '看多', '金叉', '多头', '盈利', '创新高', '加速']
+            neg_w = ['下跌', '暴跌', '跌破', '风险', '减持', '净流出', '利空', '疲软', '收紧', '回调', '崩盘', '空头', '死叉', '缩量', '亏损', '下行', '承压', '警惕', '放缓']
+
+            def _sent_score(text):
+                if not isinstance(text, str): return 0
+                return sum(1 for w in pos_w if w in text) - sum(1 for w in neg_w if w in text)
+
+            sent_df["sentiment"] = sent_df["title"].apply(_sent_score)
+            cat_sent = sent_df.groupby("category").agg(
+                cnt=("title", "count"),
+                avg_s=("sentiment", "mean"),
+                pos=("sentiment", lambda x: (x > 0).sum()),
+                neg=("sentiment", lambda x: (x < 0).sum()),
+            ).sort_values("avg_s", ascending=True).reset_index()
+
+            colors_s = ["#22c55e" if v > 0 else "#ef4444" if v < 0 else "#8b949e" for v in cat_sent["avg_s"]]
+            fig_sent = go.Figure(go.Bar(
+                x=cat_sent["avg_s"], y=cat_sent["category"], orientation="h",
+                marker_color=colors_s,
+                text=[f"{v:+.1f}" for v in cat_sent["avg_s"]], textposition="auto",
+            ))
+            fig_sent.update_layout(height=max(200, len(cat_sent)*30),
+                                   margin=dict(l=110, r=20, t=5, b=10),
+                                   xaxis_title="情绪得分(+正面/-负面)",
+                                   yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_sent, width='stretch')
+
+            sc1, sc2, sc3 = st.columns(3)
+            tp = sent_df[sent_df["sentiment"] > 0].shape[0]
+            tn = sent_df[sent_df["sentiment"] < 0].shape[0]
+            sc1.metric("正面新闻", tp)
+            sc2.metric("负面新闻", tn)
+            sc3.metric("中性新闻", len(sent_df) - tp - tn)
+
+            neg_news = sent_df[sent_df["sentiment"] < 0].nlargest(5, "sentiment", keep="last")
+            if not neg_news.empty:
+                with st.expander("负面新闻 TOP5", expanded=False):
+                    for _, nr in neg_news.iterrows():
+                        st.markdown(f'<div style="font-size:12px;color:#ef4444;padding:2px 0;">[{nr["category"]}] {nr["date"]} - {nr["title"]}</div>', unsafe_allow_html=True)
+        else:
+            st.info("近7天无新闻数据")
+    except Exception:
+        st.info("新闻情感分析暂不可用")
+
+
 # ========== Tab8: 操作建议 ==========
