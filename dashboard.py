@@ -4801,6 +4801,57 @@ def _render_tab6_technical(tab6, technical):
             )
             st.plotly_chart(fig_rsi, width="stretch")
 
+            st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
+            # ---------- RSI 历史趋势图 ----------
+            st.markdown(
+                '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">RSI 历史趋势<span class="tip-arrow" style="left:4px;top:calc(100%+5px);"></span><span class="tip-text" style="left:4px;top:calc(100%+10px);">选择持仓品种，查看近60个交易日RSI走势。</span></div>',
+                unsafe_allow_html=True,
+            )
+            tech_names = tech_df[["code", "name"]].drop_duplicates()
+            if not tech_names.empty:
+                rsi_nm = dict(zip(tech_names["code"], tech_names["name"]))
+                rsi_opts = list(rsi_nm.keys())
+                sel_rsi = st.selectbox(
+                    "选择品种", rsi_opts,
+                    format_func=lambda x: f"{rsi_nm[x]} ({x})",
+                    key="rsi_trend_sel", label_visibility="collapsed",
+                )
+                if sel_rsi:
+                    cr = get_db_connection()
+                    try:
+                        rh = pd.read_sql_query(
+                            "SELECT date, rsi_value FROM etf_technical "
+                            "WHERE code = ? ORDER BY date DESC LIMIT 60",
+                            cr, params=(sel_rsi,),
+                        )
+                    finally:
+                        cr.close()
+                    if not rh.empty:
+                        rh = rh.sort_values("date").reset_index(drop=True)
+                        frt = go.Figure()
+                        frt.add_trace(go.Scatter(
+                            x=rh["date"], y=rh["rsi_value"], name="RSI",
+                            mode="lines+markers", line=dict(color="#58a6ff", width=2),
+                            marker=dict(size=4), hovertemplate="%{x}<br>RSI: %{y:.1f}<extra></extra>",
+                        ))
+                        frt.add_hrect(y0=70, y1=100, fillcolor="rgba(239,68,68,0.08)", line_width=0,
+                            annotation_text="超买区", annotation_position="top left",
+                            annotation_font=dict(size=10, color="#ef4444"))
+                        frt.add_hrect(y0=0, y1=30, fillcolor="rgba(59,130,246,0.08)", line_width=0,
+                            annotation_text="超卖区", annotation_position="bottom left",
+                            annotation_font=dict(size=10, color="#3b82f6"))
+                        frt.add_hline(y=70, line_dash="dash", line_color="#ef4444", opacity=0.5)
+                        frt.add_hline(y=30, line_dash="dash", line_color="#3b82f6", opacity=0.5)
+                        frt.add_hline(y=50, line_dash="dot", line_color="#8b949e", opacity=0.3)
+                        frt.update_layout(
+                            xaxis=dict(gridcolor="#21262d", tickfont=dict(size=9, color="#8b949e")),
+                            yaxis=dict(title="RSI", range=[0, 100], gridcolor="#21262d", tickfont=dict(size=9, color="#8b949e")),
+                            paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                            height=320, margin=dict(l=50, r=30, t=30, b=40), showlegend=False,
+                        )
+                        st.plotly_chart(frt, width="stretch")
+
+
     # ========== Tab7: 资讯与评估 ==========
 
 
@@ -4898,6 +4949,40 @@ def _render_tab7_news(tab7, positions, summary, technical):
                 )
         else:
             st.info("暂无市场资讯数据，请检查数据采集服务是否正常运行")
+
+
+            # ===== 新闻数量趋势图 =====
+            st.markdown(
+                '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">新闻数量趋势<span class="tip-arrow" style="left:4px;top:calc(100%+5px);"></span><span class="tip-text" style="left:4px;top:calc(100%+10px);">各板块近30日新闻数量趋势，发现市场关注热点变化。</span></div>',
+                unsafe_allow_html=True,
+            )
+            try:
+                cn = get_db_connection()
+                try:
+                    ntd = pd.read_sql_query(
+                        "SELECT date, category, COUNT(*) as cnt FROM daily_news "
+                        "WHERE date >= date('now', '-30 days') "
+                        "GROUP BY date, category ORDER BY date", cn)
+                finally:
+                    cn.close()
+                if not ntd.empty:
+                    fnt = go.Figure()
+                    for cat in sorted(ntd["category"].unique()):
+                        s = ntd[ntd["category"] == cat]
+                        fnt.add_trace(go.Scatter(
+                            x=s["date"], y=s["cnt"], name=cat,
+                            mode="lines+markers", line=dict(width=1.5), marker=dict(size=3)))
+                    fnt.update_layout(
+                        yaxis=dict(title="新闻数量", gridcolor="#21262d", tickfont=dict(size=9, color="#8b949e")),
+                        xaxis=dict(gridcolor="#21262d", tickfont=dict(size=9, color="#8b949e")),
+                        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                        height=320, margin=dict(l=50, r=30, t=30, b=40),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            font=dict(size=9, color="#8b949e"), groupclick="toggleitem"),
+                    )
+                    st.plotly_chart(fnt, width="stretch")
+            except Exception:
+                pass
 
         st.markdown("---")
 
@@ -6410,6 +6495,27 @@ def _render_tab10_fund_flow(tab10, positions, summary):
                                 yaxis=dict(tickfont=dict(size=10)),
                             )
                             st.plotly_chart(fig_heat, width="stretch")
+
+                            # ===== 板块轮动追踪 =====
+                            st.markdown(
+                                '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:3px 0;margin-top:12px;">板块轮动追踪<span class="tip-arrow" style="left:4px;top:calc(100%+5px);"></span><span class="tip-text" style="left:4px;top:calc(100%+10px);">追踪近5个交易日资金净流入TOP10板块排名变化。</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                            r5d = sorted(sector_df["date"].unique(), reverse=True)[:5]
+                            if len(r5d) >= 2:
+                                rh2 = '<div style="display:flex;gap:12px;overflow-x:auto;padding:8px 0;">'
+                                for d in r5d:
+                                    dt = sector_df[sector_df["date"] == d].nlargest(10, "net_inflow")[["name", "net_inflow"]].reset_index(drop=True)
+                                    rh2 += f'<div style="min-width:150px;background:#161b22;border-radius:6px;padding:10px;">'
+                                    rh2 += f'<div style="font-size:11px;color:#8b949e;text-align:center;margin-bottom:6px;font-weight:bold;">{str(d)[-5:]}</div>'
+                                    for rk, (_, rw) in enumerate(dt.iterrows(), 1):
+                                        v = rw["net_inflow"] / 1e8
+                                        cl = "#22c55e" if v >= 0 else "#ef4444"
+                                        rh2 += f'<div style="font-size:11px;padding:2px 0;display:flex;justify-content:space-between;"><span style="color:#8b949e;">{rk}. {rw["name"]}</span><span style="color:{cl};font-weight:bold;">{v:+.1f}亿</span></div>'
+                                    rh2 += '</div>'
+                                rh2 += '</div>'
+                                st.markdown(rh2, unsafe_allow_html=True)
+
                 else:
                     st.info("暂无行业资金流数据，请先运行数据采集任务")
                     if st.button("采集行业资金流", key="fetch_sector_flow"):
@@ -6890,6 +6996,23 @@ def _inject_custom_css():
     )
 
 def _render_sidebar(available_dates):
+
+    # ===== 数据新鲜度提示 =====
+    latest_avail = available_dates[0] if available_dates else None
+    if latest_avail:
+        from datetime import datetime
+        try:
+            last_dt = datetime.strptime(str(latest_avail), "%Y-%m-%d")
+            gap = (datetime.now() - last_dt).days
+            if gap <= 1:
+                st.sidebar.success(f"数据已更新至 {latest_avail}")
+            elif gap <= 3:
+                st.sidebar.warning(f"数据截止 {latest_avail}（{gap}天前）")
+            else:
+                st.sidebar.error(f"数据截止 {latest_avail}（{gap}天前），请检查采集服务")
+        except Exception:
+            st.sidebar.caption(f"数据截止: {latest_avail}")
+
     """Render sidebar controls. Returns (selected_date, show_days, selected_benchmark)."""
     with st.sidebar:
         st.markdown("### 🔧 控制面板")

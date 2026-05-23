@@ -101,6 +101,7 @@ def render_tab12(**kwargs):
         "🗺 黄金基准",
         "💰 利率",
         "📊 两融余额",
+        "🔒 股权质押",
     ])
 
     with sub_tabs[0]:
@@ -113,6 +114,8 @@ def render_tab12(**kwargs):
         _render_interest_rates(days)
     with sub_tabs[4]:
         _render_margin_data(days)
+    with sub_tabs[5]:
+        _render_pledge_data(days)
 
 
 def _render_exchange_rate(days: int):
@@ -328,3 +331,53 @@ def _render_margin_data(days: int):
     fig = _style_fig(fig, "沪深两市融资融券余额")
     fig.update_layout(xaxis=dict(gridcolor="#21262d", rangeslider=dict(visible=False)))
     st.plotly_chart(fig, width='stretch')
+
+
+def _render_pledge_data(days: int):
+    """股权质押数据（市场概况）"""
+    df = _load_sentiment_data(["PLEDGE_RATIO", "PLEDGE_COMPANY_COUNT", "PLEDGE_TOTAL_MV"], days)
+    if df.empty:
+        st.info("暂无股权质押数据")
+        return
+
+    ratio = df[df["indicator_code"] == "PLEDGE_RATIO"].sort_values("date")
+    count = df[df["indicator_code"] == "PLEDGE_COMPANY_COUNT"].sort_values("date")
+    mv = df[df["indicator_code"] == "PLEDGE_TOTAL_MV"].sort_values("date")
+
+    # 指标卡片
+    c1, c2, c3 = st.columns(3)
+    if not ratio.empty:
+        latest_ratio = ratio.iloc[-1]
+        prev_ratio = ratio.iloc[-2] if len(ratio) >= 2 else latest_ratio
+        chg = (latest_ratio['value'] or 0) - (prev_ratio['value'] or 0)
+        c1.metric("A股质押总比例", f"{(latest_ratio['value'] or 0):.2f}%", f"{chg:+.2f}pp")
+    if not count.empty:
+        latest_count = count.iloc[-1]
+        prev_count = count.iloc[-2] if len(count) >= 2 else latest_count
+        chg = (latest_count['value'] or 0) - (prev_count['value'] or 0)
+        c2.metric("质押公司数量", f"{int(latest_count['value'] or 0):,}家", f"{chg:+,}家")
+    if not mv.empty:
+        latest_mv = mv.iloc[-1]
+        prev_mv = mv.iloc[-2] if len(mv) >= 2 else latest_mv
+        chg = (latest_mv['value'] or 0) - (prev_mv['value'] or 0)
+        c3.metric("质押总市值", f"{(latest_mv['value'] or 0)/1e8:.2f}万亿元", f"{chg/1e8:+.2f}万亿")
+
+    # 质押比例趋势图
+    if not ratio.empty:
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(go.Scatter(x=ratio["date"], y=ratio["value"].ffill(), mode="lines+markers",
+                                 name="质押比例(%)", line=dict(color="#ef4444", width=2),
+                                 marker=dict(size=5)),
+                      secondary_y=False)
+
+        # 公司数量（右轴）
+        if not count.empty:
+            fig.add_trace(go.Bar(x=count["date"], y=count["value"].fillna(0),
+                                 name="质押公司数", marker_color="#58a6ff", opacity=0.5),
+                          secondary_y=True)
+
+        fig.update_yaxes(title_text="质押比例(%)", secondary_y=False, gridcolor="#21262d")
+        fig.update_yaxes(title_text="公司数量", secondary_y=True, gridcolor="#21262d")
+        fig = _style_fig(fig, "A股股权质押市场概况（周频）")
+        fig.update_layout(xaxis=dict(gridcolor="#21262d", rangeslider=dict(visible=False)))
+        st.plotly_chart(fig, width='stretch')
