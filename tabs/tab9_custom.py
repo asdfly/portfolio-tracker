@@ -95,6 +95,8 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
                         detail_df["return_pct"] = detail_df["return_pct"].apply(
                             lambda x: f'<span style="color:{"#22c55e" if x>0 else "#ef4444"}">{x:+.2f}%</span>'
                         )
+                        col_map = {"date": "日期", "entry": "买入价", "exit": "卖出价", "return_pct": "收益率"}
+                        detail_df = detail_df.rename(columns={k: v for k, v in col_map.items() if k in detail_df.columns})
                         st.markdown(detail_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
                     # 收益分布图

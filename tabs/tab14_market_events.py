@@ -18,7 +18,25 @@ from config.settings import DATABASE_PATH
 #  数据查询
 # ============================================================
 
+# 表头中英文映射
+_COL_CN = {
+    "code": "代码", "name": "名称", "close": "收盘价", "change_pct": "涨跌幅",
+    "lhb_net_buy": "净买入额", "lhb_buy_amount": "买入额", "lhb_sell_amount": "卖出额",
+    "net_buy_ratio": "净买入占比", "reason": "上榜原因",
+    "margin_balance": "融资余额", "margin_buy": "融资买入", "margin_repay": "融资偿还",
+    "short_volume": "融券余量", "short_sell": "融券卖出", "short_repay": "融券偿还",
+    "holder_name": "股东名称", "holder_type": "股东类型", "qty_change": "变动数量",
+    "qty_change_pct": "变动比例", "change_type": "变动方向", "float_mv": "流通市值",
+    "price": "股价", "institution": "机构名称", "inst_type": "机构类型",
+    "receive_method": "接待方式", "research_date": "调研日期",
+    "trade_price": "成交价", "premium_rate": "折溢价率", "volume": "成交量",
+    "amount": "成交额", "buyer_broker": "买方营业部", "seller_broker": "卖方营业部",
+}
+
+
 @st.cache_data(ttl=600)
+
+
 def _load_market_events(table: str, days: int = 30) -> pd.DataFrame:
     """从数据库加载指定表最近N天的数据"""
     import sqlite3
@@ -127,6 +145,8 @@ def _render_lhb_panel():
     if 'change_pct' in display_df.columns:
         display_df['change_pct'] = display_df['change_pct'].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "")
     
+    cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
+    display_df.columns = cn_cols
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
 
 
@@ -218,6 +238,8 @@ def _render_margin_panel():
         if c in display_df.columns:
             display_df[c] = display_df[c].apply(lambda x: f"{x/1e4:.0f}万" if pd.notna(x) else "")
     
+    cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
+    display_df.columns = cn_cols
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
 
 
@@ -301,6 +323,8 @@ def _render_holder_change_panel():
         display_df['float_mv'] = display_df['float_mv'].apply(
             lambda x: f"{x/1e8:.1f}亿" if pd.notna(x) else "")
     
+    cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
+    display_df.columns = cn_cols
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
 
 
@@ -397,6 +421,8 @@ def _render_institution_panel():
         display_df['change_pct'] = display_df['change_pct'].apply(
             lambda x: f"{x:.2f}%" if pd.notna(x) else "")
     
+    cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
+    display_df.columns = cn_cols
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=350)
 
 
@@ -508,6 +534,8 @@ def _render_block_trade_panel():
         display_df['volume'] = display_df['volume'].apply(
             lambda x: f"{x/1e4:.0f}万" if pd.notna(x) else "")
     
+    cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
+    display_df.columns = cn_cols
     st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
 
 
