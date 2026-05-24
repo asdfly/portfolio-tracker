@@ -836,7 +836,10 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
 
             # 规模暴露
             with col_size:
-                st.markdown("**规模维度**")
+                st.markdown(
+                    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">规模维度<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于持仓ETF的市值规模分类，计算大盘/中盘/小盘风格的暴露占比。</span></div>',
+                    unsafe_allow_html=True,
+                )
                 size_exp = style_exp.get("size_exposure", {})
                 if size_exp:
                     fig_size = go.Figure(
@@ -860,7 +863,10 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
 
             # 风格暴露
             with col_style:
-                st.markdown("**风格维度**")
+                st.markdown(
+                    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">风格维度<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于持仓ETF的风格标签，计算成长/价值/均衡风格的暴露占比。</span></div>',
+                    unsafe_allow_html=True,
+                )
                 style_exp_d = style_exp.get("style_exposure", {})
                 if style_exp_d:
                     fig_sty = go.Figure(
@@ -884,7 +890,10 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
 
             # 行业暴露
             with col_sect:
-                st.markdown("**行业维度**")
+                st.markdown(
+                    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">行业维度<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于持仓ETF的行业分类，计算各行业的暴露权重，展示组合的行业集中度。</span></div>',
+                    unsafe_allow_html=True,
+                )
                 sector_exp = style_exp.get("sector_exposure", {})
                 if sector_exp:
                     sec_labels = list(sector_exp.keys())[:8]

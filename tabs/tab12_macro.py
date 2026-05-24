@@ -240,7 +240,10 @@ def _render_interest_rates(days: int):
     col_lpr, col_shibor = st.columns(2)
 
     with col_lpr:
-        st.markdown("**LPR贷款市场报价利率**")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">LPR贷款市场报价利率<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示1年期和5年期LPR利率走势，LPR是商业银行贷款定价基准，反映货币政策松紧方向。</span></div>',
+            unsafe_allow_html=True,
+        )
         if lpr_df.empty:
             st.info("暂无LPR数据")
         else:
@@ -268,7 +271,10 @@ def _render_interest_rates(days: int):
             st.plotly_chart(fig, width='stretch')
 
     with col_shibor:
-        st.markdown("**Shibor隔夜利率**")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">Shibor隔夜利率<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">上海银行间同业拆放利率(隔夜)，反映银行间短期资金面松紧程度。</span></div>',
+            unsafe_allow_html=True,
+        )
         if shibor_df.empty:
             st.info("暂无Shibor数据")
         else:

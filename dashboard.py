@@ -5441,7 +5441,7 @@ def _render_tab8_advice(tab8, positions, summary, technical):
 
             # ===== 建议详情 =====
             st.markdown(
-                '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">建议详情</div>',
+                '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">建议详情<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于技术信号与持仓收益的智能调仓建议，包含多空评分、操作方向及信号来源。</span></div>',
                 unsafe_allow_html=True,
             )
 
@@ -6758,7 +6758,7 @@ def _render_tab10_fund_flow(tab10, positions, summary):
 
                     # ----- 持仓ETF合计主力资金净流入 -----
                     st.markdown(
-                        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:3px 0;">持仓ETF合计资金流</div>',
+                        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:3px 0;">持仓ETF合计资金流<span class="tip-arrow" style="left:4px;top:calc(100%+5px);"></span><span class="tip-text" style="left:4px;top:calc(100%+10px);">持仓中所有ETF的主力资金净流入合计趋势，含90日累计统计与单日明细。</span></div>',
                         unsafe_allow_html=True,
                     )
 

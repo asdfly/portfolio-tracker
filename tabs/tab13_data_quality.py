@@ -168,7 +168,10 @@ def render_tab13(**kwargs):
     st.markdown("---")
 
     # === 新鲜度热力图 ===
-    st.subheader("数据新鲜度")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">数据新鲜度<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">各数据表的最新数据日期与当前日期的延迟天数，颜色标识数据时效性状态。</span></div>',
+        unsafe_allow_html=True,
+    )
     freshness = report["details"]["freshness"]
     fig_fresh = _freshness_heatmap(freshness)
     st.plotly_chart(fig_fresh, width='stretch')
@@ -191,12 +194,18 @@ def render_tab13(**kwargs):
     col_cov, col_bt = st.columns(2)
 
     with col_cov:
-        st.subheader("数据覆盖率")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">数据覆盖率<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">各数据表在选定时间范围内的记录完整度，包括缺失交易日占比和有效记录数。</span></div>',
+            unsafe_allow_html=True,
+        )
         cov_df = _coverage_table(report["details"]["coverage"])
         st.markdown(cov_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
     with col_bt:
-        st.subheader("回测完整度")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">回测完整度<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">自定义指标的模板数量和回测结果覆盖情况，反映回测体系的完备程度。</span></div>',
+            unsafe_allow_html=True,
+        )
         bt = report["details"]["backtest"]
         st.metric("指标模板", f"{bt['template_count']}个")
         st.metric("回测结果", f"{bt['result_count']}条")
@@ -206,7 +215,10 @@ def render_tab13(**kwargs):
 
     # === 全库概览 ===
     st.markdown("---")
-    st.subheader("全库数据概览")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">全库数据概览<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">数据库中所有表的记录总数和最新数据日期，快速了解整体数据规模。</span></div>',
+        unsafe_allow_html=True,
+    )
     conn = get_db_connection()
     try:
         tables = pd.read_sql_query(
@@ -228,7 +240,10 @@ def render_tab13(**kwargs):
 
     # === 采集执行日志 ===
     st.markdown("---")
-    st.subheader("采集执行统计")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">采集执行统计<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">数据采集任务的执行历史统计，包括成功率、平均耗时和最近执行状态。</span></div>',
+        unsafe_allow_html=True,
+    )
     conn_el = get_db_connection()
     try:
         el_df = pd.read_sql_query("""

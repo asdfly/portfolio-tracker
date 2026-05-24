@@ -90,7 +90,10 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
                     # 信号明细
                     details = result.get("signals_detail", [])
                     if details:
-                        st.markdown("**最近信号记录**")
+                        st.markdown(
+                            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">最近信号记录<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示所选指标最近触发的买卖信号及其后续收益表现。</span></div>',
+                            unsafe_allow_html=True,
+                        )
                         detail_df = pd.DataFrame(details)
                         detail_df["return_pct"] = detail_df["return_pct"].apply(
                             lambda x: f'<span style="color:{"#22c55e" if x>0 else "#ef4444"}">{x:+.2f}%</span>'
@@ -197,7 +200,10 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
 
                         col_pc1, col_pc2 = st.columns([1, 2])
                         with col_pc1:
-                            st.markdown("**形态统计**")
+                            st.markdown(
+                                '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">形态统计<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">统计各K线形态在所选周期内的出现次数及其信号方向。</span></div>',
+                                unsafe_allow_html=True,
+                            )
                             for pname, cnt in sorted(pat_count.items(), key=lambda x: -x[1]):
                                 sig = PATTERN_SIGNAL.get(pname, "neutral")
                                 icon = "🟢" if sig == "bullish" else ("🔴" if sig == "bearish" else "⚪")
