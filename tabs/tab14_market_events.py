@@ -109,7 +109,10 @@ def _render_lhb_panel():
         st.metric("上榜原因数", len(reasons))
     
     # 深度分析: 近30日上榜频率TOP10
-    st.markdown("**近30日上榜频率 TOP10**")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">近30日上榜频率 TOP10<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">统计近30个交易日内各股票登上龙虎榜的次数，上榜频率越高表示市场关注度越高。</span></div>',
+        unsafe_allow_html=True,
+    )
     freq = df.groupby(['code', 'name']).size().reset_index(name='上榜次数')
     freq = freq.sort_values('上榜次数', ascending=False).head(10)
     if not freq.empty:
@@ -124,7 +127,10 @@ def _render_lhb_panel():
 
     # 深度分析: 净买入金额趋势(近30日合计)
     if 'lhb_net_buy' in df.columns and not df.empty:
-        st.markdown("**净买入金额趋势**")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">净买入金额趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">龙虎榜每日合计净买入金额走势，绿色为净买入、红色为净卖出，反映机构资金整体动向。</span></div>',
+            unsafe_allow_html=True,
+        )
         daily_net = df.groupby('date')['lhb_net_buy'].sum().reset_index()
         daily_net = daily_net.sort_values('date')
         colors = ['#22c55e' if v >= 0 else '#ef4444' for v in daily_net['lhb_net_buy']]
@@ -194,7 +200,10 @@ def _render_margin_panel():
         st.metric("融券余量(万)", f"{total_short:.0f}")
     
     # 深度分析: 融资余额TOP10
-    st.markdown("**融资余额 TOP10**")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">融资余额 TOP10<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">最新交易日融资余额排名前10的个股，融资余额高表示杠杆做多资金集中。</span></div>',
+        unsafe_allow_html=True,
+    )
     if 'margin_balance' in df.columns and not df.empty:
         latest_date = df['date'].max()
         latest_df = df[df['date'] == latest_date]
@@ -212,7 +221,10 @@ def _render_margin_panel():
 
     # 深度分析: 融资余额日变化趋势
     if 'margin_balance' in df.columns and not df.empty:
-        st.markdown("**融资余额变化趋势**")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">融资余额变化趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">两融标的融资余额日变化走势，含融资买入额和融资偿还额对比，反映杠杆资金进出动态。</span></div>',
+            unsafe_allow_html=True,
+        )
         daily_total = df.groupby('date').agg(
             total_balance=('margin_balance', 'sum'),
             total_buy=('margin_buy', 'sum'),
@@ -275,7 +287,10 @@ def _render_holder_change_panel():
         st.metric("减持", decrease)
     
     # 深度分析: 增减持规模趋势
-    st.markdown("**增减持规模趋势**")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">增减持规模趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">大股东及高管每日增持/减持股数合计走势，绿色为增持、红色为减持。</span></div>',
+        unsafe_allow_html=True,
+    )
     if not df.empty and 'qty_change' in df.columns:
         daily_chg = df.groupby('date').agg(
             increase_vol=('qty_change', lambda x: x[x > 0].sum()),
@@ -292,7 +307,10 @@ def _render_holder_change_panel():
         st.plotly_chart(fig_hc, width='stretch')
 
     # 深度分析: 减持规模TOP10
-    st.markdown("**减持规模 TOP10**")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">减持规模 TOP10<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">减持规模排名前10的个股，减持量大可能意味着内部人对股价前景谨慎。</span></div>',
+        unsafe_allow_html=True,
+    )
     if not df.empty and 'qty_change' in df.columns:
         dec = df[df['qty_change'].fillna(0) < 0].copy()
         if not dec.empty:
@@ -380,7 +398,10 @@ def _render_institution_panel():
         st.plotly_chart(fig, use_container_width=True)
     
     # 深度分析: 调研热度趋势(被调研公司数)
-    st.markdown("**调研热度趋势**")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">调研热度趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">每日被调研公司数和参与调研机构数走势，反映机构关注度和研究方向变化。</span></div>',
+        unsafe_allow_html=True,
+    )
     if not df.empty:
         daily_stats = df.groupby('date').agg(
             companies=('code', 'nunique'),
@@ -483,7 +504,10 @@ def _render_block_trade_panel():
             st.plotly_chart(fig, use_container_width=True)
     
     # 深度分析: 买方营业部TOP10（按成交额）
-    st.markdown("**买方营业部 TOP10（按成交额）**")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">买方营业部 TOP10（按成交额）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">大宗交易买方营业部按成交金额排名，活跃营业部可能代表特定资金动向。</span></div>',
+        unsafe_allow_html=True,
+    )
     if not df.empty and 'buyer_broker' in df.columns and 'amount' in df.columns:
         broker_buy = df.groupby('buyer_broker')['amount'].sum().nlargest(10).reset_index()
         fig_broker = go.Figure(go.Bar(
@@ -499,7 +523,10 @@ def _render_block_trade_panel():
 
     # 深度分析: 日成交额趋势
     if not df.empty and 'amount' in df.columns:
-        st.markdown("**成交额趋势**")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">成交额趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">大宗交易每日成交额走势，含成交笔数和平均折价率，反映大宗交易市场活跃度。</span></div>',
+            unsafe_allow_html=True,
+        )
         daily_amt = df.groupby('date').agg(
             total_amount=('amount', 'sum'),
             trade_count=('code', 'count'),
