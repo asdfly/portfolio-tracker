@@ -318,6 +318,11 @@ def _render_sentiment_analysis(df_sentiment):
 
 def render_international_comparison():
     """国际金价对比分析主入口"""
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">国际金价对比<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">对比不同市场的黄金价格（伦敦金、纽约金、上海金），分析价差和汇率影响。</span></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("#### 国际金价对比")
     # 优先使用预加载数据
     from tabs.gold_components.gold_preloader import get_preloaded

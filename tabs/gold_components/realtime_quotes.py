@@ -175,6 +175,11 @@ def _render_kline_panel(symbol, n_days=90):
 
 def render_realtime_quotes():
     """渲染SGE多品种实时行情面板"""
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">实时行情<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示上海黄金交易所各品种的最新报价、涨跌幅、成交量等实时行情数据。</span></div>',
+        unsafe_allow_html=True,
+    )
     # 上方：品种表 + 实时行情
     top_left, top_right = st.columns([1, 2])
 

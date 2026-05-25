@@ -11,6 +11,11 @@ from .gold_utils import fetch_china_reserve, base_layout
 
 
 def render_reserve_analysis():
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">储备分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">跟踪中国央行黄金储备变化趋势，分析官方购金行为对金价的中长期影响。</span></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("**黄金储备与外汇储备占比分析**")
 
     reserve_df = fetch_china_reserve()
