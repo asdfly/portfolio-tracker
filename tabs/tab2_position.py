@@ -507,6 +507,97 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("持仓数据不足，暂无法计算相关性矩阵")
 
+    # ===== 深度分析: 持仓集中度 + Beta贡献 =====
+    if not positions.empty:
+        st.markdown("---")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">持仓集中度与风险贡献<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于HHI指数衡量持仓集中度，基于Beta和市值权重分解各ETF对组合风险的贡献度。</span></div>',
+            unsafe_allow_html=True,
+        )
+
+        col_hhi, col_beta = st.columns(2)
+
+        with col_hhi:
+            # HHI指数计算
+            total_mv = positions["market_value"].sum()
+            if total_mv > 0:
+                weights = (positions["market_value"] / total_mv)
+                hhi = (weights ** 2).sum()
+                hhi_max = 1.0  # 完全集中
+                # 有效持仓数 = 1/HHI
+                effective_n = 1 / hhi if hhi > 0 else len(positions)
+
+                # HHI评级
+                if hhi <= 0.15:
+                    hhi_grade, hhi_color = "高度分散", "#22c55e"
+                elif hhi <= 0.25:
+                    hhi_grade, hhi_color = "适度集中", "#f59e0b"
+                else:
+                    hhi_grade, hhi_color = "高度集中", "#ef4444"
+
+                st.metric("HHI指数", f"{hhi:.4f}", delta=f"{hhi_grade}")
+                st.metric("有效持仓数", f"{effective_n:.1f}只", delta=f"共{len(positions)}只")
+
+                # 个股权重分布条形图
+                pos_sorted = positions.sort_values("market_value", ascending=True)
+                fig_hhi = go.Figure(go.Bar(
+                    y=pos_sorted["name"],
+                    x=pos_sorted["market_value"] / total_mv * 100,
+                    orientation="h",
+                    marker_color="#58a6ff",
+                    text=[f"{v:.1f}%" for v in pos_sorted["market_value"] / total_mv * 100],
+                    textposition="outside",
+                    textfont=dict(size=9, color="#c9d1d9"),
+                ))
+                fig_hhi.update_layout(
+                    xaxis=dict(title="权重%", range=[0, max(pos_sorted["market_value"] / total_mv * 100) * 1.3],
+                               gridcolor="#21262d", tickfont=dict(size=9, color="#8b949e")),
+                    yaxis=dict(tickfont=dict(size=10, color="#c9d1d9")),
+                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    height=max(200, 28 * len(pos_sorted)),
+                    margin=dict(l=80, r=40, t=10, b=30),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_hhi, width="stretch")
+
+        with col_beta:
+            # Beta贡献分析
+            if "beta" in positions.columns and positions["beta"].notna().any():
+                positions_b = positions.dropna(subset=["beta"]).copy()
+                if not positions_b.empty and total_mv > 0:
+                    positions_b["weight"] = positions_b["market_value"] / total_mv
+                    positions_b["beta_contribution"] = positions_b["weight"] * positions_b["beta"]
+                    portfolio_beta = positions_b["beta_contribution"].sum()
+
+                    st.metric("组合加权Beta", f"{portfolio_beta:.3f}")
+
+                    # Beta贡献条形图
+                    beta_sorted = positions_b.sort_values("beta_contribution", ascending=True)
+                    fig_beta = go.Figure(go.Bar(
+                        y=beta_sorted["name"],
+                        x=beta_sorted["beta_contribution"],
+                        orientation="h",
+                        marker_color=["#22c55e" if v <= 1 else "#f59e0b" if v <= 1.5 else "#ef4444"
+                                      for v in beta_sorted["beta_contribution"]],
+                        text=[f"{v:.3f}" for v in beta_sorted["beta_contribution"]],
+                        textposition="outside",
+                        textfont=dict(size=9, color="#c9d1d9"),
+                    ))
+                    fig_beta.update_layout(
+                        xaxis=dict(title="Beta贡献(权重×Beta)", gridcolor="#21262d",
+                                   tickfont=dict(size=9, color="#8b949e")),
+                        yaxis=dict(tickfont=dict(size=10, color="#c9d1d9")),
+                        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                        height=max(200, 28 * len(beta_sorted)),
+                        margin=dict(l=80, r=40, t=10, b=30),
+                        showlegend=False,
+                    )
+                    st.plotly_chart(fig_beta, width="stretch")
+                else:
+                    st.caption("暂无有效Beta数据")
+            else:
+                st.caption("暂无Beta数据（需技术分析模块计算）")
+
     # ---------- 累计盈亏柱状图 ----------
     if not positions.empty:
         st.markdown(

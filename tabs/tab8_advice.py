@@ -197,6 +197,70 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
             unsafe_allow_html=True,
         )
 
+        # ===== 建议分布饼图 + 信号强度矩阵 =====
+        if suggestions:
+            viz_col1, viz_col2 = st.columns([1, 2])
+
+            with viz_col1:
+                # 建议分布饼图
+                fig_pie = go.Figure(go.Pie(
+                    labels=[s["action"] for s in suggestions],
+                    hole=0.5,
+                    marker_colors=[action_colors.get(s["action"], "#8b949e") for s in suggestions],
+                    textinfo="label",
+                    textfont=dict(size=11, color="#c9d1d9"),
+                    hovertemplate="%{label}<br>净信号: %{customdata}<extra></extra>",
+                    customdata=[f'{s["net_signal"]:+.1f}' for s in suggestions],
+                ))
+                fig_pie.update_layout(
+                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    height=280, margin=dict(l=10, r=10, t=10, b=10),
+                    showlegend=False,
+                    annotations=[dict(text=f"{len(suggestions)}只", x=0.5, y=0.5, font_size=20, font_color="#c9d1d9", showarrow=False)],
+                )
+                st.plotly_chart(fig_pie, width="stretch")
+
+            with viz_col2:
+                # 信号强度热力图 (ETF x 指标维度)
+                indicators = ["MA", "MACD", "RSI", "KDJ", "布林带", "趋势", "盈亏"]
+                fig_heat = go.Figure(go.Heatmap(
+                    z=[[1 if r else -1 for r in [
+                        "均线" in str(s.get("reasons",[])),
+                        "MACD" in str(s.get("reasons",[])),
+                        "RSI" in str(s.get("reasons",[])),
+                        "KDJ" in str(s.get("reasons",[])),
+                        "布林" in str(s.get("reasons",[])),
+                        "趋势" in str(s.get("reasons",[])),
+                        "亏损" in str(s.get("reasons",[])) or "盈利" in str(s.get("reasons",[])),
+                    ]] for s in suggestions],
+                    x=indicators,
+                    y=[s["name"] for s in suggestions],
+                    colorscale=[[0, "#ef4444"], [0.5, "#0d1117"], [1, "#22c55e"]],
+                    zmid=0,
+                    text=[["+" if v > 0 else "-" for v in row] for row in [
+                        [1 if r else -1 for r in [
+                            "均线" in str(s.get("reasons",[])),
+                            "MACD" in str(s.get("reasons",[])),
+                            "RSI" in str(s.get("reasons",[])),
+                            "KDJ" in str(s.get("reasons",[])),
+                            "布林" in str(s.get("reasons",[])),
+                            "趋势" in str(s.get("reasons",[])),
+                            "亏损" in str(s.get("reasons",[])) or "盈利" in str(s.get("reasons",[])),
+                        ]] for s in suggestions
+                    ]],
+                    texttemplate="%{text}",
+                    textfont=dict(size=12, color="#c9d1d9"),
+                    hovertemplate="%{y} - %{x}<extra></extra>",
+                ))
+                fig_heat.update_layout(
+                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    height=max(200, 30 * len(suggestions)),
+                    margin=dict(l=80, r=20, t=5, b=30),
+                    xaxis=dict(tickfont=dict(size=10, color="#8b949e")),
+                    yaxis=dict(tickfont=dict(size=10, color="#c9d1d9")),
+                )
+                st.plotly_chart(fig_heat, width="stretch")
+
         # ===== 建议详情 =====
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">建议详情<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于技术信号与持仓收益的智能调仓建议，包含多空评分、操作方向及信号来源。</span></div>',
