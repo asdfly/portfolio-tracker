@@ -175,7 +175,139 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
                             xaxis=dict(side="bottom", tickangle=45),
                             yaxis=dict(tickfont=dict(size=10)),
                         )
+
                         st.plotly_chart(fig_heat, width="stretch")
+
+                # ===== 深度分析: 资金流背离信号 =====
+                st.markdown(
+                    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">资金流背离信号<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">近5日板块净流入为正但累计涨幅为负的「资金底背离」行业，可能预示筑底反弹机会。</span></div>',
+                    unsafe_allow_html=True,
+                )
+                try:
+                    conn_dv = get_db_connection()
+                    try:
+                        # 获取近5日板块资金流合计
+                        dates_5 = sorted(sector_df["date"].unique(), reverse=True)[:5]
+                        dv_df = sector_df[sector_df["date"].isin(dates_5)].copy()
+                        dv_5d = dv_df.groupby("name")["net_inflow"].sum().sort_values(ascending=False)
+
+                        # 获取对应日期的行业涨跌幅（通过index_quotes近似或板块自身涨跌）
+                        # 用板块资金流日度变化间接判断：连续流入但金额递减=分歧
+                        bullish_diverge = []
+                        bearish_diverge = []
+
+                        for name, total_flow in dv_5d.items():
+                            if total_flow > 0:
+                                # 正流入板块：检查流入是否递减（分歧信号）
+                                daily = dv_df[dv_df["name"] == name].sort_values("date")["net_inflow"].values
+                                if len(daily) >= 3:
+                                    # 最后2日均值为负但5日合计为正 = 短期分歧
+                                    recent_avg = daily[-2:].mean()
+                                    if recent_avg < 0:
+                                        bullish_diverge.append({"行业": name, "5日净流入": total_flow, "近2日均流入": recent_avg, "信号": "流入衰减"})
+
+                            if total_flow < 0:
+                                # 负流出板块：检查流出是否递减（企稳信号）
+                                daily = dv_df[dv_df["name"] == name].sort_values("date")["net_inflow"].values
+                                if len(daily) >= 3:
+                                    first_half = daily[:len(daily)//2].mean()
+                                    second_half = daily[len(daily)//2:].mean()
+                                    if second_half > first_half:
+                                        bearish_diverge.append({"行业": name, "5日净流入": total_flow, "流出减缓": f"{(second_half - first_half)/1e8:+.1f}亿", "信号": "流出减缓"})
+
+                        if bullish_diverge or bearish_diverge:
+                            col_div1, col_div2 = st.columns(2)
+                            with col_div1:
+                                if bullish_diverge:
+                                    st.markdown("**资金流入衰减信号**")
+                                    for item in bullish_diverge[:8]:
+                                        st.markdown(
+                                            f'<div style="padding:6px 10px;background:#161b22;border-radius:4px;margin:3px 0;border-left:3px solid #f59e0b;">'
+                                            f'<span style="color:#c9d1d9;">{item["行业"]}</span> '
+                                            f'<span style="color:#f59e0b;font-size:11px;">{item["信号"]}</span> '
+                                            f'<span style="color:#8b949e;font-size:11px;">5日{item["5日净流入"]/1e8:.1f}亿</span></div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                else:
+                                    st.caption("暂无流入衰减信号")
+                            with col_div2:
+                                if bearish_diverge:
+                                    st.markdown("**资金流出减缓信号**")
+                                    for item in bearish_diverge[:8]:
+                                        st.markdown(
+                                            f'<div style="padding:6px 10px;background:#161b22;border-radius:4px;margin:3px 0;border-left:3px solid #3b82f6;">'
+                                            f'<span style="color:#c9d1d9;">{item["行业"]}</span> '
+                                            f'<span style="color:#3b82f6;font-size:11px;">{item["信号"]}</span> '
+                                            f'<span style="color:#8b949e;font-size:11px;">5日{item["5日净流入"]/1e8:.1f}亿</span></div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                else:
+                                    st.caption("暂无流出减缓信号")
+                        else:
+                            st.caption("当前无显著背离信号")
+                    finally:
+                        conn_dv.close()
+                except Exception:
+                    pass
+
+                # ===== 深度分析: 板块轮动速度 =====
+                st.markdown(
+                    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">板块轮动速度<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">计算行业排名日变化率，轮动速度越高表示市场风格切换越快，低轮动速度表示趋势延续。</span></div>',
+                    unsafe_allow_html=True,
+                )
+                try:
+                    dates_all = sorted(sector_df["date"].unique())
+                    if len(dates_all) >= 5:
+                        # 计算每日TOP10排名的Jaccard相似度
+                        rank_changes = []
+                        for i in range(1, min(10, len(dates_all))):
+                            prev_set = set(
+                                sector_df[sector_df["date"] == dates_all[-i-1]]
+                                .nlargest(10, "net_inflow")["name"].tolist()
+                            )
+                            curr_set = set(
+                                sector_df[sector_df["date"] == dates_all[-i]]
+                                .nlargest(10, "net_inflow")["name"].tolist()
+                            )
+                            if prev_set and curr_set:
+                                jaccard = len(prev_set & curr_set) / len(prev_set | curr_set)
+                                rank_changes.append({"date": dates_all[-i], "相似度": jaccard})
+
+                        if rank_changes:
+                            rc_df = pd.DataFrame(rank_changes)
+                            avg_similarity = rc_df["相似度"].mean()
+                            if avg_similarity >= 0.6:
+                                speed_label, speed_color = "低轮动(趋势延续)", "#22c55e"
+                            elif avg_similarity >= 0.3:
+                                speed_label, speed_color = "中等轮动", "#f59e0b"
+                            else:
+                                speed_label, speed_color = "高轮动(风格切换快)", "#ef4444"
+
+                            col_sp1, col_sp2 = st.columns([1, 3])
+                            with col_sp1:
+                                st.metric("轮动速度", speed_label)
+                            with col_sp2:
+                                fig_speed = go.Figure()
+                                fig_speed.add_trace(
+                                    go.Scatter(
+                                        x=rc_df["date"], y=rc_df["相似度"],
+                                        mode="lines+markers", line=dict(color="#58a6ff", width=2),
+                                        marker=dict(size=6),
+                                        fill="tozeroy", fillcolor="rgba(88,166,255,0.1)",
+                                    )
+                                )
+                                fig_speed.add_hline(y=0.6, line_dash="dash", line_color="#22c55e", annotation_text="趋势延续阈值")
+                                fig_speed.add_hline(y=0.3, line_dash="dash", line_color="#ef4444", annotation_text="风格切换阈值")
+                                fig_speed.update_layout(
+                                    yaxis=dict(title="Jaccard相似度", gridcolor="#21262d", tickfont=dict(size=9, color="#8b949e"), range=[0, 1]),
+                                    xaxis=dict(gridcolor="#21262d", tickfont=dict(size=9, color="#8b949e")),
+                                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                                    height=250, margin=dict(l=50, r=20, t=10, b=30),
+                                    showlegend=False,
+                                )
+                                st.plotly_chart(fig_speed, width="stretch")
+                except Exception:
+                    pass
             else:
                 st.info("暂无行业资金流数据，请先运行数据采集任务")
                 if st.button("采集行业资金流", key="fetch_sector_flow"):
@@ -299,6 +431,41 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
                             f"{flow_up} / {len(etf_single)}",
                             delta=f"{flow_up/len(etf_single)*100:.0f}%",
                         )
+
+                # ===== 深度分析: ETF资金流与价格背离 =====
+                st.markdown(
+                    '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:3px 0;margin-top:12px;">资金流与价格背离分析<span class="tip-arrow" style="left:4px;top:calc(100%+5px);"></span><span class="tip-text" style="left:4px;top:calc(100%+10px);">检测资金持续流入但价格下跌（底背离）或资金流出但价格上涨（顶背离）的异常信号。</span></div>',
+                    unsafe_allow_html=True,
+                )
+                try:
+                    if len(etf_single) >= 10:
+                        # 计算5日滚动资金流合计与价格变化
+                        etf_single_sorted = etf_single.sort_values("date").copy()
+                        etf_single_sorted["flow_5d"] = etf_single_sorted["net_inflow"].rolling(5).sum()
+                        etf_single_sorted["price_5d_chg"] = etf_single_sorted["close"].pct_change(5)
+
+                        divergences = []
+                        for idx in range(5, len(etf_single_sorted)):
+                            row = etf_single_sorted.iloc[idx]
+                            if pd.notna(row["flow_5d"]) and pd.notna(row["price_5d_chg"]):
+                                # 底背离: 资金流入但价格下跌
+                                if row["flow_5d"] > 0 and row["price_5d_chg"] < -0.02:
+                                    divergences.append({"date": row["date"], "类型": "底背离", "5日净流入(亿)": round(row["flow_5d"]/1e8, 2), "5日涨跌幅": f"{row['price_5d_chg']*100:.1f}%"})
+                                # 顶背离: 资金流出但价格上涨
+                                elif row["flow_5d"] < 0 and row["price_5d_chg"] > 0.02:
+                                    divergences.append({"date": row["date"], "类型": "顶背离", "5日净流入(亿)": round(row["flow_5d"]/1e8, 2), "5日涨跌幅": f"{row['price_5d_chg']*100:.1f}%"})
+
+                        if divergences:
+                            dv_df = pd.DataFrame(divergences[-10:])  # 最近10条
+                            st.dataframe(
+                                dv_df.style.format({"5日净流入(亿)": "{:+.2f}"}),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                        else:
+                            st.caption("该ETF近期无显著资金流-价格背离信号")
+                except Exception:
+                    pass
             else:
                 st.info("暂无ETF资金流数据")
                 if not positions.empty:
