@@ -14,6 +14,7 @@ from tabs.gold_components.realtime_quotes import render_realtime_quotes
 from tabs.gold_components.central_bank_trends import render_central_bank_trends
 from tabs.gold_components.supply_demand import render_supply_demand
 from tabs.gold_components.international_comparison import render_international_comparison
+from tabs.gold_components.gold_portfolio_correlation import render_gold_portfolio_correlation
 
 def render_tab11(positions, summary, index_quotes=None, selected_date=None, selected_benchmark=None, **kwargs):
     st.markdown(
@@ -38,6 +39,7 @@ def render_tab11(positions, summary, index_quotes=None, selected_date=None, sele
         "\U0001f3e6 央行购金",
         "\u2696\ufe0f 供需平衡",
         "\U0001f310 国际金价",
+        "\U0001f517 组合相关性",
     ])
     with tabs[0]: _render_gold_price_trend()
     with tabs[1]: render_technical_signals()
@@ -49,6 +51,7 @@ def render_tab11(positions, summary, index_quotes=None, selected_date=None, sele
     with tabs[7]: render_central_bank_trends()
     with tabs[8]: render_supply_demand()
     with tabs[9]: render_international_comparison()
+    with tabs[10]: render_gold_portfolio_correlation()
 
 def _render_gold_price_trend():
     from tabs.gold_components.realtime_quotes import SYMBOL_GROUPS

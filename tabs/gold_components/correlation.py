@@ -66,6 +66,11 @@ def _load_all_factors(n_days):
 
 def render_correlation():
     """渲染定价因子相关性分析子Tab"""
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">定价因子相关性<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">分析黄金价格与美元汇率、中美利差、国债收益率等宏观因子的相关性，揭示金价驱动因素。</span></div>',
+        unsafe_allow_html=True,
+    )
     period = st.selectbox("分析周期", ["近1年", "近2年", "近3年"], key="corr_period")
     period_map = {"近1年": 365, "近2年": 730, "近3年": 1095}
     n_days = period_map.get(period, 365)

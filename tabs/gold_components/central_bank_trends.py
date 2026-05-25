@@ -110,6 +110,11 @@ def _render_reserve_vs_etf(df_reserve, df_etf):
 
 
 def render_central_bank_trends():
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">央行购金趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">全球主要央行（中国、俄罗斯、印度等）黄金储备变化趋势，反映各国去美元化进程。</span></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("#### 央行购金全球趋势")
     # 优先使用预加载数据
     from tabs.gold_components.gold_preloader import get_preloaded

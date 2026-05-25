@@ -93,6 +93,11 @@ def _render_etf_vs_price(df_etf, df_sge):
 
 
 def render_supply_demand():
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">供需平衡<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">黄金供需基本面分析，包括矿产供给、回收供给、珠宝/投资/央行需求等维度。</span></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("#### 供需平衡分析")
     # 优先使用预加载数据
     from tabs.gold_components.gold_preloader import get_preloaded

@@ -11,6 +11,11 @@ from .gold_utils import fetch_sge_benchmark, fetch_sge_hist, base_layout
 
 
 def render_price_comparison():
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">基准价对比<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">对比上海黄金交易所各品种（Au99.99/Au99.95/Au100g等）的价差和走势差异，发现套利机会。</span></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("**上海金基准价 vs SGE现货对比**")
 
     col_ctrl = st.columns([2, 2, 2])

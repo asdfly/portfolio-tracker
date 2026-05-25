@@ -574,6 +574,40 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                 f"*VaR 表示在 95% 置信度下，{mc_days} 个交易日内的最大可能损失。"
                 f"CVaR 是超出 VaR 时的平均损失（尾部风险）。*"
             )
+
+            # VaR终值分布直方图（Phase 7A新增）
+            final_values = mc_result["paths"][:, -1]
+            fig_var_hist = go.Figure()
+            fig_var_hist.add_trace(go.Histogram(
+                x=final_values, nbinsx=50,
+                marker_color="#58a6ff", marker_line_color="#0d1117",
+                marker_line_width=1, opacity=0.85,
+                hovertemplate="市值区间: %{x}<br>频次: %{y}<extra></extra>",
+            ))
+            fig_var_hist.add_vline(
+                x=perc_df["p5"].iloc[-1], line_dash="dash", line_color="#ef4444",
+                annotation_text=f"VaR 95%: ¥{perc_df['p5'].iloc[-1]:,.0f}",
+                annotation_position="top left", annotation_font=dict(size=10, color="#ef4444"),
+            )
+            fig_var_hist.add_vline(
+                x=mc_result["last_value"], line_dash="dot", line_color="#f59e0b",
+                annotation_text=f"当前: ¥{mc_result['last_value']:,.0f}",
+                annotation_position="top right", annotation_font=dict(size=10, color="#f59e0b"),
+            )
+            fig_var_hist.add_vline(
+                x=perc_df["p50"].iloc[-1], line_dash="dash", line_color="#22c55e",
+                annotation_text=f"P50: ¥{perc_df['p50'].iloc[-1]:,.0f}",
+                annotation_position="top left", annotation_font=dict(size=10, color="#22c55e"),
+            )
+            fig_var_hist.update_layout(
+                height=250, plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                font=dict(color="#c9d1d9", size=11),
+                margin=dict(l=60, r=20, t=30, b=30),
+                xaxis=dict(title="终值 (¥)", showgrid=True, gridcolor="#21262d"),
+                yaxis=dict(title="频次", showgrid=True, gridcolor="#21262d"),
+                showlegend=False, bargap=0.02,
+            )
+            st.plotly_chart(fig_var_hist, width="stretch")
     else:
         st.info("历史数据不足（需要至少30个交易日），暂无法进行 Monte Carlo 模拟")
 
@@ -802,6 +836,43 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                     unsafe_allow_html=True,
                 )
 
+        # 压力测试行业影响雷达图（Phase 7A新增）
+        if stress_results:
+            all_sectors_stress = set()
+            for sr in stress_results:
+                all_sectors_stress.update(sr.get("sector_impacts", {}).keys())
+            sector_list_radar = sorted(all_sectors_stress)
+            if len(sector_list_radar) >= 3:
+                fig_radar = go.Figure()
+                radar_colors_map = {
+                    "温和下跌": "#f59e0b", "大幅下跌": "#ef4444",
+                    "极端暴跌": "#dc2626", "震荡盘整": "#8b949e",
+                    "结构牛市": "#22c55e",
+                }
+                for sr in stress_results:
+                    impacts = sr.get("sector_impacts", {})
+                    values = [impacts.get(s, 0) * 100 for s in sector_list_radar]
+                    fig_radar.add_trace(go.Scatterpolar(
+                        r=values, theta=sector_list_radar, fill="toself",
+                        name=sr["scenario"],
+                        line_color=radar_colors_map.get(sr["scenario"], "#58a6ff"),
+                        opacity=0.5,
+                    ))
+                fig_radar.update_layout(
+                    height=320,
+                    polar=dict(
+                        radialaxis=dict(visible=True, gridcolor="#21262d", color="#8b949e"),
+                        angularaxis=dict(gridcolor="#21262d", color="#8b949e", tickfont=dict(size=10)),
+                        bgcolor="#0d1117",
+                    ),
+                    plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                    font=dict(color="#c9d1d9", size=11),
+                    margin=dict(l=40, r=40, t=10, b=30),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="center", x=0.5, font=dict(size=10, color="#8b949e")),
+                )
+                st.plotly_chart(fig_radar, width="stretch")
+
         with st.expander("查看压力测试详情", expanded=False):
             for sr in stress_results:
                 loss_c = "#22c55e" if sr["est_loss"] >= 0 else "#ef4444"
@@ -954,6 +1025,54 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                 st.metric("最大偏离", f"{max_dev:.1f}%", delta=max_sector)
             with rb_s3:
                 st.metric("组合总市值", f"¥{rb_result['total_value']:,.0f}")
+
+            # 调仓前后净值模拟对比图（Phase 7A新增）
+            conn_sim = get_db_connection()
+            try:
+                recent_ret = pd.read_sql_query(
+                    "SELECT daily_return FROM portfolio_summary "
+                    "WHERE daily_return IS NOT NULL ORDER BY date DESC LIMIT 252",
+                    conn_sim,
+                )
+                conn_sim.close()
+            except Exception:
+                conn_sim.close()
+                recent_ret = pd.DataFrame()
+
+            if not recent_ret.empty and len(recent_ret) >= 60:
+                ret_arr = recent_ret["daily_return"].dropna().values
+                np.random.seed(42)
+                n_sim_days = min(60, len(ret_arr))
+                sim_curr = [1.0]
+                sim_reb = [1.0]
+                for t in range(n_sim_days):
+                    r = ret_arr[t % len(ret_arr)]
+                    sim_curr.append(sim_curr[-1] * (1 + r))
+                    rebal_adj = 1.0 - 0.02 * abs(max_dev / 100) if max_dev > 0 else 1.0
+                    sim_reb.append(sim_reb[-1] * (1 + r * rebal_adj))
+
+                fig_rebal_sim = go.Figure()
+                fig_rebal_sim.add_trace(go.Scatter(
+                    x=list(range(n_sim_days + 1)), y=[v * 100 for v in sim_curr],
+                    mode="lines", name="当前组合",
+                    line=dict(color="#58a6ff", width=2),
+                ))
+                fig_rebal_sim.add_trace(go.Scatter(
+                    x=list(range(n_sim_days + 1)), y=[v * 100 for v in sim_reb],
+                    mode="lines", name="调仓后模拟",
+                    line=dict(color="#22c55e", width=2, dash="dot"),
+                ))
+                fig_rebal_sim.update_layout(
+                    height=220, plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                    font=dict(color="#c9d1d9", size=11),
+                    margin=dict(l=40, r=20, t=10, b=30),
+                    xaxis=dict(title="交易日", showgrid=True, gridcolor="#21262d"),
+                    yaxis=dict(title="净值 (基准100)", showgrid=True, gridcolor="#21262d"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="right", x=1, font=dict(size=10, color="#8b949e")),
+                )
+                st.plotly_chart(fig_rebal_sim, width="stretch")
+                st.caption("*调仓后模拟基于近期实际收益率，假设调仓降低最大行业偏离后波动率相应下降。仅供参考。*")
 
             # 调仓明细
             if rb_result["suggestions"]:

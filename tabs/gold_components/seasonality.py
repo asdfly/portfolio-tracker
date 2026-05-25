@@ -14,6 +14,11 @@ MONTH_LABELS = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","
 
 
 def render_seasonality():
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">季节性规律<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">分析黄金价格的月度/季节性规律，识别历史上涨概率较高的时段，辅助择时决策。</span></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("**黄金季节性规律分析**")
 
     col_ctrl = st.columns([2, 2])

@@ -98,6 +98,11 @@ def _compute_signals(df):
 
 def render_technical_signals():
     """渲染技术信号面板子Tab"""
+
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">技术信号分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于RSI、MACD、布林带等技术指标，对黄金价格进行多维度技术分析，生成买卖信号。</span></div>',
+        unsafe_allow_html=True,
+    )
     ctrl = st.columns([2, 2, 1])
     with ctrl[0]:
         symbol = st.selectbox("品种", ["Au99.99", "Au99.95", "Au(T+D)", "mAu(T+D)"], key="tech_symbol")
