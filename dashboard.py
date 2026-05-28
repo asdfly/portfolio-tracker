@@ -3935,6 +3935,85 @@ def _render_tab3_risk(tab3, positions, summary, technical, selected_date, ext_ri
                     "当前未触发任何告警规则，所有指标处于安全范围内。</div></div>",
                     unsafe_allow_html=True,
                 )
+                # Phase 8B: 告警阈值仪表盘 & 健康评分
+                st.markdown("---")
+                st.markdown(
+                    '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+                    '指标阈值监控<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+                    '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+                    '展示各关键指标当前值与告警阈值的距离，绿色=安全，黄色=接近阈值，红色=已触发。</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+                gauge_metrics = []
+                if not positions.empty and not summary.empty:
+                    ls = summary.iloc[-1]
+                    dr = ls.get("daily_return", 0) or 0
+                    mdd = abs(ls.get("max_drawdown", 0) or 0)
+                    vol = ls.get("volatility", 0) or 0
+                    sp = ls.get("sharpe_ratio", 0) or 0
+                    total_mv = positions["market_value"].sum()
+                    max_w = positions["market_value"].max() / total_mv * 100 if total_mv > 0 else 0
+                    gauge_metrics = [
+                        {"name": "日收益率", "value": dr, "warn": -3, "error": -5, "unit": "%", "lower_is_worse": True},
+                        {"name": "最大回撤", "value": mdd, "warn": 10, "error": 15, "unit": "%", "lower_is_worse": False},
+                        {"name": "年化波动率", "value": vol, "warn": 30, "error": 40, "unit": "%", "lower_is_worse": False},
+                        {"name": "夏普比率", "value": sp, "warn": 0, "error": -0.5, "unit": "", "lower_is_worse": True},
+                        {"name": "集中度", "value": max_w, "warn": 30, "error": 40, "unit": "%", "lower_is_worse": False},
+                    ]
+
+                if gauge_metrics:
+                    gc1, gc2, gc3, gc4, gc5 = st.columns(5)
+                    health_score = 100
+                    for idx_g, gm in enumerate(gauge_metrics):
+                        val = gm["value"]
+                        if gm["lower_is_worse"]:
+                            if val <= gm["error"]:
+                                status, color = "严重", "#ef4444"; health_score -= 20
+                            elif val <= gm["warn"]:
+                                status, color = "警告", "#f59e0b"; health_score -= 8
+                            else:
+                                status, color = "正常", "#22c55e"
+                        else:
+                            if val >= gm["error"]:
+                                status, color = "严重", "#ef4444"; health_score -= 20
+                            elif val >= gm["warn"]:
+                                status, color = "警告", "#f59e0b"; health_score -= 8
+                            else:
+                                status, color = "正常", "#22c55e"
+                        fig_gauge = go.Figure(go.Indicator(
+                            mode="gauge+number",
+                            value=abs(val),
+                            domain={"x": [0, 1], "y": [0, 1]},
+                            title={"text": f'{gm["name"]} ({status})', "font": {"size": 11, "color": color}},
+                            number={"suffix": gm["unit"], "font": {"size": 14, "color": color}},
+                            gauge={
+                                "axis": {"range": [0, max(gm["error"] * 1.5, 1)], "tickfont": {"size": 8, "color": "#8b949e"}},
+                                "bar": {"color": color},
+                                "threshold": {"line": {"color": "#f59e0b", "width": 2}, "thickness": 0.75, "value": gm["warn"]},
+                                "bgcolor": "#0d1117", "borderwidth": 0,
+                            },
+                        ))
+                        fig_gauge.update_layout(
+                            height=160, margin=dict(l=10, r=10, t=40, b=10),
+                            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                            font=dict(color="#c9d1d9"),
+                        )
+                        with [gc1, gc2, gc3, gc4, gc5][idx_g]:
+                            st.plotly_chart(fig_gauge, width="stretch")
+
+                    health_score = max(0, min(100, health_score))
+                    hc = "#22c55e" if health_score >= 80 else "#f59e0b" if health_score >= 60 else "#ef4444"
+                    st.markdown(
+                        f'<div style="text-align:center;padding:12px;border-radius:8px;'
+                        f'background:{"rgba(34,197,94,0.06)" if health_score >= 80 else "rgba(245,158,11,0.06)" if health_score >= 60 else "rgba(239,68,68,0.06)"};'
+                        f'border:1px solid {hc}30;">'
+                        f'<span style="font-size:28px;font-weight:bold;color:{hc};">{health_score}</span>'
+                        f'<span style="font-size:14px;color:#8b949e;margin-left:8px;">/100 告警健康评分</span>'
+                        f'<div style="font-size:11px;color:#484f58;margin-top:4px;">'
+                        f'{"组合整体风险可控" if health_score >= 80 else "存在风险预警，建议关注" if health_score >= 60 else "多项指标触发告警，需立即关注"}</div></div>',
+                        unsafe_allow_html=True,
+                    )
 
             with st.expander("查看历史告警记录", expanded=False):
                 hist_alerts = load_alerts(limit=20)
@@ -4031,6 +4110,126 @@ def _render_tab3_risk(tab3, positions, summary, technical, selected_date, ext_ri
                         yaxis=dict(showgrid=False, tickfont=dict(size=10)),
                     )
                     st.plotly_chart(fig_alert_dist, width="stretch")
+
+                # Phase 8A: 告警趋势增强
+                if not hist_alerts.empty and "created_at" in hist_alerts.columns:
+                    hist_alerts["created_at"] = pd.to_datetime(hist_alerts["created_at"], errors="coerce")
+                    hist_valid = hist_alerts.dropna(subset=["created_at"])
+
+                    if not hist_valid.empty:
+                        atc1, atc2 = st.columns(2)
+
+                        with atc1:
+                            st.markdown(
+                                '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+                                '告警时间线<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+                                '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+                                '按时间展示历史告警事件，红色为严重，橙色为警告。</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                            level_colors = {"error": "#ef4444", "warning": "#f59e0b", "info": "#58a6ff"}
+                            fig_timeline = go.Figure()
+                            for lvl, clr in level_colors.items():
+                                subset = hist_valid[hist_valid["level"] == lvl]
+                                if not subset.empty:
+                                    fig_timeline.add_trace(go.Scatter(
+                                        x=subset["created_at"],
+                                        y=[lvl] * len(subset),
+                                        mode="markers",
+                                        name={"error": "严重", "warning": "警告", "info": "提示"}.get(lvl, lvl),
+                                        marker=dict(size=10, color=clr, symbol="circle"),
+                                        hovertemplate="%{x|%Y-%m-%d %H:%M}<br>%{text}<extra></extra>",
+                                        text=subset["message"].str[:60],
+                                        showlegend=True,
+                                    ))
+                            fig_timeline.update_layout(
+                                height=200,
+                                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                                font=dict(color="#c9d1d9", size=10),
+                                margin=dict(l=50, r=20, t=10, b=30),
+                                xaxis=dict(showgrid=True, gridcolor="#21262d", tickfont=dict(size=9)),
+                                yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                            font=dict(size=9, color="#8b949e")),
+                            )
+                            st.plotly_chart(fig_timeline, width="stretch")
+
+                        with atc2:
+                            st.markdown(
+                                '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+                                '告警频率热力图<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+                                '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+                                '展示告警在不同星期和时段的分布密度，帮助识别高风险时段。</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                            hist_valid_copy = hist_valid.copy()
+                            hist_valid_copy["dow"] = hist_valid_copy["created_at"].dt.dayofweek
+                            hist_valid_copy["hour"] = hist_valid_copy["created_at"].dt.hour
+                            dow_labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+                            hour_bins = [0, 6, 12, 18, 24]
+                            hour_labels = ["凌晨", "上午", "下午", "晚间"]
+                            hist_valid_copy["hour_bin"] = pd.cut(hist_valid_copy["hour"], bins=hour_bins, labels=hour_labels, right=False)
+                            heatmap_data = hist_valid_copy.groupby(["dow", "hour_bin"]).size().unstack(fill_value=0)
+                            heatmap_data.index = [dow_labels[i] if i < len(dow_labels) else str(i) for i in heatmap_data.index]
+                            if not heatmap_data.empty:
+                                fig_heatmap = go.Figure(go.Heatmap(
+                                    z=heatmap_data.values,
+                                    x=list(heatmap_data.columns),
+                                    y=list(heatmap_data.index),
+                                    colorscale=[[0, "#0d1117"], [0.5, "#1a2332"], [1, "#f59e0b"]],
+                                    showscale=True,
+                                    text=heatmap_data.values,
+                                    texttemplate="%{text}",
+                                    textfont=dict(size=11, color="#c9d1d9"),
+                                    hovertemplate="%{y} %{x}: %{z} 次告警<extra></extra>",
+                                ))
+                                fig_heatmap.update_layout(
+                                    height=200,
+                                    plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                                    font=dict(color="#c9d1d9", size=10),
+                                    margin=dict(l=50, r=40, t=10, b=30),
+                                    xaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                                    yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                                )
+                                st.plotly_chart(fig_heatmap, width="stretch")
+
+                # 规则触发趋势（按周统计堆叠面积图）
+                if not hist_alerts.empty and "created_at" in hist_alerts.columns:
+                    hist_valid2 = hist_alerts.dropna(subset=["created_at"]).copy()
+                    if len(hist_valid2) >= 2:
+                        hist_valid2["week"] = hist_valid2["created_at"].dt.isocalendar().week.astype(int)
+                        hist_valid2["year"] = hist_valid2["created_at"].dt.year
+                        hist_valid2["week_label"] = hist_valid2["year"].astype(str) + "W" + hist_valid2["week"].astype(str).str.zfill(2)
+                        weekly = hist_valid2.groupby(["week_label", "rule_name"]).size().unstack(fill_value=0)
+                        if len(weekly) >= 2:
+                            st.markdown(
+                                '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+                                '规则触发趋势<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+                                '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+                                '按周统计各告警规则的触发次数，堆叠面积图展示趋势变化。</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                            trend_colors = ["#ef4444", "#f59e0b", "#58a6ff", "#22c55e", "#a855f7", "#ec4899", "#14b8a6", "#6366f1"]
+                            fig_trend = go.Figure()
+                            for ci, col in enumerate(weekly.columns):
+                                fig_trend.add_trace(go.Scatter(
+                                    x=weekly.index, y=weekly[col],
+                                    mode="lines", stackgroup="one",
+                                    name=col, line=dict(width=0),
+                                    fillcolor=trend_colors[ci % len(trend_colors)],
+                                    hovertemplate="%{x}: %{y} 次<extra></extra>",
+                                ))
+                            fig_trend.update_layout(
+                                height=200,
+                                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                                font=dict(color="#c9d1d9", size=10),
+                                margin=dict(l=50, r=20, t=10, b=30),
+                                xaxis=dict(showgrid=True, gridcolor="#21262d", tickfont=dict(size=9)),
+                                yaxis=dict(showgrid=True, gridcolor="#21262d", title="触发次数", titlefont=dict(size=10)),
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                            font=dict(size=9, color="#8b949e")),
+                            )
+                            st.plotly_chart(fig_trend, width="stretch")
 
         st.markdown("---")
 
@@ -5519,6 +5718,260 @@ def _render_tab8_advice(tab8, positions, summary, technical):
                 st.info("暂无足够技术数据生成操作建议")
         else:
             st.info("暂无持仓数据")
+        # ========== Phase 8C: 投资复盘 ==========
+        st.markdown("---")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">投资复盘'
+            '<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+            '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+            '回顾历史收益表现、技术信号决策质量与行业收益贡献度，帮助总结投资经验。</span></div>',
+            unsafe_allow_html=True,
+        )
+
+        try:
+            conn_rev = get_db_connection()
+            try:
+                rev_summary = pd.read_sql(
+                    "SELECT date, total_value, total_cost, total_pnl, daily_return, "
+                    "vs_hs300, profit_count, loss_count, sharpe_ratio, max_drawdown, volatility "
+                    "FROM portfolio_summary ORDER BY date", conn_rev
+                )
+                rev_snaps = pd.read_sql(
+                    "SELECT date, code, name, market_value, pnl, pnl_rate, beta "
+                    "FROM portfolio_snapshots ORDER BY date, code", conn_rev
+                )
+            finally:
+                conn_rev.close()
+
+            if rev_summary.empty:
+                st.info("暂无历史数据可供复盘")
+            else:
+                rev_summary["date"] = pd.to_datetime(rev_summary["date"])
+                rev_summary["year"] = rev_summary["date"].dt.year
+                rev_summary["month"] = rev_summary["date"].dt.month
+                cost0 = rev_summary["total_cost"].iloc[0]
+                rev_summary["cum_return"] = (rev_summary["total_pnl"] / cost0 * 100) if cost0 > 0 else 0
+
+                rev_c1, rev_c2 = st.columns(2)
+
+                # --- 8C-1: 年度收益对比 ---
+                with rev_c1:
+                    st.markdown(
+                        '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin-bottom:6px;">年度收益对比</div>',
+                        unsafe_allow_html=True,
+                    )
+                    yearly = rev_summary.groupby("year").agg(
+                        y_return=("cum_return", "last"),
+                        y_pnl=("total_pnl", "sum"),
+                        y_sharpe=("sharpe_ratio", "mean"),
+                        y_maxdd=("max_drawdown", "min"),
+                        y_vol=("volatility", "mean"),
+                        y_trade_days=("date", "count"),
+                    ).reset_index()
+                    yearly = yearly[yearly["year"] >= 2024]
+
+                    if not yearly.empty:
+                        bar_colors = ["#22c55e" if v >= 0 else "#ef4444" for v in yearly["y_return"]]
+                        fig_yr = go.Figure()
+                        fig_yr.add_trace(go.Bar(
+                            x=yearly["year"].astype(str),
+                            y=yearly["y_return"],
+                            marker_color=bar_colors,
+                            text=[f"{v:+.1f}%" for v in yearly["y_return"]],
+                            textposition="outside",
+                            textfont=dict(size=11, color="#e6edf3"),
+                        ))
+                        fig_yr.update_layout(
+                            height=260, margin=dict(t=10, b=30, l=40, r=10),
+                            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                            xaxis=dict(title="", tickfont=dict(size=10, color="#8b949e"), gridcolor="#21262d"),
+                            yaxis=dict(title="累计收益率%", tickfont=dict(size=10, color="#8b949e"), gridcolor="#21262d"),
+                        )
+                        st.plotly_chart(fig_yr, use_container_width=True)
+                    else:
+                        st.caption("暂无近年数据")
+
+                # --- 8C-2: 月度收益热力图 ---
+                with rev_c2:
+                    st.markdown(
+                        '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin-bottom:6px;">月度收益热力图</div>',
+                        unsafe_allow_html=True,
+                    )
+                    monthly = rev_summary.groupby(["year", "month"]).agg(
+                        m_return=("daily_return", lambda x: (1 + x).prod() - 1),
+                    ).reset_index()
+                    monthly["m_return"] = monthly["m_return"] * 100
+                    monthly = monthly[monthly["year"] >= 2024]
+
+                    if not monthly.empty:
+                        pivot = monthly.pivot(index="year", columns="month", values="m_return")
+                        pivot = pivot.reindex(columns=range(1, 13))
+                        fig_heat = go.Figure(data=go.Heatmap(
+                            z=pivot.values,
+                            x=[f"{m}月" for m in range(1, 13)],
+                            y=[str(y) for y in pivot.index],
+                            colorscale=[[0, "#ef4444"], [0.45, "#21262d"], [1, "#22c55e"]],
+                            zmid=0,
+                            text=[[f"{v:+.1f}%" if pd.notna(v) else "" for v in row] for row in pivot.values],
+                            texttemplate="%{text}",
+                            textfont=dict(size=10),
+                            hovertemplate="%{y}年%{x}: %{z:+.1f}%<extra></extra>",
+                        ))
+                        fig_heat.update_layout(
+                            height=260, margin=dict(t=10, b=30, l=40, r=10),
+                            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                            xaxis=dict(tickfont=dict(size=10, color="#8b949e")),
+                            yaxis=dict(tickfont=dict(size=10, color="#8b949e")),
+                        )
+                        st.plotly_chart(fig_heat, use_container_width=True)
+                    else:
+                        st.caption("暂无近年月度数据")
+
+                # --- 8C-3: 行业收益归因 ---
+                st.markdown(
+                    '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin:10px 0 6px;">行业收益归因</div>',
+                    unsafe_allow_html=True,
+                )
+
+                if not rev_snaps.empty:
+                    rev_snaps["date"] = pd.to_datetime(rev_snaps["date"])
+                    cutoff = rev_snaps["date"].max() - pd.Timedelta(days=90)
+                    recent = rev_snaps[rev_snaps["date"] >= cutoff].copy()
+                    recent["sector"] = recent["code"].map(
+                        lambda c: ETF_CATEGORIES.get(str(c), {}).get("sector", "其他")
+                    )
+                    sector_pnl = recent.groupby("sector").agg(
+                        s_total_pnl=("pnl", "sum"),
+                        s_avg_rate=("pnl_rate", "mean"),
+                        s_mv=("market_value", "last"),
+                    ).reset_index()
+                    sector_pnl = sector_pnl[sector_pnl["s_total_pnl"] != 0].sort_values("s_total_pnl", ascending=False)
+
+                    if not sector_pnl.empty:
+                        sec_c1, sec_c2 = st.columns([1, 2])
+                        with sec_c1:
+                            abs_pnl = sector_pnl["s_total_pnl"].abs()
+                            pie_colors = [
+                                SECTOR_COLORS.get(s, "#6b7280") for s in sector_pnl["sector"]
+                            ]
+                            fig_sec = go.Figure(go.Pie(
+                                labels=sector_pnl["sector"],
+                                values=abs_pnl,
+                                hole=0.55,
+                                marker_colors=pie_colors,
+                                textinfo="label+percent",
+                                textfont=dict(size=10, color="#e6edf3"),
+                                hovertemplate="%{label}: ¥%{value:,.0f}<extra></extra>",
+                            ))
+                            fig_sec.update_layout(
+                                height=280, margin=dict(t=15, b=10, l=10, r=10),
+                                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                                showlegend=False,
+                            )
+                            st.plotly_chart(fig_sec, use_container_width=True)
+                        with sec_c2:
+                            attr_rows = []
+                            for _, sr in sector_pnl.iterrows():
+                                sc = SECTOR_COLORS.get(sr["sector"], "#6b7280")
+                                pnl_val = sr["s_total_pnl"]
+                                rate_val = sr["s_avg_rate"]
+                                pnl_str = f"¥{pnl_val:,.0f}" if pnl_val >= 0 else f"-¥{abs(pnl_val):,.0f}"
+                                rc = "#22c55e" if rate_val >= 0 else "#ef4444"
+                                attr_rows.append(
+                                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                                    f'padding:6px 10px;background:#161b22;border-radius:4px;margin-bottom:4px;'
+                                    f'border-left:3px solid {sc};">'
+                                    f'<span style="color:#e6edf3;font-size:13px;">{sr["sector"]}</span>'
+                                    f'<span style="display:flex;gap:16px;font-size:12px;">'
+                                    f'<span style="color:{sc};">{pnl_str}</span>'
+                                    f'<span style="color:{rc};">{rate_val:+.2f}%</span>'
+                                    f"</span></div>"
+                                )
+                            st.markdown(
+                                f'<div style="max-height:280px;overflow-y:auto;">{"".join(attr_rows)}</div>',
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        st.caption("暂无行业归因数据")
+                else:
+                    st.caption("暂无持仓快照数据")
+
+                # --- 8C-4: 技术信号胜率复盘 ---
+                st.markdown(
+                    '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin:10px 0 6px;">技术信号胜率复盘</div>',
+                    unsafe_allow_html=True,
+                )
+
+                try:
+                    conn_tech = get_db_connection()
+                    try:
+                        tech_rev = pd.read_sql(
+                            "SELECT date, code, ma_signal, macd_signal, rsi_value, trend "
+                            "FROM etf_technical ORDER BY date, code", conn_tech
+                        )
+                    finally:
+                        conn_tech.close()
+
+                    if not tech_rev.empty and not rev_snaps.empty:
+                        tech_rev["date"] = pd.to_datetime(tech_rev["date"])
+                        tech_rev = tech_rev.sort_values(["code", "date"])
+                        signals = []
+                        rev_snaps_dt = rev_snaps.copy()
+                        rev_snaps_dt["date"] = pd.to_datetime(rev_snaps_dt["date"])
+                        for code_val, grp in tech_rev.groupby("code"):
+                            grp = grp.set_index("date")
+                            macd_col = grp.get("macd_signal")
+                            if macd_col is None:
+                                continue
+                            for sig_type_str in ("金叉", "死叉"):
+                                sig_dates = macd_col[macd_col == sig_type_str].index
+                                for sig_date in sig_dates:
+                                    future = rev_snaps_dt[
+                                        (rev_snaps_dt["code"] == code_val) &
+                                        (rev_snaps_dt["date"] > sig_date + pd.Timedelta(days=3)) &
+                                        (rev_snaps_dt["date"] <= sig_date + pd.Timedelta(days=8))
+                                    ]
+                                    if not future.empty:
+                                        ret5 = future["pnl_rate"].iloc[-1]
+                                        signals.append({"type": f"MACD{sig_type_str}", "code": code_val, "date": sig_date, "ret5": ret5})
+
+                        if signals:
+                            sig_df = pd.DataFrame(signals)
+                            for sig_type in ("MACD金叉", "MACD死叉"):
+                                sub = sig_df[sig_df["type"] == sig_type]
+                                if sub.empty:
+                                    continue
+                                is_golden = "金叉" in sig_type
+                                if is_golden:
+                                    wins = (sub["ret5"] > 0).sum()
+                                else:
+                                    wins = (sub["ret5"] < 0).sum()
+                                total = len(sub)
+                                win_rate = wins / total * 100 if total > 0 else 0
+                                avg_ret = sub["ret5"].mean()
+                                sc = "#22c55e" if win_rate >= 50 else "#ef4444"
+                                arc = "#22c55e" if avg_ret >= 0 else "#ef4444"
+                                st.markdown(
+                                    f'<div style="background:#161b22;border-radius:6px;padding:10px 14px;margin-bottom:6px;'
+                                    f'border-left:3px solid {sc};">'
+                                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                                    f'<span style="font-size:13px;font-weight:bold;color:#e6edf3;">{sig_type}</span>'
+                                    f'<span style="font-size:13px;color:{sc};font-weight:bold;">{win_rate:.1f}% 胜率 ({wins}/{total})</span>'
+                                    f"</div>"
+                                    f'<div style="font-size:11px;color:#8b949e;margin-top:4px;">'
+                                    f'信号后5日平均收益: <b style="color:{arc};">{avg_ret:+.2f}%</b>'
+                                    f"</div></div>",
+                                    unsafe_allow_html=True,
+                                )
+                        else:
+                            st.caption("暂无技术信号翻转记录可供复盘")
+                    else:
+                        st.caption("暂无技术指标数据")
+                except Exception:
+                    st.caption("技术信号复盘数据加载异常")
+
+        except Exception:
+            pass
 
     # ========== 数据导出 ==========
     st.markdown("---")
