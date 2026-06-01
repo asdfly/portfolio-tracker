@@ -5498,6 +5498,120 @@ def _render_tab7_news(tab7, positions, summary, technical):
                     )
                     st.plotly_chart(fig_pnl_dist, width="stretch")
 
+        # ===== 新闻情感分析（持久化分数，避免重复计算）=====
+        st.markdown("---")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+            '新闻情感分析'
+            '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+            '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+            '基于SnowNLP+金融词典混合评分，情感分数已持久化到数据库。'
+            '</span></div>',
+            unsafe_allow_html=True,
+        )
+
+        try:
+            conn_sent = get_db_connection()
+            try:
+                sent_df = pd.read_sql_query(
+                    "SELECT date, category, title, summary, sentiment_score "
+                    "FROM daily_news WHERE date >= date('now', '-7 days') "
+                    "AND sentiment_score IS NOT NULL ORDER BY date DESC",
+                    conn_sent)
+            finally:
+                conn_sent.close()
+
+            if not sent_df.empty:
+                sent_df["sentiment"] = sent_df["sentiment_score"]
+
+                # 各板块平均情绪
+                cat_sent = sent_df.groupby("category").agg(
+                    cnt=("title", "count"),
+                    avg_s=("sentiment", "mean"),
+                    pos=("sentiment", lambda x: (x > 0.6).sum()),
+                    neg=("sentiment", lambda x: (x < 0.4).sum()),
+                ).sort_values("avg_s", ascending=True).reset_index()
+
+                # 情绪对比图（0=负面, 0.5=中性, 1=正面）
+                colors_s = ["#22c55e" if v > 0.55 else "#f59e0b" if v >= 0.45 else "#ef4444"
+                            for v in cat_sent["avg_s"]]
+                fig_sent = go.Figure(go.Bar(
+                    x=cat_sent["avg_s"], y=cat_sent["category"], orientation="h",
+                    marker_color=colors_s,
+                    text=[f"{v:.2f}" for v in cat_sent["avg_s"]], textposition="auto",
+                ))
+                fig_sent.update_layout(height=max(200, len(cat_sent)*30),
+                                       margin=dict(l=110, r=20, t=5, b=10),
+                                        xaxis=dict(title="情绪得分(0负面~0.5中性~1正面)", range=[0, 1]),
+                                       yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_sent, width="stretch")
+
+                # 情绪概要卡片
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                avg_all = sent_df["sentiment"].mean()
+                tp = (sent_df["sentiment"] > 0.6).sum()
+                tn = (sent_df["sentiment"] < 0.4).sum()
+                sc1.metric("平均情绪", f"{avg_all:.2f}")
+                sc2.metric("正面新闻", tp)
+                sc3.metric("负面新闻", tn)
+                sc4.metric("中性新闻", len(sent_df) - tp - tn)
+
+                # 情绪时间趋势图
+                daily_sent = sent_df.groupby("date").agg(
+                    avg_sent=("sentiment", "mean"),
+                    cnt=("title", "count"),
+                    neg_cnt=("sentiment", lambda x: (x < 0.4).sum()),
+                ).reset_index().sort_values("date")
+                if len(daily_sent) >= 2:
+                    fig_trend = go.Figure()
+                    fig_trend.add_trace(go.Scatter(
+                        x=daily_sent["date"], y=daily_sent["avg_sent"],
+                        mode="lines+markers", name="平均情绪",
+                        line=dict(color="#58a6ff", width=2),
+                        marker=dict(size=6),
+                    ))
+                    fig_trend.add_trace(go.Bar(
+                        x=daily_sent["date"], y=daily_sent["neg_cnt"],
+                        name="负面新闻数", yaxis="y2",
+                        marker_color="rgba(239,68,68,0.3)",
+                    ))
+                    fig_trend.update_layout(
+                        height=250,
+                        margin=dict(l=40, r=60, t=10, b=30),
+                        plot_bgcolor="#0d1117",
+                        paper_bgcolor="#0d1117",
+                        font=dict(color="#c9d1d9", size=11),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                                    font=dict(size=10, color="#8b949e")),
+                        xaxis=dict(title="", showgrid=True, gridcolor="#21262d"),
+                        yaxis=dict(title="平均情绪", range=[0, 1], showgrid=True, gridcolor="#21262d"),
+                        yaxis2=dict(title="负面数", overlaying="y", side="right",
+                                    gridcolor="rgba(255,255,255,0.05)"),
+                    )
+                    st.plotly_chart(fig_trend, width="stretch")
+
+                # 各板块情绪明细表
+                with st.expander("各板块情绪明细", expanded=False):
+                    disp_s = cat_sent[["category", "cnt", "avg_s", "pos", "neg"]].copy()
+                    disp_s.columns = ["板块", "新闻数", "平均情绪", "正面数", "负面数"]
+                    st.dataframe(disp_s, use_container_width=True, hide_index=True, height=250)
+
+                # 负面新闻列表
+                neg_news = sent_df[sent_df["sentiment"] < 0.4].nsmallest(5, "sentiment")
+                if not neg_news.empty:
+                    with st.expander("负面新闻 TOP5", expanded=False):
+                        for _, nr in neg_news.iterrows():
+                            st.markdown(
+                                f'<div style="font-size:12px;color:#ef4444;padding:2px 0;">'
+                                f'[{nr["category"]}] {nr["date"]} (情绪:{nr["sentiment"]:.2f}) - {nr["title"]}</div>',
+                                unsafe_allow_html=True)
+            else:
+                st.info("近7天无新闻情感数据")
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            st.error(f"新闻情感分析异常: {type(e).__name__}: {e}")
+
+
     # ========== Tab8: 操作建议 ==========
 
 
