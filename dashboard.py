@@ -4225,7 +4225,7 @@ def _render_tab3_risk(tab3, positions, summary, technical, selected_date, ext_ri
                                 font=dict(color="#c9d1d9", size=10),
                                 margin=dict(l=50, r=20, t=10, b=30),
                                 xaxis=dict(showgrid=True, gridcolor="#21262d", tickfont=dict(size=9)),
-                                yaxis=dict(showgrid=True, gridcolor="#21262d", title="触发次数", titlefont=dict(size=10)),
+                                 yaxis=dict(showgrid=True, gridcolor="#21262d", title=dict(text="触发次数", font=dict(size=10))),
                                 legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                             font=dict(size=9, color="#8b949e")),
                             )
