@@ -159,7 +159,7 @@ TABLE_DEFS = [
         )
     """, [
         "CREATE INDEX IF NOT EXISTS idx_news_date ON daily_news(date)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_news_title ON daily_news(title)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_news_date_title ON daily_news(date, title)",
     ]),
 
     # --- 监控 ---
