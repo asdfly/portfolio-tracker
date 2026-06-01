@@ -50,7 +50,7 @@ def fetch_lhb_data(date_str: str) -> pd.DataFrame:
         if '_seq' in df.columns:
             df = df.drop(columns=['_seq'])
         
-        df['date'] = pd.to_datetime(df['research_date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d'))
+        df['date'] = pd.to_datetime(df['上榜日'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d'))
         
         # 仅保留DB列
         keep = ['date', 'code', 'name', 'close', 'change_pct', 'lhb_net_buy',
@@ -68,20 +68,15 @@ def fetch_lhb_data(date_str: str) -> pd.DataFrame:
 # ============================================================
 
 def fetch_margin_data(date_str: str) -> pd.DataFrame:
-    """获取指定日期的融资融券数据（上交所）。
-    
-    Args:
-        date_str: 日期字符串, 格式 YYYYMMDD
-        
-    Returns:
-        DataFrame, 标准化列名
-    """
+    """获取指定日期的融资融券数据（上交所）。"""
     try:
         import akshare as ak
-        df = ak.stock_margin_detail_sse(date=date_str)
+        try:
+            df = ak.stock_margin_detail_sse(date=date_str)
+        except (ValueError, TypeError):
+            return pd.DataFrame()
         if df is None or df.empty:
             return pd.DataFrame()
-        
         col_map = {
             '信用交易日期': 'date',
             '标的证券代码': 'code', '标的证券简称': 'name',
@@ -90,68 +85,52 @@ def fetch_margin_data(date_str: str) -> pd.DataFrame:
             '融券卖出量': 'short_sell', '融券偿还量': 'short_repay',
         }
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
-        
         keep = ['date', 'code', 'name', 'margin_balance', 'margin_buy',
                 'margin_repay', 'short_volume', 'short_sell', 'short_repay']
         df = df[[c for c in keep if c in df.columns]]
-        # 统一日期格式: YYYYMMDD -> YYYY-MM-DD
         if 'date' in df.columns:
             df['date'] = df['date'].apply(lambda x: (
-                f"{x[:4]}-{x[4:6]}-{x[6:8]}" if isinstance(x, str) and len(x) == 8 else x
-            ))
+                f'{x[:4]}-{x[4:6]}-{x[6:8]}' if isinstance(x, str) and len(x) == 8 else x))
         return df
     except Exception as e:
-        logger.warning(f"获取融资融券数据失败 ({date_str}): {e}")
+        logger.warning(f'获取融资融券数据失败 ({date_str}): {e}')
         return pd.DataFrame()
-
-
-# ============================================================
-#  股东增减持 (stock_holder_change)
-# ============================================================
 
 def fetch_holder_change_data(date_str: str) -> pd.DataFrame:
     """获取指定日期的股东增减持数据。
-    
+
+    使用 stock_gdfx_free_holding_change_em (AKShare 1.18.59+),
+    原API stock_gdfx_free_holding_detail_em 存在 NoneType bug。
+
     Args:
         date_str: 日期字符串, 格式 YYYYMMDD
-        
+
     Returns:
         DataFrame, 标准化列名
     """
     try:
         import akshare as ak
-        df = ak.stock_gdfx_free_holding_detail_em(date=date_str)
+        try:
+            df = ak.stock_gdfx_free_holding_change_em(date=date_str)
+        except (TypeError, KeyError):
+            return pd.DataFrame()
         if df is None or df.empty:
             return pd.DataFrame()
-        
         col_map = {
             '序号': '_seq',
             '股东名称': 'holder_name', '股东类型': 'holder_type',
-            '股票代码': 'code', '股票简称': 'name',
-            '报告期': 'report_period', '期末持股-数量': 'holding_qty',
-            '数量变化': 'qty_change', '数量变化比例': 'qty_change_pct',
-            '持股变动': 'change_type', '流通市值': 'float_mv',
-            '公告日': 'announce_date',
+            '流通市值统计': 'float_mv',
         }
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         if '_seq' in df.columns:
             df = df.drop(columns=['_seq'])
-        
-        df['date'] = pd.to_datetime(df['research_date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d'))
-        
-        keep = ['date', 'holder_name', 'holder_type', 'code', 'name', 'report_period',
-                'holding_qty', 'qty_change', 'qty_change_pct', 'change_type',
-                'float_mv', 'announce_date']
+        df['date'] = datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
+        keep = ['date', 'holder_name', 'holder_type', 'float_mv']
         df = df[[c for c in keep if c in df.columns]]
         return df
     except Exception as e:
-        logger.warning(f"获取股东增减持数据失败 ({date_str}): {e}")
+        logger.warning(f'获取股东增减持数据失败 ({date_str}): {e}')
         return pd.DataFrame()
-
-
-# ============================================================
-#  机构调研 (stock_institution_research)
-# ============================================================
 
 def fetch_institution_research_data(date_str: str) -> pd.DataFrame:
     """获取指定日期的机构调研数据。
@@ -352,7 +331,7 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         try:
             df = fetch_holder_change_data(date_param)
             stats["holder_change"] = save_market_events(
-                conn, df, "stock_holder_change", ["date", "holder_name", "code"])
+                conn, df, "stock_holder_change", ["date", "holder_name"])
             logger.info(f"  股东增减持: {stats['holder_change']} 条")
         except Exception as e:
             stats["errors"].append(f"股东增减持: {e}")
@@ -459,7 +438,7 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                 try:
                     df = fetch_holder_change_data(date_str)
                     n = save_market_events(conn, df, "stock_holder_change",
-                                          ["date", "holder_name", "code"])
+                                          ["date", "holder_name"])
                     totals["holder_change"] += n
                 except Exception as e:
                     logger.warning(f"  股东增减持失败: {e}")
