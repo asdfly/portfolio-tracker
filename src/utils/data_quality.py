@@ -220,6 +220,146 @@ class DataQualityChecker:
         score = self.compute_quality_score()
         return score
 
+    def check_null_rates(self) -> List[Dict]:
+        """检查各表关键列的NULL比例，返回需要关注的项。"""
+        conn = self._conn()
+        cur = conn.cursor()
+        # 每个表需要检查的关键列(排除id和created_at)
+        key_cols_map = {
+            "fund_flows": ["net_inflow", "buy_amount", "sell_amount"],
+            "stock_lhb": ["code", "net_inflow"],
+            "stock_margin": ["code", "margin_balance"],
+            "stock_institution_research": ["code", "institution"],
+            "stock_block_trade": ["code", "amount"],
+            "daily_news": ["title", "category", "source"],
+            "index_quotes": ["close", "change_pct"],
+            "portfolio_snapshots": ["total_value", "daily_change_pct"],
+        }
+        results = []
+        for table, cols in key_cols_map.items():
+            if table not in QUALITY_CHECK_TABLES:
+                continue
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM {table}")
+                total = cur.fetchone()[0]
+                if total == 0:
+                    continue
+                for col in cols:
+                    cur.execute(f"SELECT COUNT(*) FROM {table} WHERE [{col}] IS NULL")
+                    nulls = cur.fetchone()[0]
+                    rate = nulls / total
+                    if rate > 0.01:  # 超过1%才报告
+                        results.append({
+                            "table": table,
+                            "column": col,
+                            "null_count": nulls,
+                            "total_count": total,
+                            "null_rate": round(rate, 4),
+                            "severity": "HIGH" if rate > 0.1 else "MEDIUM" if rate > 0.05 else "LOW",
+                        })
+            except Exception:
+                pass
+        conn.close()
+        return results
+
+    def check_date_gaps(self, lookback_days: int = 10) -> List[Dict]:
+        """检查近N天内各表是否存在日期缺口。"""
+        conn = self._conn()
+        cur = conn.cursor()
+        today = date.today()
+        cutoff = (today - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        results = []
+        daily_tables = [
+            ("portfolio_snapshots", "date"), ("fund_flows", "date"),
+            ("daily_news", "date"), ("index_quotes", "date"),
+            ("stock_lhb", "date"), ("stock_margin", "date"),
+        ]
+        for table, date_col in daily_tables:
+            try:
+                cur.execute(f"SELECT DISTINCT {date_col} FROM {table} WHERE {date_col} >= ? ORDER BY {date_col}", (cutoff,))
+                dates = [datetime.strptime(str(r[0]), "%Y-%m-%d").date() for r in cur.fetchall()]
+                if len(dates) < 2:
+                    continue
+                # 检查连续性
+                gaps = []
+                for i in range(1, len(dates)):
+                    diff = (dates[i] - dates[i-1]).days
+                    if diff > 3:  # 超过3天视为缺口(排除周末)
+                        gaps.append({"from": str(dates[i-1]), "to": str(dates[i]), "gap_days": diff})
+                if gaps:
+                    results.append({"table": table, "latest": str(dates[-1]), "gaps": gaps})
+            except Exception:
+                pass
+        conn.close()
+        return results
+
+    def generate_alerts(self) -> List[Dict]:
+        """生成数据质量告警列表，按严重程度排序。"""
+        alerts = []
+        score_data = self.compute_quality_score()
+
+        # 1. 新鲜度告警
+        for f in score_data["details"]["freshness"]:
+            if f["status"] == "STALE":
+                alerts.append({
+                    "severity": "HIGH",
+                    "category": "freshness",
+                    "table": f["table"],
+                    "message": f"{f['label']} 数据严重过期 (最新: {f['latest_date']}, 延迟{f['days_lag']}天)",
+                    "suggestion": f"检查 {f['table']} 采集任务是否正常运行，必要时手动回填",
+                })
+            elif f["status"] == "WARN":
+                alerts.append({
+                    "severity": "MEDIUM",
+                    "category": "freshness",
+                    "table": f["table"],
+                    "message": f"{f['label']} 数据延迟 (最新: {f['latest_date']}, 延迟{f['days_lag']}天)",
+                })
+
+        # 2. NULL率告警
+        null_issues = self.check_null_rates()
+        for n in null_issues:
+            alerts.append({
+                "severity": n["severity"],
+                "category": "null_rate",
+                "table": n["table"],
+                "message": f"{n['table']}.{n['column']} NULL率 {n['null_rate']*100:.1f}% ({n['null_count']}/{n['total_count']})",
+                "suggestion": "检查采集源是否缺少该字段，或用默认值填充",
+            })
+
+        # 3. 日期缺口告警
+        gap_issues = self.check_date_gaps()
+        for g in gap_issues:
+            for gap in g["gaps"]:
+                alerts.append({
+                    "severity": "HIGH" if gap["gap_days"] > 5 else "MEDIUM",
+                    "category": "date_gap",
+                    "table": g["table"],
+                    "message": f"{g['table']} 存在缺口: {gap['from']} ~ {gap['to']} ({gap['gap_days']}天)",
+                    "suggestion": "运行 backfill_market_events 或对应采集器的回填函数",
+                })
+
+        # 4. 评分告警
+        if score_data["total_score"] < 70:
+            alerts.append({
+                "severity": "HIGH",
+                "category": "score",
+                "table": "全局",
+                "message": f"数据质量评分过低: {score_data['total_score']}/100 ({score_data['grade']})",
+            })
+        elif score_data["total_score"] < 80:
+            alerts.append({
+                "severity": "LOW",
+                "category": "score",
+                "table": "全局",
+                "message": f"数据质量评分偏低: {score_data['total_score']}/100 ({score_data['grade']})",
+            })
+
+        # 按严重程度排序
+        severity_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+        alerts.sort(key=lambda x: severity_order.get(x["severity"], 99))
+        return alerts
+
     def get_freshness_summary(self) -> str:
         """生成新鲜度检查的简要文本报告"""
         results = self.check_table_freshness()
