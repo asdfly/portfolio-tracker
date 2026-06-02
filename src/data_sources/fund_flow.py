@@ -104,7 +104,7 @@ def fetch_etf_fund_flow(code: str, name: str = '') -> pd.DataFrame:
         df['code'] = code
         df['name'] = name
         df['category'] = 'etf'
-        keep_cols = ['date', 'code', 'name', 'close', 'change_pct', 'net_inflow', 'net_inflow_pct', 'category']
+        keep_cols = ['date', 'code', 'name', 'close', 'change_pct', 'net_inflow', 'net_inflow_pct', 'super_large_inflow', 'large_inflow', 'medium_inflow', 'small_inflow', 'category']
         df = df[[c for c in keep_cols if c in df.columns]]
         return df
     except (ConnectionError, OSError) as e:
