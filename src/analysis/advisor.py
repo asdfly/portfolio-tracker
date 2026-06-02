@@ -485,41 +485,41 @@ class SmartAdvisor:
                 agg = ff_df.groupby('code').agg(
                     total_net_inflow=('net_inflow', 'sum'),
                     avg_net_inflow=('net_inflow', 'mean'),
-                    days=('trade_date', 'count')
+                    days=('date', 'count')
                 ).reset_index()
 
                 for _, row in agg.iterrows():
                     code = str(row['code'])
                     net = row.get('total_net_inflow', 0)
-                    if abs(net) < 1:
+                    if abs(net) < 100000000:  # <1亿忽略
                         continue
 
                     if code in held_codes:
-                        if net > 5:
+                        if net > 100000000:  # >1亿净流入
                             advices.append(InvestmentAdvice(
                                 type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
                                 title=f"{code} 资金大幅净流入",
-                                description=f"近{int(row['days'])}个交易日累计净流入{net:.2f}亿元",
+                                description=f"近{int(row['days'])}个交易日累计净流入{net/1e8:.2f}亿元",
                                 action_items=["关注资金持续性", "评估是否跟随主力方向"],
                                 related_codes=[code], confidence=0.6,
                                 created_at=datetime.now()
                             ))
-                        elif net < -5:
+                        elif net < -100000000:  # >1亿净流出
                             advices.append(InvestmentAdvice(
                                 type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
                                 title=f"{code} 资金大幅净流出",
-                                description=f"近{int(row['days'])}个交易日累计净流出{abs(net):.2f}亿元",
+                                description=f"近{int(row['days'])}个交易日累计净流出{abs(net)/1e8:.2f}亿元",
                                 action_items=["警惕资金撤离风险", "评估止损或减仓时机"],
                                 related_codes=[code], confidence=0.6,
                                 created_at=datetime.now()
                             ))
 
                 total_inflow = agg['total_net_inflow'].sum()
-                if total_inflow < -10:
+                if total_inflow < -500000000:  # 整体净流出>5亿
                     advices.append(InvestmentAdvice(
                         type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.MEDIUM,
                         title="ETF市场整体资金流出",
-                        description=f"持仓ETF近7日累计净流出{abs(total_inflow):.2f}亿元",
+                        description=f"持仓ETF近{int(agg['days'].sum())}日累计净流出{abs(total_inflow)/1e8:.2f}亿元",
                         action_items=["关注市场整体风险偏好", "考虑降低仓位防御"],
                         related_codes=[], confidence=0.55,
                         created_at=datetime.now()

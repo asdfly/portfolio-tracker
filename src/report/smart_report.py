@@ -215,7 +215,7 @@ class SmartReportGenerator:
             if 'code' in fund_flows.columns:
                 agg = fund_flows.groupby('code').agg(
                     total_net=('net_inflow', 'sum'),
-                    days=('trade_date', 'count')
+                    days=('date', 'count')
                 ).reset_index()
                 top_inflow = agg.nlargest(3, 'total_net')
                 top_outflow = agg.nsmallest(3, 'total_net')
@@ -223,11 +223,11 @@ class SmartReportGenerator:
                 lines.append("")
                 lines.append("**净流入TOP3**:")
                 for _, r in top_inflow.iterrows():
-                    lines.append(f"- {r['code']}: {r['total_net']:.2f}亿元 ({int(r['days'])}日)")
+                    lines.append(f"- {r['code']}: {r['total_net']/1e8:.2f}亿元 ({int(r['days'])}日)")
                 lines.append("")
                 lines.append("**净流出TOP3**:")
                 for _, r in top_outflow.iterrows():
-                    lines.append(f"- {r['code']}: {r['total_net']:.2f}亿元 ({int(r['days'])}日)")
+                    lines.append(f"- {r['code']}: {r['total_net']/1e8:.2f}亿元 ({int(r['days'])}日)")
                 lines.append("")
                 sections.append(True)
 
