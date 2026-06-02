@@ -79,6 +79,34 @@ class SmartAdvisor:
             advices.extend(opportunity_advice)
 
         # 按优先级排序
+
+        # 6. 市场事件信号建议（如果传入）
+        event_signals = portfolio_data.get('market_event_signals', [])
+        if event_signals:
+            event_advice = self.analyze_market_event_signals(event_signals)
+            if event_advice:
+                advices.extend(event_advice)
+
+        # 7. 资金流建议
+        fund_flow_advice = self._analyze_fund_flows(portfolio_data)
+        if fund_flow_advice:
+            advices.extend(fund_flow_advice)
+
+        # 8. 市场情绪建议
+        sentiment_advice = self._analyze_market_sentiment(portfolio_data)
+        if sentiment_advice:
+            advices.extend(sentiment_advice)
+
+        # 9. 宏观环境建议
+        macro_advice = self._analyze_macro_environment(portfolio_data)
+        if macro_advice:
+            advices.extend(macro_advice)
+
+        # 10. 新闻事件建议
+        news_advice = self._analyze_news_sentiment(portfolio_data)
+        if news_advice:
+            advices.extend(news_advice)
+
         priority_order = {AdvicePriority.HIGH: 0, AdvicePriority.MEDIUM: 1, AdvicePriority.LOW: 2}
         advices.sort(key=lambda x: priority_order.get(x.priority, 3))
 
@@ -435,7 +463,266 @@ class SmartAdvisor:
     # ============================================================
     #  市场事件驱动建议（Phase 2）
     # ============================================================
-    def analyze_market_event_signals(self, signals) -> List["InvestmentAdvice"]:
+
+    # ============================================================
+    #  资金流分析建议
+    # ============================================================
+    def _analyze_fund_flows(self, portfolio_data):
+        """分析ETF资金流异动，关联持仓标的"""
+        advices = []
+        ff_df = portfolio_data.get('fund_flows')
+        if ff_df is None or (hasattr(ff_df, 'empty') and ff_df.empty):
+            return advices
+
+        try:
+            if not isinstance(ff_df, pd.DataFrame):
+                return advices
+
+            positions = portfolio_data.get('positions', [])
+            held_codes = set(p.get('code', '') for p in positions if isinstance(p, dict))
+
+            if 'code' in ff_df.columns:
+                agg = ff_df.groupby('code').agg(
+                    total_net_inflow=('net_inflow', 'sum'),
+                    avg_net_inflow=('net_inflow', 'mean'),
+                    days=('trade_date', 'count')
+                ).reset_index()
+
+                for _, row in agg.iterrows():
+                    code = str(row['code'])
+                    net = row.get('total_net_inflow', 0)
+                    if abs(net) < 1:
+                        continue
+
+                    if code in held_codes:
+                        if net > 5:
+                            advices.append(InvestmentAdvice(
+                                type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+                                title=f"{code} 资金大幅净流入",
+                                description=f"近{int(row['days'])}个交易日累计净流入{net:.2f}亿元",
+                                action_items=["关注资金持续性", "评估是否跟随主力方向"],
+                                related_codes=[code], confidence=0.6,
+                                created_at=datetime.now()
+                            ))
+                        elif net < -5:
+                            advices.append(InvestmentAdvice(
+                                type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                                title=f"{code} 资金大幅净流出",
+                                description=f"近{int(row['days'])}个交易日累计净流出{abs(net):.2f}亿元",
+                                action_items=["警惕资金撤离风险", "评估止损或减仓时机"],
+                                related_codes=[code], confidence=0.6,
+                                created_at=datetime.now()
+                            ))
+
+                total_inflow = agg['total_net_inflow'].sum()
+                if total_inflow < -10:
+                    advices.append(InvestmentAdvice(
+                        type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.MEDIUM,
+                        title="ETF市场整体资金流出",
+                        description=f"持仓ETF近7日累计净流出{abs(total_inflow):.2f}亿元",
+                        action_items=["关注市场整体风险偏好", "考虑降低仓位防御"],
+                        related_codes=[], confidence=0.55,
+                        created_at=datetime.now()
+                    ))
+        except Exception as e:
+            logger.warning(f"资金流分析异常: {e}")
+
+        return advices
+
+    # ============================================================
+    #  市场情绪分析建议
+    # ============================================================
+    def _analyze_market_sentiment(self, portfolio_data):
+        """分析融资融券/质押等市场情绪指标"""
+        advices = []
+        ms_df = portfolio_data.get('market_sentiment')
+        if ms_df is None or (hasattr(ms_df, 'empty') and ms_df.empty):
+            return advices
+
+        try:
+            if not isinstance(ms_df, pd.DataFrame):
+                return advices
+
+            latest = ms_df.drop_duplicates('indicator_name', keep='first')
+            indicators = dict(zip(latest['indicator_name'], latest['indicator_value']))
+
+            margin_total = indicators.get('MARGIN_TOTAL')
+            margin_buy_sh = indicators.get('MARGIN_BUY_\u4e0a')
+            if margin_total and margin_buy_sh:
+                try:
+                    mt = float(margin_total)
+                    if mt > 18000:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.CAUTION, priority=AdvicePriority.LOW,
+                            title="融资余额处于高位",
+                            description=f"两市融资余额{mt:.0f}亿元，杠杆水平偏高",
+                            action_items=["注意杠杆风险", "关注后续资金动向"],
+                            related_codes=[], confidence=0.5,
+                            created_at=datetime.now()
+                        ))
+                except (ValueError, TypeError):
+                    pass
+
+            pledge_ratio = indicators.get('PLEDGE_RATIO')
+            if pledge_ratio:
+                try:
+                    pr = float(pledge_ratio)
+                    if pr > 5.0:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                            title="股权质押比例偏高",
+                            description=f"市场整体质押比例{pr:.2f}%，需关注平仓风险",
+                            action_items=["关注高质押个股", "警惕连锁平仓风险"],
+                            related_codes=[], confidence=0.55,
+                            created_at=datetime.now()
+                        ))
+                except (ValueError, TypeError):
+                    pass
+        except Exception as e:
+            logger.warning(f"市场情绪分析异常: {e}")
+
+        return advices
+
+    # ============================================================
+    #  宏观环境分析建议
+    # ============================================================
+    def _analyze_macro_environment(self, portfolio_data):
+        """分析宏观经济指标对投资组合的影响"""
+        advices = []
+        md_df = portfolio_data.get('macro_daily')
+        if md_df is None or (hasattr(md_df, 'empty') and md_df.empty):
+            return advices
+
+        try:
+            if not isinstance(md_df, pd.DataFrame):
+                return advices
+
+            latest = md_df.drop_duplicates('indicator_name', keep='first')
+            indicators = dict(zip(latest['indicator_name'], latest['indicator_value']))
+
+            gold_price = indicators.get('COMEX_GOLD')
+            if gold_price:
+                try:
+                    gp = float(gold_price)
+                    if gp > 3200:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.OPPORTUNITY, priority=AdvicePriority.LOW,
+                            title="金价处于高位",
+                            description=f"COMEX黄金价格{gp:.0f}美元/盎司，避险情绪浓厚",
+                            action_items=["关注黄金ETF配置价值", "评估避险资产比例"],
+                            related_codes=[], confidence=0.5,
+                            created_at=datetime.now()
+                        ))
+                except (ValueError, TypeError):
+                    pass
+
+            usd_cny = indicators.get('USD_CNY')
+            if usd_cny:
+                try:
+                    rate = float(usd_cny)
+                    if rate > 7.3:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                            title="人民币汇率承压",
+                            description=f"美元/人民币{rate:.4f}，贬值压力较大",
+                            action_items=["关注外资流向变化", "评估进口成本影响"],
+                            related_codes=[], confidence=0.55,
+                            created_at=datetime.now()
+                        ))
+                except (ValueError, TypeError):
+                    pass
+
+            shibor = indicators.get('SHIBOR_ON')
+            if shibor:
+                try:
+                    s = float(shibor)
+                    if s > 2.5:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.LOW,
+                            title="银行间利率偏高",
+                            description=f"SHIBOR隔夜{s:.3f}%，短期流动性偏紧",
+                            action_items=["关注市场流动性变化", "评估对债券/货基的影响"],
+                            related_codes=[], confidence=0.45,
+                            created_at=datetime.now()
+                        ))
+                except (ValueError, TypeError):
+                    pass
+
+            us_10y = indicators.get('US_10Y_BOND')
+            if us_10y:
+                try:
+                    y = float(us_10y)
+                    if y > 4.5:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                            title="美债收益率高企",
+                            description=f"美国10年期国债收益率{y:.2f}%，全球资产承压",
+                            action_items=["关注外资回流美国风险", "评估对A股估值影响"],
+                            related_codes=[], confidence=0.55,
+                            created_at=datetime.now()
+                        ))
+                except (ValueError, TypeError):
+                    pass
+        except Exception as e:
+            logger.warning(f"宏观环境分析异常: {e}")
+
+        return advices
+
+    # ============================================================
+    #  新闻事件分析建议
+    # ============================================================
+    def _analyze_news_sentiment(self, portfolio_data):
+        """分析新闻事件，关联持仓板块"""
+        advices = []
+        news_df = portfolio_data.get('daily_news')
+        if news_df is None or (hasattr(news_df, 'empty') and news_df.empty):
+            return advices
+
+        try:
+            if not isinstance(news_df, pd.DataFrame):
+                return advices
+
+            sentiment_counts = news_df['sentiment'].value_counts() if 'sentiment' in news_df.columns else {}
+            total = len(news_df)
+
+            if total == 0:
+                return advices
+
+            neg_count = sentiment_counts.get('negative', sentiment_counts.get('负面', 0))
+            neg_ratio = neg_count / total if total > 0 else 0
+
+            if neg_ratio > 0.4 and total >= 5:
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                    title="市场负面新闻占比较高",
+                    description=f"最近3天{total}条新闻中{neg_count}条为负面({neg_ratio:.0%})",
+                    action_items=["关注负面新闻关联标的", "提高风险意识"],
+                    related_codes=[], confidence=0.5,
+                    created_at=datetime.now()
+                ))
+
+            if 'category' in news_df.columns:
+                cat_counts = news_df['category'].value_counts()
+                top_cat = cat_counts.index[0] if len(cat_counts) > 0 else None
+                if top_cat and cat_counts.iloc[0] >= 3:
+                    cat_news = news_df[news_df['category'] == top_cat]
+                    cat_neg = len(cat_news[cat_news['sentiment'].isin(['negative', '负面'])])
+                    if cat_neg >= 2:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.CAUTION, priority=AdvicePriority.LOW,
+                            title=f"[{top_cat}] 板块负面新闻密集",
+                            description=f"该板块{len(cat_news)}条新闻中{cat_neg}条为负面",
+                            action_items=["审视该板块持仓", "关注后续政策或事件发展"],
+                            related_codes=[], confidence=0.45,
+                            created_at=datetime.now()
+                        ))
+        except Exception as e:
+            logger.warning(f"新闻情感分析异常: {e}")
+
+        return advices
+
+
+    def analyze_market_event_signals(self, signals):
         """基于市场事件信号生成投资建议。
 
         Args:

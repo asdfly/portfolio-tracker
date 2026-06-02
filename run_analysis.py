@@ -365,6 +365,45 @@ def run_stage4_smart(results, summary, risk_data):
             'positions': results.get('positions', [])
         }
 
+        # === 闭环反馈: 扩展数据接入 ===
+        try:
+            ff_query = "SELECT code, name, trade_date, net_inflow, " \
+                "super_large_inflow, large_inflow, medium_inflow, small_inflow " \
+                "FROM fund_flows WHERE source='etf' " \
+                "AND trade_date >= date('now','-7 days') " \
+                "ORDER BY trade_date DESC, code"
+            combined_data['fund_flows'] = pd.read_sql(ff_query, conn)
+        except Exception as e:
+            logger.warning(f'资金流数据获取失败: {e}')
+            combined_data['fund_flows'] = pd.DataFrame()
+
+        try:
+            ms_query = "SELECT indicator_name, indicator_value, trade_date " \
+                "FROM market_sentiment WHERE trade_date >= date('now','-7 days') " \
+                "ORDER BY trade_date DESC"
+            combined_data['market_sentiment'] = pd.read_sql(ms_query, conn)
+        except Exception as e:
+            logger.warning(f'市场情绪数据获取失败: {e}')
+            combined_data['market_sentiment'] = pd.DataFrame()
+
+        try:
+            md_query = "SELECT indicator_name, indicator_value, unit, trade_date " \
+                "FROM macro_daily WHERE trade_date >= date('now','-7 days') " \
+                "ORDER BY trade_date DESC"
+            combined_data['macro_daily'] = pd.read_sql(md_query, conn)
+        except Exception as e:
+            logger.warning(f'宏观数据获取失败: {e}')
+            combined_data['macro_daily'] = pd.DataFrame()
+
+        try:
+            news_query = "SELECT title, sentiment, category, published_at, source " \
+                "FROM daily_news WHERE published_at >= date('now','-3 days') " \
+                "ORDER BY published_at DESC LIMIT 50"
+            combined_data['daily_news'] = pd.read_sql(news_query, conn)
+        except Exception as e:
+            logger.warning(f'新闻数据获取失败: {e}')
+            combined_data['daily_news'] = pd.DataFrame()
+
         # 获取建议摘要
         advice_summary = smart_report.get_advice_summary(combined_data)
         total = advice_summary.get('total', 0)
