@@ -7622,7 +7622,7 @@ def _render_sidebar(available_dates):
         except Exception:
             st.sidebar.caption(f"数据截止: {latest_avail}")
 
-    """Render sidebar controls. Returns (selected_date, show_days, selected_benchmark)."""
+    # Render sidebar controls. Returns (selected_date, show_days, selected_benchmark).
     with st.sidebar:
         st.markdown("### 🔧 控制面板")
 
