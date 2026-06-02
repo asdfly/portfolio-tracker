@@ -544,7 +544,7 @@ class SmartAdvisor:
                 return advices
 
             latest = ms_df.drop_duplicates('indicator_name', keep='first')
-            indicators = dict(zip(latest['indicator_name'], latest['indicator_value']))
+            indicators = dict(zip(latest['name'], latest['value']))
 
             margin_total = indicators.get('MARGIN_TOTAL')
             margin_buy_sh = indicators.get('MARGIN_BUY_\u4e0a')
@@ -598,7 +598,7 @@ class SmartAdvisor:
                 return advices
 
             latest = md_df.drop_duplicates('indicator_name', keep='first')
-            indicators = dict(zip(latest['indicator_name'], latest['indicator_value']))
+            indicators = dict(zip(latest['name'], latest['value']))
 
             gold_price = indicators.get('COMEX_GOLD')
             if gold_price:
@@ -682,13 +682,13 @@ class SmartAdvisor:
             if not isinstance(news_df, pd.DataFrame):
                 return advices
 
-            sentiment_counts = news_df['sentiment'].value_counts() if 'sentiment' in news_df.columns else {}
+            sentiment_counts = news_df['sentiment_score'].value_counts() if 'sentiment_score' in news_df.columns else {}
             total = len(news_df)
 
             if total == 0:
                 return advices
 
-            neg_count = sentiment_counts.get('negative', sentiment_counts.get('负面', 0))
+            neg_count = sentiment_counts.get('negative', sentiment_counts.get(-1, 0))
             neg_ratio = neg_count / total if total > 0 else 0
 
             if neg_ratio > 0.4 and total >= 5:
@@ -706,7 +706,7 @@ class SmartAdvisor:
                 top_cat = cat_counts.index[0] if len(cat_counts) > 0 else None
                 if top_cat and cat_counts.iloc[0] >= 3:
                     cat_news = news_df[news_df['category'] == top_cat]
-                    cat_neg = len(cat_news[cat_news['sentiment'].isin(['negative', '负面'])])
+                    cat_neg = len(cat_news[cat_news['sentiment_score'].isin(['negative', -1])])
                     if cat_neg >= 2:
                         advices.append(InvestmentAdvice(
                             type=AdviceType.CAUTION, priority=AdvicePriority.LOW,

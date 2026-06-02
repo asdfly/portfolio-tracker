@@ -234,27 +234,27 @@ class SmartReportGenerator:
         if sentiment is not None and hasattr(sentiment, 'empty') and not sentiment.empty:
             lines.append("### 市场情绪")
             lines.append("")
-            latest_s = sentiment.drop_duplicates('indicator_name', keep='first')
+            latest_s = sentiment.drop_duplicates('name', keep='first')
             for _, r in latest_s.iterrows():
-                lines.append(f"- {r['indicator_name']}: {r['indicator_value']}")
+                lines.append(f"- {r['name']}: {r['value']}")
             lines.append("")
             sections.append(True)
 
         if macro is not None and hasattr(macro, 'empty') and not macro.empty:
             lines.append("### 宏观指标")
             lines.append("")
-            latest_m = macro.drop_duplicates('indicator_name', keep='first')
+            latest_m = macro.drop_duplicates('name', keep='first')
             for _, r in latest_m.iterrows():
                 unit = r.get('unit', '')
-                val = r['indicator_value']
-                lines.append(f"- {r['indicator_name']}: {val} {unit}")
+                val = r['value']
+                lines.append(f"- {r['name']}: {val} {unit}")
             lines.append("")
             sections.append(True)
 
         if news is not None and hasattr(news, 'empty') and not news.empty:
             lines.append("### 近期新闻摘要")
             lines.append("")
-            sentiment_counts = news['sentiment'].value_counts() if 'sentiment' in news.columns else {}
+            sentiment_counts = news['sentiment_score'].value_counts() if 'sentiment_score' in news.columns else {}
             total_news = len(news)
             lines.append(f"共{total_news}条新闻: ", )
             for s, c in sentiment_counts.items():
