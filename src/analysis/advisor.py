@@ -543,7 +543,7 @@ class SmartAdvisor:
             if not isinstance(ms_df, pd.DataFrame):
                 return advices
 
-            latest = ms_df.drop_duplicates('indicator_name', keep='first')
+            latest = ms_df.drop_duplicates('name', keep='first')
             indicators = dict(zip(latest['name'], latest['value']))
 
             margin_total = indicators.get('MARGIN_TOTAL')
@@ -597,7 +597,7 @@ class SmartAdvisor:
             if not isinstance(md_df, pd.DataFrame):
                 return advices
 
-            latest = md_df.drop_duplicates('indicator_name', keep='first')
+            latest = md_df.drop_duplicates('name', keep='first')
             indicators = dict(zip(latest['name'], latest['value']))
 
             gold_price = indicators.get('COMEX_GOLD')

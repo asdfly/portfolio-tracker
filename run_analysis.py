@@ -343,6 +343,7 @@ def run_stage_news(positions, summary, index_quotes=None):
 
 def run_stage4_smart(results, summary, risk_data):
     """阶段四: 智能分析 - 策略回测和建议生成"""
+    import pandas as pd
     logger = logging.getLogger(__name__)
 
     if not SMART_ANALYSIS_CONFIG.get('advice_enabled', True):
@@ -367,38 +368,37 @@ def run_stage4_smart(results, summary, risk_data):
 
         # === 闭环反馈: 扩展数据接入 ===
         try:
-            ff_query = "SELECT code, name, trade_date, net_inflow, " \
+            ff_query = "SELECT code, name, date as trade_date, net_inflow, " \
                 "super_large_inflow, large_inflow, medium_inflow, small_inflow " \
-                "FROM fund_flows WHERE source='etf' " \
-                "AND trade_date >= date('now','-7 days') " \
-                "ORDER BY trade_date DESC, code"
+                "FROM fund_flows WHERE date >= date('now','-7 days') " \
+                "ORDER BY date DESC, code"
             combined_data['fund_flows'] = pd.read_sql(ff_query, conn)
         except Exception as e:
             logger.warning(f'资金流数据获取失败: {e}')
             combined_data['fund_flows'] = pd.DataFrame()
 
         try:
-            ms_query = "SELECT indicator_name, indicator_value, trade_date " \
-                "FROM market_sentiment WHERE trade_date >= date('now','-7 days') " \
-                "ORDER BY trade_date DESC"
+            ms_query = "SELECT name, value, date as trade_date " \
+                "FROM market_sentiment WHERE date >= date('now','-7 days') " \
+                "ORDER BY date DESC"
             combined_data['market_sentiment'] = pd.read_sql(ms_query, conn)
         except Exception as e:
             logger.warning(f'市场情绪数据获取失败: {e}')
             combined_data['market_sentiment'] = pd.DataFrame()
 
         try:
-            md_query = "SELECT indicator_name, indicator_value, unit, trade_date " \
-                "FROM macro_daily WHERE trade_date >= date('now','-7 days') " \
-                "ORDER BY trade_date DESC"
+            md_query = "SELECT name, value, 'N/A' as unit, date as trade_date " \
+                "FROM macro_daily WHERE date >= date('now','-7 days') " \
+                "ORDER BY date DESC"
             combined_data['macro_daily'] = pd.read_sql(md_query, conn)
         except Exception as e:
             logger.warning(f'宏观数据获取失败: {e}')
             combined_data['macro_daily'] = pd.DataFrame()
 
         try:
-            news_query = "SELECT title, sentiment, category, published_at, source " \
-                "FROM daily_news WHERE published_at >= date('now','-3 days') " \
-                "ORDER BY published_at DESC LIMIT 50"
+            news_query = "SELECT title, sentiment_score, category, date, source " \
+                "FROM daily_news WHERE date >= date('now','-3 days') " \
+                "ORDER BY date DESC LIMIT 50"
             combined_data['daily_news'] = pd.read_sql(news_query, conn)
         except Exception as e:
             logger.warning(f'新闻数据获取失败: {e}')
