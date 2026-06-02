@@ -430,23 +430,23 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
                 st.dataframe(ff_df, use_container_width=True, hide_index=True)
 
             # 市场情绪快览
-            ms_sql = ("SELECT indicator_name, indicator_value, trade_date "
-                      "FROM market_sentiment WHERE trade_date >= date('now','-3 days') "
+            ms_sql = ("SELECT name, value, date "
+                      "FROM market_sentiment WHERE date >= date('now','-3 days') "
                       "ORDER BY trade_date DESC")
             ms_df = pd.read_sql(ms_sql, env_conn)
             if not ms_df.empty:
                 st.subheader("市场情绪指标")
-                ms_latest = ms_df.drop_duplicates('indicator_name', keep='first')
+                ms_latest = ms_df.drop_duplicates('name', keep='first')
                 st.dataframe(ms_latest, use_container_width=True, hide_index=True)
 
             # 宏观指标快览
-            mc_sql = ("SELECT indicator_name, indicator_value, unit, trade_date "
-                      "FROM macro_daily WHERE trade_date >= date('now','-3 days') "
+            mc_sql = ("SELECT name, value, 'N/A' as unit, date "
+                      "FROM macro_daily WHERE date >= date('now','-3 days') "
                       "ORDER BY trade_date DESC")
             mc_df = pd.read_sql(mc_sql, env_conn)
             if not mc_df.empty:
                 st.subheader("宏观指标")
-                mc_latest = mc_df.drop_duplicates('indicator_name', keep='first')
+                mc_latest = mc_df.drop_duplicates('name', keep='first')
                 st.dataframe(mc_latest, use_container_width=True, hide_index=True)
 
             env_conn.close()
