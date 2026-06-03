@@ -97,10 +97,10 @@ def fetch_margin_data(date_str: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 def fetch_holder_change_data(date_str: str) -> pd.DataFrame:
-    """获取指定日期的股东增减持数据。
+    """获取指定日期的股东增减持明细数据。
 
-    使用 stock_gdfx_free_holding_change_em (AKShare 1.18.59+),
-    原API stock_gdfx_free_holding_detail_em 存在 NoneType bug。
+    使用 stock_gdfx_free_holding_detail_em 返回个股级别增减持明细。
+    回退方案: 若detail API失败，使用holding_change_em汇总数据。
 
     Args:
         date_str: 日期字符串, 格式 YYYYMMDD
@@ -110,24 +110,62 @@ def fetch_holder_change_data(date_str: str) -> pd.DataFrame:
     """
     try:
         import akshare as ak
+
+        # 首选: stock_gdfx_free_holding_detail_em (个股明细)
         try:
-            df = ak.stock_gdfx_free_holding_change_em(date=date_str)
-        except (TypeError, KeyError):
+            df = ak.stock_gdfx_free_holding_detail_em(date=date_str)
+        except (TypeError, ValueError, KeyError):
+            df = pd.DataFrame()
+
+        if df is not None and not df.empty:
+            col_map = {
+                '序号': '_seq',
+                '股东名称': 'holder_name', '股东类型': 'holder_type',
+                '股票代码': 'code', '股票简称': 'name',
+                '报告期': 'report_period',
+                '期末持股-数量': 'holding_qty',
+                '期末持股-数量变化': 'qty_change',
+                '期末持股-数量变化比例': 'qty_change_pct',
+                '期末持股-持股变动': 'change_type',
+                '期末持股-流通市值': 'float_mv',
+                '公告日': 'announce_date',
+            }
+            df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+            if '_seq' in df.columns:
+                df = df.drop(columns=['_seq'])
+            df['date'] = datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
+            # 标准化日期列
+            for dcol in ['report_period', 'announce_date']:
+                if dcol in df.columns:
+                    df[dcol] = df[dcol].apply(lambda x: (
+                        x.strftime('%Y-%m-%d') if hasattr(x, 'strftime') else
+                        str(x)[:10] if x and str(x) != 'nan' else None
+                    ))
+            keep = ['date', 'holder_name', 'holder_type', 'code', 'name',
+                    'report_period', 'holding_qty', 'qty_change', 'qty_change_pct',
+                    'change_type', 'float_mv', 'announce_date']
+            df = df[[c for c in keep if c in df.columns]]
+            return df
+
+        # 回退: stock_gdfx_free_holding_change_em (汇总级别)
+        try:
+            df2 = ak.stock_gdfx_free_holding_change_em(date=date_str)
+        except (TypeError, ValueError, KeyError):
             return pd.DataFrame()
-        if df is None or df.empty:
+        if df2 is None or df2.empty:
             return pd.DataFrame()
-        col_map = {
+        col_map2 = {
             '序号': '_seq',
             '股东名称': 'holder_name', '股东类型': 'holder_type',
             '流通市值统计': 'float_mv',
         }
-        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
-        if '_seq' in df.columns:
-            df = df.drop(columns=['_seq'])
-        df['date'] = datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
-        keep = ['date', 'holder_name', 'holder_type', 'float_mv']
-        df = df[[c for c in keep if c in df.columns]]
-        return df
+        df2 = df2.rename(columns={k: v for k, v in col_map2.items() if k in df2.columns})
+        if '_seq' in df2.columns:
+            df2 = df2.drop(columns=['_seq'])
+        df2['date'] = datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
+        keep2 = ['date', 'holder_name', 'holder_type', 'float_mv']
+        return df2[[c for c in keep2 if c in df2.columns]]
+
     except Exception as e:
         logger.warning(f'获取股东增减持数据失败 ({date_str}): {e}')
         return pd.DataFrame()
@@ -360,7 +398,13 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         except Exception as e:
             stats["errors"].append(f"大宗交易: {e}")
             logger.warning(f"  大宗交易失败(跳过): {e}")
-    
+
+        # 6. 数据源健康检查 - 检测并回填缺失交易日
+        try:
+            _check_and_backfill_stale(conn, target_date, stats)
+        except Exception as e:
+            logger.warning(f"数据源健康检查异常(不影响主流程): {e}")
+
     finally:
         conn.close()
     
@@ -473,3 +517,107 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
     
     logger.info(f"[回填] 完成, 交易日 {trading_days} 天, 总计: {totals}")
     return totals
+
+
+# ============================================================
+#  数据源健康检查 + 自动回填
+# ============================================================
+
+# 数据源配置: (表名, fetch函数名, 去重列, 最大允许滞后天数)
+SOURCE_CONFIG = [
+    ("stock_margin", "fetch_margin_data", ["date", "code"], 2),
+    ("stock_lhb", "fetch_lhb_data", ["date", "code"], 2),
+    ("stock_holder_change", "fetch_holder_change_data", ["date", "holder_name"], 5),
+    ("stock_institution_research", "fetch_institution_research_data",
+     ["date", "code", "institution"], 2),
+]
+
+# 每日采集最大回填天数(防止无限回填)
+MAX_BACKFILL_DAYS = 5
+
+
+def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
+                              stats: Dict[str, Any]) -> None:
+    """检查数据源新鲜度，自动回填缺失的交易日数据。
+
+    使用index_quotes表的交易日历判断哪些日期应有数据，
+    对STALE超过阈值的数据源执行逐日回填(最多MAX_BACKFILL_DAYS天)。
+
+    Args:
+        conn: 数据库连接
+        target_date: 当前采集日期 (YYYY-MM-DD)
+        stats: 当前采集统计(用于追加回填数量)
+    """
+    cursor = conn.cursor()
+
+    # 获取交易日历(用index_quotes判断)
+    cursor.execute("""
+        SELECT DISTINCT date FROM index_quotes
+        WHERE date >= DATE(?, '-30 days') AND date <= ?
+        ORDER BY date
+    """, (target_date, target_date))
+    trading_days = [r[0] for r in cursor.fetchall()]
+
+    if not trading_days:
+        return
+
+    fetch_map = {
+        "stock_margin": fetch_margin_data,
+        "stock_lhb": fetch_lhb_data,
+        "stock_holder_change": fetch_holder_change_data,
+        "stock_institution_research": fetch_institution_research_data,
+    }
+
+    for table, fetch_name, unique_cols, max_stale in SOURCE_CONFIG:
+        fetch_fn = fetch_map.get(table)
+        if not fetch_fn:
+            continue
+
+        # 检查该表最新数据日期
+        cursor.execute(f"SELECT MAX(date) FROM {table}")
+        row = cursor.fetchone()
+        latest = row[0] if row and row[0] else None
+
+        if not latest:
+            # 表完全为空，跳过(由backfill_market_events处理)
+            continue
+
+        # 计算滞后天数
+        try:
+            latest_dt = datetime.strptime(latest, "%Y-%m-%d")
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            stale_days = (target_dt - latest_dt).days
+        except (ValueError, TypeError):
+            continue
+
+        if stale_days <= max_stale:
+            continue  # 新鲜度OK
+
+        logger.info(f"[健康检查] {table}: 最新{latest}, 滞后{stale_days}天(阈值{max_stale}), 触发回填")
+
+        # 找出缺失的交易日
+        cursor.execute(f"SELECT DISTINCT date FROM {table} WHERE date >= DATE(?, '-30 days')", (target_date,))
+        have_dates = set(r[0] for r in cursor.fetchall())
+        missing = [d for d in trading_days if d not in have_dates]
+
+        # 限制回填范围
+        if len(missing) > MAX_BACKFILL_DAYS:
+            missing = missing[-MAX_BACKFILL_DAYS:]
+            logger.info(f"  {table}: 缺{len(missing)}天(仅回填最近{MAX_BACKFILL_DAYS}天): {missing}")
+
+        # 逐日回填
+        backfill_total = 0
+        for d in missing:
+            try:
+                df = fetch_fn(d.replace("-", ""))
+                n = save_market_events(conn, df, table, unique_cols)
+                backfill_total += n
+                if n > 0:
+                    logger.info(f"  {table} {d}: 回填 {n} 条")
+            except Exception as e:
+                logger.debug(f"  {table} {d} 回填失败: {e}")
+            time.sleep(0.5)
+
+        if backfill_total > 0:
+            stats[f"{table}_backfill"] = backfill_total
+            logger.info(f"[健康检查] {table}: 回填完成, 共{backfill_total}条")
