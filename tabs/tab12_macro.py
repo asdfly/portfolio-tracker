@@ -321,13 +321,13 @@ def _render_margin_data(days: int):
 
     # 合计余额（左轴）
     if not total.empty:
-        fig.add_trace(go.Scatter(x=total["date"], y=total["value"].fillna(0)/1e4, mode="lines",
+        fig.add_trace(go.Scatter(x=total["date"], y=pd.to_numeric(total["value"], errors="coerce").fillna(0)/1e4, mode="lines",
                                  name="两融合计", line=dict(color="#58a6ff", width=2)),
                       secondary_y=False)
 
     # 变化额（右轴，柱状图）
     if not total.empty and "change_value" in total.columns:
-        fig.add_trace(go.Bar(x=total["date"], y=total["change_value"].fillna(0)/1e4,
+        fig.add_trace(go.Bar(x=total["date"], y=pd.to_numeric(total["change_value"], errors="coerce").fillna(0)/1e4,
                              name="日变化(亿元)", marker_color="#f59e0b", opacity=0.5,
                              yaxis="y2"),
                       secondary_y=True)
