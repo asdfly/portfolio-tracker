@@ -379,7 +379,8 @@ def render_tab4(positions, summary, index_quotes, selected_date, selected_benchm
         all_cal = load_calendar_data()
         if not all_cal.empty:
             yearly_cumret = all_cal.groupby("year").apply(
-                lambda g: g["total_value"].iloc[-1] / g["total_value"].iloc[0] - 1
+                lambda g: g["total_value"].iloc[-1] / g["total_value"].iloc[0] - 1,
+                include_groups=False
             )
             cumret_by_date = all_cal.groupby("date").agg(
                 first_v=("total_value", "first"), last_v=("total_value", "last")

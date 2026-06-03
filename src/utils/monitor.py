@@ -9,6 +9,10 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 
+# Fix Python 3.12+ deprecation: register adapters for datetime/date passed to sqlite3
+sqlite3.register_adapter(datetime, lambda v: v.isoformat())
+sqlite3.register_adapter(datetime.now().date().__class__, lambda v: v.isoformat())
+
 logger = logging.getLogger(__name__)
 
 
