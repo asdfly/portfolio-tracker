@@ -645,40 +645,6 @@ def main():
             logger.warning(f"数据源健康检测失败(不影响主流程): {e}")
 
 
-        # === 阶段零: 数据源健康检测 ===
-        try:
-            import akshare as ak
-            import time as _time
-            health_results = []
-            _api_checks = [
-                ('AKShare-行情', lambda: ak.stock_zh_a_spot_em()),
-                ('AKShare-板块', lambda: ak.stock_board_industry_name_em()),
-                ('AKShare-北向', lambda: ak.stock_hsgt_north_net_flow_in_em(symbol='沪股通')),  # noqa
-            ]
-            for _name, _fn in _api_checks:
-                try:
-                    _t0 = _time.time()
-                    _df = _fn()
-                    _ms = (_time.time() - _t0) * 1000
-                    _status = 'OK' if _df is not None and len(_df) > 0 else 'EMPTY'
-                    health_results.append((_name, _status, f'{_ms:.0f}ms'))
-                except Exception as _e:
-                    health_results.append((_name, 'FAIL', str(_e)[:80]))
-            _ok_count = sum(1 for _, s, _ in health_results if s == 'OK')
-            _fail_count = sum(1 for _, s, _ in health_results if s == 'FAIL')
-            logger.info(f"数据源健康: {_ok_count}/{len(_api_checks)} OK")
-            for _n, _s, _d in health_results:
-                _icon = 'V' if _s == 'OK' else 'X' if _s == 'FAIL' else '!'
-                logger.info(f"  [{_icon}] {_n}: {_s} ({_d})")
-            if _fail_count > 0:
-                monitor.log_execution('source_health_check', 'warning',
-                    f'{_fail_count}/{len(_api_checks)} sources failed')
-            else:
-                monitor.log_execution('source_health_check', 'success',
-                    f'{_ok_count}/{len(_api_checks)} sources OK')
-        except Exception as e:
-            logger.warning(f"数据源健康检测失败(不影响主流程): {e}")
-
         # === 阶段一: 基础分析 ===
         results = run_stage1_basic(analyzer)
 
@@ -752,39 +718,6 @@ def main():
 
         # === 阶段四: 智能分析 ===
         advice_summary = run_stage4_smart(results, summary, risk_data)
-
-
-        # === 阶段六: 数据质量巡检 ===
-        try:
-            from src.utils.data_quality import DataQualityChecker
-            dq = DataQualityChecker(str(DATABASE_PATH))
-            score_data = dq.compute_quality_score()
-            total_score = score_data['total_score']
-            grade = score_data['grade']
-            freshness_txt = dq.get_freshness_summary()
-            logger.info(f"数据质量评分: {total_score}/100 ({grade})")
-            if freshness_txt:
-                for fl in freshness_txt.split('\n'):
-                    logger.info(fl)
-            dq_alerts = dq.generate_alerts()
-            if dq_alerts:
-                logger.warning(f"数据质量告警: {len(dq_alerts)} 条")
-                for a in dq_alerts:
-                    logger.warning(f"  [{a['severity']}] {a['message']}")
-                # 写入execution_logs供后续监控
-                try:
-                    monitor.log_execution(
-                        'data_quality_check', 'warning',
-                        f"score={total_score}, alerts={len(dq_alerts)}, grade={grade}"
-                    )
-                except Exception:
-                    pass
-            else:
-                logger.info("数据质量检查通过，无告警")
-                monitor.log_execution('data_quality_check', 'success',
-                                   f"score={total_score}, grade={grade}")
-        except Exception as e:
-            logger.warning(f"数据质量巡检失败(不影响主流程): {e}")
 
 
         # === 阶段六: 数据质量巡检 ===

@@ -139,9 +139,9 @@ class TestSignalEngineEdgeCases:
                      "premium_rate REAL, trade_amount REAL, buyer_broker TEXT)")
         conn.execute("CREATE TABLE stock_institution_research (id INTEGER, date TEXT, code TEXT, name TEXT, "
                      "institution TEXT, inst_type TEXT)")
-        conn.execute("INSERT INTO stock_lhb VALUES (1,'2026-05-21','600001','测试',9.9,"
+        conn.execute("INSERT INTO stock_lhb VALUES (1,'2026-06-01','600001','测试',9.9,"
                      "'日涨幅偏离值达7%','游资',1000,500)")
-        conn.execute("INSERT INTO stock_block_trade VALUES (1,'2026-05-21','600001','测试',-0.25,5000,'机构A')")
+        conn.execute("INSERT INTO stock_block_trade VALUES (1,'2026-06-01','600001','测试',-0.25,5000,'机构A')")
         engine = MarketEventSignalEngine(conn)
         signals = engine.generate_all_signals(lookback_days=5)
         assert len(signals) >= 1
