@@ -107,6 +107,22 @@ class SmartAdvisor:
         if news_advice:
             advices.extend(news_advice)
 
+
+        # 11. 融资融券数据分析
+        margin_advice = self._analyze_margin_data(portfolio_data)
+        if margin_advice:
+            advices.extend(margin_advice)
+
+        # 12. 机构调研热点分析
+        research_advice = self._analyze_institution_research(portfolio_data)
+        if research_advice:
+            advices.extend(research_advice)
+
+        # 13. 大宗交易异常分析
+        block_advice = self._analyze_block_trade(portfolio_data)
+        if block_advice:
+            advices.extend(block_advice)
+
         priority_order = {AdvicePriority.HIGH: 0, AdvicePriority.MEDIUM: 1, AdvicePriority.LOW: 2}
         advices.sort(key=lambda x: priority_order.get(x.priority, 3))
 
@@ -778,4 +794,438 @@ class SmartAdvisor:
         # 按优先级排序
         po = {AdvicePriority.HIGH: 0, AdvicePriority.MEDIUM: 1, AdvicePriority.LOW: 2}
         advices.sort(key=lambda x: po.get(x.priority, 3))
+        return advices
+
+    def _analyze_margin_data(self, portfolio_data: Dict) -> List[InvestmentAdvice]:
+        """分析融资融券数据，检测融资余额异常变动和融券异动。
+
+        利用stock_margin表（128,464行）的数据，对持仓标的进行：
+        1. 融资余额趋势检测：近5日Z-score > 2.0（急剧增长/萎缩）
+        2. 融资买入占比检测：融资买入/余额 > 阈值（资金涌入信号）
+        3. 融券余额异动检测：融券量近期突增（空头情绪升温）
+
+        Returns:
+            投资建议列表
+        """
+        import pandas as pd
+        import numpy as np
+
+        advices = []
+
+        try:
+            # 获取持仓代码
+            positions = portfolio_data.get('positions', [])
+            if not positions:
+                return advices
+            hold_codes = set(p.get('code', '') for p in positions)
+
+            # 查询融资融券数据（近20个交易日）
+            query = """
+                SELECT date, code, name, margin_balance, margin_buy, margin_repay,
+                       short_volume, short_sell, short_repay
+                FROM stock_margin
+                WHERE code IN ({})
+                ORDER BY code, date DESC
+            """.format(','.join('?' * len(hold_codes)))
+
+            df = pd.read_sql_query(query, self.db, params=list(hold_codes))
+
+            if df.empty or len(df) < 5:
+                return advices
+
+            df['date'] = pd.to_datetime(df['date'])
+
+            for code in df['code'].unique():
+                code_df = df[df['code'] == code].sort_values('date')
+                name = code_df['name'].iloc[-1] if 'name' in code_df.columns else code
+
+                if len(code_df) < 5:
+                    continue
+
+                # --- 指标1: 融资余额趋势 (Z-score) ---
+                recent = code_df.head(5)['margin_balance']
+                older = code_df.iloc[5:]['margin_balance'] if len(code_df) > 5 else recent
+
+                mean_val = older.mean()
+                std_val = older.std()
+                current_balance = recent.iloc[0]
+
+                if std_val > 0 and mean_val > 0:
+                    z_score = (current_balance - mean_val) / std_val
+
+                    if z_score > 2.0:
+                        # 融资余额急剧增长 - 资金涌入信号
+                        change_pct = (current_balance - mean_val) / mean_val * 100
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.OPPORTUNITY,
+                            priority=AdvicePriority.MEDIUM,
+                            title=f"[{name}] 融资余额近5日异常增长",
+                            description=(
+                                f"近5日融资余额Z-score={z_score:.1f}，"
+                                f"当前{current_balance/1e8:.1f}亿元，"
+                                f"较均值偏离{change_pct:.1f}%，"
+                                f"显示杠杆资金积极买入"
+                            ),
+                            action_items=[
+                                "关注融资余额增长持续性",
+                                "结合技术面确认趋势方向",
+                                "警惕短期获利盘回吐压力"
+                            ],
+                            related_codes=[code], confidence=min(0.5 + z_score * 0.05, 0.85),
+                            created_at=datetime.now()
+                        ))
+                    elif z_score < -2.0:
+                        # 融资余额急剧萎缩 - 资金撤离信号
+                        change_pct = (current_balance - mean_val) / mean_val * 100
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.CAUTION,
+                            priority=AdvicePriority.MEDIUM,
+                            title=f"[{name}] 融资余额近5日大幅萎缩",
+                            description=(
+                                f"近5日融资余额Z-score={z_score:.1f}，"
+                                f"当前{current_balance/1e8:.1f}亿元，"
+                                f"较均值下降{abs(change_pct):.1f}%，"
+                                f"杠杆资金正在撤退"
+                            ),
+                            action_items=[
+                                "评估资金撤离是否与基本面变化相关",
+                                "关注后续企稳信号",
+                                "考虑适当降低仓位"
+                            ],
+                            related_codes=[code], confidence=min(0.5 + abs(z_score) * 0.05, 0.85),
+                            created_at=datetime.now()
+                        ))
+
+                # --- 指标2: 融券量突增检测（空头情绪） ---
+                short_recent = code_df.head(5)['short_volume']
+                short_older = code_df.iloc[5:]['short_volume'] if len(code_df) > 5 else short_recent
+                short_mean = short_older.mean()
+                short_std = short_older.std()
+                current_short = short_recent.iloc[0]
+
+                if short_std > 0 and short_mean > 0:
+                    short_z = (current_short - short_mean) / short_std
+                    if short_z > 2.5 and current_short > 0:
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.CAUTION,
+                            priority=AdvicePriority.LOW,
+                            title=f"[{name}] 融券量近期显著增加",
+                            description=(
+                                f"近5日融券量Z-score={short_z:.1f}，"
+                                f"当前{current_short/1e8:.2f}亿元，"
+                                f"空头力量明显增强"
+                            ),
+                            action_items=["关注融券变化趋势", "结合价格走势判断是否有做空压力"],
+                            related_codes=[code], confidence=0.5,
+                            created_at=datetime.now()
+                        ))
+
+                # --- 指标3: 融资买入活跃度 (买入/余额比) ---
+                if current_balance > 0:
+                    recent_buy = code_df.head(5)['margin_buy'].iloc[0]
+                    buy_ratio = recent_buy / current_balance
+
+                    if buy_ratio > 0.05:  # 单日买入超余额5%
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.OPPORTUNITY,
+                            priority=AdvicePriority.LOW,
+                            title=f"[{name}] 融资买入活跃度偏高",
+                            description=(
+                                f"最近一日融资买入{recent_buy/1e8:.2f}亿元，"
+                                f"占融资余额{buy_ratio:.1%}，"
+                                f"杠杆资金买入积极性较高"
+                            ),
+                            action_items=["关注买入持续性", "配合技术面判断"],
+                            related_codes=[code], confidence=0.4,
+                            created_at=datetime.now()
+                        ))
+
+        except Exception as e:
+            logger.warning(f"融资融券分析异常: {e}")
+
+        return advices
+
+    def _analyze_institution_research(self, portfolio_data: Dict) -> List[InvestmentAdvice]:
+        """分析机构调研热点，识别市场关注度集中的方向。
+
+        利用stock_institution_research表（4,300行）的数据：
+        1. 近30天机构调研密集标的推荐（调研次数>20次）
+        2. 新增机构调研异动（近期突然增多）
+        3. 券商/基金集中调研方向
+
+        注: 该表数据为个股，不直接关联ETF持仓，但可反映板块关注度方向。
+
+        Returns:
+            投资建议列表
+        """
+        import pandas as pd
+
+        advices = []
+
+        try:
+            query = """
+                SELECT code, name, date, institution, inst_type,
+                       receive_method, research_date
+                FROM stock_institution_research
+                WHERE date >= DATE('now', '-45 days')
+                ORDER BY date DESC
+            """
+
+            df = pd.read_sql_query(query, self.db)
+
+            if df.empty:
+                return advices
+
+            df['date'] = pd.to_datetime(df['date'])
+
+            # --- 指标1: 高热度调研标的 ---
+            code_stats = df.groupby(['code', 'name']).agg(
+                research_count=('institution', 'count'),
+                inst_count=('institution', 'nunique'),
+                latest_date=('date', 'max')
+            ).reset_index()
+
+            hot_targets = code_stats[code_stats['research_count'] >= 20].sort_values(
+                'research_count', ascending=False
+            )
+
+            if not hot_targets.empty:
+                top3 = hot_targets.head(3)
+                summaries = []
+                for _, row in top3.iterrows():
+                    summaries.append(
+                        f"{row['name']}({row['code']}): "
+                        f"{row['research_count']}次调研/{row['inst_count']}家机构"
+                    )
+
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.OPPORTUNITY,
+                    priority=AdvicePriority.LOW,
+                    title="机构调研热度TOP标的",
+                    description=(
+                        f"近45天机构调研最密集的标的: {'; '.join(summaries)}。"
+                        f"机构密集调研通常预示潜在投资机会或重大事项。"
+                    ),
+                    action_items=[
+                        "关注调研热点是否与持仓板块相关",
+                        "研究高热度标的对应ETF是否有配置价值",
+                        "留意相关公司公告和业绩预期"
+                    ],
+                    related_codes=[], confidence=0.4,
+                    created_at=datetime.now()
+                ))
+
+            # --- 指标2: 近7天新增调研异动 ---
+            recent_date = df['date'].max()
+            week_ago = recent_date - pd.Timedelta(days=7)
+            recent_df = df[df['date'] >= week_ago]
+
+            if not recent_df.empty:
+                recent_stats = recent_df.groupby(['code', 'name']).agg(
+                    week_count=('institution', 'count'),
+                ).reset_index()
+
+                # 与之前38天对比
+                earlier_df = df[df['date'] < week_ago]
+                if not earlier_df.empty:
+                    earlier_stats = earlier_df.groupby(['code', 'name']).agg(
+                        prior_count=('institution', 'count'),
+                    ).reset_index()
+
+                    merged = recent_stats.merge(
+                        earlier_stats, on=['code', 'name'], how='left'
+                    )
+                    merged['prior_count'] = merged['prior_count'].fillna(0)
+
+                    # 调研频次骤增（近7天>之前38天总量）
+                    surging = merged[
+                        (merged['week_count'] >= 10) &
+                        (merged['week_count'] > merged['prior_count'])
+                    ]
+
+                    if not surging.empty:
+                        surge_summaries = []
+                        for _, row in surging.head(3).iterrows():
+                            surge_summaries.append(
+                                f"{row['name']}({row['code']}): "
+                                f"近7天{row['week_count']}次 vs 前38天{int(row['prior_count'])}次"
+                            )
+
+                        advices.append(InvestmentAdvice(
+                            type=AdviceType.OPPORTUNITY,
+                            priority=AdvicePriority.MEDIUM,
+                            title="机构调研热度骤增标的",
+                            description=(
+                                f"近7天调研次数显著超过此前: {'; '.join(surge_summaries)}。"
+                                f"关注度突然提升可能伴随催化事件。"
+                            ),
+                            action_items=[
+                                "查阅相关公司近期公告",
+                                "判断是否为板块级别信号",
+                                "评估对应ETF的配置时机"
+                            ],
+                            related_codes=[], confidence=0.55,
+                            created_at=datetime.now()
+                        ))
+
+        except Exception as e:
+            logger.warning(f"机构调研分析异常: {e}")
+
+        return advices
+
+    def _analyze_block_trade(self, portfolio_data: Dict) -> List[InvestmentAdvice]:
+        """分析大宗交易异常，检测可能的筹码变动信号。
+
+        利用stock_block_trade表（6,651行）的数据：
+        1. 大额溢价成交（机构主动吸筹信号）
+        2. 大额折价成交（减持/资金出逃信号）
+        3. 频繁大宗交易标的（活跃度异常）
+
+        注: 大宗交易数据为个股级别，不直接关联ETF持仓，
+        但可反映市场资金流向和板块筹码变化趋势。
+
+        Returns:
+            投资建议列表
+        """
+        import pandas as pd
+
+        advices = []
+
+        try:
+            query = """
+                SELECT date, code, name, change_pct, close, trade_price,
+                       premium_rate, volume, amount, amount_to_float_mv,
+                       buyer_broker
+                FROM stock_block_trade
+                WHERE date >= DATE('now', '-15 days')
+                ORDER BY date DESC
+            """
+
+            df = pd.read_sql_query(query, self.db)
+
+            if df.empty:
+                return advices
+
+            df['date'] = pd.to_datetime(df['date'])
+
+            # --- 指标1: 高溢价大宗交易（溢价率>3%，可能主动吸筹） ---
+            premium_trades = df[df['premium_rate'] > 0.03].copy()
+            if not premium_trades.empty:
+                premium_stats = premium_trades.groupby(['code', 'name']).agg(
+                    trade_count=('amount', 'count'),
+                    total_amount=('amount', 'sum'),
+                    avg_premium=('premium_rate', 'mean'),
+                    max_premium=('premium_rate', 'max')
+                ).reset_index()
+
+                large_premium = premium_stats[
+                    (premium_stats['total_amount'] >= 50_000_000) &
+                    (premium_stats['avg_premium'] > 0.05)
+                ].sort_values('total_amount', ascending=False)
+
+                if not large_premium.empty:
+                    top = large_premium.head(3)
+                    items = []
+                    for _, row in top.iterrows():
+                        items.append(
+                            f"{row['name']}({row['code']}): "
+                            f"{row['trade_count']}笔/{row['total_amount']/1e4:.0f}万元/"
+                            f"平均溢价{row['avg_premium']:.1%}"
+                        )
+
+                    advices.append(InvestmentAdvice(
+                        type=AdviceType.OPPORTUNITY,
+                        priority=AdvicePriority.LOW,
+                        title="大宗交易高溢价成交标的",
+                        description=(
+                            f"近15天出现大额溢价大宗交易: {'; '.join(items)}。"
+                            f"溢价成交可能反映机构主动吸筹意愿。"
+                        ),
+                        action_items=[
+                            "关注溢价交易标的是否与持仓板块相关",
+                            "查看是否有连续溢价成交趋势",
+                            "留意相关公告确认动机"
+                        ],
+                        related_codes=[], confidence=0.4,
+                        created_at=datetime.now()
+                    ))
+
+            # --- 指标2: 大额折价成交（折价率>5%，减持信号） ---
+            discount_trades = df[df['premium_rate'] < -0.05].copy()
+            if not discount_trades.empty:
+                discount_stats = discount_trades.groupby(['code', 'name']).agg(
+                    trade_count=('amount', 'count'),
+                    total_amount=('amount', 'sum'),
+                    avg_discount=('premium_rate', 'mean'),
+                ).reset_index()
+
+                large_discount = discount_stats[
+                    discount_stats['total_amount'] >= 100_000_000
+                ].sort_values('total_amount', ascending=False)
+
+                if not large_discount.empty:
+                    top_d = large_discount.head(3)
+                    items = []
+                    for _, row in top_d.iterrows():
+                        items.append(
+                            f"{row['name']}({row['code']}): "
+                            f"{row['trade_count']}笔/{row['total_amount']/1e4:.0f}万元/"
+                            f"平均折价{abs(row['avg_discount']):.1%}"
+                        )
+
+                    advices.append(InvestmentAdvice(
+                        type=AdviceType.CAUTION,
+                        priority=AdvicePriority.LOW,
+                        title="大宗交易大额折价成交标的",
+                        description=(
+                            f"近15天出现大额折价大宗交易: {'; '.join(items)}。"
+                            f"大额折价成交可能反映股东减持或资金撤离。"
+                        ),
+                        action_items=[
+                            "关注折价标的是否与持仓板块相关",
+                            "评估对板块情绪的潜在影响",
+                            "警惕持续性减持信号"
+                        ],
+                        related_codes=[], confidence=0.4,
+                        created_at=datetime.now()
+                    ))
+
+            # --- 指标3: 大宗交易活跃度异常（amount_to_float_mv>1%且频次高） ---
+            active_codes = df[df['amount_to_float_mv'] > 0.01].copy()
+            if not active_codes.empty:
+                active_stats = active_codes.groupby(['code', 'name']).agg(
+                    trade_count=('amount', 'count'),
+                    total_to_mv=('amount_to_float_mv', 'sum'),
+                    total_amount=('amount', 'sum'),
+                ).reset_index()
+
+                highly_active = active_stats[
+                    active_stats['trade_count'] >= 5
+                ].sort_values('total_amount', ascending=False)
+
+                if not highly_active.empty:
+                    top_a = highly_active.head(3)
+                    items = []
+                    for _, row in top_a.iterrows():
+                        items.append(
+                            f"{row['name']}({row['code']}): "
+                            f"{row['trade_count']}笔/解禁占比{row['total_to_mv']:.1%}"
+                        )
+
+                    advices.append(InvestmentAdvice(
+                        type=AdviceType.CAUTION,
+                        priority=AdvicePriority.LOW,
+                        title="大宗交易活跃度异常标的",
+                        description=(
+                            f"近15天大宗交易成交占比超1%: {'; '.join(items)}。"
+                            f"频繁大宗交易可能预示筹码结构变化。"
+                        ),
+                        action_items=["关注标的是否面临解禁压力", "结合换手率判断筹码稳定性"],
+                        related_codes=[], confidence=0.35,
+                        created_at=datetime.now()
+                    ))
+
+        except Exception as e:
+            logger.warning(f"大宗交易分析异常: {e}")
+
         return advices
