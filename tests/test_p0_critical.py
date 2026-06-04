@@ -53,12 +53,12 @@ class TestMonitorInit:
     def test_init_with_empty_config(self, temp_db):
         from src.utils.monitor import Monitor
         m = Monitor(str(temp_db), {})
-        assert len(m.rules) == 5
+        assert len(m.rules) == 9
 
     def test_init_default(self, temp_db):
         from src.utils.monitor import Monitor
         m = Monitor(temp_db)
-        assert len(m.rules) == 5
+        assert len(m.rules) == 9
 
     def test_init_with_threshold_override(self, temp_db):
         from src.utils.monitor import Monitor
