@@ -1,12 +1,12 @@
 @echo off
-echo ¼¤»îÍ¶×Ê×éºÏÏîÄ¿ĞéÄâ»·¾³...
+echo Í¶Ä¿â»·...
 cd /d "%~dp0"
 call venv\Scripts\activate.bat
 echo.
-echo ĞéÄâ»·¾³ÒÑ¼¤»î£¡
-echo PythonÂ·¾¶: %VIRTUAL_ENV%\Scripts\python.exe
+echo â»·Ñ¼î£¡
+echo PythonÂ·: %VIRTUAL_ENV%\Scripts\python.exe
 echo.
-echo ÏÖÔÚ¿ÉÒÔÔËĞĞ:
-echo   streamlit run dashboard_main.py
+echo Ú¿:
+echo   streamlit run dashboard.py
 echo.
 cmd /k

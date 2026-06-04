@@ -51,7 +51,7 @@ goto :eof
 echo.
 echo 正在运行快速分析...
 cd /d "%PROJECT_DIR%"
-python run_enhanced.py --run
+python run_analysis.py
 echo.
 pause
 goto :eof
@@ -73,28 +73,28 @@ set /p mon="请选择 (1-5): "
 
 if "%mon%"=="1" (
     cd /d "%PROJECT_DIR%"
-    python run_enhanced.py --health
+    python -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; m=Monitor(str(DATABASE_PATH)); print(json.dumps(m.get_health_status(), indent=2, ensure_ascii=False))"
     echo.
     pause
     goto monitor
 )
 if "%mon%"=="2" (
     cd /d "%PROJECT_DIR%"
-    python run_enhanced.py --alerts 24
+    python -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; [print(f\"[{a.level}] {a.rule_name}: {a.message}\") for a in Monitor(str(DATABASE_PATH)).get_recent_alerts(24)]"
     echo.
     pause
     goto monitor
 )
 if "%mon%"=="3" (
     cd /d "%PROJECT_DIR%"
-    python run_enhanced.py --stats 7
+    python -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; m=Monitor(str(DATABASE_PATH)); print(json.dumps(m.get_execution_stats(7), indent=2, ensure_ascii=False))"
     echo.
     pause
     goto monitor
 )
 if "%mon%"=="4" (
     cd /d "%PROJECT_DIR%"
-    python run_enhanced.py --run
+    python run_analysis.py
     echo.
     pause
     goto monitor
@@ -130,7 +130,7 @@ goto :eof
 :notify
 echo.
 cd /d "%PROJECT_DIR%"
-python setup_notification.py
+python scripts\setup\setup_notification.py
 pause
 goto :eof
 
@@ -138,7 +138,7 @@ goto :eof
 echo.
 echo 正在执行历史数据回填...
 cd /d "%PROJECT_DIR%"
-python backfill_history.py
+python scripts\run_backfill.py all
 echo.
 pause
 goto :eof

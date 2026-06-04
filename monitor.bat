@@ -30,7 +30,7 @@ goto menu
 :health
 echo.
 cd /d "%PROJECT_DIR%"
-"%PYTHON%" run_enhanced.py --health
+"%PYTHON%" -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; print(json.dumps(Monitor(str(DATABASE_PATH)).get_health_status(), indent=2, ensure_ascii=False))"
 echo.
 pause
 goto menu
@@ -38,7 +38,7 @@ goto menu
 :today_alerts
 echo.
 cd /d "%PROJECT_DIR%"
-"%PYTHON%" run_enhanced.py --alerts 24
+"%PYTHON%" -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; [print(f'[{a.level}] {a.rule_name}: {a.message}') for a in Monitor(str(DATABASE_PATH)).get_recent_alerts(24)]"
 echo.
 pause
 goto menu
@@ -46,7 +46,7 @@ goto menu
 :stats
 echo.
 cd /d "%PROJECT_DIR%"
-"%PYTHON%" run_enhanced.py --stats 7
+"%PYTHON%" -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; print(json.dumps(Monitor(str(DATABASE_PATH)).get_execution_stats(7), indent=2, ensure_ascii=False))"
 echo.
 pause
 goto menu
@@ -54,7 +54,7 @@ goto menu
 :run
 echo.
 cd /d "%PROJECT_DIR%"
-"%PYTHON%" run_enhanced.py --run
+"%PYTHON%" run_analysis.py
 echo.
 pause
 goto menu

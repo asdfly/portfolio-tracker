@@ -1,3 +1,6 @@
+# 归档目录（旧脚本/临时文件，不需要版本控制）
+archive/
+
 # 环境变量
 .env
 .env.local
@@ -45,11 +48,6 @@ Desktop.ini
 timer_config.xml
 
 # 临时测试/调试文件
-_test_*.py
-_run_*.py
-read_kline.py
-backfill_log.txt
-run_backfill.bat
 
 # 输出文件（报告、截图）
 output/
@@ -65,12 +63,6 @@ data/*.txt
 .streamlit/secrets.toml
 
 # 临时启动/测试文件（不纳入版本控制）
-_start_dash.py
-temp_start.py
-test_modular_structure.py
-test_split_dashboard.py
-dashboard.py.backup
-dashboard_main.py.bak2
 
 debug_home.png
 
