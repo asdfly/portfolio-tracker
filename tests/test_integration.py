@@ -11,7 +11,7 @@ def test_full_import_chain():
     import src.utils.chart_utils
     import src.utils.database
     import tabs
-    import dashboard_main
+    import dashboard as dashboard_main
     # 验证关键对象存在
     assert hasattr(dashboard_main, "main") or hasattr(dashboard_main, "load_positions"),         "dashboard_main 缺少入口函数"
 

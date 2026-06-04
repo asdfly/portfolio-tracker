@@ -35,8 +35,8 @@ def test_import_helpers():
 
 
 def test_import_dashboard_main():
-    """导入 dashboard_main"""
-    import dashboard_main
+    """dashboard_main 已归档到 archive/，改为验证 archive 存在"""
+    assert (Path(__file__).parent.parent / "archive" / "dashboard_main.py").exists()
 
 
 def test_import_tabs_package():
