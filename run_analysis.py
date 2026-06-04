@@ -143,6 +143,64 @@ def run_stage3_monitor(summary, risk_data):
                         summary.get('sharpe_ratio', 0))),
     }
 
+    # D4: 扩展告警数据源 - 数据新鲜度/数据质量/持仓变化/市值变化
+    try:
+        import sqlite3 as _sqlite3
+        _conn = _sqlite3.connect(str(DATABASE_PATH))
+        _cur = _conn.cursor()
+
+        # 1) 数据源陈旧检查: 统计最近N天无更新的数据源数
+        _stale_days = MONITOR_CONFIG.get('stale_threshold_days', 7)
+        _cur.execute("SELECT COUNT(*) FROM ("             "SELECT 'daily_prices' AS src, MAX(date) AS last_date FROM daily_prices "             "UNION ALL SELECT 'fund_flows', MAX(date) FROM fund_flows "             "UNION ALL SELECT 'daily_news', MAX(date) FROM daily_news "             "UNION ALL SELECT 'market_sentiment', MAX(date) FROM market_sentiment "             "UNION ALL SELECT 'macro_daily', MAX(date) FROM macro_daily"             ") WHERE last_date < date('now', ?)", (f'-{_stale_days} days',))
+        _stale_count = _cur.fetchone()[0]
+        check_data['stale_sources_count'] = _stale_count
+        check_data['stale_threshold_days'] = _stale_days
+
+        # 2) 数据质量评分
+        check_data['data_quality_score'] = 0
+        check_data['data_quality_grade'] = 'N/A'
+        _cur.execute("SELECT message FROM execution_logs "             "WHERE task_name = 'data_quality_check' "             "ORDER BY created_at DESC LIMIT 1")
+        _dq_row = _cur.fetchone()
+        if _dq_row and 'score' in _dq_row[0].lower():
+            try:
+                import json as _json
+                _dq_info = _json.loads(_dq_row[0])
+                check_data['data_quality_score'] = _dq_info.get('score', 0)
+                check_data['data_quality_grade'] = _dq_info.get('grade', 'N/A')
+            except Exception:
+                pass
+
+        # 3) 持仓数量变化
+        _cur.execute("SELECT COUNT(*) FROM ("             "SELECT DISTINCT code FROM daily_prices "             "WHERE date = (SELECT MAX(date) FROM daily_prices))")
+        _curr_count = _cur.fetchone()[0] or 0
+        check_data['position_count_curr'] = _curr_count
+        _prev_count = 0
+        _cur.execute("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 2 OFFSET 1")
+        _prev_date_row = _cur.fetchone()
+        if _prev_date_row:
+            _cur.execute("SELECT COUNT(*) FROM ("                 "SELECT DISTINCT code FROM daily_prices WHERE date = ?)",
+                (_prev_date_row[0],))
+            _prev_count = _cur.fetchone()[0] or 0
+        check_data['position_count_prev'] = _prev_count
+        check_data['position_count_change_pct'] = (
+            (_curr_count - _prev_count) / _prev_count * 100
+        ) if _prev_count > 0 else 0
+
+        # 4) 总市值变化
+        _val_change = 0
+        _cur.execute("SELECT total_value FROM daily_summary ORDER BY date DESC LIMIT 2")
+        _value_rows = _cur.fetchall()
+        if len(_value_rows) >= 2 and _value_rows[1][0] and _value_rows[1][0] > 0:
+            _val_change = (_value_rows[0][0] - _value_rows[1][0]) / _value_rows[1][0] * 100
+        check_data['total_value_change_pct'] = _val_change
+
+        _conn.close()
+        logger.info(f"D4告警数据扩展: stale={_stale_count}, dq={check_data.get('data_quality_score', 0)}, "
+                     f"pos_change={check_data['position_count_change_pct']:+.1f}%, "
+                     f"val_change={_val_change:+.1f}%")
+    except Exception as e:
+        logger.warning(f"D4告警数据扩展失败(使用默认值): {e}")
+
     alerts = monitor.check_alerts(check_data, check_data)
 
     if alerts:

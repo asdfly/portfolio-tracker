@@ -60,9 +60,9 @@ class Monitor:
         AlertRule(
             name="concentration_risk",
             condition="concentration_hhi",
-            threshold=0.5,
+            threshold=0.35,
             level="warning",
-            message_template="持仓集中度偏高(HHI>{threshold}): 当前{concentration_hhi}"
+            message_template="持仓集中度偏高(HHI>{threshold}): 当前{concentration_hhi:.3f}"
         ),
         AlertRule(
             name="volatility_spike",
@@ -78,12 +78,41 @@ class Monitor:
             level="warning",
             message_template="夏普比率偏低(<{threshold}): 当前{sharpe_ratio}"
         ),
+        AlertRule(
+            name="data_source_stale",
+            condition="stale_sources_count",
+            threshold=1,
+            level="warning",
+            message_template="数据源陈旧: {stale_sources_count}个数据源超过{stale_threshold_days}天未更新"
+        ),
+        AlertRule(
+            name="data_quality_low",
+            condition="data_quality_score",
+            threshold=60,
+            level="warning",
+            message_template="数据质量评分偏低(<{threshold}): 当前{data_quality_score}/100 ({data_quality_grade}级)"
+        ),
+        AlertRule(
+            name="position_count_change",
+            condition="position_count_change_pct",
+            threshold=50.0,
+            level="warning",
+            message_template="持仓数量异常变化: {position_count_change_pct:+.0f}% (从{position_count_prev}变为{position_count_curr})"
+        ),
+        AlertRule(
+            name="total_value_drop",
+            condition="total_value_change_pct",
+            threshold=-5.0,
+            level="error",
+            message_template="总市值大幅下降(>{threshold}%): {total_value_change_pct:+.1f}%"
+        ),
     ]
 
     def __init__(self, db_path: str, config: dict = None):
         self.db_path = db_path
         self.config = config or {}
         self.rules: List[AlertRule] = []
+        self.dedup_interval_hours = (config or {}).get('dedup_interval_hours', 6)
         self._init_rules()
         self._init_tables()
 
@@ -112,11 +141,14 @@ class Monitor:
         pass
 
     def check_alerts(self, portfolio_data: dict, risk_data: dict) -> List[Alert]:
-        """检查告警条件"""
+        """检查告警条件（含去重逻辑）"""
         alerts = []
 
         # 合并数据
         data = {**portfolio_data, **risk_data}
+
+        # 预加载最近告警用于去重
+        recent_alert_rules = self._get_recent_alert_rules()
 
         for rule in self.rules:
             if not rule.enabled:
@@ -127,12 +159,17 @@ class Monitor:
                 continue
 
             triggered = False
-            if rule.condition in ['daily_return', 'max_drawdown', 'sharpe_ratio']:
+            if rule.condition in ['daily_return', 'max_drawdown', 'sharpe_ratio', 'total_value_change_pct', 'data_quality_score']:
                 triggered = value < rule.threshold
             else:
                 triggered = value > rule.threshold
 
             if triggered:
+                # 去重: 同一 rule_name 在 dedup_interval_hours 内已存在则跳过
+                if rule.name in recent_alert_rules:
+                    logger.info(f"告警去重跳过: {rule.name} 在 {self.dedup_interval_hours}h 内已触发")
+                    continue
+
                 message = rule.message_template.format(
                     threshold=rule.threshold,
                     **data
@@ -146,6 +183,23 @@ class Monitor:
                 self._save_alert(alert)
 
         return alerts
+
+    def _get_recent_alert_rules(self) -> set:
+        """获取 dedup_interval_hours 内已触发的告警规则名称集合"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            since = datetime.now() - timedelta(hours=self.dedup_interval_hours)
+            cursor.execute(
+                'SELECT DISTINCT rule_name FROM alerts WHERE created_at > ?',
+                (since.isoformat(),)
+            )
+            rules = {row[0] for row in cursor.fetchall()}
+            conn.close()
+            return rules
+        except Exception as e:
+            logger.warning(f"查询最近告警失败(跳过去重): {e}")
+            return set()
 
     def _save_alert(self, alert: Alert):
         """保存告警到数据库"""
