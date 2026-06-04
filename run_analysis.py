@@ -7,6 +7,7 @@ import sys
 import os
 import time
 import logging
+import logging.handlers
 from datetime import datetime, date
 from pathlib import Path
 
@@ -37,21 +38,31 @@ from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 
 # ==================== 日志配置 ====================
 def setup_logging():
-    """配置日志"""
+    """配置日志（含轮转: 10MB/文件, 保留5份, 按天切分）"""
     log_dir = PROJECT_DIR / "logs"
     log_dir.mkdir(exist_ok=True)
 
     today_str = date.today().strftime('%Y%m%d')
     log_file = log_dir / f"portfolio_{today_str}.log"
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()
-        ]
+    fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    # 主文件: RotatingFileHandler (10MB, 5份备份)
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'
     )
+    file_handler.setFormatter(fmt)
+
+    # 控制台输出
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(fmt)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.handlers.clear()
+    root.addHandler(file_handler)
+    root.addHandler(console_handler)
+
     return logging.getLogger(__name__)
 
 
