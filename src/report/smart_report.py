@@ -76,13 +76,14 @@ class SmartReportGenerator:
             _conn_fb.commit()
             for advice in advices:
                 _conn_fb.execute(
-                    "INSERT INTO advice_history (created_at, advice_type, priority, title, description, confidence, related_codes, source) VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT INTO advice_history (created_at, advice_type, priority, title, description, confidence, related_codes, source, status) VALUES (?,?,?,?,?,?,?,?)",
                     (advice.created_at.strftime('%Y-%m-%d %H:%M:%S'),
                      advice.type.value, advice.priority.value,
                      advice.title, advice.description,
                      advice.confidence,
                      ','.join(advice.related_codes),
-                     'smart_report')
+                     'smart_report',
+                     'pending')
                 )
             _conn_fb.commit()
             logger.info(f'建议历史已记录: {len(advices)}条')
