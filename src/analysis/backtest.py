@@ -289,6 +289,147 @@ class StrategyBacktester:
             daily_values=pd.DataFrame({'value': portfolio_values, 'date': portfolio_values.index})
         )
 
+
+    def backtest_momentum(self, prices: pd.DataFrame,
+                          lookback: int = 20,
+                          top_n: int = 3,
+                          initial_value: float = 100000) -> BacktestResult:
+        """动量策略回测 - 买入近期涨幅最大的top_n只，定期调仓"""
+        returns = self.calculate_returns(prices)
+        codes = list(prices.columns)
+        n_codes = len(codes)
+        if n_codes == 0:
+            return self._empty_result("动量", prices, initial_value)
+
+        portfolio_values = [initial_value]
+        current_weights = {c: 1.0/n_codes for c in codes}
+        rebalance_dates = []
+        trades = []
+        turnover = 0
+
+        for i, (date, daily_returns) in enumerate(returns.iterrows()):
+            daily_ret = sum(daily_returns.get(c, 0) * current_weights.get(c, 0) for c in codes)
+            portfolio_values.append(portfolio_values[-1] * (1 + daily_ret))
+
+            if i > 0:
+                for c in codes:
+                    if c in daily_returns.index and daily_returns[c] != -1.0:
+                        current_weights[c] *= (1 + daily_returns[c])
+                tw = sum(current_weights.values())
+                if tw > 0:
+                    current_weights = {k: v/tw for k, v in current_weights.items()}
+
+            if i > 0 and i % lookback == 0 and i >= lookback:
+                past_returns = {}
+                for c in codes:
+                    if c in returns.columns:
+                        past_ret = returns[c].iloc[max(0, i-lookback):i]
+                        if len(past_ret) > 0:
+                            past_returns[c] = (1 + past_ret).prod() - 1
+                        else:
+                            past_returns[c] = 0
+                ranked = sorted(past_returns.items(), key=lambda x: x[1], reverse=True)
+                selected = [x[0] for x in ranked[:top_n]]
+                new_weights = {c: (1.0/top_n if c in selected else 0.0) for c in codes}
+                turnover += sum(abs(current_weights.get(c, 0) - new_weights.get(c, 0)) for c in codes) / 2
+                for c in codes:
+                    if abs(current_weights.get(c, 0) - new_weights.get(c, 0)) > 0.01:
+                        trades.append({'date': date, 'code': c, 'action': 'momentum',
+                                       'old_weight': current_weights.get(c, 0), 'new_weight': new_weights[c]})
+                current_weights = new_weights
+                rebalance_dates.append(date)
+
+        portfolio_values = pd.Series(portfolio_values[1:], index=returns.index)
+        metrics = self._compute_metrics(portfolio_values, returns, initial_value)
+        return BacktestResult(
+            strategy=f"动量(top{top_n},{lookback}d)",
+            start_date=str(prices.index[0].date()), end_date=str(prices.index[-1].date()),
+            initial_value=initial_value, final_value=portfolio_values.iloc[-1],
+            rebalance_count=len(rebalance_dates), turnover=turnover, trades=trades,
+            daily_values=pd.DataFrame({'value': portfolio_values, 'date': portfolio_values.index}),
+            **metrics)
+
+    def backtest_mean_reversion(self, prices: pd.DataFrame,
+                                 lookback: int = 20,
+                                 z_threshold: float = 1.0,
+                                 initial_value: float = 100000) -> BacktestResult:
+        """均值回归策略回测 - 低配高估资产、高配低估资产"""
+        returns = self.calculate_returns(prices)
+        codes = list(prices.columns)
+        n_codes = len(codes)
+        if n_codes == 0:
+            return self._empty_result("均值回归", prices, initial_value)
+
+        portfolio_values = [initial_value]
+        current_weights = {c: 1.0/n_codes for c in codes}
+        rebalance_dates = []
+        trades = []
+        turnover = 0
+
+        for i, (date, daily_returns) in enumerate(returns.iterrows()):
+            daily_ret = sum(daily_returns.get(c, 0) * current_weights.get(c, 0) for c in codes)
+            portfolio_values.append(portfolio_values[-1] * (1 + daily_ret))
+
+            if i > 0:
+                for c in codes:
+                    if c in daily_returns.index and daily_returns[c] != -1.0:
+                        current_weights[c] *= (1 + daily_returns[c])
+                tw = sum(current_weights.values())
+                if tw > 0:
+                    current_weights = {k: v/tw for k, v in current_weights.items()}
+
+            if i > 0 and i % lookback == 0 and i >= lookback:
+                z_scores = {}
+                for c in codes:
+                    if c in returns.columns:
+                        window = returns[c].iloc[max(0, i-lookback):i]
+                        if len(window) >= 5:
+                            m, s = window.mean(), window.std()
+                            z_scores[c] = (window.iloc[-1] - m) / s if s > 0 else 0
+                        else:
+                            z_scores[c] = 0
+                total_inv_z = sum(max(0.1, 1.0 - z) for z in z_scores.values())
+                new_weights = {c: max(0.05, (1.0 - z_scores.get(c, 0))) / total_inv_z for c in codes}
+                turnover += sum(abs(current_weights.get(c, 0) - new_weights.get(c, 0)) for c in codes) / 2
+                for c in codes:
+                    if abs(current_weights.get(c, 0) - new_weights.get(c, 0)) > 0.01:
+                        trades.append({'date': date, 'code': c, 'action': 'mean_rev',
+                                       'old_weight': current_weights.get(c, 0), 'new_weight': new_weights[c]})
+                current_weights = new_weights
+                rebalance_dates.append(date)
+
+        portfolio_values = pd.Series(portfolio_values[1:], index=returns.index)
+        metrics = self._compute_metrics(portfolio_values, returns, initial_value)
+        return BacktestResult(
+            strategy=f"均值回归({lookback}d,z={z_threshold})",
+            start_date=str(prices.index[0].date()), end_date=str(prices.index[-1].date()),
+            initial_value=initial_value, final_value=portfolio_values.iloc[-1],
+            rebalance_count=len(rebalance_dates), turnover=turnover, trades=trades,
+            daily_values=pd.DataFrame({'value': portfolio_values, 'date': portfolio_values.index}),
+            **metrics)
+
+    def _empty_result(self, name, prices, initial_value):
+        return BacktestResult(
+            strategy=name, start_date="N/A", end_date="N/A",
+            initial_value=initial_value, final_value=initial_value,
+            total_return=0, annualized_return=0, volatility=0,
+            sharpe_ratio=0, max_drawdown=0, calmar_ratio=0,
+            rebalance_count=0, turnover=0, trades=[], daily_values=pd.DataFrame())
+
+    def _compute_metrics(self, portfolio_values, returns, initial_value):
+        total_return = (portfolio_values.iloc[-1] / initial_value - 1) * 100
+        days = len(portfolio_values)
+        annualized_return = ((1 + total_return/100) ** (252/days) - 1) * 100 if days > 0 else 0
+        volatility = returns.mean(axis=1).std() * np.sqrt(252) * 100
+        sharpe = annualized_return / volatility if volatility > 0 else 0
+        cummax = portfolio_values.cummax()
+        drawdown = (portfolio_values - cummax) / cummax
+        max_drawdown = drawdown.min() * 100
+        calmar = annualized_return / abs(max_drawdown) if max_drawdown != 0 else 0
+        return {'total_return': total_return, 'annualized_return': annualized_return,
+                'volatility': volatility, 'sharpe_ratio': sharpe,
+                'max_drawdown': max_drawdown, 'calmar_ratio': calmar}
+
     def compare_strategies(self, codes: List[str], weights: Dict[str, float],
                           start_date: str, end_date: str,
                           initial_value: float = 100000) -> pd.DataFrame:
@@ -315,6 +456,14 @@ class StrategyBacktester:
 
         # 阈值再平衡
         result = self.backtest_threshold_rebalance(prices, weights, initial_value, 0.05)
+        results.append(self._result_to_dict(result))
+
+        # 动量策略
+        result = self.backtest_momentum(prices, lookback=20, top_n=min(3, len(codes)))
+        results.append(self._result_to_dict(result))
+
+        # 均值回归策略
+        result = self.backtest_mean_reversion(prices, lookback=20)
         results.append(self._result_to_dict(result))
 
         return pd.DataFrame(results)

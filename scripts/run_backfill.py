@@ -14,6 +14,7 @@ import sys
 import os
 import time
 import logging
+import logging.handlers
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).parent.parent
@@ -56,7 +57,7 @@ def setup_logging():
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler(log_dir / "backfill.log", encoding="utf-8"),
+            logging.handlers.RotatingFileHandler(log_dir / "backfill.log", maxBytes=10*1024*1024, backupCount=5, encoding="utf-8"),
             logging.StreamHandler(),
         ],
     )
