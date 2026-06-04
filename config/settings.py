@@ -1,11 +1,37 @@
 """
 投资组合跟踪分析系统配置文件
+支持环境变量覆盖: .env 文件或系统环境变量
+优先级: 环境变量 > .env文件 > 默认值
 """
 import os
 from pathlib import Path
 
+# ---------- 环境变量加载 ----------
+def _load_env_file():
+    """加载项目根目录的 .env 文件（不覆盖已有环境变量）"""
+    env_path = PROJECT_ROOT / ".env" if 'PROJECT_ROOT' in dir() else Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' in line:
+                    key, _, value = line.partition('=')
+                    key = key.strip()
+                    value = value.strip().strip("'\"")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+
+def env(key: str, default=None):
+    """获取环境变量（支持 .env 文件和系统环境变量）"""
+    return os.environ.get(key, default)
+
+# 延迟加载（在 PROJECT_ROOT 定义后）
+
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent
+_load_env_file()  # 加载 .env 文件
 
 # 数据目录
 DATA_DIR = PROJECT_ROOT / "data"
@@ -20,13 +46,13 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 REPORT_DIR = PROJECT_ROOT / "report"
 
 # 数据库配置
-DATABASE_PATH = DATABASE_DIR / "portfolio.db"
+DATABASE_PATH = Path(env('DATABASE_PATH', str(DATABASE_DIR / "portfolio.db")))
 
 # 持仓文件路径（通达信导出）
 # 自动查找通达信导出目录中最新的持仓股文件
 def _find_latest_position_file() -> str:
     """自动查找通达信导出目录中最新的持仓股文件"""
-    export_dir = r"C:\zd_zsone\T0002\export"
+    export_dir = env("TDX_EXPORT_DIR", r"C:\zd_zsone\T0002\export")
     if not os.path.isdir(export_dir):
         # fallback到历史文件
         return os.path.join(os.path.dirname(__file__), "..", "data", "raw", "positions.tsv")
@@ -188,17 +214,17 @@ SCHEDULER = {
 # ==================== 通知配置 ====================
 NOTIFICATION_CONFIG = {
     'email': {
-        'enabled': False,  # 是否启用邮件通知
-        'smtp_server': 'smtp.qq.com',  # SMTP服务器
-        'smtp_port': 587,
-        'username': 'your_email@qq.com',
-        'password': 'your_auth_code',  # 授权码
-        'sender': 'your_email@qq.com',
-        'recipients': ['recipient@example.com'],  # 收件人列表
+        'enabled': env('EMAIL_ENABLED', 'false').lower() == 'true',
+        'smtp_server': env('EMAIL_SMTP_SERVER', 'smtp.qq.com'),
+        'smtp_port': int(env('EMAIL_SMTP_PORT', '587')),
+        'username': env('EMAIL_USERNAME', ''),
+        'password': env('EMAIL_PASSWORD', ''),
+        'sender': env('EMAIL_USERNAME', ''),
+        'recipients': [r.strip() for r in env('EMAIL_RECIPIENTS', '').split(',') if r.strip()],
     },
     'wechat': {
-        'enabled': False,  # 是否启用企业微信通知
-        'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY',
+        'enabled': env('WECHAT_ENABLED', 'false').lower() == 'true',
+        'webhook_url': env('WECHAT_WEBHOOK_URL', ''),
     }
 }
 
@@ -235,13 +261,15 @@ MONITOR_CONFIG = {
         },
     ],
     'auto_notify': True,  # 自动发送通知
+    'dedup_interval_hours': int(env('ALERT_DEDUP_INTERVAL_HOURS', '6')),
+    'stale_threshold_days': int(env('STALE_THRESHOLD_DAYS', '7')),
     'log_level': 'INFO',
 }
 
 
 # ==================== 智能分析配置 ====================
 SMART_ANALYSIS_CONFIG = {
-    'advice_enabled': True,  # 启用智能建议
+    'advice_enabled': env('ADVICE_ENABLED', 'true').lower() != 'false',  # 启用智能建议
     'backtest_enabled': True,  # 启用回测分析
     'min_confidence': 0.6,  # 建议最小置信度
     'max_advices': 10,  # 最大建议数量
