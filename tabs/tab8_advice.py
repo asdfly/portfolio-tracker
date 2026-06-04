@@ -3,6 +3,7 @@ Tab8: 操作建议
 """
 
 import os
+from datetime import datetime
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -416,13 +417,117 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
             except Exception as e:
                 st.error(f"导出失败: {e}")
 
+
+    # ========== 闭环反馈: 建议历史追踪 ==========
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '闭环反馈: 建议历史追踪'
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '追踪每条建议的生命周期：生成→确认→执行→验证效果。点击状态可更新建议进展。</span></div>',
+        unsafe_allow_html=True,
+    )
+    try:
+        fb_conn = get_db_connection()
+        fb_df = pd.read_sql("""
+            SELECT id, created_at, advice_type, priority, title, confidence,
+                   related_codes, source, action_taken, status, feedback, resolved_at
+            FROM advice_history
+            ORDER BY created_at DESC
+            LIMIT 50
+        """, fb_conn)
+        fb_conn.close()
+
+        if not fb_df.empty:
+            # Stats cards
+            fb_s1, fb_s2, fb_s3, fb_s4 = st.columns(4)
+            total_adv = len(fb_df)
+            pending_cnt = len(fb_df[fb_df['status'] == 'pending'])
+            executed_cnt = len(fb_df[fb_df['status'] == 'executed'])
+            effective_cnt = len(fb_df[fb_df['status'] == 'effective'])
+            fb_s1.metric("建议总数", total_adv)
+            fb_s2.metric("待处理", pending_cnt)
+            fb_s3.metric("已执行", executed_cnt)
+            fb_s4.metric("已验证有效", effective_cnt)
+
+            # Type distribution
+            type_counts = fb_df['advice_type'].value_counts()
+            type_map = {
+                'rebalance': '再平衡', 'risk_mgmt': '风险管理', 'technical': '技术分析',
+                'concentration': '集中度', 'opportunity': '机会识别', 'fund_flow': '资金流',
+                'sentiment': '市场情绪', 'macro': '宏观环境', 'news': '新闻事件',
+                'market_event': '市场事件', 'strategy': '策略建议', 'margin': '融资融券',
+                'research': '机构调研', 'block_trade': '大宗交易',
+            }
+            st.markdown("**建议类型分布 (近50条)**")
+            type_bar = pd.DataFrame({
+                '类型': [type_map.get(t, t) for t in type_counts.index],
+                '数量': type_counts.values
+            })
+            st.bar_chart(type_bar, x='类型', y='数量', height=200)
+
+            # Advice history table with status update
+            st.markdown("**建议详情**")
+            status_options = ['pending', 'executed', 'ignored', 'effective', 'ineffective']
+            status_labels = {
+                'pending': '⏳ 待处理', 'executed': '✅ 已执行', 'ignored': '⏭️ 已忽略',
+                'effective': '🎯 有效', 'ineffective': '❌ 无效',
+            }
+            priority_colors = {'high': '#ef4444', 'medium': '#f59e0b', 'low': '#22c55e'}
+
+            for _, row in fb_df.iterrows():
+                p_color = priority_colors.get(row['priority'], '#8b949e')
+                status_label = status_labels.get(row['status'], row['status'])
+                title_display = row['title'][:60] + ('...' if len(str(row['title'])) > 60 else '')
+                codes_display = row['related_codes'][:40] if row['related_codes'] else '-'
+                conf_pct = f"{row['confidence']:.0%}" if row['confidence'] else '-'
+
+                cols_row = st.columns([1, 3, 1.5, 1, 1])
+                with cols_row[0]:
+                    st.markdown(f"<span style='color:{p_color};font-size:12px;font-weight:bold;'>"
+                                f"{row['priority'].upper()}</span>", unsafe_allow_html=True)
+                with cols_row[1]:
+                    st.markdown(f"**{title_display}**<br><span style='font-size:11px;color:#6e7681;'>"
+                                f"{row['created_at']} | {type_map.get(row['advice_type'], row['advice_type'])} | {codes_display}</span>",
+                                unsafe_allow_html=True)
+                with cols_row[2]:
+                    st.markdown(f"<span style='font-size:12px;'>{status_label}</span>", unsafe_allow_html=True)
+                with cols_row[3]:
+                    st.markdown(f"<span style='font-size:12px;'>{conf_pct}</span>", unsafe_allow_html=True)
+                with cols_row[4]:
+                    new_status = st.selectbox(
+                        "状态", status_options,
+                        index=status_options.index(row['status']) if row['status'] in status_options else 0,
+                        key=f"status_{row['id']}", label_visibility="collapsed"
+                    )
+                    if new_status != row['status']:
+                        try:
+                            upd_conn = get_db_connection()
+                            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            upd_conn.execute(
+                                "UPDATE advice_history SET status=?, resolved_at=? WHERE id=?",
+                                (new_status, now_str, row['id'])
+                            )
+                            upd_conn.commit()
+                            upd_conn.close()
+                            st.toast(f"建议 #{row['id']} 状态更新为: {status_labels.get(new_status, new_status)}")
+                            st.rerun()
+                        except Exception as upd_e:
+                            st.warning(f"状态更新失败: {upd_e}")
+        else:
+            st.info("暂无建议历史记录。建议会在每日分析时自动记录。")
+    except Exception as e:
+        st.warning(f"建议历史加载失败: {e}")
+
+
     # === 闭环反馈: 市场环境快览面板 ===
     with st.expander("📊 市场环境快览", expanded=False):
         try:
             env_conn = get_db_connection()
             # 资金流快览
             ff_sql = ("SELECT code, SUM(net_inflow) as total_net, COUNT(*) as days "
-                      "FROM fund_flows WHERE source='etf' AND trade_date >= date('now','-7 days') "
+                      "FROM fund_flows WHERE category='etf' AND date >= date('now','-7 days') "
                       "GROUP BY code ORDER BY total_net DESC LIMIT 10")
             ff_df = pd.read_sql(ff_sql, env_conn)
             if not ff_df.empty:
@@ -432,7 +537,7 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
             # 市场情绪快览
             ms_sql = ("SELECT name, value, date "
                       "FROM market_sentiment WHERE date >= date('now','-3 days') "
-                      "ORDER BY trade_date DESC")
+                      "ORDER BY date DESC")
             ms_df = pd.read_sql(ms_sql, env_conn)
             if not ms_df.empty:
                 st.subheader("市场情绪指标")
@@ -442,7 +547,7 @@ def render_tab8(positions, summary, index_quotes, selected_date, selected_benchm
             # 宏观指标快览
             mc_sql = ("SELECT name, value, 'N/A' as unit, date "
                       "FROM macro_daily WHERE date >= date('now','-3 days') "
-                      "ORDER BY trade_date DESC")
+                      "ORDER BY date DESC")
             mc_df = pd.read_sql(mc_sql, env_conn)
             if not mc_df.empty:
                 st.subheader("宏观指标")
