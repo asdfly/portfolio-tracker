@@ -45,7 +45,7 @@ def test_render_tab1_real_data():
 
     # mock streamlit
     mock_st = MagicMock()
-    mock_st.columns = MagicMock(return_value=[MagicMock(), MagicMock(), MagicMock()])
+    mock_st.columns = MagicMock(return_value=[MagicMock(), MagicMock()])
     mock_st.session_state = {}
 
     # 加载真实数据
