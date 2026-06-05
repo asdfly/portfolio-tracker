@@ -807,6 +807,47 @@ def render_tab1(positions, summary, index_quotes, selected_date, selected_benchm
                     else:
                         st.warning("起始日期须早于结束日期")
 
+    # --- 年度收益对比条形图 ---
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
+        '年度收益对比<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '各年度累计收益率对比，颜色反映涨跌方向，帮助识别组合的年度表现规律。</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    if not summary.empty and len(summary) > 1:
+        summary_annual = summary.copy()
+        summary_annual["date"] = pd.to_datetime(summary_annual["date"])
+        summary_annual["year"] = summary_annual["date"].dt.year
+        yearly_returns = summary_annual.groupby("year").apply(
+            lambda g: g["total_value"].iloc[-1] / g["total_value"].iloc[0] - 1
+        ) * 100
+        if not yearly_returns.empty:
+            bar_colors = ["#22c55e" if v >= 0 else "#ef4444" for v in yearly_returns.values]
+            fig_annual = go.Figure()
+            fig_annual.add_trace(go.Bar(
+                x=yearly_returns.index.astype(str),
+                y=yearly_returns.values,
+                marker_color=bar_colors,
+                text=[f"{v:+.1f}%" for v in yearly_returns.values],
+                textposition="auto",
+                textfont=dict(size=11, color="#c9d1d9"),
+                hovertemplate="%{x}年<br>收益率: %{y:+.2f}%<extra></extra>",
+            ))
+            fig_annual.add_hline(y=0, line_dash="dash", line_color="#8b949e", line_width=1)
+            fig_annual.update_layout(
+                height=280,
+                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                font=dict(color="#c9d1d9", size=11),
+                margin=dict(l=40, r=20, t=10, b=30),
+                xaxis=dict(title="", showgrid=False),
+                yaxis=dict(title="年度收益率 (%)", showgrid=True, gridcolor="#21262d"),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_annual, width="stretch")
+
     
 
 

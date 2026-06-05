@@ -205,9 +205,9 @@ class TestTab1AnnualChart:
     """Test annual return comparison chart in Tab1 (Phase 7C)"""
 
     def test_dashboard_has_annual_chart_code(self):
-        """dashboard.py should contain annual return chart code"""
-        dash_path = os.path.join(os.path.dirname(__file__), "..", "dashboard.py")
-        with open(dash_path, "r", encoding="utf-8") as f:
+        """tabs/tab1_net_value.py should contain annual return chart code"""
+        tab1_path = os.path.join(os.path.dirname(__file__), "..", "tabs", "tab1_net_value.py")
+        with open(tab1_path, "r", encoding="utf-8") as f:
             content = f.read()
         assert "年度收益对比" in content
         assert "fig_annual" in content
