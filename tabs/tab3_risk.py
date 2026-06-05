@@ -263,26 +263,13 @@ def load_alerts(limit=10):
 
 
 
-def render_tab3(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    show_days = kwargs.get("show_days", len(summary) if not summary.empty else 250)
-    # 从positions计算盈亏计数，从summary最新行获取风险指标
-    profit_count = int((positions["pnl"] > 0).sum()) if not positions.empty else 0
-    loss_count = int((positions["pnl"] < 0).sum()) if not positions.empty else 0
-    if not summary.empty:
-        latest = summary.iloc[-1]
-        volatility = latest.get("volatility", None)
-        max_dd = latest.get("max_drawdown", None)
-    else:
-        volatility = None
-        max_dd = None
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
+
+
+def _render_risk_gauge_and_metrics(sharpe, volatility, max_dd, selected_date, summary, positions, profit_count, loss_count, show_days=250):
+    """渲染风险仪表盘和风险指标详情。"""
 
     """渲染Tab3: 风险分析"""
-    
+
     st.caption("⚠️ 展示风险评分仪表盘、风险指标详情、回撤曲线及Brinson收益归因分析")
     col_risk_gauge, col_risk_detail = st.columns([1, 1])
 
@@ -400,6 +387,9 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                 unsafe_allow_html=True,
             )
 
+
+def _render_drawdown_chart(summary):
+    """Extracted from render_tab3."""
     # 回撤曲线（降采样）
     if not summary.empty and len(summary) > 5:
         st.markdown(
@@ -438,13 +428,16 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
         )
         st.plotly_chart(fig_dd, width="stretch")
 
+
+def _render_brinson_attribution(show_days, selected_date):
+    """Extracted from render_tab3."""
     # ===== P2: 收益归因分析（Brinson模型） =====
     st.markdown("---")
     st.markdown(
         '<div class="tip-title" style="">收益归因分析（Brinson 模型）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">使用Brinson归因模型将组合超额收益分解为「配置效应」（超配/低配行业的贡献）和「选股效应」（行业内个股选择的贡献），帮助判断收益来源。</span></div>',
         unsafe_allow_html=True,
     )
-    
+
 
     attr_result = compute_return_attribution(days=min(show_days, 500), end_date=selected_date)
     if attr_result and attr_result.get("sector_returns"):
@@ -555,13 +548,16 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("历史数据不足（需要至少250个交易日），暂无法进行收益归因分析")
 
+
+def _render_multi_factor_attribution(positions):
+    """Extracted from render_tab3."""
     # ===== P2b: 多因子归因分析 =====
     st.markdown("---")
     st.markdown(
         '<div class="tip-title" style="">多因子归因分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于 A 股公开指数构造市场/规模/价值/动量/质量五因子模型，量化各因子对组合收益的贡献。</span></div>',
         unsafe_allow_html=True,
     )
-    
+
 
     try:
         from src.analysis.factor_attribution import (
@@ -695,6 +691,9 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
     except Exception as e:
         st.info(f"多因子归因模块暂不可用: {str(e)[:80]}")
 
+
+def _render_risk_warnings(positions, volatility, max_dd, profit_count, loss_count, selected_date):
+    """Extracted from render_tab3."""
     # ---------- 风险提示面板 ----------
     if not positions.empty:
         st.markdown(
@@ -820,6 +819,9 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                 unsafe_allow_html=True,
             )
 
+
+def _render_style_exposure(positions):
+    """Extracted from render_tab3."""
     # ===== P2c: 风格暴露分析 =====
     st.markdown("---")
     st.markdown(
@@ -964,6 +966,9 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
     except Exception as e:
         st.info(f"风格暴露分析暂不可用: {str(e)[:80]}")
 
+
+def _render_sector_rotation():
+    """Extracted from render_tab3."""
     # ===== P2d: 行业轮动分析 =====
     st.markdown("---")
     st.markdown(
@@ -1036,6 +1041,9 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
     except Exception as e:
         st.info(f"行业轮动分析暂不可用: {str(e)[:80]}")
 
+
+def _render_alert_center(positions, summary, selected_date):
+    """Extracted from render_tab3."""
     # ========== 告警中心 ==========
     st.markdown("---")
     alert_tab1, alert_tab2 = st.tabs(["🔔 告警中心", "📊 告警统计"])
@@ -1279,4 +1287,30 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
                     yaxis=dict(showgrid=False, tickfont=dict(size=10)),
                 )
                 st.plotly_chart(fig_alert_dist, width="stretch")
+
+
+
+def render_tab3(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+    """渲染Tab3: 风险分析（重构版 - 子函数调用）"""
+    profit_count = int((positions["pnl"] > 0).sum()) if not positions.empty else 0
+    loss_count = int((positions["pnl"] < 0).sum()) if not positions.empty else 0
+    if not summary.empty:
+        latest = summary.iloc[-1]
+        volatility = latest.get("volatility", None)
+        max_dd = latest.get("max_drawdown", None)
+    else:
+        volatility = None
+        max_dd = None
+    technical = kwargs.get('technical', pd.DataFrame())
+    sharpe = kwargs.get('sharpe', None)
+    show_days = kwargs.get('show_days', len(summary) if not summary.empty else 250)
+
+    _render_risk_gauge_and_metrics(sharpe, volatility, max_dd, selected_date, summary, positions, profit_count, loss_count, show_days=show_days)
+    _render_drawdown_chart(summary)
+    _render_brinson_attribution(show_days, selected_date)
+    _render_multi_factor_attribution(positions)
+    _render_risk_warnings(positions, volatility, max_dd, profit_count, loss_count, selected_date)
+    _render_style_exposure(positions)
+    _render_sector_rotation()
+    _render_alert_center(positions, summary, selected_date)
 

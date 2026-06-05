@@ -47,6 +47,7 @@ REPORT_DIR = PROJECT_ROOT / "report"
 
 # 数据库配置
 DATABASE_PATH = Path(env('DATABASE_PATH', str(DATABASE_DIR / "portfolio.db")))
+BACKUP_DIR = Path(env('BACKUP_DIR', str(PROJECT_ROOT / "data" / "backups")))
 
 # 持仓文件路径（通达信导出）
 # 自动查找通达信导出目录中最新的持仓股文件

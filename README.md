@@ -4,36 +4,24 @@
 
 ## 功能概览
 
-### Streamlit Dashboard（11个分析Tab）
+### Streamlit Dashboard（14个分析Tab）
 
 | Tab | 名称 | 核心功能 |
 |-----|------|----------|
-| 1 | 净值走势 | 累计净值曲线、多基准对比、区间收益分析 |
-| 2 | 持仓分布 | 饼图、行业分布、相关性矩阵 |
+| 1 | 净值走势 | 累计净值曲线、多基准对比、区间收益分析、年度收益图 |
+| 2 | 持仓分布 | 饼图、行业分布、相关性矩阵、HHI集中度、Beta贡献 |
 | 3 | 风险分析 | 夏普/索提诺/卡玛比率、VaR、最大回撤、压力测试 |
 | 4 | 收益日历 | 年度/月度收益概览、日历热力图 |
-| 5 | 高级分析 | 因子归因、Brinson分解、Monte Carlo模拟 |
+| 5 | 高级分析 | 因子归因、Brinson分解、Monte Carlo模拟、VaR直方图、再平衡模拟 |
 | 6 | 技术信号 | 雷达图、信号柱状图、布林带/RSI分布 |
-| 7 | 资讯与评估 | 自动新闻聚合、市场情绪评估 |
-| 8 | 操作建议 | 智能建议引擎（再平衡、风险管理、机会识别） |
-| 9 | 自定义指标 | 技术指标回测、K线形态识别 |
-| 10 | 资金动向 | 行业资金流趋势/热力图、ETF资金流、主力资金 |
-| 11 | 黄金市场 | 10个子Tab（见下表） |
-
-### Tab11 黄金市场分析（10个子Tab）
-
-| 子Tab | 名称 | 数据源 | 核心功能 |
-|-------|------|--------|----------|
-| 1 | 金价走势 | SGE `spot_hist_sge` | K线图 + MA5/MA20/MA60 |
-| 2 | 实时行情 | SGE `spot_quotations_sge` | 多品种实时行情面板 |
-| 3 | 基准价对比 | SGE `spot_golden_benchmark_sge` | 上海金基准价 vs Au99.99 价差分析 |
-| 4 | 季节性规律 | SGE历史K线 | 22年月度涨跌统计、热力图 |
-| 5 | 技术信号 | 自算MACD/RSI/Bollinger | 三指标组合技术分析面板 |
-| 6 | 定价因子 | 中美利差/CPI | 金价与宏观因子相关性矩阵、趋势对比 |
-| 7 | 储备分析 | WGC `macro_cons_gold` | SPDR持仓趋势、中国黄金储备与外汇占比 |
-| 8 | 央行购金 | WGC `macro_cons_gold` | 全球央行购金趋势、东西方持仓对比 |
-| 9 | 供需平衡 | COMEX/SGE/WGC | COMEX库存、ETF持仓变化、供需指标 |
-| 10 | 国际对比 | WGC ETF数据 | ETF推算国际金价、隐含汇率、上海金溢价分析 |
+| 7 | 资讯与评估 | 自动新闻聚合、SnowNLP+jieba 情感评分、市场情绪评估 |
+| 8 | 操作建议 | 智能建议引擎（再平衡/风险管理/机会识别），反馈闭环追踪 |
+| 9 | 自定义指标 | 技术指标回测、K线形态识别、DB回测历史 |
+| 10 | 资金动向 | 行业资金流趋势/热力图、ETF资金流、主力资金、北向资金 |
+| 11 | 黄金市场 | 10个子Tab（金价走势/实时行情/基准价对比/季节性/技术信号/定价因子/储备分析/央行购金/供需平衡/国际对比） |
+| 12 | 宏观经济 | 宏观数据面板（汇率/债市/金价基准/利率/融资融券） |
+| 13 | 数据质量 | 数据质量评分环、新鲜度热力图、覆盖度表格、回测摘要 |
+| 14 | 市场事件 | 涨停板/融资融券/股东增减持/机构调研/大宗交易深度分析 |
 
 ### 数据采集
 
@@ -45,112 +33,75 @@
 | ETF资金流 | AKShare + 估算 | 23只ETF净流入/流出，K线估算回填 |
 | 主力资金 | 东方财富 | 大单/中单/小单净流入 |
 | 北向资金 | 东方财富 | 沪股通+深股通合并 |
+| 市场事件 | AKShare | 涨停板、融资融券、股东增减持、机构调研、大宗交易 |
 | 黄金行情 | 上海金交所 | Au99.99/Au99.95/Au(T+D)历史K线+实时分时 |
 | 黄金持仓 | SPDR/央行 | SPDR Gold Trust持仓、中国黄金储备 |
-| 定价因子 | AKShare | 中美国债收益率利差、中国CPI |
+| 定价因子 | AKShare | 中美国债收益率利差、中国CPI、Shibor |
+| 宏观情绪 | AKShare | 融资融券余额、股权质押比例 |
 
 ### 智能分析
 
 - **风险指标**: 夏普比率、索提诺比率、卡玛比率、VaR(95%/99%)、CVaR、Beta/Alpha
 - **集中度分析**: HHI指数、行业分布
 - **压力测试**: 多场景模拟损失
-- **策略回测**: 5种再平衡策略（买入持有/定期/阈值/风险平价/动量）
-- **智能建议**: 再平衡建议、风险管理、机会识别（含置信度评估）
-- **告警系统**: 8项自动监控规则，三级告警（warning/error/critical）
+- **策略回测**: 5种再平衡策略（买入持有/定期/阈值/动量/均值回归）
+- **智能建议**: 17个分析步骤，13个分析维度（含置信度评估），建议→执行→效果闭环
+- **告警系统**: 9条自动监控规则（数据源中断/数据质量/持仓变化/市值变化/回撤/集中度/夏普/波动率/异常），告警去重
 
 ## 项目结构
 
 ```
 portfolio_tracker/
 ├── config/
-│   └── settings.py              # 全局配置（数据源、阈值、通知等）
+│   ├── settings.py              # 全局配置（支持.env环境变量覆盖）
+│   └── db_schema.py             # 数据库DDL集中定义（20张表）
 ├── src/
 │   ├── data_sources/            # 数据采集层
-│   │   ├── base.py              # 数据源基类
-│   │   ├── sina.py              # 新浪财经
-│   │   ├── akshare_ds.py        # AKShare
-│   │   └── fund_flow.py         # 资金流采集（行业/ETF/主力/北向）
+│   │   ├── base.py / sina.py / akshare_ds.py
+│   │   ├── fund_flow.py         # 资金流采集（行业/ETF/主力/北向）
+│   │   ├── market_events.py     # 市场事件采集（涨停/融资/股东/机构/大宗）
+│   │   ├── macro_daily.py       # 宏观日度数据
+│   │   ├── news_fetcher.py     # 新闻资讯抓取+情感分析
+│   │   └── monitor_push2his.py  # 资金流推送监控
 │   ├── analysis/                # 分析引擎
 │   │   ├── technical.py         # 技术指标计算
-│   │   ├── portfolio.py         # 组合分析器
-│   │   ├── portfolio_risk.py    # 风险指标计算
-│   │   ├── risk.py              # 风险分析
-│   │   ├── advisor.py           # 智能建议引擎
-│   │   ├── backtest.py          # 策略回测引擎
-│   │   ├── indicator_backtest.py # 指标回测
-│   │   ├── candle_patterns.py   # K线形态识别
-│   │   └── factor_attribution.py # 因子归因
-│   ├── report/                  # 报告生成
-│   │   ├── smart_report.py      # 智能报告
-│   │   ├── excel_report.py      # Excel报告
-│   │   └── risk_report.py       # 风险报告
+│   │   ├── portfolio.py / portfolio_risk.py / risk.py
+│   │   ├── advisor.py           # 智能建议引擎（17方法/13步骤）
+│   │   ├── backtest.py          # 策略回测引擎（5种策略）
+│   │   ├── market_event_signals.py  # 市场事件信号引擎
+│   │   ├── indicator_backtest.py / candle_patterns.py / factor_attribution.py
 │   └── utils/                   # 工具层
-│       ├── database.py          # 数据库管理
-│       ├── position_reader.py   # 通达信持仓解析
-│       ├── monitor.py           # 运行监控
+│       ├── database.py / db_schema.py
+│       ├── monitor.py           # 运行监控（9条规则+去重）
 │       ├── notification.py      # 通知管理（邮件/企业微信）
-│       ├── email_report.py      # 邮件报告
-│       ├── enhanced_report.py   # 增强HTML报告
-│       ├── news_fetcher.py      # 新闻资讯抓取
-│       ├── backfill.py          # 历史数据回填
-│       └── chart_utils.py       # 图表工具函数
-├── tabs/                        # 模块化Dashboard Tab
-│   ├── __init__.py              # 11个Tab render函数导出
-│   ├── _helpers.py              # Tab公共辅助函数
-│   ├── tab1_net_value.py        # 净值走势
-│   ├── tab2_position.py         # 持仓分布
-│   ├── tab3_risk.py             # 风险分析
-│   ├── tab4_calendar.py         # 收益日历
-│   ├── tab5_advanced.py         # 高级分析
-│   ├── tab6_technical.py        # 技术信号
-│   ├── tab7_news.py             # 资讯与评估
-│   ├── tab8_advice.py           # 操作建议
-│   ├── tab9_custom.py           # 自定义指标
-│   ├── tab10_fund_flow.py       # 资金动向
-│   ├── tab11_gold.py            # 黄金市场（10子Tab入口）
-│   └── gold_components/         # 黄金分析子模块
-│       ├── gold_utils.py        #   公共工具（数据获取+指标计算）
-│       ├── price_comparison.py  #   Phase1: 基准价对比
-│       ├── seasonality.py       #   Phase1: 季节性规律
-│       ├── reserve_analysis.py  #   Phase1: 储备分析
-│       ├── technical_signals.py #   Phase2: 技术信号面板
-│       ├── correlation.py       #   Phase2: 定价因子相关性
-│       ├── realtime_quotes.py   #   Phase3: 多品种实时行情
-│       ├── central_bank_trends.py # Phase4: 央行购金趋势
-│       ├── supply_demand.py     #   Phase4: 供需平衡分析
-│       └── international_comparison.py # Phase4: 国际金价对比
+│       ├── data_quality.py     # 数据质量评估（新鲜度40+覆盖度30+回测度30）
+│       ├── position_reader.py / chart_utils.py / backfill.py
+│       └── email_report.py / enhanced_report.py / smart_report.py
+├── tabs/                        # 模块化Dashboard Tab（14个）
+│   ├── tab1~tab14               # 各Tab渲染函数
+│   ├── _helpers.py              # 公共辅助函数
+│   └── gold_components/         # 黄金分析子模块（9个）
 ├── components/                  # Dashboard UI组件
-│   ├── layouts.py / charts.py / metrics.py / tables.py
-├── tests/                       # 测试套件（115用例，全部通过）
-│   ├── conftest.py              # 共享fixture
-│   ├── test_config.py           # L0: 配置完整性(5)
-│   ├── test_imports.py          # L0: 模块导入(15)
-│   ├── test_chart_utils.py      # L1: 纯函数测试(25)
-│   ├── test_database_new.py     # L2: 数据库测试(12)
-│   ├── test_gold_utils.py       # L1: 黄金工具函数(27)
-│   ├── test_tab_render.py       # L3: Tab渲染测试(25)
-│   └── test_integration.py      # L4: 集成冒烟(4)
-├── data/
-│   ├── database/portfolio.db    # SQLite主数据库
-│   ├── raw/ / processed/ / reports/
-├── docs/                        # 设计文档
-├── dashboard_main.py            # 模块化Dashboard入口
-├── run_analysis.py              # 每日定时任务入口
-├── run_enhanced.py              # 增强分析（含监控管理）
-├── run_smart.py                 # 智能分析入口
-├── backfill_full_history.py     # 历史数据回填
-├── requirements.txt             # Python依赖
-├── requirements-dev.txt         # 开发依赖
-├── pytest.ini / pyproject.toml  # 项目配置
-├── CHANGELOG.md                 # 变更日志
-└── README.md                    # 本文件
+├── scripts/                     # 运维脚本
+│   ├── backfill/                # 6个回填脚本（history/indicators/macro/news/sector/full）
+│   ├── setup/setup_notification.py
+│   └── run_backfill.py          # 统一backfill入口
+├── tests/                       # 测试套件（655用例）
+├── data/database/               # SQLite数据库
+├── Dockerfile                   # Docker容器化部署
+├── .github/workflows/ci.yml     # GitHub Actions CI
+├── .env.example                 # 环境变量模板
+├── requirements.txt / requirements-dev.txt
+├── pytest.ini / pyproject.toml
+├── LICENSE / CHANGELOG.md
+└── README.md
 ```
 
 ## 快速开始
 
 ### 环境要求
 
-- Python 3.9+
+- Python 3.12+
 - Windows（持仓数据依赖通达信导出文件）
 
 ### 安装
@@ -164,54 +115,46 @@ pip install -r requirements-dev.txt   # 开发/测试依赖
 
 ### 配置
 
-编辑 `config/settings.py`，主要配置项：
+支持两种配置方式：
 
-```python
-# 持仓文件路径（通达信导出目录自动检测最新文件）
-POSITION_FILE = _find_latest_position_file()
+1. **环境变量（推荐）**: 复制 `.env.example` 为 `.env`，填入实际值
+2. **直接编辑**: `config/settings.py` 中修改默认值
 
-# 通知配置（可选）
-NOTIFICATION_CONFIG = {
-    'email': {'enabled': False, 'smtp_server': 'smtp.qq.com', ...},
-    'wechat': {'enabled': False, 'webhook_url': '...', ...},
-}
-
-# 风险阈值
-RISK_CONFIG = {
-    'max_concentration': 0.25,
-    'max_drawdown_alert': 0.10,
-    'max_volatility_alert': 0.30,
-}
+```bash
+cp .env.example .env
+# 编辑 .env 填入敏感配置（邮箱密码、webhook地址等）
 ```
 
 ### 运行
 
 ```bash
-streamlit run dashboard_main.py        # 启动Dashboard
-python run_analysis.py                # 每日分析
-python run_smart.py                   # 智能分析
-python run_enhanced.py --run          # 增强分析
-python run_enhanced.py --health       # 健康检查
-python run_enhanced.py --stats 7      # 近7天统计
+streamlit run dashboard.py              # 启动Dashboard（端口8501）
+python run_analysis.py                  # 每日分析（Stage1-4）
+python scripts/run_backfill.py all      # 全量回填
+python scripts/run_backfill.py history  # 仅行情回填
+```
+
+### Docker部署
+
+```bash
+docker build -t portfolio-tracker .
+docker run -p 8501:8501 -v ./data:/app/data portfolio-tracker
 ```
 
 ### 测试
 
 ```bash
-pytest tests/ -v                       # 全部115个用例
-pytest tests/test_imports.py -v        # L0 导入检查
-pytest tests/test_chart_utils.py -v    # L1 纯函数
-pytest tests/test_gold_utils.py -v     # L1 黄金工具
-pytest tests/test_database_new.py -v   # L2 数据库
-pytest tests/test_tab_render.py -v     # L3 Tab渲染
-pytest tests/test_integration.py -v    # L4 集成
+pytest tests/ -v                         # 全部655个用例
+pytest tests/ -k "d8 or d9 or d10" -v    # 特定阶段测试
 ```
 
-### 定时任务
+### CI/CD
 
-以管理员身份运行 PowerShell：`.\setup_scheduler.ps1`，触发器设为每个交易日 15:10。
+GitHub Actions 在每次 push/PR 到 master 分支时自动运行 pytest。
 
 ## 数据库结构
+
+20张表，核心表如下：
 
 | 表名 | 用途 | 关键列 |
 |------|------|--------|
@@ -219,67 +162,50 @@ pytest tests/test_integration.py -v    # L4 集成
 | portfolio_summary | 组合日汇总 | date, total_value, total_pnl, daily_return, vs_hs300 |
 | index_quotes | 指数行情 | date, code, close, change_pct, volume |
 | etf_technical | 技术指标 | date, code, ma/macd/rsi/kdj信号及数值 |
-| fund_flows | 资金流数据 | date, code, category, net_inflow, buy_amount, sell_amount |
-| daily_news | 新闻资讯 | date, category, title, source, url, summary |
+| fund_flows | 资金流数据 | date, code, category, net_inflow(元) |
+| daily_news | 新闻资讯 | date, category, title, source, sentiment_score |
 | alerts | 告警记录 | rule_name, level, message, created_at |
+| advice_history | 建议追踪 | status, action_taken, feedback, resolved_at |
 | execution_logs | 执行日志 | task_name, status, duration_seconds |
-| custom_indicators | 自定义指标 | name, formula, description |
+| market_sentiment | 市场情绪 | name, value, date |
+| macro_daily | 宏观数据 | name, value, date |
 
 ## 技术栈
 
 | 类别 | 技术 |
 |------|------|
-| 语言 | Python 3.9+ |
+| 语言 | Python 3.12 |
 | Dashboard | Streamlit + Plotly |
 | 数据库 | SQLite |
 | 数据源 | 新浪财经、AKShare、同花顺、东方财富、上海金交所 |
 | 技术计算 | NumPy, SciPy, Pandas |
 | 报告生成 | Python-docx, OpenPyXL |
 | 通知 | SMTP, 企业微信 Webhook |
-| 自动化 | Windows 任务计划程序 |
-| 测试 | pytest, unittest.mock |
+| 容器化 | Docker (python:3.12-slim) |
+| CI/CD | GitHub Actions (pytest) |
+| 测试 | pytest 9.0.3 |
 
 ## 开发指南
 
 ### 代码规范
 
-- 遵循 PEP 8，pre-commit hook 自动检查
-- 使用 type hints
-- 每个模块包含 docstring
-- 错误处理使用 try/except + logging
-- 黄金组件中 DataFrame 参数需做 None guard（`if df is None or df.empty`）
+- 遵循 PEP 8，pre-commit hook 自动检查（Python语法 + pytest gate）
+- 错误处理使用 try/except + logging，日志自动轮转（10MB, 5备份）
+- 敏感配置通过 `.env` 环境变量管理，不硬编码
+- 黄金组件中 DataFrame 参数需做 None guard
 
 ### 项目统计
 
 | 维度 | 数据 |
 |------|------|
-| Python 文件 | 88 个 |
-| 代码总行数 | ~28,000 行 |
-| 测试用例 | 115 个（全部通过） |
-| Dashboard Tab | 11 个（Tab11含10个子Tab） |
-| 数据库表 | 9 个 |
-| Plotly 图表 | 25+ 个 |
-
-### 添加新数据源
-
-1. 在 `src/data_sources/` 创建新模块，继承 `DataSourceBase`
-2. 实现 `fetch_data()` 方法
-3. 在 `__init__.py` 中注册
-4. 在 `config/settings.py` 中添加配置
-
-### 添加新分析Tab
-
-1. 在 `tabs/` 创建新模块 `tabN_xxx.py`
-2. 实现 `render_tabN(positions, summary, index_quotes, selected_date, selected_benchmark)` 函数
-3. 在 `tabs/__init__.py` 中注册
-4. 在 `dashboard_main.py` 中添加 Tab 入口
-
-### 添加黄金分析子模块
-
-1. 在 `tabs/gold_components/` 创建新模块
-2. 数据获取函数放在 `gold_utils.py` 并加 `@st.cache_data` + `try/except`
-3. 在 `tab11_gold.py` 中添加子Tab入口
+| 测试用例 | 655 个（全部通过） |
+| Dashboard Tab | 14 个（Tab11含10个子Tab） |
+| 数据库表 | 20 个 |
+| 数据行数 | 320,000+ 行 |
+| 告警规则 | 9 条（含去重） |
+| 回测策略 | 5 种 |
+| Plotly 图表 | 30+ 个 |
 
 ## License
 
-MIT License
+[MIT License](LICENSE)

@@ -139,7 +139,7 @@ class TestMonitorQueries:
         c = sqlite3.connect(temp_db)
         c.execute(
             "INSERT INTO alerts(rule_name,level,message,created_at) "
-            "VALUES('t','warning','msg',datetime('now'))")
+            "VALUES('t','warning','msg','2099-12-31 23:59:59')")
         c.commit()
         assert len(m.get_recent_alerts(24)) == 1
 
