@@ -819,21 +819,10 @@ class SmartAdvisor:
                 return advices
             hold_codes = set(p.get('code', '') for p in positions)
 
-            # 查询融资融券数据（近20个交易日）
-            query = """
-                SELECT date, code, name, margin_balance, margin_buy, margin_repay,
-                       short_volume, short_sell, short_repay
-                FROM stock_margin
-                WHERE code IN ({})
-                ORDER BY code, date DESC
-            """.format(','.join('?' * len(hold_codes)))
-
-            df = pd.read_sql_query(query, self.db, params=list(hold_codes))
+            df = self._query_margin_data(list(hold_codes))
 
             if df.empty or len(df) < 5:
                 return advices
-
-            df['date'] = pd.to_datetime(df['date'])
 
             for code in df['code'].unique():
                 code_df = df[df['code'] == code].sort_values('date')
@@ -1072,6 +1061,56 @@ class SmartAdvisor:
             logger.warning(f"机构调研分析异常: {e}")
 
         return advices
+
+
+
+    def _query_recent_block_trades(self, days=15):
+        """查询近期大宗交易数据。"""
+        import pandas as pd
+        query = """
+            SELECT date, code, name, change_pct, close, trade_price,
+                   premium_rate, volume, amount, amount_to_float_mv,
+                   buyer_broker
+            FROM stock_block_trade
+            WHERE date >= DATE('now', '-{} days')
+            ORDER BY date DESC
+        """.format(days)
+        df = pd.read_sql_query(query, self.db)
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+        return df
+
+    def _query_margin_data(self, codes, days=20):
+        """查询指定代码的融资融券数据。"""
+        import pandas as pd
+        if not codes:
+            return pd.DataFrame()
+        query = """
+            SELECT date, code, name, margin_balance, margin_buy, margin_repay,
+                   short_volume, short_sell, short_repay
+            FROM stock_margin
+            WHERE code IN ({})
+            ORDER BY code, date DESC
+        """.format(','.join('?' * len(codes)))
+        df = pd.read_sql_query(query, self.db, params=list(codes))
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+        return df
+
+    def _query_institution_research(self, days=45):
+        """查询近期机构调研数据。"""
+        import pandas as pd
+        query = """
+            SELECT code, name, date, institution, inst_type,
+                   receive_method, research_date
+            FROM stock_institution_research
+            WHERE date >= DATE('now', '-{} days')
+            ORDER BY date DESC
+        """.format(days)
+        df = pd.read_sql_query(query, self.db)
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+        return df
 
     def _analyze_block_trade(self, portfolio_data: Dict) -> List[InvestmentAdvice]:
         """分析大宗交易异常，检测可能的筹码变动信号。
