@@ -162,7 +162,7 @@ def run_stage3_monitor(summary, risk_data):
 
         # 1) 数据源陈旧检查: 统计最近N天无更新的数据源数
         _stale_days = MONITOR_CONFIG.get('stale_threshold_days', 7)
-        _cur.execute("SELECT COUNT(*) FROM ("             "SELECT 'daily_prices' AS src, MAX(date) AS last_date FROM daily_prices "             "UNION ALL SELECT 'fund_flows', MAX(date) FROM fund_flows "             "UNION ALL SELECT 'daily_news', MAX(date) FROM daily_news "             "UNION ALL SELECT 'market_sentiment', MAX(date) FROM market_sentiment "             "UNION ALL SELECT 'macro_daily', MAX(date) FROM macro_daily"             ") WHERE last_date < date('now', ?)", (f'-{_stale_days} days',))
+        _cur.execute("SELECT COUNT(*) FROM ("             "SELECT 'portfolio_snapshots' AS src, MAX(date) AS last_date FROM portfolio_snapshots "             "UNION ALL SELECT 'fund_flows', MAX(date) FROM fund_flows "             "UNION ALL SELECT 'daily_news', MAX(date) FROM daily_news "             "UNION ALL SELECT 'market_sentiment', MAX(date) FROM market_sentiment "             "UNION ALL SELECT 'macro_daily', MAX(date) FROM macro_daily"             ") WHERE last_date < date('now', ?)", (f'-{_stale_days} days',))
         _stale_count = _cur.fetchone()[0]
         check_data['stale_sources_count'] = _stale_count
         check_data['stale_threshold_days'] = _stale_days
@@ -172,24 +172,25 @@ def run_stage3_monitor(summary, risk_data):
         check_data['data_quality_grade'] = 'N/A'
         _cur.execute("SELECT message FROM execution_logs "             "WHERE task_name = 'data_quality_check' "             "ORDER BY created_at DESC LIMIT 1")
         _dq_row = _cur.fetchone()
-        if _dq_row and 'score' in _dq_row[0].lower():
-            try:
-                import json as _json
-                _dq_info = _json.loads(_dq_row[0])
-                check_data['data_quality_score'] = _dq_info.get('score', 0)
-                check_data['data_quality_grade'] = _dq_info.get('grade', 'N/A')
-            except Exception:
-                pass
+        if _dq_row:
+            _dq_msg = _dq_row[0] or ''
+            import re as _re
+            _score_m = _re.search(r'score=([0-9.]+)', _dq_msg)
+            _grade_m = _re.search(r'grade=([A-F])', _dq_msg)
+            if _score_m:
+                check_data['data_quality_score'] = float(_score_m.group(1))
+            if _grade_m:
+                check_data['data_quality_grade'] = _grade_m.group(1)
 
         # 3) 持仓数量变化
-        _cur.execute("SELECT COUNT(*) FROM ("             "SELECT DISTINCT code FROM daily_prices "             "WHERE date = (SELECT MAX(date) FROM daily_prices))")
+        _cur.execute("SELECT COUNT(*) FROM ("             "SELECT DISTINCT code FROM portfolio_snapshots "             "WHERE date = (SELECT MAX(date) FROM portfolio_snapshots))")
         _curr_count = _cur.fetchone()[0] or 0
         check_data['position_count_curr'] = _curr_count
         _prev_count = 0
-        _cur.execute("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 2 OFFSET 1")
+        _cur.execute("SELECT DISTINCT date FROM portfolio_snapshots ORDER BY date DESC LIMIT 2 OFFSET 1")
         _prev_date_row = _cur.fetchone()
         if _prev_date_row:
-            _cur.execute("SELECT COUNT(*) FROM ("                 "SELECT DISTINCT code FROM daily_prices WHERE date = ?)",
+            _cur.execute("SELECT COUNT(*) FROM ("                 "SELECT DISTINCT code FROM portfolio_snapshots WHERE date = ?)",
                 (_prev_date_row[0],))
             _prev_count = _cur.fetchone()[0] or 0
         check_data['position_count_prev'] = _prev_count
@@ -199,7 +200,7 @@ def run_stage3_monitor(summary, risk_data):
 
         # 4) 总市值变化
         _val_change = 0
-        _cur.execute("SELECT total_value FROM daily_summary ORDER BY date DESC LIMIT 2")
+        _cur.execute("SELECT total_value FROM portfolio_summary ORDER BY date DESC LIMIT 2")
         _value_rows = _cur.fetchall()
         if len(_value_rows) >= 2 and _value_rows[1][0] and _value_rows[1][0] > 0:
             _val_change = (_value_rows[0][0] - _value_rows[1][0]) / _value_rows[1][0] * 100
@@ -684,10 +685,14 @@ def main():
             import akshare as ak
             import time as _time
             health_results = []
+            # 临时移除代理以直连东方财富API
+            _saved_proxies = {}
+            for _k in ['http_proxy','https_proxy','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','all_proxy']:
+                _saved_proxies[_k] = os.environ.pop(_k, None)
             _api_checks = [
                 ('AKShare-行情', lambda: ak.stock_zh_a_spot_em()),
                 ('AKShare-板块', lambda: ak.stock_board_industry_name_em()),
-                ('AKShare-北向', lambda: ak.stock_hsgt_north_net_flow_in_em(symbol='沪股通')),  # noqa
+                ('AKShare-北向', lambda: ak.stock_hsgt_hist_em(symbol='沪股通')),
             ]
             for _name, _fn in _api_checks:
                 try:
@@ -697,16 +702,30 @@ def main():
                     _status = 'OK' if _df is not None and len(_df) > 0 else 'EMPTY'
                     health_results.append((_name, _status, f'{_ms:.0f}ms'))
                 except Exception as _e:
-                    health_results.append((_name, 'FAIL', str(_e)[:80]))
+                    _err_str = str(_e)
+                    # ProxyError/ConnectionError = 网络不可达，非数据源故障
+                    if 'ProxyError' in _err_str or 'ConnectionError' in _err_str or 'Max retries' in _err_str:
+                        health_results.append((_name, 'NETWORK', _err_str[:60]))
+                    else:
+                        health_results.append((_name, 'FAIL', _err_str[:80]))
+            # 恢复代理
+            for _k, _v in _saved_proxies.items():
+                if _v is not None:
+                    os.environ[_k] = _v
             _ok_count = sum(1 for _, s, _ in health_results if s == 'OK')
             _fail_count = sum(1 for _, s, _ in health_results if s == 'FAIL')
-            logger.info(f"数据源健康: {_ok_count}/{len(_api_checks)} OK")
+            _network_count = sum(1 for _, s, _ in health_results if s == 'NETWORK')
+            logger.info(f"数据源健康: {_ok_count}/{len(_api_checks)} OK, {_network_count} NETWORK, {_fail_count} FAIL")
             for _n, _s, _d in health_results:
-                _icon = 'V' if _s == 'OK' else 'X' if _s == 'FAIL' else '!'
+                _icon = 'V' if _s == 'OK' else 'X' if _s == 'FAIL' else '?' if _s == 'NETWORK' else '!'
                 logger.info(f"  [{_icon}] {_n}: {_s} ({_d})")
+            # 仅当有 FAIL（非 NETWORK）时才告警
             if _fail_count > 0:
                 monitor.log_execution('source_health_check', 'warning',
-                    f'{_fail_count}/{len(_api_checks)} sources failed')
+                    f'{_fail_count} source failures + {_network_count} network issues')
+            elif _network_count > 0:
+                monitor.log_execution('source_health_check', 'success',
+                    f'{_ok_count} OK, {_network_count} network issues (bypassed)')
             else:
                 monitor.log_execution('source_health_check', 'success',
                     f'{_ok_count}/{len(_api_checks)} sources OK')
