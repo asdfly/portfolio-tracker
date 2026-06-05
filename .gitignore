@@ -75,3 +75,6 @@ screenshot_*.png
 scroll_*.png
 tab12_*.png
 tab_current_*.png
+
+# Windows device file
+NUL
