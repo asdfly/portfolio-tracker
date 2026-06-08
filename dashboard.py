@@ -1278,6 +1278,60 @@ def _render_overview_cards(total_value, total_pnl, total_return, daily_return, d
         )
 
 
+def _render_quick_stats(positions, profit_count, loss_count, technical):
+    """Render the quick stats summary bar below overview cards."""
+    # ========== 快速指标条 ==========
+    if not positions.empty:
+        total_mv = positions["market_value"].sum()
+        pc = profit_count if profit_count else 0
+        lc = loss_count if loss_count else 0
+        total_held = pc + lc
+        wr = (pc / total_held * 100) if total_held > 0 else 0
+        wr_color = "#22c55e" if wr >= 60 else "#f59e0b" if wr >= 40 else "#ef4444"
+
+        # 最大持仓
+        max_pos = positions.loc[positions["market_value"].idxmax()]
+        max_wt = (max_pos["market_value"] / total_mv * 100) if total_mv > 0 else 0
+        wt_color = "#ef4444" if max_wt > 30 else "#f59e0b" if max_wt > 20 else "#22c55e"
+
+        # 技术信号统计
+        buy_sig = sell_sig = 0
+        if technical is not None and not technical.empty:
+            for _, tr in technical.iterrows():
+                if tr.get("ma_signal") in ("多头排列", "金叉") or tr.get("macd_signal") == "金叉":
+                    buy_sig += 1
+                if tr.get("ma_signal") in ("空头排列", "死叉") or tr.get("macd_signal") == "死叉":
+                    sell_sig += 1
+        sig_color = "#22c55e" if buy_sig > sell_sig else "#ef4444" if sell_sig > buy_sig else "#f59e0b"
+
+        # 行业分布
+        sector_dist = {}
+        for _, pos in positions.iterrows():
+            code = str(pos["code"])
+            cat_info = ETF_CATEGORIES.get(code)
+            if cat_info:
+                sec = cat_info["sector"]
+                sector_dist[sec] = sector_dist.get(sec, 0) + pos["market_value"]
+        sector_tags = ""
+        if sector_dist and total_mv > 0:
+            top_sec = sorted(sector_dist.items(), key=lambda x: x[1], reverse=True)[:4]
+            sector_tags = " ".join(
+                f'<span style="font-size:11px;color:{SECTOR_COLORS.get(s, "#8b949e")};background:{SECTOR_COLORS.get(s, "#8b949e")}15;padding:2px 6px;border-radius:3px;">{s} {(v/total_mv*100):.0f}%</span>'
+                for s, v in top_sec
+            )
+
+        st.markdown(
+            f'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 4px;margin-bottom:4px;font-size:13px;">'
+            f'<span style="color:#8b949e;">胜率: <b style="color:{wr_color};">{wr:.1f}%</b> <span style="color:#484f58;font-size:11px;">({pc}盈/{lc}亏)</span></span>'
+            f'<span style="color:#8b949e;">最大持仓: <b style="color:{wt_color};">{max_pos["name"]}</b> <span style="color:#484f58;font-size:11px;">{max_wt:.1f}%</span></span>'
+            f'<span style="color:#8b949e;">技术信号: <b style="color:{sig_color};">{buy_sig}多 / {sell_sig}空</b></span>'
+            f"</div>"
+            f'<div style="padding:2px 4px 8px;">{sector_tags}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+
 def main():
     global sharpe, volatility, max_dd, effective_max_dd, total_return, total_value, total_pnl, daily_return, daily_pnl, profit_count, loss_count, total_mv, show_days, technical
     import pandas as pd
