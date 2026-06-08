@@ -1,3 +1,4 @@
+from src.utils.screenshot import capture_screenshot, export_pdf
 """
 Tab5: 高级分析
 """
@@ -218,177 +219,6 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         "sample_start": sample_start,
     }
 
-
-
-def capture_dashboard_screenshot(port=8501):
-    """截取 Dashboard 页面截图（PNG）
-
-    通过 Selenium headless Chrome + webdriver_manager 自动管理 ChromeDriver。
-    智能等待 Plotly 图表渲染完成后全页截图。
-
-    Args:
-        port: Streamlit 端口号
-
-    Returns:
-        str: PNG 文件路径，失败返回 None
-    """
-    try:
-        import time
-
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.common.by import By
-        from webdriver_manager.chrome import ChromeDriverManager
-    except ImportError:
-        print("截图失败: 缺少 selenium 或 webdriver-manager，请执行 pip install selenium webdriver-manager")
-        return None
-
-    output_dir = PROJECT_ROOT / "output"
-    output_dir.mkdir(exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    png_path = str(output_dir / f"dashboard_{timestamp}.png")
-
-    try:
-        options = Options()
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--window-size=1920,3000")
-
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.get(f"http://localhost:{port}")
-
-        # Step 1: 等待 Streamlit App 容器就绪
-        for i in range(30):
-            try:
-                el = driver.find_element(By.CSS_SELECTOR, "[data-testid='stApp']")
-                if el.is_displayed():
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-
-        # Step 2: 等待 Plotly 图表渲染（至少2个SVG出现）
-        for i in range(45):
-            try:
-                charts = driver.find_elements(By.CSS_SELECTOR, ".js-plotly-plot .main-svg")
-                if len(charts) >= 2:
-                    time.sleep(2)  # 等待剩余图表
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-
-        # Step 3: 滚动到底部触发懒加载，再滚回顶部
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
-        driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(1)
-
-        # Step 4: 截取完整页面
-        driver.save_screenshot(png_path)
-        driver.quit()
-        return png_path
-    except selenium.common.exceptions.WebDriverException as e:
-        print(f"截图失败: {e}")
-        return None
-
-
-
-def export_dashboard_pdf(port=8501):
-    """导出 Dashboard 为 PDF
-
-    通过 Selenium headless Chrome + CDP Page.printToPDF 实现，A3 宽幅输出。
-    智能等待 Plotly 图表渲染完成后导出。
-
-    Args:
-        port: Streamlit 端口号
-
-    Returns:
-        str: PDF 文件路径，失败返回 None
-    """
-    try:
-        import base64
-        import time
-
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.common.by import By
-        from webdriver_manager.chrome import ChromeDriverManager
-    except ImportError:
-        print("PDF导出失败: 缺少 selenium 或 webdriver-manager，请执行 pip install selenium webdriver-manager")
-        return None
-
-    output_dir = PROJECT_ROOT / "output"
-    output_dir.mkdir(exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_path = str(output_dir / f"dashboard_{timestamp}.pdf")
-
-    try:
-        options = Options()
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--window-size=1920,3000")
-
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.get(f"http://localhost:{port}")
-
-        # Step 1: 等待 Streamlit App 容器就绪
-        for i in range(30):
-            try:
-                el = driver.find_element(By.CSS_SELECTOR, "[data-testid='stApp']")
-                if el.is_displayed():
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-
-        # Step 2: 等待 Plotly 图表渲染
-        for i in range(45):
-            try:
-                charts = driver.find_elements(By.CSS_SELECTOR, ".js-plotly-plot .main-svg")
-                if len(charts) >= 2:
-                    time.sleep(2)
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-
-        # Step 3: 滚动触发懒加载
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
-        driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(1)
-
-        # Step 4: CDP printToPDF (A3 宽幅)
-        pdf_result = driver.execute_cdp_cmd(
-            "Page.printToPDF",
-            {
-                "landscape": False,
-                "displayHeaderFooter": False,
-                "printBackground": True,
-                "paperWidth": 13.0,
-                "paperHeight": 19.0,
-                "marginTop": 0.4,
-                "marginBottom": 0.4,
-                "marginLeft": 0.4,
-                "marginRight": 0.4,
-            },
-        )
-
-        pdf_bytes = base64.b64decode(pdf_result["data"])
-        with open(pdf_path, "wb") as f:
-            f.write(pdf_bytes)
-        driver.quit()
-        return pdf_path
-    except selenium.common.exceptions.WebDriverException as e:
-        print(f"PDF导出失败: {e}")
-        return None
 
 
 
@@ -1434,7 +1264,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date, t
         with col_exp3:
             if st.button("📸 导出 Dashboard 截图 (PNG)", key="screenshot_btn"):
                 with st.spinner("正在截图，请稍候..."):
-                    screenshot_path = capture_dashboard_screenshot(port=8501)
+                    screenshot_path = capture_screenshot(port=8501)
                 if screenshot_path:
                     st.success(f"截图已保存: {screenshot_path}")
                     # 提供下载链接
@@ -1456,7 +1286,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date, t
         with col_exp4:
             if st.button("📄 导出 Dashboard 报告 (PDF)", key="pdf_btn"):
                 with st.spinner("正在生成 PDF，请稍候..."):
-                    pdf_path = export_dashboard_pdf(port=8501)
+                    pdf_path = export_pdf(port=8501)
                 if pdf_path:
                     st.success(f"PDF 已生成: {pdf_path}")
                     with open(pdf_path, "rb") as f:
