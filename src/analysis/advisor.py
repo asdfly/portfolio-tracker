@@ -498,10 +498,11 @@ class SmartAdvisor:
             held_codes = set(p.get('code', '') for p in positions if isinstance(p, dict))
 
             if 'code' in ff_df.columns:
+                date_col = 'date' if 'date' in ff_df.columns else 'trade_date'
                 agg = ff_df.groupby('code').agg(
                     total_net_inflow=('net_inflow', 'sum'),
                     avg_net_inflow=('net_inflow', 'mean'),
-                    days=('date', 'count')
+                    days=(date_col, 'count')
                 ).reset_index()
 
                 for _, row in agg.iterrows():

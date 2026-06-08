@@ -214,9 +214,10 @@ class SmartReportGenerator:
 
         if fund_flows is not None and hasattr(fund_flows, 'empty') and not fund_flows.empty:
             if 'code' in fund_flows.columns:
+                date_col = 'date' if 'date' in fund_flows.columns else 'trade_date'
                 agg = fund_flows.groupby('code').agg(
                     total_net=('net_inflow', 'sum'),
-                    days=('date', 'count')
+                    days=(date_col, 'count')
                 ).reset_index()
                 top_inflow = agg.nlargest(3, 'total_net')
                 top_outflow = agg.nsmallest(3, 'total_net')
