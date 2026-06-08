@@ -1,3 +1,4 @@
+import sqlite3
 """
 Tab2: 持仓分布
 """
@@ -95,7 +96,7 @@ def load_sector_weights(days=250, end_date=None):
         if end_date:
             params.append(end_date)
         df = pd.read_sql_query(query, conn, params=params)
-    except Exception as e:
+    except sqlite3.OperationalError as e:
         import logging
         logging.getLogger(__name__).warning(f"load_sector_weights 查询失败: {e}")
         return pd.DataFrame(), {}

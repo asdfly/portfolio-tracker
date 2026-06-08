@@ -48,7 +48,7 @@ def fetch_usd_cny(date_str: str = None) -> list:
                     'date': dt, 'indicator_code': 'USD_CNY', 'name': '美元兑人民币',
                     'value': round(value, 4), 'change_pct': None, 'source': 'BOC_SINA',
                 })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"USD/CNY 采集失败: {e}")
     return records
 
@@ -94,7 +94,7 @@ def fetch_bond_yields(date_str: str = None) -> list:
                         'date': dt, 'indicator_code': code, 'name': name,
                         'value': value, 'change_pct': None, 'source': 'EASTMONEY',
                     })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"国债收益率采集失败: {e}")
     return records
 
@@ -122,7 +122,7 @@ def fetch_comex_gold(days: int = 5) -> list:
                     'date': dt, 'indicator_code': 'COMEX_GOLD', 'name': 'COMEX黄金',
                     'value': value, 'change_pct': change_pct, 'source': 'SINA_FUTURES',
                 })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"COMEX黄金采集失败: {e}")
     return records
 
@@ -156,7 +156,7 @@ def fetch_sge_gold(days: int = 5) -> list:
                     'date': dt, 'indicator_code': 'SGE_GOLD', 'name': '上海金基准价',
                     'value': round(value, 2), 'change_pct': change_pct, 'source': 'SGE',
                 })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"上海金采集失败: {e}")
     return records
 
@@ -185,7 +185,7 @@ def fetch_lpr(days: int = 30) -> list:
                         'date': dt, 'indicator_code': 'LPR_5Y', 'name': '5年期LPR',
                         'value': float(lpr5y), 'change_pct': None, 'source': 'EASTMONEY',
                     })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"LPR采集失败: {e}")
     return records
 
@@ -209,7 +209,7 @@ def fetch_shibor(days: int = 5) -> list:
                     'value': float(on_price), 'change_pct': float(on_change) if pd.notna(on_change) else None,
                     'source': 'JIN10',
                 })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"Shibor采集失败: {e}")
     return records
 
@@ -276,7 +276,7 @@ def fetch_margin_balance(days: int = 5) -> list:
                         'change_value': None, 'change_pct': None,
                         'source': 'CALCULATED',
                     })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"两融数据采集失败: {e}")
     return records
 
@@ -340,7 +340,7 @@ def fetch_pledge_profile(days: int = 8) -> list:
                     'change_value': None, 'change_pct': None,
                     'source': 'EASTMONEY',
                 })
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"股权质押数据采集失败: {e}")
     return records
 

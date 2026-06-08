@@ -32,7 +32,7 @@ def _get_symbol_table():
                 if "品种" in c:
                     df = df.rename(columns={c: "symbol"})
             return df["symbol"].tolist() if "symbol" in df.columns else df.iloc[:, -1].tolist()
-    except Exception:
+    except Exception:  # akshare 品种列表获取失败，使用默认列表
         pass
     return [s for group in SYMBOL_GROUPS.values() for s in group]
 
@@ -46,7 +46,7 @@ def _get_quotations():
         if df is not None and not df.empty:
             df.columns = [c.strip() for c in df.columns]
             return df
-    except Exception:
+    except Exception:  # akshare 实时行情获取失败
         pass
 
     # 回退方案：只获取5个核心品种，避免17次串行网络请求
@@ -78,7 +78,7 @@ def _get_quotations():
             import pandas as pd
             result = pd.DataFrame(rows)
             return result
-    except Exception:
+    except (ValueError, KeyError):  # 历史行情解析失败
         pass
     return None
 

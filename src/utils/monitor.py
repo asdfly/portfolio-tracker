@@ -198,7 +198,7 @@ class Monitor:
             rules = {row[0] for row in cursor.fetchall()}
             conn.close()
             return rules
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.warning(f"查询最近告警失败(跳过去重): {e}")
             return set()
 

@@ -94,7 +94,7 @@ class PositionReader:
             logger.info(f"读取到 {len(positions)} 条持仓记录")
             return positions
 
-        except Exception as e:
+        except ValueError as e:
             logger.error(f"读取持仓文件失败: {e}")
             raise
 

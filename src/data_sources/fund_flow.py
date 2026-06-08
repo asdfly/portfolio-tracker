@@ -70,7 +70,7 @@ def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
         keep_cols = ['date', 'code', 'name', 'change_pct', 'net_inflow', 'buy_amount', 'sell_amount', 'category']
         df = df[[c for c in keep_cols if c in df.columns]]
         return df
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"获取行业资金流失败: {e}")
     return pd.DataFrame()
 
@@ -260,7 +260,7 @@ def backfill_etf_fund_flow_from_kline(
                                      'buy_amount': round(to_ / 2, 2),
                                      'sell_amount': round(to_ / 2, 2),
                                      'category': 'etf'})
-            except Exception:
+            except (ValueError, KeyError, IndexError):  # 基金数据解析异常，跳过该条
                 pass
             # 数据源2: 新浪日K线(fallback)
             if not rows:
@@ -289,7 +289,7 @@ def backfill_etf_fund_flow_from_kline(
                                          'buy_amount': round(to_ / 2, 2),
                                          'sell_amount': round(to_ / 2, 2),
                                          'category': 'etf'})
-                except Exception:
+                except (ValueError, KeyError, IndexError):  # 新浪日K线数据解析异常，跳过
                     pass
             if rows:
                 n = save_fund_flows(conn, pd.DataFrame(rows))
@@ -449,7 +449,7 @@ def backfill_sector_fund_flow(conn, trading_days=None):
                      f"{df_new['name'].nunique()}个行业")
         return count
 
-    except Exception as e:
+    except sqlite3.OperationalError as e:
         logger.error(f"行业资金流回填失败: {e}")
         return 0
 
@@ -527,6 +527,6 @@ def fetch_etf_fund_flow_batch(etf_codes: list) -> pd.DataFrame:
         result = pd.DataFrame(rows)
         logger.info(f"ETF资金流(批量): {len(result)} 只ETF, {today_str}")
         return result
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"ETF批量资金流获取失败: {e}")
         return pd.DataFrame()

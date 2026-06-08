@@ -570,7 +570,7 @@ def capture_dashboard_screenshot(port=8501):
                 el = driver.find_element(By.CSS_SELECTOR, "[data-testid='stApp']")
                 if el.is_displayed():
                     break
-            except Exception:
+            except selenium.common.exceptions.WebDriverException:
                 pass
             time.sleep(1)
 
@@ -581,7 +581,7 @@ def capture_dashboard_screenshot(port=8501):
                 if len(charts) >= 2:
                     time.sleep(2)  # 等待剩余图表
                     break
-            except Exception:
+            except selenium.common.exceptions.WebDriverException:
                 pass
             time.sleep(1)
 
@@ -595,7 +595,7 @@ def capture_dashboard_screenshot(port=8501):
         driver.save_screenshot(png_path)
         driver.quit()
         return png_path
-    except Exception as e:
+    except selenium.common.exceptions.WebDriverException as e:
         print(f"截图失败: {e}")
         return None
 
@@ -647,7 +647,7 @@ def export_dashboard_pdf(port=8501):
                 el = driver.find_element(By.CSS_SELECTOR, "[data-testid='stApp']")
                 if el.is_displayed():
                     break
-            except Exception:
+            except selenium.common.exceptions.WebDriverException:
                 pass
             time.sleep(1)
 
@@ -658,7 +658,7 @@ def export_dashboard_pdf(port=8501):
                 if len(charts) >= 2:
                     time.sleep(2)
                     break
-            except Exception:
+            except selenium.common.exceptions.WebDriverException:
                 pass
             time.sleep(1)
 
@@ -689,7 +689,7 @@ def export_dashboard_pdf(port=8501):
             f.write(pdf_bytes)
         driver.quit()
         return pdf_path
-    except Exception as e:
+    except selenium.common.exceptions.WebDriverException as e:
         print(f"PDF导出失败: {e}")
         return None
 

@@ -237,7 +237,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                             st.caption("当前无显著背离信号")
                     finally:
                         conn_dv.close()
-                except Exception:
+                except Exception:  # UI渲染降级：资金流背离信号
                     pass
 
                 # ===== 深度分析: 板块轮动速度 =====
@@ -296,7 +296,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                                     showlegend=False,
                                 )
                                 st.plotly_chart(fig_speed, width="stretch")
-                except Exception:
+                except Exception:  # UI渲染降级：风格切换图表
                     pass
             else:
                 st.info("暂无行业资金流数据，请先运行数据采集任务")
@@ -456,7 +456,7 @@ def _render_etf_fund_flow(tab_obj, positions):
                             )
                         else:
                             st.caption("该ETF近期无显著资金流-价格背离信号")
-                except Exception:
+                except Exception:  # UI渲染降级：背离信号表格
                     pass
             else:
                 st.info("暂无ETF资金流数据")

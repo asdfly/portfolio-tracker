@@ -219,7 +219,7 @@ class HistoricalDataBackfiller:
                     """, (kdate, code, name, kline.get('close', 0), kline.get('volume', 0)))
                     backfilled += 1
 
-            except Exception as e:
+            except sqlite3.OperationalError as e:
                 logger.debug(f"指数 {code} 回填失败: {e}")
 
         conn.commit()

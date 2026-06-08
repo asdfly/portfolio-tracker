@@ -29,8 +29,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("backfill_macro")
 
-from src.data_sources.macro_daily import (
 from data_loader import get_db_connection
+from src.data_sources.macro_daily import (
     fetch_comex_gold, fetch_sge_gold, fetch_shibor,
     fetch_usd_cny, fetch_bond_yields, fetch_lpr, fetch_margin_balance,
     save_macro_daily, save_market_sentiment, get_db_connection,
@@ -127,7 +127,7 @@ def run_backfill(dry_run: bool = False):
             stats['USD_CNY'] = count
             total += count
             logger.info(f"  已保存: {count}条")
-    except Exception as e:
+    except ValueError as e:
         logger.error(f"  USD/CNY回填失败: {e}")
     
     time.sleep(1)
@@ -173,7 +173,7 @@ def run_backfill(dry_run: bool = False):
             stats['BOND_YIELDS'] = count
             total += count
             logger.info(f"  已保存: {count}条")
-    except Exception as e:
+    except ValueError as e:
         logger.error(f"  国债收益率回填失败: {e}")
     
     time.sleep(1)

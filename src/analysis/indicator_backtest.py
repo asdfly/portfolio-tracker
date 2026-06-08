@@ -134,7 +134,7 @@ def _backtest_by_signal_only(df):
             if not price_df.empty:
                 for _, r in price_df.iterrows():
                     prices_map[str(r['date'])] = float(r['current_price'])
-        except Exception:
+        except (sqlite3.OperationalError, ValueError, KeyError):  # 价格数据加载失败，跳过
             pass
 
     signals = []

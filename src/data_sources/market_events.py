@@ -310,7 +310,7 @@ def save_market_events(conn: sqlite3.Connection, df: pd.DataFrame, table_name: s
                 list(values.values())
             )
             count += 1
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.debug(f"写入 {table_name} 失败: {e}")
     
     conn.commit()

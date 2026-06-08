@@ -258,7 +258,7 @@ class DataQualityChecker:
                             "null_rate": round(rate, 4),
                             "severity": "HIGH" if rate > 0.1 else "MEDIUM" if rate > 0.05 else "LOW",
                         })
-            except Exception:
+            except (sqlite3.OperationalError, KeyError, ValueError):  # 空值检查失败，跳过该列
                 pass
         conn.close()
         return results
@@ -289,7 +289,7 @@ class DataQualityChecker:
                         gaps.append({"from": str(dates[i-1]), "to": str(dates[i]), "gap_days": diff})
                 if gaps:
                     results.append({"table": table, "latest": str(dates[-1]), "gaps": gaps})
-            except Exception:
+            except (sqlite3.OperationalError, ValueError):  # 连续性检查失败，跳过该表
                 pass
         conn.close()
         return results

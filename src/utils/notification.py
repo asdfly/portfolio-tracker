@@ -178,7 +178,7 @@ class NotificationManager:
             else:
                 logger.error(f"企业微信发送失败: {response.text}")
 
-        except Exception as e:
+        except requests.RequestException as e:
             logger.error(f"企业微信发送失败: {e}")
 
     def _send_wechat_alert(self, alert_type: str, message: str, level: str):
@@ -198,5 +198,5 @@ class NotificationManager:
 
             requests.post(webhook_url, json=payload, timeout=10)
 
-        except Exception as e:
+        except requests.RequestException as e:
             logger.error(f"告警发送失败: {e}")

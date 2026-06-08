@@ -31,7 +31,7 @@ def _ensure_indexes():
     for sql in indexes:
         try:
             conn.execute(sql)
-        except Exception:
+        except sqlite3.OperationalError:  # 索引创建失败可忽略
             pass
     conn.commit()
     conn.close()
@@ -549,7 +549,7 @@ def load_sector_weights(days=250, end_date=None):
             params.append(end_date)
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
-    except Exception as e:
+    except sqlite3.OperationalError as e:
         import logging
 
         logging.getLogger(__name__).warning(f"load_sector_weights 查询失败: {e}")

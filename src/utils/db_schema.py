@@ -1,3 +1,4 @@
+import sqlite3
 """
 数据库 Schema 定义 - 所有表的 DDL 集中管理。
 
@@ -370,6 +371,6 @@ def init_all_tables(conn):
         for idx_sql in indexes:
             try:
                 cur.execute(idx_sql)
-            except Exception:
+            except sqlite3.OperationalError:  # 索引创建失败可忽略
                 pass
     conn.commit()

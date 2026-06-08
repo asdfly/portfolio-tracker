@@ -159,7 +159,7 @@ def test_email(email_cfg: dict):
     except smtplib.SMTPConnectError:
         print(f"错误: 无法连接到SMTP服务器 {email_cfg['smtp_server']}:{email_cfg.get('smtp_port')}")
         return False
-    except Exception as e:
+    except ValueError as e:
         print(f"错误: {e}")
         return False
 
@@ -205,7 +205,7 @@ def test_wechat(wechat_cfg: dict):
     except requests.exceptions.ConnectionError:
         print("错误: 无法连接到企业微信API")
         return False
-    except Exception as e:
+    except requests.RequestException as e:
         print(f"错误: {e}")
         return False
 

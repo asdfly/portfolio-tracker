@@ -344,7 +344,7 @@ class PortfolioAnalyzer:
             conn.close()
             if row and row[0] and row[0] > 0:
                 prev_value = row[0]
-        except Exception:
+        except (sqlite3.OperationalError, KeyError):  # 前日总资产查询失败，使用默认值
             pass
 
         # fallback: 用pre_close反推前日市值（仅当DB无历史数据时使用）

@@ -541,7 +541,7 @@ class SmartAdvisor:
                         related_codes=[], confidence=0.55,
                         created_at=datetime.now()
                     ))
-        except Exception as e:
+        except ValueError as e:
             logger.warning(f"资金流分析异常: {e}")
 
         return advices
@@ -595,7 +595,7 @@ class SmartAdvisor:
                         ))
                 except (ValueError, TypeError):
                     pass
-        except Exception as e:
+        except ValueError as e:
             logger.warning(f"市场情绪分析异常: {e}")
 
         return advices
@@ -680,7 +680,7 @@ class SmartAdvisor:
                         ))
                 except (ValueError, TypeError):
                     pass
-        except Exception as e:
+        except ValueError as e:
             logger.warning(f"宏观环境分析异常: {e}")
 
         return advices

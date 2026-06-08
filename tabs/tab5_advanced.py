@@ -291,7 +291,7 @@ def capture_dashboard_screenshot(port=8501):
         driver.save_screenshot(png_path)
         driver.quit()
         return png_path
-    except Exception as e:
+    except selenium.common.exceptions.WebDriverException as e:
         print(f"截图失败: {e}")
         return None
 
@@ -386,7 +386,7 @@ def export_dashboard_pdf(port=8501):
             f.write(pdf_bytes)
         driver.quit()
         return pdf_path
-    except Exception as e:
+    except selenium.common.exceptions.WebDriverException as e:
         print(f"PDF导出失败: {e}")
         return None
 
@@ -1398,10 +1398,10 @@ def _render_investment_review(volatility, tech_signals, summary):
                             st.caption("暂无技术信号翻转记录可供复盘")
                     else:
                         st.caption("暂无技术指标数据")
-                except Exception:
+                except Exception:  # UI渲染降级：技术信号异常提示
                     st.caption("技术信号复盘数据加载异常")
 
-        except Exception:
+        except Exception:  # UI渲染降级：外层 Tab 容错
             pass
 
 

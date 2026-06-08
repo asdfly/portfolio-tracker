@@ -118,7 +118,7 @@ def fetch_klines_sina(code: str, max_datalen: int = 10000) -> list:
             datalen = min(datalen, 5000)
             time.sleep(0.3)
 
-        except Exception as e:
+        except ValueError as e:
             logger.error(f"  新浪K线获取异常 {code}: {e}")
             break
 
@@ -732,7 +732,7 @@ def run_backfill(etf_only=False, index_only=False, dry_run=False):
                 print(f"  无持仓ETF数据，跳过资金流补齐")
 
             ff_conn.close()
-        except Exception as ff_err:
+        except ValueError as ff_err:
             logger.warning(f"ETF资金流补齐异常: {ff_err}")
     elif dry_run and not index_only:
         print(f"\n--- 阶段一B: ETF资金流补齐 (试运行, 跳过) ---")

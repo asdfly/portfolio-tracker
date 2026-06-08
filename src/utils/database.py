@@ -219,7 +219,7 @@ def get_db_connection(db_path=None):
         for sql in indexes:
             try:
                 conn.execute(sql)
-            except Exception:
+            except sqlite3.OperationalError:  # 索引创建失败可忽略
                 pass
         conn.commit()
         _indexes_created = True

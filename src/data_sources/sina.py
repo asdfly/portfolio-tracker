@@ -94,7 +94,7 @@ class SinaDataSource(BaseDataSource):
                                 'change_pct': (float(data[3]) - float(data[2])) / float(data[2]) * 100 
                                               if data[2] and float(data[2]) > 0 else 0
                             }
-            except Exception as e:
+            except ValueError as e:
                 logger.error(f"批量获取失败: {e}")
                 for orig_code in original_batch:
                     try:

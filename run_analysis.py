@@ -211,7 +211,7 @@ def run_stage3_monitor(summary, risk_data):
         logger.info(f"D4告警数据扩展: stale={_stale_count}, dq={check_data.get('data_quality_score', 0)}, "
                      f"pos_change={check_data['position_count_change_pct']:+.1f}%, "
                      f"val_change={_val_change:+.1f}%")
-    except Exception as e:
+    except sqlite3.OperationalError as e:
         logger.warning(f"D4告警数据扩展失败(使用默认值): {e}")
 
     alerts = monitor.check_alerts(check_data, check_data)
@@ -444,7 +444,7 @@ def run_stage4_smart(results, summary, risk_data):
                 "FROM fund_flows WHERE date >= date('now','-7 days') " \
                 "ORDER BY date DESC, code"
             combined_data['fund_flows'] = pd.read_sql(ff_query, conn)
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.warning(f'资金流数据获取失败: {e}')
             combined_data['fund_flows'] = pd.DataFrame()
 
@@ -453,7 +453,7 @@ def run_stage4_smart(results, summary, risk_data):
                 "FROM market_sentiment WHERE date >= date('now','-7 days') " \
                 "ORDER BY date DESC"
             combined_data['market_sentiment'] = pd.read_sql(ms_query, conn)
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.warning(f'市场情绪数据获取失败: {e}')
             combined_data['market_sentiment'] = pd.DataFrame()
 
@@ -462,7 +462,7 @@ def run_stage4_smart(results, summary, risk_data):
                 "FROM macro_daily WHERE date >= date('now','-7 days') " \
                 "ORDER BY date DESC"
             combined_data['macro_daily'] = pd.read_sql(md_query, conn)
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.warning(f'宏观数据获取失败: {e}')
             combined_data['macro_daily'] = pd.DataFrame()
 
@@ -471,7 +471,7 @@ def run_stage4_smart(results, summary, risk_data):
                 "FROM daily_news WHERE date >= date('now','-3 days') " \
                 "ORDER BY date DESC LIMIT 50"
             combined_data['daily_news'] = pd.read_sql(news_query, conn)
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.warning(f'新闻数据获取失败: {e}')
             combined_data['daily_news'] = pd.DataFrame()
 
@@ -589,7 +589,7 @@ def send_daily_report(results, alerts, advice_summary, news_result):
             else:
                 logger.warning(f"企业微信发送失败: {resp.json().get('errmsg')}")
 
-    except Exception as e:
+    except requests.RequestException as e:
         logger.error(f"通知发送失败: {e}")
 
 
@@ -832,7 +832,7 @@ def main():
                         'data_quality_check', 'warning',
                         f"score={total_score}, alerts={len(dq_alerts)}, grade={grade}"
                     )
-                except Exception:
+                except Exception:  # 日志写入失败可忽略
                     pass
             else:
                 logger.info("数据质量检查通过，无告警")

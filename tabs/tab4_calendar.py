@@ -527,7 +527,7 @@ def _render_event_calendar():
                         "desc": "沪深300/中证1000股指期权到期，注意波动加剧",
                     }
                 )
-        except Exception:
+        except Exception:  # UI渲染降级：股指期权交割日计算
             pass
 
     # 基金分红提醒

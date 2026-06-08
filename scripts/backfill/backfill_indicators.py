@@ -119,7 +119,7 @@ def run_batch_backtest(conn, dry_run=False):
 
                     if done % 50 == 0:
                         print(f"  进度: {done}/{total_tasks} | 成功={success} 跳过={skip} 错误={error}")
-                except Exception as e:
+                except ValueError as e:
                     error += 1
                     if done % 50 == 0:
                         print(f"  进度: {done}/{total_tasks} | 成功={success} 跳过={skip} 错误={error}")
