@@ -153,7 +153,7 @@ def _render_lhb_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================
@@ -252,7 +252,7 @@ def _render_margin_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================
@@ -343,7 +343,7 @@ def _render_holder_change_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================
@@ -395,7 +395,7 @@ def _render_institution_panel():
             xaxis_title="调研次数",
             yaxis=dict(autorange="reversed"),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     
     # 深度分析: 调研热度趋势(被调研公司数)
     st.markdown(
@@ -444,7 +444,7 @@ def _render_institution_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=350)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=350)
 
 
 # ============================================================
@@ -501,7 +501,7 @@ def _render_block_trade_panel():
                 yaxis_title="笔数",
                 bargap=0.05,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     
     # 深度分析: 买方营业部TOP10（按成交额）
     st.markdown(
@@ -563,7 +563,7 @@ def _render_block_trade_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================

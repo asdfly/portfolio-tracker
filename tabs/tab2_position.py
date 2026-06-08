@@ -125,19 +125,8 @@ def load_sector_weights(days=250, end_date=None):
 
 
 
-def render_tab2(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
 
-    """渲染Tab2: 持仓分布"""
-    
-    st.caption("📊 展示持仓分布饼图、持仓明细表格、行业权重变化趋势及持仓相关性矩阵")
-
+def _render_etf_filter(positions, summary, technical, selected_date):
     # ===== ETF 多维筛选器 =====
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
@@ -421,6 +410,7 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
                 )
                 _render_etf_detail_panel(row, selected_date, summary.iloc[-1]["total_value"])
 
+def _render_sector_weights(positions, summary, selected_date):
     # ===== 行业权重堆叠面积图 =====
     st.markdown(
         '<div class="tip-title" style="">行业权重变化趋势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以堆叠面积图展示各行业ETF在组合中的权重占比随时间的变化，可观察仓位配置的调整趋势。</span></div>',
@@ -467,8 +457,7 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("持仓历史数据不足，暂无法展示行业权重变化")
 
-    st.markdown("---")
-    # ===== 相关性矩阵热力图 =====
+def _render_correlation_matrix(positions, selected_date):
     st.markdown("---")
     st.markdown(
         '<div class="tip-title" style="">持仓相关性矩阵（日收益率 Pearson）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于最近250个交易日的日收益率计算各ETF之间的Pearson相关系数。数值接近1表示同向变动，接近-1表示反向变动，接近0表示无相关性。</span></div>',
@@ -507,7 +496,7 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("持仓数据不足，暂无法计算相关性矩阵")
 
-    # ===== 深度分析: 持仓集中度 + Beta贡献 =====
+def _render_deep_analysis(positions, summary):
     if not positions.empty:
         st.markdown("---")
         st.markdown(
@@ -598,7 +587,7 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
             else:
                 st.caption("暂无Beta数据（需技术分析模块计算）")
 
-    # ---------- 累计盈亏柱状图 ----------
+def _render_cumulative_pnl(positions):
     if not positions.empty:
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">各ETF累计盈亏<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以柱状图展示每只ETF的累计盈亏金额，绿色为盈利、红色为亏损，一目了然地识别组合中的盈利与亏损来源。</span></div>',
@@ -653,6 +642,23 @@ def render_tab2(positions, summary, index_quotes, selected_date, selected_benchm
             unsafe_allow_html=True,
         )
 
-    
+def render_tab2(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+    """渲染Tab2: 持仓分布"""
+    # 从kwargs获取额外的变量
+    technical = kwargs.get('technical', pd.DataFrame())
+    volatility = kwargs.get('volatility', None)
+    max_dd = kwargs.get('max_dd', None)
+    sharpe = kwargs.get('sharpe', None)
+    cal_data = kwargs.get('cal_data', pd.DataFrame())
+    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
 
+    st.caption("📊 展示持仓分布饼图、持仓明细表格、行业权重变化趋势及持仓相关性矩阵")
+
+    _render_etf_filter(positions, summary, technical, selected_date)
+    st.markdown("---")
+    _render_sector_weights(positions, summary, selected_date)
+    st.markdown("---")
+    _render_correlation_matrix(positions, selected_date)
+    _render_deep_analysis(positions, summary)
+    _render_cumulative_pnl(positions)
 

@@ -66,24 +66,8 @@ def compute_rolling_metrics(window=60, end_date=None):
     }).dropna()
     return result
 
-def render_tab1(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    # 检查数据是否为空
-    if summary.empty:
-        st.info("📈 暂无汇总数据，请先运行数据收集脚本。")
-        st.code("python backfill_full_history.py")
-        return
 
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
-    show_days = kwargs.get('show_days', 250)
-
-    """渲染Tab1: 净值走势"""
-    
+def _render_basic_metrics(positions, summary, index_quotes, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe, cal_data, tech_signals, show_days):
     st.caption("📈 展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
     col_left, col_right = st.columns([2, 1])
 
@@ -261,6 +245,9 @@ def render_tab1(positions, summary, index_quotes, selected_date, selected_benchm
         )
         st.plotly_chart(fig_bar, width="stretch")
 
+
+
+def _render_rolling_charts(summary, selected_date, show_days):
     # ---------- 滚动指标图表 ----------
     r1, r2 = st.columns([1, 3])
     with r1:
@@ -343,6 +330,9 @@ def render_tab1(positions, summary, index_quotes, selected_date, selected_benchm
             fig_roll.update_yaxes(title_text="波动率 (%)", showgrid=True, gridcolor="#21262d", row=2, col=1)
             st.plotly_chart(fig_roll, width="stretch")
 
+
+
+def _render_benchmark_comparison(summary, selected_benchmark, selected_date, show_days):
     # ---------- 基准对比表 ----------
     # 基准对比详情：使用 show_days 范围内的数据
     if not summary.empty and len(summary) > 1:
@@ -484,6 +474,9 @@ def render_tab1(positions, summary, index_quotes, selected_date, selected_benchm
             </tbody></table></div>"""
             st.markdown(html_table, unsafe_allow_html=True)
 
+
+
+def _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark, show_days):
             # ========== 多基准对比 & 区间分析 ==========
             st.markdown("---")
             compare_tab1, compare_tab2 = st.tabs(["📊 多基准对比", "📅 区间收益分析"])
@@ -807,6 +800,9 @@ def render_tab1(positions, summary, index_quotes, selected_date, selected_benchm
                     else:
                         st.warning("起始日期须早于结束日期")
 
+
+
+def _render_annual_returns(summary):
     # --- 年度收益对比条形图 ---
     st.markdown("---")
     st.markdown(
@@ -847,6 +843,30 @@ def render_tab1(positions, summary, index_quotes, selected_date, selected_benchm
                 showlegend=False,
             )
             st.plotly_chart(fig_annual, width="stretch")
+
+
+def render_tab1(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+    """渲染Tab1: 净值走势 - 编排入口"""
+    if summary.empty:
+        st.info("暂无汇总数据，请先运行数据收集脚本。")
+        st.code("python backfill_full_history.py")
+        return
+    technical = kwargs.get('technical', pd.DataFrame())
+    volatility = kwargs.get('volatility', None)
+    max_dd = kwargs.get('max_dd', None)
+    sharpe = kwargs.get('sharpe', None)
+    cal_data = kwargs.get('cal_data', pd.DataFrame())
+    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
+    show_days = kwargs.get('show_days', 250)
+
+    st.caption("展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
+
+    _render_basic_metrics(positions, summary, index_quotes, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe, cal_data, tech_signals, show_days)
+    _render_rolling_charts(summary, selected_date, show_days)
+    _render_benchmark_comparison(summary, selected_benchmark, selected_date, show_days)
+    _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark, show_days)
+    _render_annual_returns(summary)
+
 
     
 

@@ -12,17 +12,8 @@ from tabs._helpers import _load_latest_news, _load_tech_signals
 from src.utils.database import get_db_connection
 
 
-def render_tab7(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
 
-    # """渲染Tab7: 资讯与评估"""
-    
-    st.caption("📰 持仓相关市场资讯与综合评估，帮助把握投资时机")
-
+def _render_news_panel(positions, summary):
     # ===== 资讯面板 =====
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">市场资讯<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示与持仓板块相关的最新市场新闻，按行业板块分类。</span></div>',
@@ -114,6 +105,8 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
 
     st.markdown("---")
 
+
+def _render_comprehensive_assessment(positions, summary, volatility, max_dd):
     # ===== 综合评估面板 =====
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">综合评估<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于收益、风险、技术面多维度的综合投资评分。</span></div>',
@@ -301,6 +294,8 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         st.info("数据不足，暂无法生成综合评估")
 
+
+def _render_market_sentiment(positions, summary):
     # ===== 市场情绪仪表盘 =====
     st.markdown("---")
     st.markdown(
@@ -466,6 +461,8 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
                 )
                 st.plotly_chart(fig_pnl_dist, width="stretch")
 
+
+def _render_news_sentiment(positions, summary):
     # ===== 新闻情感分析（持久化分数，避免重复计算）=====
     st.markdown("---")
     st.markdown(
@@ -562,7 +559,7 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
             with st.expander("各板块情绪明细", expanded=False):
                 disp_s = cat_sent[["category", "cnt", "avg_s", "pos", "neg"]].copy()
                 disp_s.columns = ["板块", "新闻数", "平均情绪", "正面数", "负面数"]
-                st.dataframe(disp_s, use_container_width=True, hide_index=True, height=250)
+                st.dataframe(disp_s, width="stretch", hide_index=True, height=250)
 
             # 负面新闻列表
             neg_news = sent_df[sent_df["sentiment"] < 0.4].nsmallest(5, "sentiment")
@@ -579,3 +576,17 @@ def render_tab7(positions, summary, index_quotes, selected_date, selected_benchm
         st.info("新闻情感分析暂不可用")
 
 
+def render_tab7(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+    """渲染Tab7: 资讯与评估"""
+    # 从kwargs获取额外的变量
+    technical = kwargs.get('technical', pd.DataFrame())
+    volatility = kwargs.get('volatility', None)
+    max_dd = kwargs.get('max_dd', None)
+    sharpe = kwargs.get('sharpe', None)
+    
+    st.caption("📰 持仓相关市场资讯与综合评估，帮助把握投资时机")
+    
+    _render_news_panel(positions, summary)
+    _render_comprehensive_assessment(positions, summary, volatility, max_dd)
+    _render_market_sentiment(positions, summary)
+    _render_news_sentiment(positions, summary)

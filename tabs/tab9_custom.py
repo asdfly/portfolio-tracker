@@ -9,20 +9,9 @@ import numpy as np
 from src.utils.database import get_db_connection
 
 
-def render_tab9(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    """渲染Tab9: 自定义指标"""
-    
-    st.caption("🔬 自定义技术指标组合回测，K线形态识别，量化验证交易策略")
 
-    tab9_sub1, tab9_sub2, tab9_sub3 = st.tabs(["📊 指标回测", "🕯️ K线形态", "📈 回测历史"])
-
-    # ----- 指标回测子Tab -----
-    with tab9_sub1:
+def _render_indicator_backtest(tab_obj, positions, summary, selected_date, selected_benchmark):
+    with tab_obj:
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">指标信号回测<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">选择预置模板或自定义指标条件，对持仓ETF进行历史信号回测。</span></div>',
             unsafe_allow_html=True,
@@ -131,8 +120,8 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
         except Exception as e:
             st.info(f"指标回测模块暂不可用: {str(e)[:80]}")
 
-    # ----- K线形态识别子Tab -----
-    with tab9_sub2:
+def _render_candlestick_patterns(tab_obj, positions, summary, selected_date):
+    with tab_obj:
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">K线形态识别<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">自动识别常见K线反转和持续形态，辅助判断市场转折点。</span></div>',
             unsafe_allow_html=True,
@@ -255,8 +244,9 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
                         st.info(f"近 {n_candle} 日未检测到经典K线形态")
         except Exception as e:
             st.info(f"K线形态识别暂不可用: {str(e)[:80]}")
-    # ----- 回测历史子Tab -----
-    with tab9_sub3:
+
+def _render_backtest_history(tab_obj, positions, summary, selected_date):
+    with tab_obj:
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">回测历史记录</div>',
             unsafe_allow_html=True,
@@ -312,11 +302,27 @@ def render_tab9(positions, summary, index_quotes, selected_date, selected_benchm
                 disp['win_rate'] = disp['win_rate'].apply(lambda x: f"{x:.1f}%")
                 disp['avg_pnl'] = disp['avg_pnl'].apply(lambda x: f"{x:+.3f}%")
                 disp['created_at'] = disp['created_at'].str[:16]
-                st.dataframe(disp, use_container_width=True, hide_index=True, height=350)
+                st.dataframe(disp, width="stretch", hide_index=True, height=350)
         except Exception as e:
             st.info(f"回测历史加载失败: {str(e)[:80]}")
 
+def render_tab9(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+    """渲染Tab9: 自定义分析"""
+    # 从kwargs获取额外的变量
+    technical = kwargs.get('technical', pd.DataFrame())
+    volatility = kwargs.get('volatility', None)
+    max_dd = kwargs.get('max_dd', None)
+    sharpe = kwargs.get('sharpe', None)
 
-    
+    st.caption("🔬 自定义技术指标组合回测，K线形态识别，量化验证交易策略")
 
+    st.markdown(
+        '<div class="tip-title" style="">自定义分析</div>',
+        unsafe_allow_html=True,
+    )
 
+    tab9_sub1, tab9_sub2, tab9_sub3 = st.tabs(["📊 指标回测", "🕯️ K线形态", "📈 回测历史"])
+
+    _render_indicator_backtest(tab9_sub1, positions, summary, selected_date, selected_benchmark)
+    _render_candlestick_patterns(tab9_sub2, positions, summary, selected_date)
+    _render_backtest_history(tab9_sub3, positions, summary, selected_date)

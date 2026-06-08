@@ -63,7 +63,7 @@ class TestTab3Structure:
 
     def test_total_function_count(self):
         fns = _get_functions(TAB3_PATH.read_text(encoding="utf-8"))
-        assert len(fns) == 13, f"Expected 13 functions, got {len(fns)}"
+        assert len(fns) == 15, f"Expected 15 functions, got {len(fns)}"
 
     def test_original_helpers_preserved(self):
         expected_helpers = [

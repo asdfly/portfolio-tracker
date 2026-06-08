@@ -9,20 +9,9 @@ import numpy as np
 from src.utils.database import get_db_connection
 
 
-def render_tab10(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    """渲染Tab10: 资金动向"""
-    
-    st.caption("💰 行业/ETF资金流向分析，追踪主力资金动态，辅助判断市场热点切换")
 
-    tab10_sub1, tab10_sub2, tab10_sub3 = st.tabs(["📊 行业资金流", "📈 ETF资金流", "💰 主力资金"])
-
-    # ----- 行业资金流 -----
-    with tab10_sub1:
+def _render_industry_fund_flow(tab_obj, positions):
+    with tab_obj:
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">行业资金流向<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">各行业板块主力资金净流入/流出排名与趋势。</span></div>',
             unsafe_allow_html=True,
@@ -335,8 +324,10 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
         except Exception as e:
             st.info(f"行业资金流模块暂不可用: {str(e)[:80]}")
 
-    # ----- ETF资金流 -----
-    with tab10_sub2:
+
+
+def _render_etf_fund_flow(tab_obj, positions):
+    with tab_obj:
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">ETF资金流向<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">持仓ETF的主力资金流入流出趋势。</span></div>',
             unsafe_allow_html=True,
@@ -459,7 +450,7 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
                             dv_df = pd.DataFrame(divergences[-10:])  # 最近10条
                             st.dataframe(
                                 dv_df.style.format({"5日净流入(亿)": "{:+.2f}"}),
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True,
                             )
                         else:
@@ -496,8 +487,10 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
         except Exception as e:
             st.info(f"ETF资金流模块暂不可用: {str(e)[:80]}")
 
-    # ----- 主力资金净流入（替代已停更的北向资金） -----
-    with tab10_sub3:
+
+
+def _render_main_force_flow(tab_obj):
+    with tab_obj:
         st.markdown(
             '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">主力资金<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">A股主力资金净流入趋势（主力=超大单+大单），数据自2025-11-07起，替代已停更的北向资金。</span></div>',
             unsafe_allow_html=True,
@@ -678,6 +671,22 @@ def render_tab10(positions, summary, index_quotes, selected_date, selected_bench
 
         except Exception as e:
             st.info(f"主力资金模块暂不可用: {str(e)[:80]}")
+
+
+def render_tab10(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+    """渲染Tab10: 资金动向 - 编排入口"""
+    technical = kwargs.get('technical', pd.DataFrame())
+    volatility = kwargs.get('volatility', None)
+    max_dd = kwargs.get('max_dd', None)
+    sharpe = kwargs.get('sharpe', None)
+
+    st.caption("行业/ETF资金流向分析，追踪主力资金动态，辅助判断市场热点切换")
+    tab10_sub1, tab10_sub2, tab10_sub3 = st.tabs(["行业资金流", "ETF资金流", "主力资金"])
+
+    _render_industry_fund_flow(tab10_sub1, positions)
+    _render_etf_fund_flow(tab10_sub2, positions)
+    _render_main_force_flow(tab10_sub3)
+
 
             
 

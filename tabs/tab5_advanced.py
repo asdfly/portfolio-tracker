@@ -421,22 +421,8 @@ def format_value(val, prefix="", suffix="", decimals=2):
 
 
 
-def render_tab5(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
 
-    """渲染Tab5: 高级分析"""
-    
-    st.markdown(
-        '<div class="tip-title" style="">高级分析工具<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">包含Monte Carlo模拟（基于历史收益率随机采样预测未来收益区间）和再平衡建议（基于目标权重偏离度生成调仓方案）两种高级分析工具。</span></div>',
-        unsafe_allow_html=True,
-    )
-
+def _render_monte_carlo(summary, selected_date):
     # ----- Monte Carlo 模拟 -----
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">Monte Carlo 模拟（未来收益预测）<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于历史日收益率分布进行Bootstrap随机采样，生成大量模拟路径，统计未来市值的概率分布区间（P5/P50/P95）。</span></div>',
@@ -651,7 +637,9 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
             st.plotly_chart(fig_conv, width="stretch")
             st.caption(f"*采样池: {mc_result['sample_count']} 条，过滤异常值: {mc_result['filtered_count']} 条，起始: {mc_result['sample_start']}")
 
-    # --- 风险归因分析（Phase 5C新增）---
+
+
+def _render_risk_attribution(positions, summary, volatility):
     st.markdown("---")
     st.markdown(
         '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
@@ -731,6 +719,9 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
 
     st.markdown("---")
 
+
+
+def _render_stress_test(positions, summary):
     # ----- 压力测试 -----
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">' "持仓压力测试<span class=\"tip-arrow\" style=\"left: 4px; top: calc(100% + 5px);\"></span><span class=\"tip-text\" style=\"left: 4px; top: calc(100% + 10px);\">基于历史波动率和持仓权重，模拟温和下跌、大幅下跌、极端暴跌等多种情景下的组合市值变化。</span></div>",
@@ -920,6 +911,9 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
 
     st.markdown("---")
 
+
+
+def _render_rebalance_advice():
     # ----- 再平衡建议 -----
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">再平衡建议<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">基于各行业目标权重与实际权重的偏离度，自动生成调仓方案。超过偏离阈值的行业将给出买入/卖出建议和估算股数。</span></div>',
@@ -1105,6 +1099,9 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
         target_df = pd.DataFrame([{"行业": k, "目标权重": f"{v*100:.0f}%"} for k, v in default_targets.items()])
         st.markdown(target_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
+
+
+def _render_tech_and_advice(technical):
     # ========== 技术指标（增强版：点击持仓行查看详情） ==========
     st.markdown(
         '<div class="tip-title" style="margin-top:20px;">🔍 技术指标信号<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示各ETF的技术指标信号概览，包括RSI超买超卖、MA均线信号和综合趋势判断(看多/看空/中性)。点击持仓表格中的ETF行可查看完整技术分析面板。</span></div>',
@@ -1148,6 +1145,267 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                     report_text = f.read()
                 st.markdown(report_text[:3000] + ("..." if len(report_text) > 3000 else ""))
 
+
+
+def _render_investment_review(volatility, tech_signals, summary):
+        # ========== Phase 8C: 投资复盘 ==========
+        st.markdown("---")
+        st.markdown(
+            '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">投资复盘'
+            '<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+            '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+            '回顾历史收益表现、技术信号决策质量与行业收益贡献度，帮助总结投资经验。</span></div>',
+            unsafe_allow_html=True,
+        )
+
+        try:
+            conn_rev = get_db_connection()
+            try:
+                rev_summary = pd.read_sql(
+                    "SELECT date, total_value, total_cost, total_pnl, daily_return, "
+                    "vs_hs300, profit_count, loss_count, sharpe_ratio, max_drawdown, volatility "
+                    "FROM portfolio_summary ORDER BY date", conn_rev
+                )
+                rev_snaps = pd.read_sql(
+                    "SELECT date, code, name, market_value, pnl, pnl_rate, beta "
+                    "FROM portfolio_snapshots ORDER BY date, code", conn_rev
+                )
+            finally:
+                conn_rev.close()
+
+            if rev_summary.empty:
+                st.info("暂无历史数据可供复盘")
+            else:
+                rev_summary["date"] = pd.to_datetime(rev_summary["date"])
+                rev_summary["year"] = rev_summary["date"].dt.year
+                rev_summary["month"] = rev_summary["date"].dt.month
+                cost0 = rev_summary["total_cost"].iloc[0]
+                rev_summary["cum_return"] = (rev_summary["total_pnl"] / cost0 * 100) if cost0 > 0 else 0
+
+                rev_c1, rev_c2 = st.columns(2)
+
+                # --- 8C-1: 年度收益对比 ---
+                with rev_c1:
+                    st.markdown(
+                        '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin-bottom:6px;">年度收益对比</div>',
+                        unsafe_allow_html=True,
+                    )
+                    yearly = rev_summary.groupby("year").agg(
+                        y_return=("cum_return", "last"),
+                        y_pnl=("total_pnl", "sum"),
+                        y_sharpe=("sharpe_ratio", "mean"),
+                        y_maxdd=("max_drawdown", "min"),
+                        y_vol=("volatility", "mean"),
+                        y_trade_days=("date", "count"),
+                    ).reset_index()
+                    yearly = yearly[yearly["year"] >= 2024]
+
+                    if not yearly.empty:
+                        bar_colors = ["#22c55e" if v >= 0 else "#ef4444" for v in yearly["y_return"]]
+                        fig_yr = go.Figure()
+                        fig_yr.add_trace(go.Bar(
+                            x=yearly["year"].astype(str),
+                            y=yearly["y_return"],
+                            marker_color=bar_colors,
+                            text=[f"{v:+.1f}%" for v in yearly["y_return"]],
+                            textposition="outside",
+                            textfont=dict(size=11, color="#e6edf3"),
+                        ))
+                        fig_yr.update_layout(
+                            height=260, margin=dict(t=10, b=30, l=40, r=10),
+                            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                            xaxis=dict(title="", tickfont=dict(size=10, color="#8b949e"), gridcolor="#21262d"),
+                            yaxis=dict(title="累计收益率%", tickfont=dict(size=10, color="#8b949e"), gridcolor="#21262d"),
+                        )
+                        st.plotly_chart(fig_yr, width="stretch")
+                    else:
+                        st.caption("暂无近年数据")
+
+                # --- 8C-2: 月度收益热力图 ---
+                with rev_c2:
+                    st.markdown(
+                        '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin-bottom:6px;">月度收益热力图</div>',
+                        unsafe_allow_html=True,
+                    )
+                    monthly = rev_summary.groupby(["year", "month"]).agg(
+                        m_return=("daily_return", lambda x: (1 + x).prod() - 1),
+                    ).reset_index()
+                    monthly["m_return"] = monthly["m_return"] * 100
+                    monthly = monthly[monthly["year"] >= 2024]
+
+                    if not monthly.empty:
+                        pivot = monthly.pivot(index="year", columns="month", values="m_return")
+                        pivot = pivot.reindex(columns=range(1, 13))
+                        fig_heat = go.Figure(data=go.Heatmap(
+                            z=pivot.values,
+                            x=[f"{m}月" for m in range(1, 13)],
+                            y=[str(y) for y in pivot.index],
+                            colorscale=[[0, "#ef4444"], [0.45, "#21262d"], [1, "#22c55e"]],
+                            zmid=0,
+                            text=[[f"{v:+.1f}%" if pd.notna(v) else "" for v in row] for row in pivot.values],
+                            texttemplate="%{text}",
+                            textfont=dict(size=10),
+                            hovertemplate="%{y}年%{x}: %{z:+.1f}%<extra></extra>",
+                        ))
+                        fig_heat.update_layout(
+                            height=260, margin=dict(t=10, b=30, l=40, r=10),
+                            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                            xaxis=dict(tickfont=dict(size=10, color="#8b949e")),
+                            yaxis=dict(tickfont=dict(size=10, color="#8b949e")),
+                        )
+                        st.plotly_chart(fig_heat, width="stretch")
+                    else:
+                        st.caption("暂无近年月度数据")
+
+                # --- 8C-3: 行业收益归因 ---
+                st.markdown(
+                    '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin:10px 0 6px;">行业收益归因</div>',
+                    unsafe_allow_html=True,
+                )
+
+                if not rev_snaps.empty:
+                    rev_snaps["date"] = pd.to_datetime(rev_snaps["date"])
+                    cutoff = rev_snaps["date"].max() - pd.Timedelta(days=90)
+                    recent = rev_snaps[rev_snaps["date"] >= cutoff].copy()
+                    recent["sector"] = recent["code"].map(
+                        lambda c: ETF_CATEGORIES.get(str(c), {}).get("sector", "其他")
+                    )
+                    sector_pnl = recent.groupby("sector").agg(
+                        s_total_pnl=("pnl", "sum"),
+                        s_avg_rate=("pnl_rate", "mean"),
+                        s_mv=("market_value", "last"),
+                    ).reset_index()
+                    sector_pnl = sector_pnl[sector_pnl["s_total_pnl"] != 0].sort_values("s_total_pnl", ascending=False)
+
+                    if not sector_pnl.empty:
+                        sec_c1, sec_c2 = st.columns([1, 2])
+                        with sec_c1:
+                            abs_pnl = sector_pnl["s_total_pnl"].abs()
+                            pie_colors = [
+                                SECTOR_COLORS.get(s, "#6b7280") for s in sector_pnl["sector"]
+                            ]
+                            fig_sec = go.Figure(go.Pie(
+                                labels=sector_pnl["sector"],
+                                values=abs_pnl,
+                                hole=0.55,
+                                marker_colors=pie_colors,
+                                textinfo="label+percent",
+                                textfont=dict(size=10, color="#e6edf3"),
+                                hovertemplate="%{label}: ¥%{value:,.0f}<extra></extra>",
+                            ))
+                            fig_sec.update_layout(
+                                height=280, margin=dict(t=15, b=10, l=10, r=10),
+                                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                                showlegend=False,
+                            )
+                            st.plotly_chart(fig_sec, width="stretch")
+                        with sec_c2:
+                            attr_rows = []
+                            for _, sr in sector_pnl.iterrows():
+                                sc = SECTOR_COLORS.get(sr["sector"], "#6b7280")
+                                pnl_val = sr["s_total_pnl"]
+                                rate_val = sr["s_avg_rate"]
+                                pnl_str = f"¥{pnl_val:,.0f}" if pnl_val >= 0 else f"-¥{abs(pnl_val):,.0f}"
+                                rc = "#22c55e" if rate_val >= 0 else "#ef4444"
+                                attr_rows.append(
+                                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                                    f'padding:6px 10px;background:#161b22;border-radius:4px;margin-bottom:4px;'
+                                    f'border-left:3px solid {sc};">'
+                                    f'<span style="color:#e6edf3;font-size:13px;">{sr["sector"]}</span>'
+                                    f'<span style="display:flex;gap:16px;font-size:12px;">'
+                                    f'<span style="color:{sc};">{pnl_str}</span>'
+                                    f'<span style="color:{rc};">{rate_val:+.2f}%</span>'
+                                    f"</span></div>"
+                                )
+                            st.markdown(
+                                f'<div style="max-height:280px;overflow-y:auto;">{"".join(attr_rows)}</div>',
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        st.caption("暂无行业归因数据")
+                else:
+                    st.caption("暂无持仓快照数据")
+
+                # --- 8C-4: 技术信号胜率复盘 ---
+                st.markdown(
+                    '<div style="font-size:13px;font-weight:bold;color:#e6edf3;margin:10px 0 6px;">技术信号胜率复盘</div>',
+                    unsafe_allow_html=True,
+                )
+
+                try:
+                    conn_tech = get_db_connection()
+                    try:
+                        tech_rev = pd.read_sql(
+                            "SELECT date, code, ma_signal, macd_signal, rsi_value, trend "
+                            "FROM etf_technical ORDER BY date, code", conn_tech
+                        )
+                    finally:
+                        conn_tech.close()
+
+                    if not tech_rev.empty and not rev_snaps.empty:
+                        tech_rev["date"] = pd.to_datetime(tech_rev["date"])
+                        tech_rev = tech_rev.sort_values(["code", "date"])
+                        signals = []
+                        rev_snaps_dt = rev_snaps.copy()
+                        rev_snaps_dt["date"] = pd.to_datetime(rev_snaps_dt["date"])
+                        for code_val, grp in tech_rev.groupby("code"):
+                            grp = grp.set_index("date")
+                            macd_col = grp.get("macd_signal")
+                            if macd_col is None:
+                                continue
+                            for sig_type_str in ("金叉", "死叉"):
+                                sig_dates = macd_col[macd_col == sig_type_str].index
+                                for sig_date in sig_dates:
+                                    future = rev_snaps_dt[
+                                        (rev_snaps_dt["code"] == code_val) &
+                                        (rev_snaps_dt["date"] > sig_date + pd.Timedelta(days=3)) &
+                                        (rev_snaps_dt["date"] <= sig_date + pd.Timedelta(days=8))
+                                    ]
+                                    if not future.empty:
+                                        ret5 = future["pnl_rate"].iloc[-1]
+                                        signals.append({"type": f"MACD{sig_type_str}", "code": code_val, "date": sig_date, "ret5": ret5})
+
+                        if signals:
+                            sig_df = pd.DataFrame(signals)
+                            for sig_type in ("MACD金叉", "MACD死叉"):
+                                sub = sig_df[sig_df["type"] == sig_type]
+                                if sub.empty:
+                                    continue
+                                is_golden = "金叉" in sig_type
+                                if is_golden:
+                                    wins = (sub["ret5"] > 0).sum()
+                                else:
+                                    wins = (sub["ret5"] < 0).sum()
+                                total = len(sub)
+                                win_rate = wins / total * 100 if total > 0 else 0
+                                avg_ret = sub["ret5"].mean()
+                                sc = "#22c55e" if win_rate >= 50 else "#ef4444"
+                                arc = "#22c55e" if avg_ret >= 0 else "#ef4444"
+                                st.markdown(
+                                    f'<div style="background:#161b22;border-radius:6px;padding:10px 14px;margin-bottom:6px;'
+                                    f'border-left:3px solid {sc};">'
+                                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                                    f'<span style="font-size:13px;font-weight:bold;color:#e6edf3;">{sig_type}</span>'
+                                    f'<span style="font-size:13px;color:{sc};font-weight:bold;">{win_rate:.1f}% 胜率 ({wins}/{total})</span>'
+                                    f"</div>"
+                                    f'<div style="font-size:11px;color:#8b949e;margin-top:4px;">'
+                                    f'信号后5日平均收益: <b style="color:{arc};">{avg_ret:+.2f}%</b>'
+                                    f"</div></div>",
+                                    unsafe_allow_html=True,
+                                )
+                        else:
+                            st.caption("暂无技术信号翻转记录可供复盘")
+                    else:
+                        st.caption("暂无技术指标数据")
+                except Exception:
+                    st.caption("技术信号复盘数据加载异常")
+
+        except Exception:
+            pass
+
+
+
+def _render_data_export(positions, summary, selected_benchmark, selected_date, technical):
     # ========== 数据导出 ==========
     st.markdown("---")
     with st.expander("📥 数据导出", expanded=False):
@@ -1232,6 +1490,30 @@ def render_tab5(positions, summary, index_quotes, selected_date, selected_benchm
                     )
                 else:
                     st.error("报告生成失败，数据不足")
+
+
+def render_tab5(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+    """渲染Tab5: 高级分析 - 编排入口"""
+    technical = kwargs.get('technical', pd.DataFrame())
+    volatility = kwargs.get('volatility', None)
+    max_dd = kwargs.get('max_dd', None)
+    sharpe = kwargs.get('sharpe', None)
+    cal_data = kwargs.get('cal_data', pd.DataFrame())
+    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
+
+    st.markdown(
+        '<div class="tip-title" style="">高级分析工具<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">包含Monte Carlo模拟（基于历史收益率随机采样预测未来收益区间）和再平衡建议（基于目标权重偏离度生成调仓方案）两种高级分析工具。</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    _render_monte_carlo(summary, selected_date)
+    _render_risk_attribution(positions, summary, volatility)
+    _render_stress_test(positions, summary)
+    _render_rebalance_advice()
+    _render_tech_and_advice(technical)
+    _render_investment_review(volatility, tech_signals, summary)
+    _render_data_export(positions, summary, selected_benchmark, selected_date, technical)
+
 
     # ========== Tab9: 自定义指标工作台 ==========
     

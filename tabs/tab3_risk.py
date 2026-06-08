@@ -1192,6 +1192,7 @@ def _render_alert_center(positions, summary, selected_date):
                 "当前未触发任何告警规则，所有指标处于安全范围内。</div></div>",
                 unsafe_allow_html=True,
             )
+            _render_alert_gauge_dashboard(positions, summary)
 
         with st.expander("查看历史告警记录", expanded=False):
             hist_alerts = load_alerts(limit=20)
@@ -1287,7 +1288,233 @@ def _render_alert_center(positions, summary, selected_date):
                     yaxis=dict(showgrid=False, tickfont=dict(size=10)),
                 )
                 st.plotly_chart(fig_alert_dist, width="stretch")
+            _render_alert_trend_analysis(hist_alerts)
 
+
+
+
+def _render_alert_gauge_dashboard(positions, summary):
+    """Phase 8B: 告警阈值仪表盘 & 健康评分"""
+    # Phase 8B: 告警阈值仪表盘 & 健康评分
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+        '指标阈值监控<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+        '展示各关键指标当前值与告警阈值的距离，绿色=安全，黄色=接近阈值，红色=已触发。</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    gauge_metrics = []
+    if not positions.empty and not summary.empty:
+        ls = summary.iloc[-1]
+        dr = ls.get("daily_return", 0) or 0
+        mdd = abs(ls.get("max_drawdown", 0) or 0)
+        vol = ls.get("volatility", 0) or 0
+        sp = ls.get("sharpe_ratio", 0) or 0
+        total_mv = positions["market_value"].sum()
+        max_w = positions["market_value"].max() / total_mv * 100 if total_mv > 0 else 0
+        gauge_metrics = [
+            {"name": "日收益率", "value": dr, "warn": -3, "error": -5, "unit": "%", "lower_is_worse": True},
+            {"name": "最大回撤", "value": mdd, "warn": 10, "error": 15, "unit": "%", "lower_is_worse": False},
+            {"name": "年化波动率", "value": vol, "warn": 30, "error": 40, "unit": "%", "lower_is_worse": False},
+            {"name": "夏普比率", "value": sp, "warn": 0, "error": -0.5, "unit": "", "lower_is_worse": True},
+            {"name": "集中度", "value": max_w, "warn": 30, "error": 40, "unit": "%", "lower_is_worse": False},
+        ]
+
+    if gauge_metrics:
+        gc1, gc2, gc3, gc4, gc5 = st.columns(5)
+        health_score = 100
+        for idx_g, gm in enumerate(gauge_metrics):
+            val = gm["value"]
+            if gm["lower_is_worse"]:
+                if val <= gm["error"]:
+                    status, color = "严重", "#ef4444"; health_score -= 20
+                elif val <= gm["warn"]:
+                    status, color = "警告", "#f59e0b"; health_score -= 8
+                else:
+                    status, color = "正常", "#22c55e"
+            else:
+                if val >= gm["error"]:
+                    status, color = "严重", "#ef4444"; health_score -= 20
+                elif val >= gm["warn"]:
+                    status, color = "警告", "#f59e0b"; health_score -= 8
+                else:
+                    status, color = "正常", "#22c55e"
+            fig_gauge = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=abs(val),
+                domain={"x": [0, 1], "y": [0, 1]},
+                title={"text": f'{gm["name"]} ({status})', "font": {"size": 11, "color": color}},
+                number={"suffix": gm["unit"], "font": {"size": 14, "color": color}},
+                gauge={
+                    "axis": {"range": [0, max(gm["error"] * 1.5, 1)], "tickfont": {"size": 8, "color": "#8b949e"}},
+                    "bar": {"color": color},
+                    "threshold": {"line": {"color": "#f59e0b", "width": 2}, "thickness": 0.75, "value": gm["warn"]},
+                    "bgcolor": "#0d1117", "borderwidth": 0,
+                },
+            ))
+            fig_gauge.update_layout(
+                height=160, margin=dict(l=10, r=10, t=40, b=10),
+                plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                font=dict(color="#c9d1d9"),
+            )
+            with [gc1, gc2, gc3, gc4, gc5][idx_g]:
+                st.plotly_chart(fig_gauge, width="stretch")
+
+        health_score = max(0, min(100, health_score))
+        hc = "#22c55e" if health_score >= 80 else "#f59e0b" if health_score >= 60 else "#ef4444"
+        st.markdown(
+            f'<div style="text-align:center;padding:12px;border-radius:8px;'
+            f'background:{"rgba(34,197,94,0.06)" if health_score >= 80 else "rgba(245,158,11,0.06)" if health_score >= 60 else "rgba(239,68,68,0.06)"};'
+            f'border:1px solid {hc}30;">'
+            f'<span style="font-size:28px;font-weight:bold;color:{hc};">{health_score}</span>'
+            f'<span style="font-size:14px;color:#8b949e;margin-left:8px;">/100 告警健康评分</span>'
+            f'<div style="font-size:11px;color:#484f58;margin-top:4px;">'
+            f'{"组合整体风险可控" if health_score >= 80 else "存在风险预警，建议关注" if health_score >= 60 else "多项指标触发告警，需立即关注"}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+with st.expander("查看历史告警记录", expanded=False):
+    hist_alerts = load_alerts(limit=20)
+    if not hist_alerts.empty:
+        for _, ha in hist_alerts.iterrows():
+            ha_level = ha.get("level", "info")
+            ha_cfg = {"error": {"icon": "🔴"}, "warning": {"icon": "🟡"}, "info": {"icon": "🔵"}}.get(
+                ha_level, {"icon": "🔵"}
+            )
+            ack = "✅" if ha.get("acknowledged") else ""
+            st.markdown(
+                f'<div style="font-size:12px;padding:3px 0;color:#8b949e;">'
+                f'{ha_cfg["icon"]} <span style="color:#c9d1d9;">{ha.get("rule_name", "未知")}</span> '
+                f'{ha.get("message", "")} <span style="color:#484f58;font-size:10px;">{ha.get("created_at", "")}</span> {ack}</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("暂无历史告警记录")
+
+
+def _render_alert_trend_analysis(hist_alerts):
+    """Phase 8A: 告警趋势增强"""
+    # Phase 8A: 告警趋势增强
+    if not hist_alerts.empty and "created_at" in hist_alerts.columns:
+        hist_alerts["created_at"] = pd.to_datetime(hist_alerts["created_at"], errors="coerce")
+        hist_valid = hist_alerts.dropna(subset=["created_at"])
+
+        if not hist_valid.empty:
+            atc1, atc2 = st.columns(2)
+
+            with atc1:
+                st.markdown(
+                    '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+                    '告警时间线<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+                    '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+                    '按时间展示历史告警事件，红色为严重，橙色为警告。</span></div>',
+                    unsafe_allow_html=True,
+                )
+                level_colors = {"error": "#ef4444", "warning": "#f59e0b", "info": "#58a6ff"}
+                fig_timeline = go.Figure()
+                for lvl, clr in level_colors.items():
+                    subset = hist_valid[hist_valid["level"] == lvl]
+                    if not subset.empty:
+                        fig_timeline.add_trace(go.Scatter(
+                            x=subset["created_at"],
+                            y=[lvl] * len(subset),
+                            mode="markers",
+                            name={"error": "严重", "warning": "警告", "info": "提示"}.get(lvl, lvl),
+                            marker=dict(size=10, color=clr, symbol="circle"),
+                            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>%{text}<extra></extra>",
+                            text=subset["message"].str[:60],
+                            showlegend=True,
+                        ))
+                fig_timeline.update_layout(
+                    height=200,
+                    plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                    font=dict(color="#c9d1d9", size=10),
+                    margin=dict(l=50, r=20, t=10, b=30),
+                    xaxis=dict(showgrid=True, gridcolor="#21262d", tickfont=dict(size=9)),
+                    yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                font=dict(size=9, color="#8b949e")),
+                )
+                st.plotly_chart(fig_timeline, width="stretch")
+
+            with atc2:
+                st.markdown(
+                    '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+                    '告警频率热力图<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+                    '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+                    '展示告警在不同星期和时段的分布密度，帮助识别高风险时段。</span></div>',
+                    unsafe_allow_html=True,
+                )
+                hist_valid_copy = hist_valid.copy()
+                hist_valid_copy["dow"] = hist_valid_copy["created_at"].dt.dayofweek
+                hist_valid_copy["hour"] = hist_valid_copy["created_at"].dt.hour
+                dow_labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+                hour_bins = [0, 6, 12, 18, 24]
+                hour_labels = ["凌晨", "上午", "下午", "晚间"]
+                hist_valid_copy["hour_bin"] = pd.cut(hist_valid_copy["hour"], bins=hour_bins, labels=hour_labels, right=False)
+                heatmap_data = hist_valid_copy.groupby(["dow", "hour_bin"]).size().unstack(fill_value=0)
+                heatmap_data.index = [dow_labels[i] if i < len(dow_labels) else str(i) for i in heatmap_data.index]
+                if not heatmap_data.empty:
+                    fig_heatmap = go.Figure(go.Heatmap(
+                        z=heatmap_data.values,
+                        x=list(heatmap_data.columns),
+                        y=list(heatmap_data.index),
+                        colorscale=[[0, "#0d1117"], [0.5, "#1a2332"], [1, "#f59e0b"]],
+                        showscale=True,
+                        text=heatmap_data.values,
+                        texttemplate="%{text}",
+                        textfont=dict(size=11, color="#c9d1d9"),
+                        hovertemplate="%{y} %{x}: %{z} 次告警<extra></extra>",
+                    ))
+                    fig_heatmap.update_layout(
+                        height=200,
+                        plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                        font=dict(color="#c9d1d9", size=10),
+                        margin=dict(l=50, r=40, t=10, b=30),
+                        xaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+                    )
+                    st.plotly_chart(fig_heatmap, width="stretch")
+
+    # 规则触发趋势（按周统计堆叠面积图）
+    if not hist_alerts.empty and "created_at" in hist_alerts.columns:
+        hist_valid2 = hist_alerts.dropna(subset=["created_at"]).copy()
+        if len(hist_valid2) >= 2:
+            hist_valid2["week"] = hist_valid2["created_at"].dt.isocalendar().week.astype(int)
+            hist_valid2["year"] = hist_valid2["created_at"].dt.year
+            hist_valid2["week_label"] = hist_valid2["year"].astype(str) + "W" + hist_valid2["week"].astype(str).str.zfill(2)
+            weekly = hist_valid2.groupby(["week_label", "rule_name"]).size().unstack(fill_value=0)
+            if len(weekly) >= 2:
+                st.markdown(
+                    '<div class="tip-title" style="font-size:13px;border-bottom:none;padding:3px 0;">'
+                    '规则触发趋势<span class="tip-arrow" style="left:4px;top:calc(100% + 5px);"></span>'
+                    '<span class="tip-text" style="left:4px;top:calc(100% + 10px);">'
+                    '按周统计各告警规则的触发次数，堆叠面积图展示趋势变化。</span></div>',
+                    unsafe_allow_html=True,
+                )
+                trend_colors = ["#ef4444", "#f59e0b", "#58a6ff", "#22c55e", "#a855f7", "#ec4899", "#14b8a6", "#6366f1"]
+                fig_trend = go.Figure()
+                for ci, col in enumerate(weekly.columns):
+                    fig_trend.add_trace(go.Scatter(
+                        x=weekly.index, y=weekly[col],
+                        mode="lines", stackgroup="one",
+                        name=col, line=dict(width=0),
+                        fillcolor=trend_colors[ci % len(trend_colors)],
+                        hovertemplate="%{x}: %{y} 次<extra></extra>",
+                    ))
+                fig_trend.update_layout(
+                    height=200,
+                    plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+                    font=dict(color="#c9d1d9", size=10),
+                    margin=dict(l=50, r=20, t=10, b=30),
+                    xaxis=dict(showgrid=True, gridcolor="#21262d", tickfont=dict(size=9)),
+                     yaxis=dict(showgrid=True, gridcolor="#21262d", title=dict(text="触发次数", font=dict(size=10))),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                font=dict(size=9, color="#8b949e")),
+                )
+                st.plotly_chart(fig_trend, width="stretch")
 
 
 def render_tab3(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
