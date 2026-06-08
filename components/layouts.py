@@ -5,6 +5,7 @@
 
 import streamlit as st
 from datetime import date, datetime
+from data_loader import get_db_connection
 
 
 @st.cache_data(ttl=600)
@@ -13,7 +14,7 @@ def _get_available_dates():
     import sqlite3
     from config.settings import DATABASE_PATH
 
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
         "SELECT DISTINCT date FROM portfolio_summary "

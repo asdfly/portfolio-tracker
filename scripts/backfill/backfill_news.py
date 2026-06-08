@@ -49,6 +49,7 @@ for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "all_proxy"]
     os.environ.pop(k, None)
 
 from config.settings import DATABASE_PATH
+from data_loader import get_db_connection
 
 
 def fetch_historical_news(
@@ -278,7 +279,7 @@ def run_backfill(start_date: str, end_date: str, topic_keys: List[str] = None, d
 
     if not dry_run:
         import sqlite3
-        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn = get_db_connection(DATABASE_PATH)
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*), MIN(date), MAX(date), COUNT(DISTINCT date), COUNT(DISTINCT category) "

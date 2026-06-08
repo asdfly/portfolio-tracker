@@ -315,7 +315,7 @@ def _render_market_events(positions, summary):
     try:
         import sqlite3
         from src.analysis.market_event_signals import MarketEventSignalEngine
-        ev_conn = sqlite3.connect(str(DATABASE_PATH))
+        ev_conn = get_db_connection()
         ev_engine = MarketEventSignalEngine(ev_conn)
         ev_signals = ev_engine.generate_all_signals(lookback_days=5)
         ev_summary = ev_engine.get_signal_summary(ev_signals)

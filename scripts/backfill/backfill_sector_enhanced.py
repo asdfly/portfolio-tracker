@@ -45,6 +45,7 @@ logging.basicConfig(
 logger = logging.getLogger("sector_backfill")
 
 from config.settings import DATABASE_PATH
+from data_loader import get_db_connection
 from src.data_sources.fund_flow import save_fund_flows
 
 
@@ -245,7 +246,7 @@ def backfill_earlier_days(conn, trading_days, existing_dates):
 
 def run_backfill():
     """执行完整的行业资金流回填"""
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection(DATABASE_PATH)
     
     try:
         trading_days = get_trading_days(conn, days=150)

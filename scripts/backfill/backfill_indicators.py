@@ -15,6 +15,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.settings import DATABASE_PATH
+from data_loader import get_db_connection
 from src.analysis.indicator_backtest import (
     INDICATOR_TEMPLATES,
     backtest_technical_composite,
@@ -141,7 +142,7 @@ def main():
     print(f"  模式: {'DRY-RUN (仅预览)' if dry_run else '正式执行'}")
     print("=" * 60)
 
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection(DATABASE_PATH)
 
     # Step 1: 初始化指标模板
     print("\n--- Step 1: 初始化指标模板 ---")

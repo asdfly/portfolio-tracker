@@ -21,6 +21,7 @@ from src.analysis.risk import RiskAnalyzer
 from src.analysis.portfolio_risk import PortfolioRiskAnalyzer
 from src.utils.database import DatabaseManager
 from src.utils.position_reader import PositionReader
+from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class PortfolioAnalyzer:
             # 方法1: 比较文件修改时间与DB快照时间
             import sqlite3
             try:
-                conn = sqlite3.connect(str(self.db.db_path))
+                conn = get_db_connection(self.db.db_path)
                 cur = conn.cursor()
                 # 查询DB中当天snapshot的记录数和各code的数量
                 cur.execute(
@@ -333,7 +334,7 @@ class PortfolioAnalyzer:
         prev_value = 0
         try:
             import sqlite3
-            conn = sqlite3.connect(str(self.db.db_path))
+            conn = get_db_connection(self.db.db_path)
             cur = conn.cursor()
             cur.execute(
                 "SELECT total_value FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1",

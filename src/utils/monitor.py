@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
+from data_loader import get_db_connection
 
 # Fix Python 3.12+ deprecation: register adapters for datetime/date passed to sqlite3
 sqlite3.register_adapter(datetime, lambda v: v.isoformat())
@@ -187,7 +188,7 @@ class Monitor:
     def _get_recent_alert_rules(self) -> set:
         """获取 dedup_interval_hours 内已触发的告警规则名称集合"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_db_connection(self.db_path)
             cursor = conn.cursor()
             since = datetime.now() - timedelta(hours=self.dedup_interval_hours)
             cursor.execute(
@@ -203,7 +204,7 @@ class Monitor:
 
     def _save_alert(self, alert: Alert):
         """保存告警到数据库"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -216,7 +217,7 @@ class Monitor:
 
     def log_execution(self, task_name: str, status: str, message: str = "", duration: float = 0):
         """记录任务执行日志"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -231,7 +232,7 @@ class Monitor:
 
     def get_recent_alerts(self, hours: int = 24) -> List[Alert]:
         """获取最近的告警"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         since = datetime.now() - timedelta(hours=hours)
@@ -250,7 +251,7 @@ class Monitor:
 
     def get_execution_stats(self, days: int = 7) -> Dict:
         """获取执行统计"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         since = datetime.now() - timedelta(days=days)
@@ -280,7 +281,7 @@ class Monitor:
 
     def acknowledge_alert(self, alert_id: int):
         """确认告警"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -292,7 +293,7 @@ class Monitor:
 
     def get_health_status(self) -> Dict:
         """获取系统健康状态"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         # 检查最近执行状态

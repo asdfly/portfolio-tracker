@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
+from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +270,7 @@ class EnhancedReportBuilder:
         return str(filepath)
 
     def _load_summary(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM portfolio_summary ORDER BY date DESC LIMIT 1")
@@ -278,7 +279,7 @@ class EnhancedReportBuilder:
         return dict(row) if row else None
 
     def _load_positions(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM portfolio_snapshots WHERE date = (SELECT MAX(date) FROM portfolio_snapshots) ORDER BY market_value DESC")
@@ -287,19 +288,19 @@ class EnhancedReportBuilder:
         return [dict(r) for r in rows]
 
     def _load_history(self, days):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         df = pd.read_sql_query("SELECT * FROM portfolio_summary ORDER BY date DESC LIMIT ?", conn, params=(days,))
         conn.close()
         return df.sort_values('date').reset_index(drop=True)
 
     def _load_index_history(self, code, days):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         df = pd.read_sql_query("SELECT date, close FROM index_quotes WHERE code = ? ORDER BY date DESC LIMIT ?", conn, params=(code, days))
         conn.close()
         return df.sort_values('date').reset_index(drop=True)
 
     def _load_alerts(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT rule_name, level, message FROM alerts ORDER BY id DESC LIMIT 5")
@@ -324,7 +325,7 @@ class EnhancedReportBuilder:
 
 
     def _load_index_today(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT code, name, close, change_pct FROM index_quotes WHERE date = (SELECT MAX(date) FROM index_quotes)")
@@ -333,7 +334,7 @@ class EnhancedReportBuilder:
         return [dict(r) for r in rows]
 
     def _load_technical(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("""SELECT t.code, p.name, p.current_price, t.ma_signal, t.macd_signal, t.rsi_value, t.rsi_status,
@@ -350,7 +351,7 @@ class EnhancedReportBuilder:
         """加载30个交易日前的持仓价格，用于计算30日涨跌幅"""
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
+            conn = get_db_connection(self.db_path)
             cur = conn.cursor()
             cur.execute("""
                 SELECT a.code, b.current_price as price_30d_ago

@@ -10,6 +10,7 @@ import requests
 from typing import Dict, List, Any
 from datetime import datetime, date
 from dataclasses import dataclass, asdict
+from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -412,7 +413,7 @@ def save_news_to_db(db_path: str, news_data: Dict[str, Any], date_str: str = Non
     if date_str is None:
         date_str = date.today().strftime("%Y-%m-%d")
 
-    conn = sqlite3.connect(db_path)
+    conn = get_db_connection(db_path)
     cursor = conn.cursor()
 
     # daily_news 表由 DatabaseManager._init_db() -> db_schema.init_all_tables() 统一创建
@@ -451,7 +452,7 @@ def load_news_from_db(db_path: str, date_str: str = None) -> Dict[str, Any]:
     if date_str is None:
         date_str = date.today().strftime("%Y-%m-%d")
 
-    conn = sqlite3.connect(db_path)
+    conn = get_db_connection(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute("""

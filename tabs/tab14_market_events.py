@@ -12,6 +12,7 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from config.settings import DATABASE_PATH
+from data_loader import get_db_connection
 
 
 # ============================================================
@@ -39,8 +40,7 @@ _COL_CN = {
 
 def _load_market_events(table: str, days: int = 30) -> pd.DataFrame:
     """从数据库加载指定表最近N天的数据"""
-    import sqlite3
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection()
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     try:
         df = pd.read_sql_query(
@@ -56,8 +56,7 @@ def _load_market_events(table: str, days: int = 30) -> pd.DataFrame:
 @st.cache_data(ttl=600)
 def _load_date_list(table: str) -> list:
     """获取指定表的可用日期列表"""
-    import sqlite3
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection()
     try:
         df = pd.read_sql_query(
             f"SELECT DISTINCT date FROM {table} ORDER BY date DESC", conn

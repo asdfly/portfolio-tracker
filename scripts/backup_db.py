@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import DATABASE_PATH, BACKUP_DIR
+from data_loader import get_db_connection
 
 
 def get_backup_dir() -> Path:
@@ -28,8 +29,8 @@ def backup_database(db_path=None, backup_dir=None) -> Path:
         raise FileNotFoundError(f"Database not found: {db}")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = bak_dir / f"{db.stem}_{timestamp}.db"
-    source = sqlite3.connect(str(db))
-    dest = sqlite3.connect(str(backup_path))
+    source = get_db_connection(db)
+    dest = get_db_connection(backup_path)
     try:
         source.backup(dest)
     finally:

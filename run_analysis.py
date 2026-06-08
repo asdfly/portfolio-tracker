@@ -35,6 +35,7 @@ from src.data_sources.fund_flow import (
 )
 from src.data_sources.market_events import run_market_events_collection
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
+from data_loader import get_db_connection
 
 # ==================== 日志配置 ====================
 def setup_logging():
@@ -157,7 +158,7 @@ def run_stage3_monitor(summary, risk_data):
     # D4: 扩展告警数据源 - 数据新鲜度/数据质量/持仓变化/市值变化
     try:
         import sqlite3 as _sqlite3
-        _conn = _sqlite3.connect(str(DATABASE_PATH))
+        _conn = get_db_connection()
         _cur = _conn.cursor()
 
         # 1) 数据源陈旧检查: 统计最近N天无更新的数据源数
@@ -254,7 +255,7 @@ def run_stage_fund_flow():
     # 获取数据库连接
     from config.settings import DATABASE_PATH
     import sqlite3
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection()
 
     try:
         # --- 行业资金流 ---
@@ -426,7 +427,7 @@ def run_stage4_smart(results, summary, risk_data):
     try:
         db = DatabaseManager()
         import sqlite3
-        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn = get_db_connection()
         smart_report = SmartReportGenerator(conn)
 
         combined_data = {
@@ -771,7 +772,7 @@ def main():
         try:
             import sqlite3 as _sqlite3
             from src.analysis.market_event_signals import MarketEventSignalEngine
-            _me_conn = _sqlite3.connect(str(DATABASE_PATH))
+            _me_conn = get_db_connection()
             _me_engine = MarketEventSignalEngine(_me_conn)
             _me_signals = _me_engine.generate_all_signals(lookback_days=3)
             _me_summary = _me_engine.get_signal_summary(_me_signals)
@@ -782,7 +783,7 @@ def main():
             if _positions:
                 _held = [str(p.get('code', '')) for p in _positions if isinstance(p, dict)]
                 if _held:
-                    _me_conn2 = _sqlite3.connect(str(DATABASE_PATH))
+                    _me_conn2 = get_db_connection()
                     _me_engine2 = MarketEventSignalEngine(_me_conn2)
                     _rpt = _me_engine2.get_portfolio_signal_report(_me_signals, _held)
                     _me_conn2.close()

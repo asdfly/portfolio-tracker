@@ -8,6 +8,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +314,7 @@ class EmailReportBuilder:
 
     def _load_summary(self) -> Optional[Dict]:
         """加载最新汇总"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM portfolio_summary ORDER BY date DESC LIMIT 1")
@@ -323,7 +324,7 @@ class EmailReportBuilder:
 
     def _load_positions(self) -> List[Dict]:
         """加载最新持仓"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("""
@@ -337,7 +338,7 @@ class EmailReportBuilder:
 
     def _load_alerts(self) -> List[Dict]:
         """加载最近告警"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT rule_name, level, message FROM alerts ORDER BY id DESC LIMIT 5")

@@ -14,6 +14,7 @@ import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class ExcelReportGenerator:
 
     def _load_all_data(self, date: str = None):
         """加载报告所需的全部数据"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         try:
             if date is None:
                 row = conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()

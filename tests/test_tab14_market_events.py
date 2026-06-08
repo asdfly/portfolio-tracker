@@ -102,42 +102,42 @@ class TestTab14LoadData:
     """测试数据加载函数"""
 
     def test_load_lhb_data(self, mock_db):
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(mock_db)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(mock_db))):
             from tabs.tab14_market_events import _load_market_events
             df = _load_market_events("stock_lhb", 30)
             assert len(df) == 3
             assert set(df.columns) & {'date', 'code', 'name', 'lhb_net_buy'}
 
     def test_load_margin_data(self, mock_db):
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(mock_db)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(mock_db))):
             from tabs.tab14_market_events import _load_market_events
             df = _load_market_events("stock_margin", 30)
             assert len(df) == 2
             assert 'margin_balance' in df.columns
 
     def test_load_holder_change_data(self, mock_db):
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(mock_db)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(mock_db))):
             from tabs.tab14_market_events import _load_market_events
             df = _load_market_events("stock_holder_change", 30)
             assert len(df) == 2
             assert 'qty_change' in df.columns
 
     def test_load_institution_data(self, mock_db):
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(mock_db)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(mock_db))):
             from tabs.tab14_market_events import _load_market_events
             df = _load_market_events("stock_institution_research", 30)
             assert len(df) == 3
             assert 'institution' in df.columns
 
     def test_load_block_trade_data(self, mock_db):
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(mock_db)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(mock_db))):
             from tabs.tab14_market_events import _load_market_events
             df = _load_market_events("stock_block_trade", 30)
             assert len(df) == 2
             assert 'premium_rate' in df.columns
 
     def test_load_date_list(self, mock_db):
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(mock_db)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(mock_db))):
             from tabs.tab14_market_events import _load_date_list
             dates = _load_date_list("stock_lhb")
             assert len(dates) == 2
@@ -149,7 +149,7 @@ class TestTab14LoadData:
         conn = sqlite3.connect(str(db_path))
         conn.execute("CREATE TABLE empty_test_table (id INTEGER PRIMARY KEY, date TEXT, code TEXT)")
         conn.close()
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(db_path)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(db_path))):
             from tabs.tab14_market_events import _load_market_events
             df = _load_market_events("empty_test_table", 30)
             assert df.empty
@@ -159,7 +159,7 @@ class TestTab14Render:
     """测试Tab14渲染（无报错）"""
 
     def test_render_tab14_no_error(self, mock_db):
-        with patch("tabs.tab14_market_events.DATABASE_PATH", str(mock_db)):
+        with patch("tabs.tab14_market_events.get_db_connection", return_value=sqlite3.connect(str(mock_db))):
             import streamlit as st
             from tabs.tab14_market_events import render_tab14
             # 仅验证导入和函数可调用

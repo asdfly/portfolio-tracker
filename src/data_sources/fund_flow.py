@@ -33,7 +33,7 @@ _requests.Session.__init__ = _NoProxySessionInit
 
 def get_db_connection() -> sqlite3.Connection:
     from config.settings import DATABASE_PATH
-    return sqlite3.connect(str(DATABASE_PATH))
+    return get_db_connection()
 
 def _urllib_get_json(url, retries=2, delay=1.0):
     proxy_handler = urllib.request.ProxyHandler({})

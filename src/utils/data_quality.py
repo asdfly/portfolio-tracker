@@ -13,6 +13,7 @@ from typing import Dict, List, Tuple, Optional
 logger = logging.getLogger(__name__)
 
 from src.utils.db_schema import QUALITY_CHECK_TABLES
+from data_loader import get_db_connection
 
 
 class DataQualityChecker:
@@ -22,7 +23,7 @@ class DataQualityChecker:
         self.db_path = db_path
 
     def _conn(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+        return get_db_connection(self.db_path)
 
     def check_table_freshness(self) -> List[Dict]:
         """

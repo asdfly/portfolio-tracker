@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
+from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class HistoricalDataBackfiller:
         """基于已有快照数据生成组合汇总历史"""
         logger.info(f"开始生成 {days} 天组合汇总历史")
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         # 获取所有有数据的日期
@@ -145,7 +146,7 @@ class HistoricalDataBackfiller:
 
     def _save_snapshot_from_kline(self, date_str: str, code: str, kline: dict):
         """从K线数据保存快照"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         close_price = kline.get('close', 0)
@@ -178,7 +179,7 @@ class HistoricalDataBackfiller:
 
     def _get_existing_dates(self, code: str) -> set:
         """获取已有日期"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT date FROM portfolio_snapshots WHERE code = ?", (code,))
         dates = {row[0] for row in cursor.fetchall()}
@@ -191,7 +192,7 @@ class HistoricalDataBackfiller:
 
         logger.info(f"回填指数历史数据...")
 
-        conn = sqlite3.connect(self.db_path)
+        conn = get_db_connection(self.db_path)
         cursor = conn.cursor()
 
         backfilled = 0

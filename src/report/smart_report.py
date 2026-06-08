@@ -10,6 +10,7 @@ import logging
 
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 from src.analysis.advisor import SmartAdvisor, AdviceType, AdvicePriority
+from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class SmartReportGenerator:
         try:
             import sqlite3 as _sqlite3
             _db_path = 'data/database/portfolio.db'
-            _conn_fb = _sqlite3.connect(_db_path)
+            _conn_fb = get_db_connection(_db_path)
             _conn_fb.execute("""
                 CREATE TABLE IF NOT EXISTS advice_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

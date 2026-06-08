@@ -33,6 +33,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
 from config.settings import INDEX_CODES, DATABASE_PATH
+from data_loader import get_db_connection
 
 logging.basicConfig(
     level=logging.INFO,
@@ -204,7 +205,7 @@ def fetch_full_klines(code: str, name: str = "") -> list:
 def get_etf_positions(db_path):
     """从数据库获取持仓ETF列表（最新快照）"""
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cur = conn.cursor()
     cur.execute("""
         SELECT code, name, quantity, cost_price
@@ -220,7 +221,7 @@ def get_etf_positions(db_path):
 def get_existing_dates(db_path, table, code=None):
     """获取数据库中已有的日期集合"""
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cur = conn.cursor()
     if code:
         cur.execute(f"SELECT DISTINCT date FROM {table} WHERE code = ?", (code,))
@@ -234,7 +235,7 @@ def get_existing_dates(db_path, table, code=None):
 def save_etf_snapshots(db_path, code, name, quantity, cost_price, klines, existing_dates):
     """批量保存ETF历史快照，返回新增条数"""
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cur = conn.cursor()
 
     new_count = 0
@@ -299,7 +300,7 @@ def save_etf_snapshots(db_path, code, name, quantity, cost_price, klines, existi
 def save_index_quotes(db_path, code, name, klines, existing_dates):
     """批量保存指数历史行情"""
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cur = conn.cursor()
 
     new_count = 0
@@ -352,7 +353,7 @@ def save_index_quotes(db_path, code, name, klines, existing_dates):
 def rebuild_portfolio_summary(db_path):
     """基于完整快照数据重建组合汇总历史"""
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cur = conn.cursor()
 
     cur.execute("DELETE FROM portfolio_summary")
@@ -459,7 +460,7 @@ def rebuild_etf_technical(db_path):
     import sqlite3
     import pandas as pd
 
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cur = conn.cursor()
 
     cur.execute("DELETE FROM etf_technical")
@@ -661,7 +662,7 @@ def run_backfill(etf_only=False, index_only=False, dry_run=False):
             import sqlite3 as _sqlite3
             from src.data_sources.fund_flow import fetch_etf_fund_flow, save_fund_flows
 
-            ff_conn = _sqlite3.connect(str(db_path))
+            ff_conn = _get_db_connection(db_path)
 
             # 1. 统计每只ETF资金流缺失天数
             ff_conn.row_factory = _sqlite3.Row
@@ -786,7 +787,7 @@ def run_backfill(etf_only=False, index_only=False, dry_run=False):
     # === 验证 ===
     print(f"\n--- 数据验证 ---")
     import sqlite3
-    conn = sqlite3.connect(db_path)
+    conn = get_db_connection(db_path)
     cur = conn.cursor()
 
     cur.execute("SELECT MIN(date), MAX(date), COUNT(DISTINCT date) FROM portfolio_snapshots")

@@ -21,6 +21,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
 from config.settings import DATA_SOURCES, INDEX_CODES, DATABASE_PATH
+from data_loader import get_db_connection
 from src.data_sources import DataSourceManager
 from src.utils.backfill import HistoricalDataBackfiller
 
@@ -42,7 +43,7 @@ logger = logging.getLogger("backfill_history")
 def get_etf_codes_from_db(db_path):
     """从数据库获取最新的持仓ETF代码列表"""
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
         SELECT DISTINCT code FROM portfolio_snapshots
@@ -67,7 +68,7 @@ def get_trading_days_range(days):
 def verify_backfill(db_path, expected_days):
     """验证回填结果"""
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = get_db_connection(db_path)
     cursor = conn.cursor()
 
     print("\n" + "=" * 60)

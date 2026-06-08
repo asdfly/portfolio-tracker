@@ -25,13 +25,13 @@ class DatabaseManager:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
         from src.utils.db_schema import init_all_tables
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             init_all_tables(conn)
             logger.info("数据库初始化完成")
 
     def save_portfolio_snapshot(self, date_str: str, holdings: List[Dict[str, Any]]):
         """保存持仓快照"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             for holding in holdings:
@@ -64,7 +64,7 @@ class DatabaseManager:
 
     def save_portfolio_summary(self, date_str: str, summary: Dict[str, Any]):
         """保存组合汇总"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO portfolio_summary 
@@ -89,7 +89,7 @@ class DatabaseManager:
 
     def save_index_quotes(self, date_str: str, quotes: Dict[str, Dict[str, Any]]):
         """保存指数行情"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             from config.settings import INDEX_CODES
@@ -114,7 +114,7 @@ class DatabaseManager:
     def save_technical_indicators(self, date_str: str, code: str, 
                                    indicators: Dict[str, Any]):
         """保存技术指标"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             ma = indicators.get('ma', {})
@@ -145,7 +145,7 @@ class DatabaseManager:
 
     def get_latest_portfolio(self, date_str: Optional[str] = None) -> List[Dict[str, Any]]:
         """获取最新持仓数据"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
@@ -164,7 +164,7 @@ class DatabaseManager:
 
     def get_portfolio_history(self, days: int = 30) -> List[Dict[str, Any]]:
         """获取组合历史数据"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
@@ -180,7 +180,7 @@ class DatabaseManager:
 
     def get_price_history(self, code: str, days: int = 60) -> List[Dict[str, Any]]:
         """获取价格历史"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db_connection(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
@@ -198,12 +198,15 @@ class DatabaseManager:
 
 _indexes_created = False
 
-def get_db_connection():
-    """获取数据库连接，首次调用时创建索引"""
+def get_db_connection(db_path=None):
+    """获取数据库连接，首次调用时创建索引。
+
+    委托给 data_loader.get_db_connection，并在首次调用时确保索引就绪。
+    为保持向后兼容，接受可选的 db_path 参数。
+    """
     global _indexes_created
-    import sqlite3
-    from config.settings import DATABASE_PATH
-    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+    from data_loader import get_db_connection as _dl_get_conn
+    conn = _dl_get_conn(db_path)
     if not _indexes_created:
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_snap_date ON portfolio_snapshots(date)",

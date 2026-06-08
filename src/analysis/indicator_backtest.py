@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 def get_db_connection() -> sqlite3.Connection:
     from config.settings import DATABASE_PATH
-    return sqlite3.connect(str(DATABASE_PATH))
+    return get_db_connection()
 
 
 def backtest_indicator_signals(df, signal_col='signal', hold_days=5, forward_col='close'):

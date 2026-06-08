@@ -20,6 +20,7 @@ push2his.eastmoney.com 封锁状态监测脚本
 
 import urllib.request, json, time, sys, os, logging, argparse
 from datetime import datetime
+from data_loader import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger(__name__)
@@ -79,7 +80,7 @@ def _backfill(days):
         from src.data_sources.fund_flow import fetch_main_fund_flow, save_fund_flows
         from config.settings import DATABASE_PATH
         import sqlite3
-        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn = get_db_connection()
         try:
             df = fetch_main_fund_flow(days=days)
             if not df.empty:

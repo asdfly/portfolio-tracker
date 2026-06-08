@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def get_db_connection() -> sqlite3.Connection:
     from config.settings import DATABASE_PATH
-    return sqlite3.connect(str(DATABASE_PATH))
+    return get_db_connection()
 
 
 # ============================================================

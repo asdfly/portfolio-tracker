@@ -30,6 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger("backfill_macro")
 
 from src.data_sources.macro_daily import (
+from data_loader import get_db_connection
     fetch_comex_gold, fetch_sge_gold, fetch_shibor,
     fetch_usd_cny, fetch_bond_yields, fetch_lpr, fetch_margin_balance,
     save_macro_daily, save_market_sentiment, get_db_connection,

@@ -19,7 +19,7 @@ from config.settings import DATABASE_PATH, ETF_CATEGORIES, INDEX_CODES, SECTOR_C
 
 def _ensure_indexes():
     """确保数据库索引存在（只执行一次）"""
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection()
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_snap_date ON portfolio_snapshots(date)",
         "CREATE INDEX IF NOT EXISTS idx_snap_code_date ON portfolio_snapshots(code, date)",
@@ -36,9 +36,15 @@ def _ensure_indexes():
     conn.commit()
     conn.close()
 
-def get_db_connection():
-    """获取数据库连接"""
-    return sqlite3.connect(str(DATABASE_PATH), check_same_thread=False)
+def get_db_connection(db_path=None):
+    """获取数据库连接
+
+    Args:
+        db_path: 数据库文件路径，默认为 DATABASE_PATH。
+            类方法中传入 self.db_path 即可复用同一接口。
+    """
+    path = str(db_path) if db_path else str(DATABASE_PATH)
+    return sqlite3.connect(path, check_same_thread=False)
 
 def load_positions(date_str=None):
     """加载持仓数据"""
@@ -537,7 +543,7 @@ def load_sector_weights(days=250, end_date=None):
     query += " ORDER BY ps.date, ps.code"
 
     try:
-        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn = get_db_connection()
         params = [days]
         if end_date:
             params.append(end_date)

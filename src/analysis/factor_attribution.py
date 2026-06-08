@@ -31,7 +31,7 @@ FACTOR_INDEX_CODES = {
 def get_db_connection() -> sqlite3.Connection:
     """获取数据库连接"""
     from config.settings import DATABASE_PATH
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     return conn
 
