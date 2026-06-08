@@ -570,7 +570,7 @@ def _render_block_trade_panel():
 #  主渲染函数
 # ============================================================
 
-def render_tab14(**kwargs):
+def render_tab14():
     """渲染Tab14: 市场事件监控"""
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'

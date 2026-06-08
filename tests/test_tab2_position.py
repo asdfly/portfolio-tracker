@@ -19,17 +19,19 @@ class TestTab2Importable:
         from tabs.tab2_position import render_tab2
         sig = inspect.signature(render_tab2)
         params = list(sig.parameters.keys())
-        assert "positions" in params
-        assert "summary" in params
+        assert len(params) == 0, f"Expected no params, got {params}"
 
 
 class TestTab2EmptyPositions:
     """Test behavior with empty positions"""
 
+    @patch("tabs.tab2_position.load_positions", return_value=pd.DataFrame())
+    @patch("tabs.tab2_position.load_summary", return_value=pd.DataFrame())
     @patch("tabs.tab2_position.st")
-    def test_empty_positions_renders(self, mock_st):
+    def test_empty_positions_renders(self, mock_st, mock_summary, mock_positions):
         """Empty positions should not crash"""
         from tabs.tab2_position import render_tab2
+        mock_st.session_state.get = MagicMock(return_value="")
         mock_st.subheader = MagicMock()
         mock_st.info = MagicMock()
         mock_st.markdown = MagicMock()
@@ -43,7 +45,7 @@ class TestTab2EmptyPositions:
         mock_st.expander = MagicMock(return_value=MagicMock())
         mock_st.dataframe = MagicMock()
 
-        render_tab2(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2026-05-20", "沪深300")
+        render_tab2()
         # Should not raise
 
 

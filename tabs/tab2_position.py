@@ -9,6 +9,7 @@ import numpy as np
 from config.settings import ETF_CATEGORIES, SECTOR_COLORS, DATABASE_PATH
 from tabs._helpers import _render_etf_detail_panel
 from src.utils.database import get_db_connection
+from data_loader import load_positions, load_summary
 
 
 def load_correlation_matrix(days=250, end_date=None):
@@ -642,15 +643,19 @@ def _render_cumulative_pnl(positions):
             unsafe_allow_html=True,
         )
 
-def render_tab2(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab2():
+    selected_date = st.session_state.get("selected_date", "")
+    selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
+    positions = load_positions(selected_date)
+    show_days = st.session_state.get("show_days", 250)
+    summary = load_summary(show_days, selected_date)
     """渲染Tab2: 持仓分布"""
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
+    cal_data = pd.DataFrame()
+    tech_signals = pd.DataFrame()
 
     st.caption("📊 展示持仓分布饼图、持仓明细表格、行业权重变化趋势及持仓相关性矩阵")
 

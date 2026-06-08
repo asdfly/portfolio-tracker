@@ -51,7 +51,7 @@ class TestTab2Refactor:
         from tabs.tab2_position import render_tab2
         kw = dict(technical=pd.DataFrame(), volatility=None, max_dd=None,
                   sharpe=None, cal_data=pd.DataFrame(), tech_signals=pd.DataFrame())
-        render_tab2(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2024-01-30", "sh000300", **kw)
+        render_tab2()
 
 
 class TestTab4Refactor:
@@ -94,7 +94,7 @@ class TestTab4Refactor:
         from tabs.tab4_calendar import render_tab4
         kw = dict(technical=pd.DataFrame(), volatility=None, max_dd=None,
                   sharpe=None, cal_data=pd.DataFrame(), tech_signals=pd.DataFrame())
-        render_tab4(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2024-01-30", "sh000300", **kw)
+        render_tab4()
 
 
 class TestTab7Refactor:
@@ -124,7 +124,7 @@ class TestTab7Refactor:
         import pandas as pd
         from tabs.tab7_news import render_tab7
         kw = dict(technical=pd.DataFrame(), volatility=None, max_dd=None, sharpe=None)
-        render_tab7(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2024-01-30", "sh000300", **kw)
+        render_tab7()
 
 
 class TestTab8Refactor:
@@ -167,4 +167,4 @@ class TestTab8Refactor:
         import pandas as pd
         from tabs.tab8_advice import render_tab8
         kw = dict(technical=pd.DataFrame(), volatility=None, max_dd=None, sharpe=None)
-        render_tab8(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2024-01-30", "sh000300", **kw)
+        render_tab8()

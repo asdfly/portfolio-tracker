@@ -62,5 +62,4 @@ def test_render_tab1_real_data():
 
     with patch.dict("sys.modules", {"streamlit": mock_st}):
         from tabs.tab1_net_value import render_tab1
-        render_tab1(positions, summary, index_quotes,
-                     selected_date=selected_date, selected_benchmark="sh000300")
+        render_tab1()

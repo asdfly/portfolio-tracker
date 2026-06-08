@@ -49,7 +49,7 @@ class TestTab6Refactor:
         import pandas as pd
         from tabs.tab6_technical import render_tab6
         kw = dict(technical=pd.DataFrame())
-        render_tab6(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2024-01-30", "sh000300", **kw)
+        render_tab6()
 
 
 class TestTab9Refactor:
@@ -90,4 +90,4 @@ class TestTab9Refactor:
         import pandas as pd
         from tabs.tab9_custom import render_tab9
         kw = dict(technical=pd.DataFrame(), volatility=None, max_dd=None, sharpe=None)
-        render_tab9(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2024-01-30", "sh000300", **kw)
+        render_tab9()

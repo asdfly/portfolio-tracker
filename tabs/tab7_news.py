@@ -10,6 +10,7 @@ import math
 from config.settings import ETF_CATEGORIES, SECTOR_COLORS
 from tabs._helpers import _load_latest_news, _load_tech_signals
 from src.utils.database import get_db_connection
+from data_loader import load_positions, load_summary
 
 
 
@@ -576,13 +577,16 @@ def _render_news_sentiment(positions, summary):
         st.info("新闻情感分析暂不可用")
 
 
-def render_tab7(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab7():
+    selected_date = st.session_state.get('selected_date', '')
+    positions = load_positions(selected_date)
+    show_days = st.session_state.get("show_days", 250)
+    summary = load_summary(show_days, selected_date)
     """渲染Tab7: 资讯与评估"""
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
     
     st.caption("📰 持仓相关市场资讯与综合评估，帮助把握投资时机")
     

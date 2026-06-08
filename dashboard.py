@@ -1130,236 +1130,86 @@ def _render_overview(positions, summary, technical, effective_max_dd):
         )
 
 
-def _render_tab1_body(tab1, positions, summary, selected_date, show_days, selected_benchmark, rolling_data, effective_max_dd, technical=None, volatility=None, max_dd=None, sharpe=None):
-    """Tab1: 净值走势（委托 tabs/tab1_net_value）"""
+def _render_tab1_body(tab1):
+    """Wrapper for tab1_net_value.render_tab1"""
     from tabs.tab1_net_value import render_tab1
     with tab1:
-        render_tab1(
-            positions, summary, None,
-            selected_date=selected_date,
-            selected_benchmark=selected_benchmark,
-            show_days=show_days,
-            technical=technical,
-            volatility=volatility,
-            max_dd=max_dd,
-            sharpe=sharpe,
-        )
+        render_tab1()
 
-
-def _render_tab2_position(tab2, positions, summary, selected_date, selected_benchmark=None, technical=None, volatility=None, max_dd=None, sharpe=None):
-    """Tab2: 持仓分布（委托 tabs/tab2_position）"""
+def _render_tab2_position(tab2):
+    """Wrapper for tab2_position.render_tab2"""
     from tabs.tab2_position import render_tab2
     with tab2:
-        render_tab2(
-            positions, summary, None,
-            selected_date=selected_date,
-            selected_benchmark=selected_benchmark,
-            technical=technical,
-            volatility=volatility,
-            max_dd=max_dd,
-            sharpe=sharpe,
-        )
+        render_tab2()
 
-
-def _render_tab3_risk(tab3, positions, summary, technical, selected_date, selected_benchmark=None, ext_risk=None, volatility=None, max_dd=None, sharpe=None):
-    """Tab3: 风险分析（委托 tabs/tab3_risk）"""
+def _render_tab3_risk(tab3):
+    """Wrapper for tab3_risk.render_tab3"""
     from tabs.tab3_risk import render_tab3
     with tab3:
-        render_tab3(
-            positions, summary, None,
-            selected_date=selected_date,
-            selected_benchmark=selected_benchmark,
-            technical=technical,
-            volatility=volatility,
-            max_dd=max_dd,
-            sharpe=sharpe,
-        )
+        render_tab3()
 
-
-def _render_tab4_calendar(tab4, positions, summary, selected_date=None, selected_benchmark=None):
-    """Tab4: 收益日历"""
+def _render_tab4_calendar(tab4):
+    """Wrapper for tab4_calendar.render_tab4"""
     from tabs.tab4_calendar import render_tab4
     with tab4:
-        render_tab4(positions, summary, index_quotes=None, selected_date=selected_date, selected_benchmark=selected_benchmark)
-        cal_data = load_calendar_data()
-def _render_tab6_technical(tab6, technical, selected_date=None, selected_benchmark=None, positions=None, summary=None):
-    """Tab6: 技术信号"""
+        render_tab4()
+
+def _render_tab6_technical(tab6):
+    """Wrapper for tab6_technical.render_tab6"""
     from tabs.tab6_technical import render_tab6
     with tab6:
-        render_tab6(positions, summary, index_quotes=None, selected_date=selected_date, selected_benchmark=selected_benchmark, technical=technical)
+        render_tab6()
 
-
-def _render_tab7_news(tab7, positions, summary, technical, selected_date=None, selected_benchmark=None):
-    """Tab7: 资讯与评估"""
+def _render_tab7_news(tab7):
+    """Wrapper for tab7_news.render_tab7"""
     from tabs.tab7_news import render_tab7
     with tab7:
-        render_tab7(positions, summary, index_quotes=None, selected_date=selected_date, selected_benchmark=selected_benchmark)
+        render_tab7()
 
-
-def _render_tab8_advice(tab8, positions, summary, technical, selected_date=None, selected_benchmark=None):
-    """Tab8: 操作建议"""
+def _render_tab8_advice(tab8):
+    """Wrapper for tab8_advice.render_tab8"""
     from tabs.tab8_advice import render_tab8
     with tab8:
-        render_tab8(positions, summary, index_quotes=None, selected_date=selected_date, selected_benchmark=selected_benchmark)
+        render_tab8()
 
-def _render_tab5_advanced(tab5, positions, summary, technical, selected_date=None, selected_benchmark=None):
-    """Tab5: 高级分析"""
+def _render_tab5_advanced(tab5):
+    """Wrapper for tab5_advanced.render_tab5"""
     from tabs.tab5_advanced import render_tab5
     with tab5:
-        render_tab5(positions, summary, index_quotes=None, selected_date=selected_date, selected_benchmark=selected_benchmark)
+        render_tab5()
 
-def _render_tab9_custom(tab9, positions, summary=None, selected_date=None, selected_benchmark=None):
-    """Tab9: 自定义指标"""
+def _render_tab9_custom(tab9):
+    """Wrapper for tab9_custom.render_tab9"""
     from tabs.tab9_custom import render_tab9
     with tab9:
-        render_tab9(positions, summary, index_quotes=None, selected_date=selected_date, selected_benchmark=selected_benchmark)
+        render_tab9()
 
-def _render_tab10_fund_flow(tab10, positions, summary, selected_date=None, selected_benchmark=None):
-    """Tab10: 资金动向"""
+def _render_tab10_fund_flow(tab10):
+    """Wrapper for tab10_fund_flow.render_tab10"""
     from tabs.tab10_fund_flow import render_tab10
     with tab10:
-        render_tab10(positions, summary, index_quotes=None, selected_date=selected_date, selected_benchmark=selected_benchmark)
+        render_tab10()
 
-def _render_tab11_gold(tab11, positions, summary, selected_date, selected_benchmark):
-    """Tab11: 黄金市场分析"""
+def _render_tab11_gold(tab11):
+    """Wrapper for tab11_gold.render_tab11"""
     from tabs.tab11_gold import render_tab11
     with tab11:
-        render_tab11(positions, summary, selected_date=selected_date, selected_benchmark=selected_benchmark)
-
+        render_tab11()
 
 def _render_tab12_macro(tab12):
-    """Tab12: 宏观市场数据面板"""
+    """Wrapper for tab12_macro.render_tab12"""
     from tabs.tab12_macro import render_tab12
     with tab12:
         render_tab12()
 
-
-def _render_tab13_data_quality(tab13, positions=None, summary=None, selected_date=None, selected_benchmark=None):
-    """Tab13: 数据质量监控面板"""
+def _render_tab13_data_quality(tab13):
+    """Wrapper for tab13_data_quality.render_tab13"""
     from tabs.tab13_data_quality import render_tab13
     with tab13:
         render_tab13()
 
-
-
-
-def _render_overview_cards(total_value, total_pnl, total_return, daily_return, daily_pnl,
-                              sharpe, effective_max_dd, volatility):
-    """Render the 6-column overview metric cards row."""
-    # 概览卡片行
-    cols = st.columns(6)
-    with cols[0]:
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid #58a6ff;">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="当前所有持仓证券的市值总和">总市值 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:#58a6ff;">¥{format_value(total_value)}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[1]:
-        pnl_color = "#22c55e" if total_pnl >= 0 else "#ef4444"
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {pnl_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="所有持仓的累计盈亏金额和收益率，基于买入成本计算">总盈亏 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{pnl_color};">{format_value(total_pnl, prefix="¥")}</div>'
-            f'<div style="font-size:11px;color:#8b949e;">{format_value(total_return, suffix="%")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[2]:
-        dr_color = get_indicator_color(daily_return, [(0, "#ef4444"), (-1e-9, "#22c55e")], default="#888")
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dr_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定日期相对于前一交易日的收益率(%)和盈亏金额(元)">日收益 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{dr_color};">{format_value(daily_return, suffix="%")}</div>'
-            f'<div style="font-size:11px;color:#8b949e;">{format_value(daily_pnl, prefix="¥")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[3]:
-        sharpe_color = "#22c55e" if (sharpe and sharpe > 0.5) else "#f59e0b" if sharpe else "#888"  # get_indicator_color不适合此三元逻辑，保留
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {sharpe_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="风险调整后收益指标 = (年化收益率 - 无风险利率) / 年化波动率。>1为优秀，>0.5为良好">夏普比率 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{sharpe_color};">{format_value(sharpe, decimals=3)}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[4]:
-        dd_color = get_indicator_color(effective_max_dd, [(10, "#ef4444"), (5, "#f59e0b"), (0, "#22c55e")])
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {dd_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="选定时间段内，组合从历史最高点到最低点的最大跌幅(%)">最大回撤 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{dd_color};">{format_value(effective_max_dd, suffix="%")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with cols[5]:
-        vol_color = get_indicator_color(volatility, [(25, "#ef4444"), (15, "#f59e0b"), (0, "#22c55e")])
-        st.markdown(
-            f'<div style="padding:10px;border-radius:8px;background:#161b22;border-left:3px solid {vol_color};">'
-            f'<div style="font-size:11px;color:#8b949e;cursor:help;border-bottom:1px dotted #8b949e;display:inline;" title="日收益率标准差的年化值，反映组合收益的波动幅度。值越高表示风险越大">年化波动率 ℹ</div>'
-            f'<div style="font-size:20px;font-weight:bold;color:{vol_color};">{format_value(volatility, suffix="%")}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-
-def _render_quick_stats(positions, profit_count, loss_count, technical):
-    """Render the quick stats summary bar below overview cards."""
-    # ========== 快速指标条 ==========
-    if not positions.empty:
-        total_mv = positions["market_value"].sum()
-        pc = profit_count if profit_count else 0
-        lc = loss_count if loss_count else 0
-        total_held = pc + lc
-        wr = (pc / total_held * 100) if total_held > 0 else 0
-        wr_color = "#22c55e" if wr >= 60 else "#f59e0b" if wr >= 40 else "#ef4444"
-
-        # 最大持仓
-        max_pos = positions.loc[positions["market_value"].idxmax()]
-        max_wt = (max_pos["market_value"] / total_mv * 100) if total_mv > 0 else 0
-        wt_color = "#ef4444" if max_wt > 30 else "#f59e0b" if max_wt > 20 else "#22c55e"
-
-        # 技术信号统计
-        buy_sig = sell_sig = 0
-        if technical is not None and not technical.empty:
-            for _, tr in technical.iterrows():
-                if tr.get("ma_signal") in ("多头排列", "金叉") or tr.get("macd_signal") == "金叉":
-                    buy_sig += 1
-                if tr.get("ma_signal") in ("空头排列", "死叉") or tr.get("macd_signal") == "死叉":
-                    sell_sig += 1
-        sig_color = "#22c55e" if buy_sig > sell_sig else "#ef4444" if sell_sig > buy_sig else "#f59e0b"
-
-        # 行业分布
-        sector_dist = {}
-        for _, pos in positions.iterrows():
-            code = str(pos["code"])
-            cat_info = ETF_CATEGORIES.get(code)
-            if cat_info:
-                sec = cat_info["sector"]
-                sector_dist[sec] = sector_dist.get(sec, 0) + pos["market_value"]
-        sector_tags = ""
-        if sector_dist and total_mv > 0:
-            top_sec = sorted(sector_dist.items(), key=lambda x: x[1], reverse=True)[:4]
-            sector_tags = " ".join(
-                f'<span style="font-size:11px;color:{SECTOR_COLORS.get(s, "#8b949e")};background:{SECTOR_COLORS.get(s, "#8b949e")}15;padding:2px 6px;border-radius:3px;">{s} {(v/total_mv*100):.0f}%</span>'
-                for s, v in top_sec
-            )
-
-        st.markdown(
-            f'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 4px;margin-bottom:4px;font-size:13px;">'
-            f'<span style="color:#8b949e;">胜率: <b style="color:{wr_color};">{wr:.1f}%</b> <span style="color:#484f58;font-size:11px;">({pc}盈/{lc}亏)</span></span>'
-            f'<span style="color:#8b949e;">最大持仓: <b style="color:{wt_color};">{max_pos["name"]}</b> <span style="color:#484f58;font-size:11px;">{max_wt:.1f}%</span></span>'
-            f'<span style="color:#8b949e;">技术信号: <b style="color:{sig_color};">{buy_sig}多 / {sell_sig}空</b></span>'
-            f"</div>"
-            f'<div style="padding:2px 4px 8px;">{sector_tags}</div>',
-            unsafe_allow_html=True,
-        )
-
-
 def _render_tab14_market_events(tab14):
-    """Tab14: 市场事件面板"""
+    """Wrapper for tab14_market_events.render_tab14"""
     from tabs.tab14_market_events import render_tab14
     with tab14:
         render_tab14()
@@ -1382,6 +1232,9 @@ def main():
         return
 
     selected_date, show_days, selected_benchmark = _render_sidebar(available_dates)
+    st.session_state["selected_date"] = selected_date
+    st.session_state["show_days"] = show_days
+    st.session_state["selected_benchmark"] = selected_benchmark
     # 加载数据（带缓存，相同参数不重复查询）
     positions = load_positions(selected_date)
     summary = load_summary(show_days, selected_date)
@@ -1443,28 +1296,19 @@ def main():
     )
 
     _render_quick_stats(positions, profit_count, loss_count, technical)
-    _render_tab1_body(tab1, positions, summary, selected_date, show_days, selected_benchmark, rolling_data, effective_max_dd, technical, volatility, max_dd, sharpe)
-
-    _render_tab2_position(tab2, positions, summary, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe)
-
-    _render_tab3_risk(tab3, positions, summary, technical, selected_date, selected_benchmark, ext_risk, volatility, max_dd, sharpe)
-
-    _render_tab4_calendar(tab4, positions, summary, selected_date, selected_benchmark)
-
-    _render_tab6_technical(tab6, technical, selected_date, selected_benchmark, positions, summary)
-
-    _render_tab7_news(tab7, positions, summary, technical, selected_date, selected_benchmark)
-
-    _render_tab8_advice(tab8, positions, summary, technical, selected_date, selected_benchmark)
-
-    _render_tab5_advanced(tab5, positions, summary, technical, selected_date, selected_benchmark)
-
-    _render_tab9_custom(tab9, positions, summary, selected_date, selected_benchmark)
-
-    _render_tab10_fund_flow(tab10, positions, summary, selected_date, selected_benchmark)
-    _render_tab11_gold(tab11, positions, summary, selected_date, selected_benchmark)
+    _render_tab1_body(tab1)
+    _render_tab2_position(tab2)
+    _render_tab3_risk(tab3)
+    _render_tab4_calendar(tab4)
+    _render_tab5_advanced(tab5)
+    _render_tab6_technical(tab6)
+    _render_tab7_news(tab7)
+    _render_tab8_advice(tab8)
+    _render_tab9_custom(tab9)
+    _render_tab10_fund_flow(tab10)
+    _render_tab11_gold(tab11)
     _render_tab12_macro(tab12)
-    _render_tab13_data_quality(tab13, positions, summary, selected_date, selected_benchmark)
+    _render_tab13_data_quality(tab13)
     _render_tab14_market_events(tab14)
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from tabs.gold_components.supply_demand import render_supply_demand
 from tabs.gold_components.international_comparison import render_international_comparison
 from tabs.gold_components.gold_portfolio_correlation import render_gold_portfolio_correlation
 
-def render_tab11(positions, summary, index_quotes=None, selected_date=None, selected_benchmark=None, **kwargs):
+def render_tab11():
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">黄金市场分析'
         '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'

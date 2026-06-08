@@ -590,15 +590,14 @@ def _render_event_calendar():
     else:
         st.info("近90天内暂无关键日期事件")
 
-def render_tab4(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab4():
     """渲染Tab4: 收益日历"""
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
+    cal_data = pd.DataFrame()
+    tech_signals = pd.DataFrame()
     
     st.caption("📅 以日历热力图形式展示每月每个交易日的收益情况，支持按年/月切换查看")
     cal_data = load_calendar_data()

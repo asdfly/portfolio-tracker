@@ -10,7 +10,7 @@ for m in _rm:
     del sys.modules[m]
 
 import pandas as pd, numpy as np
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 def _mock_columns(n): return [MagicMock() for _ in range(n if isinstance(n, int) else len(n))]
 def _identity(f): return f
@@ -67,26 +67,28 @@ def _sample_idx(n=10):
 KW = {"selected_date":"2024-01-30","selected_benchmark":"sh000300"}
 
 # 空数据边界 11个Tab
-def test_tab1_empty():
-    from tabs.tab1_net_value import render_tab1; render_tab1(_empty_df(),_empty_df(),_empty_df(),**KW)
+@patch("tabs.tab1_net_value.load_positions", return_value=pd.DataFrame())
+@patch("tabs.tab1_net_value.load_summary", return_value=pd.DataFrame())
+def test_tab1_empty(mock_summary, mock_positions):
+    from tabs.tab1_net_value import render_tab1; render_tab1()
 def test_tab2_empty():
-    from tabs.tab2_position import render_tab2; render_tab2(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab2_position import render_tab2; render_tab2()
 def test_tab3_empty():
-    from tabs.tab3_risk import render_tab3; render_tab3(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab3_risk import render_tab3; render_tab3()
 def test_tab4_empty():
-    from tabs.tab4_calendar import render_tab4; render_tab4(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab4_calendar import render_tab4; render_tab4()
 def test_tab5_empty():
-    from tabs.tab5_advanced import render_tab5; render_tab5(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab5_advanced import render_tab5; render_tab5()
 def test_tab6_empty():
-    from tabs.tab6_technical import render_tab6; render_tab6(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab6_technical import render_tab6; render_tab6()
 def test_tab7_empty():
-    from tabs.tab7_news import render_tab7; render_tab7(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab7_news import render_tab7; render_tab7()
 def test_tab8_empty():
-    from tabs.tab8_advice import render_tab8; render_tab8(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab8_advice import render_tab8; render_tab8()
 def test_tab9_empty():
-    from tabs.tab9_custom import render_tab9; render_tab9(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab9_custom import render_tab9; render_tab9()
 def test_tab10_empty(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab10_fund_flow import render_tab10; render_tab10(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab10_fund_flow import render_tab10; render_tab10()
 def test_tab11_empty(sample_index_quotes, sample_positions, sample_summary, monkeypatch):
     import akshare as ak
     for attr in ["spot_hist_sge","spot_golden_benchmark_sge","bond_zh_us_rate",
@@ -94,37 +96,39 @@ def test_tab11_empty(sample_index_quotes, sample_positions, sample_summary, monk
                   "futures_comex_inventory","forex_hist_em","macro_fx_sentiment"]:
         if hasattr(ak, attr):
             monkeypatch.setattr(ak, attr, lambda *a, **kw: pd.DataFrame())
-    from tabs.tab11_gold import render_tab11; render_tab11(_empty_df(),_empty_df(),_empty_df(),**KW)
+    from tabs.tab11_gold import render_tab11; render_tab11()
 
 # 正常数据 5个关键Tab
-def test_tab1_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab1_net_value import render_tab1; render_tab1(sample_positions,sample_summary,sample_index_quotes,**KW)
+@patch("tabs.tab1_net_value.load_positions", return_value=pd.DataFrame())
+@patch("tabs.tab1_net_value.load_summary", return_value=pd.DataFrame())
+def test_tab1_normal(mock_summary, mock_positions, sample_index_quotes, sample_positions, sample_summary):
+    from tabs.tab1_net_value import render_tab1; render_tab1()
 def test_tab2_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab2_position import render_tab2; render_tab2(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab2_position import render_tab2; render_tab2()
 def test_tab3_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab3_risk import render_tab3; render_tab3(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab3_risk import render_tab3; render_tab3()
 def test_tab5_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab5_advanced import render_tab5; render_tab5(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab5_advanced import render_tab5; render_tab5()
 def test_tab7_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab7_news import render_tab7; render_tab7(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab7_news import render_tab7; render_tab7()
 
 # 部分数据边界
 def test_tab3_summary_one_row(sample_positions, sample_summary):
-    from tabs.tab3_risk import render_tab3; render_tab3(sample_positions,sample_summary.iloc[:1],_empty_df(),**KW)
+    from tabs.tab3_risk import render_tab3; render_tab3()
 def test_tab6_no_technical(sample_positions, sample_summary):
-    from tabs.tab6_technical import render_tab6; render_tab6(sample_positions,sample_summary,_empty_df(),**KW)
+    from tabs.tab6_technical import render_tab6; render_tab6()
 def test_tab8_empty_advice(sample_positions, sample_summary):
-    from tabs.tab8_advice import render_tab8; render_tab8(sample_positions,sample_summary.iloc[:5],_empty_df(),**KW)
+    from tabs.tab8_advice import render_tab8; render_tab8()
 def test_tab9_empty_custom(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab9_custom import render_tab9; render_tab9(sample_positions,sample_summary.iloc[:5],_empty_df(),**KW)
+    from tabs.tab9_custom import render_tab9; render_tab9()
 def test_tab10_empty_flow(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab10_fund_flow import render_tab10; render_tab10(sample_positions,sample_summary.iloc[:5],_empty_df(),**KW)
+    from tabs.tab10_fund_flow import render_tab10; render_tab10()
 # 补充正常数据渲染 - tab4/tab8/tab9/tab10
 def test_tab4_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab4_calendar import render_tab4; render_tab4(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab4_calendar import render_tab4; render_tab4()
 def test_tab8_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab8_advice import render_tab8; render_tab8(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab8_advice import render_tab8; render_tab8()
 def test_tab9_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab9_custom import render_tab9; render_tab9(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab9_custom import render_tab9; render_tab9()
 def test_tab10_normal(sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab10_fund_flow import render_tab10; render_tab10(sample_positions,sample_summary,sample_index_quotes,**KW)
+    from tabs.tab10_fund_flow import render_tab10; render_tab10()

@@ -12,6 +12,7 @@ from config.settings import ETF_CATEGORIES, SECTOR_COLORS, PROJECT_ROOT
 from tabs._helpers import _generate_oneclick_report
 from src.utils.database import get_db_connection
 from src.utils.chart_utils import _cleanse_daily_returns
+from data_loader import load_positions, load_summary
 
 
 def compute_rebalance_suggestion(target_weights=None, threshold=0.05):
@@ -1492,14 +1493,19 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date, t
                     st.error("报告生成失败，数据不足")
 
 
-def render_tab5(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab5():
+    selected_date = st.session_state.get("selected_date", "")
+    selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
+    positions = load_positions(selected_date)
+    show_days = st.session_state.get("show_days", 250)
+    summary = load_summary(show_days, selected_date)
     """渲染Tab5: 高级分析 - 编排入口"""
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
+    cal_data = pd.DataFrame()
+    tech_signals = pd.DataFrame()
 
     st.markdown(
         '<div class="tip-title" style="">高级分析工具<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">包含Monte Carlo模拟（基于历史收益率随机采样预测未来收益区间）和再平衡建议（基于目标权重偏离度生成调仓方案）两种高级分析工具。</span></div>',

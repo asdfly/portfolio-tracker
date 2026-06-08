@@ -11,6 +11,7 @@ from src.utils.chart_utils import downsample, _add_min_max_annotations, _fmt, _f
 from config.settings import INDEX_CODES, BENCHMARK_NAME_TO_CODE
 from src.utils.database import get_db_connection
 import sqlite3
+from data_loader import load_positions, load_summary
 
 
 
@@ -845,23 +846,28 @@ def _render_annual_returns(summary):
             st.plotly_chart(fig_annual, width="stretch")
 
 
-def render_tab1(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab1():
+    selected_date = st.session_state.get("selected_date", "")
+    selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
+    show_days = st.session_state.get('show_days', 250)
+    positions = load_positions(selected_date)
+    summary = load_summary(show_days, selected_date)
     """渲染Tab1: 净值走势 - 编排入口"""
     if summary.empty:
         st.info("暂无汇总数据，请先运行数据收集脚本。")
         st.code("python backfill_full_history.py")
         return
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
-    cal_data = kwargs.get('cal_data', pd.DataFrame())
-    tech_signals = kwargs.get('tech_signals', pd.DataFrame())
-    show_days = kwargs.get('show_days', 250)
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
+    cal_data = pd.DataFrame()
+    tech_signals = pd.DataFrame()
+    show_days = st.session_state.get('show_days', 250)
 
     st.caption("展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
 
-    _render_basic_metrics(positions, summary, index_quotes, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe, cal_data, tech_signals, show_days)
+    _render_basic_metrics(positions, summary, {}, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe, cal_data, tech_signals, show_days)
     _render_rolling_charts(summary, selected_date, show_days)
     _render_benchmark_comparison(summary, selected_benchmark, selected_date, show_days)
     _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark, show_days)

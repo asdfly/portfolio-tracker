@@ -11,6 +11,7 @@ import numpy as np
 from config.settings import ETF_CATEGORIES, SECTOR_COLORS, DATABASE_PATH
 from tabs._helpers import _load_tech_signals
 from src.utils.database import get_db_connection
+from data_loader import load_positions, load_summary
 
 
 
@@ -558,13 +559,17 @@ def _render_feedback_tracking(positions, summary):
             env_conn.close()
         except Exception as e:
             st.warning(f"市场环境数据加载失败: {e}")
-def render_tab8(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab8():
+    selected_date = st.session_state.get("selected_date", "")
+    selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
+    positions = load_positions(selected_date)
+    show_days = st.session_state.get("show_days", 250)
+    summary = load_summary(show_days, selected_date)
     """渲染Tab8: 操作建议"""
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
     
     st.caption("💡 基于技术信号和持仓状态，生成具体操作建议")
     

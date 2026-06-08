@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
+from data_loader import load_positions, load_summary
 
 
 
@@ -673,12 +674,14 @@ def _render_main_force_flow(tab_obj):
             st.info(f"主力资金模块暂不可用: {str(e)[:80]}")
 
 
-def render_tab10(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab10():
+    selected_date = st.session_state.get('selected_date', '')
+    positions = load_positions(selected_date)
     """渲染Tab10: 资金动向 - 编排入口"""
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
 
     st.caption("行业/ETF资金流向分析，追踪主力资金动态，辅助判断市场热点切换")
     tab10_sub1, tab10_sub2, tab10_sub3 = st.tabs(["行业资金流", "ETF资金流", "主力资金"])

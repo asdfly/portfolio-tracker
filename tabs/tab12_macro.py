@@ -74,7 +74,7 @@ def _style_fig(fig, title=""):
     return fig
 
 
-def render_tab12(**kwargs):
+def render_tab12():
     """渲染Tab12: 宏观市场"""
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'

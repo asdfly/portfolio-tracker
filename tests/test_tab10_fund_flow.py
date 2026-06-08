@@ -48,8 +48,7 @@ class TestTab10Importable:
         import inspect
         sig = inspect.signature(render_tab10)
         params = list(sig.parameters.keys())
-        assert "positions" in params
-        assert "summary" in params
+        assert len(params) == 0, f"Expected no params, got {params}"
 
 
 class TestTab10SectorFlow:
@@ -78,30 +77,33 @@ class TestTab10SectorFlow:
                 mock_st.expander = MagicMock()
                 mock_st.columns = MagicMock(return_value=[mock_tab, mock_tab])
                 mock_st.button = MagicMock(return_value=False)
-                render_tab10(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2026-05-20", "沪深300")
+                render_tab10()
 
 
 class TestTab10ETFFlow:
     """Test ETF fund flow rendering"""
 
+    @patch("tabs.tab10_fund_flow.load_positions", return_value=pd.DataFrame())
     @patch("tabs.tab10_fund_flow.get_db_connection")
-    def test_etf_flow_empty(self, mock_conn):
+    def test_etf_flow_empty(self, mock_conn, mock_load):
         """Empty ETF flow shows info"""
         with patch("tabs.tab10_fund_flow.pd.read_sql_query", return_value=pd.DataFrame()):
-            render_tab10(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2026-05-20", "沪深300")
+            render_tab10()
 
 
 class TestTab10MainFund:
     """Test main fund flow rendering"""
 
+    @patch("tabs.tab10_fund_flow.load_positions", return_value=pd.DataFrame())
     @patch("tabs.tab10_fund_flow.get_db_connection")
-    def test_main_fund_empty(self, mock_conn):
+    def test_main_fund_empty(self, mock_conn, mock_load):
         """Empty main fund shows info"""
         with patch("tabs.tab10_fund_flow.pd.read_sql_query", return_value=pd.DataFrame()):
-            render_tab10(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2026-05-20", "沪深300")
+            render_tab10()
 
+    @patch("tabs.tab10_fund_flow.load_positions", return_value=pd.DataFrame())
     @patch("tabs.tab10_fund_flow.get_db_connection")
-    def test_main_fund_with_data(self, mock_conn):
+    def test_main_fund_with_data(self, mock_conn, mock_load):
         """Main fund with data renders metrics"""
         mf_df = pd.DataFrame({
             "date": pd.date_range("2026-05-01", periods=5),
@@ -114,4 +116,4 @@ class TestTab10MainFund:
         })
         with patch("tabs.tab10_fund_flow.pd.read_sql_query", return_value=mf_df):
             with patch("tabs.tab10_fund_flow.pd.read_sql_query", return_value=mf_df):
-                render_tab10(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2026-05-20", "沪深300")
+                render_tab10()

@@ -136,7 +136,7 @@ class TestTab2ETFDetail:
             "全部", "全部", "全部", "沪深300ETF（510300）",
         ]
         from tabs.tab2_position import render_tab2
-        render_tab2(_make_positions(), _make_summary(), _make_index_quotes(), **KW)
+        render_tab2()
 
 
 class TestTab3Expander:
@@ -145,7 +145,7 @@ class TestTab3Expander:
     def test_expander_brinson_content(self):
         """expander 内 Brinson 归因内容不崩溃"""
         from tabs.tab3_risk import render_tab3
-        render_tab3(_make_positions(), _make_summary(), _make_index_quotes(), **KW)
+        render_tab3()
 
 
 class TestTab5Advanced:
@@ -153,11 +153,11 @@ class TestTab5Advanced:
 
     def test_monte_carlo_expander(self):
         from tabs.tab5_advanced import render_tab5
-        render_tab5(_make_positions(), _make_summary(), _make_index_quotes(), **KW)
+        render_tab5()
 
     def test_stress_test_expander(self):
         from tabs.tab5_advanced import render_tab5
-        render_tab5(_make_positions(), _make_summary(), _make_index_quotes(), **KW)
+        render_tab5()
 
 
 class TestTab7NewsDetail:
@@ -167,7 +167,7 @@ class TestTab7NewsDetail:
         global _selectbox_return_values
         _selectbox_return_values = ["沪深300ETF"] * 5
         from tabs.tab7_news import render_tab7
-        render_tab7(_make_positions(), _make_summary(), _make_index_quotes(), **KW)
+        render_tab7()
 
 
 class TestTab10ButtonPaths:
@@ -176,5 +176,5 @@ class TestTab10ButtonPaths:
     def test_refresh_button_pressed(self):
         mock_st.button = MagicMock(return_value=True)
         from tabs.tab10_fund_flow import render_tab10
-        render_tab10(_make_positions(), _make_summary(), _make_index_quotes(), **KW)
+        render_tab10()
         mock_st.button = MagicMock(return_value=False)

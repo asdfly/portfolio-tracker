@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
+from data_loader import load_positions, load_summary
 
 
 def load_technical(end_date=None):
@@ -386,9 +387,11 @@ def _render_rsi_chart(tech_df, n_total):
     st.plotly_chart(fig_rsi, width="stretch")
 
 
-def render_tab6(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab6():
+    selected_date = st.session_state.get("selected_date", "")
+    selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
     """渲染Tab6: 技术信号"""
-    technical = kwargs.get('technical', pd.DataFrame())
+    technical = pd.DataFrame()
     st.markdown(
         '<div class="tip-title" style="">技术信号总览</div>',
         unsafe_allow_html=True,

@@ -119,7 +119,7 @@ def _backtest_summary(backtest_data: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def render_tab13(**kwargs):
+def render_tab13():
     """渲染Tab13: 数据质量监控"""
     st.markdown(
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'

@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
+from data_loader import load_positions, load_summary
 
 
 
@@ -306,13 +307,17 @@ def _render_backtest_history(tab_obj, positions, summary, selected_date):
         except Exception as e:
             st.info(f"回测历史加载失败: {str(e)[:80]}")
 
-def render_tab9(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab9():
+    selected_date = st.session_state.get("selected_date", "")
+    selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
+    positions = load_positions(selected_date)
+    show_days = st.session_state.get("show_days", 250)
+    summary = load_summary(show_days, selected_date)
     """渲染Tab9: 自定义分析"""
-    # 从kwargs获取额外的变量
-    technical = kwargs.get('technical', pd.DataFrame())
-    volatility = kwargs.get('volatility', None)
-    max_dd = kwargs.get('max_dd', None)
-    sharpe = kwargs.get('sharpe', None)
+    technical = pd.DataFrame()
+    volatility = None
+    max_dd = None
+    sharpe = None
 
     st.caption("🔬 自定义技术指标组合回测，K线形态识别，量化验证交易策略")
 

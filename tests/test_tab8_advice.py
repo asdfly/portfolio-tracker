@@ -19,21 +19,24 @@ class TestTab8Importable:
         from tabs.tab8_advice import render_tab8
         sig = inspect.signature(render_tab8)
         params = list(sig.parameters.keys())
-        assert "positions" in params
-        assert "summary" in params
+        assert len(params) == 0, f"Expected no params, got {params}"
 
 
 class TestTab8EmptyPositions:
     """Test behavior with empty positions"""
 
+    @patch("tabs.tab8_advice.load_positions", return_value=pd.DataFrame())
+    @patch("tabs.tab8_advice.load_summary", return_value=pd.DataFrame())
     @patch("tabs.tab8_advice.st")
-    def test_empty_positions_shows_info(self, mock_st):
+    def test_empty_positions_shows_info(self, mock_st, mock_summary, mock_positions):
         """Empty positions shows info message"""
         from tabs.tab8_advice import render_tab8
+        mock_st.session_state = MagicMock()
+        mock_st.session_state.get = lambda key, default="": default
         mock_st.caption = MagicMock()
         mock_st.info = MagicMock()
         mock_st.markdown = MagicMock()
-        mock_st.columns = MagicMock(return_value=[MagicMock(), MagicMock()])
+        mock_st.columns = lambda n: [MagicMock() for _ in range(n)]
         mock_st.metric = MagicMock()
         mock_st.button = MagicMock(return_value=False)
         mock_st.download_button = MagicMock()
@@ -43,16 +46,18 @@ class TestTab8EmptyPositions:
         mock_st.expander = MagicMock(return_value=MagicMock())
         mock_st.plotly_chart = MagicMock()
 
-        render_tab8(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "2026-05-20", "沪深300")
+        render_tab8()
         mock_st.info.assert_called()
 
 
 class TestTab8WithPositions:
     """Test behavior with valid positions"""
 
+    @patch("tabs.tab8_advice.load_positions", return_value=pd.DataFrame())
+    @patch("tabs.tab8_advice.load_summary", return_value=pd.DataFrame())
     @patch("tabs.tab8_advice.st")
     @patch("tabs.tab8_advice._load_tech_signals", return_value=pd.DataFrame())
-    def test_with_positions_no_tech(self, mock_tech, mock_st):
+    def test_with_positions_no_tech(self, mock_tech, mock_st, mock_summary, mock_load_pos):
         """Positions without tech data shows suggestions from portfolio"""
         from tabs.tab8_advice import render_tab8
         positions = pd.DataFrame({
@@ -61,10 +66,12 @@ class TestTab8WithPositions:
             "current_price": [4.2], "market_value": [42000],
             "pnl": [2000], "pnl_rate": [5.0],
         })
+        mock_st.session_state = MagicMock()
+        mock_st.session_state.get = lambda key, default="": default
         mock_st.caption = MagicMock()
         mock_st.info = MagicMock()
         mock_st.markdown = MagicMock()
-        mock_st.columns = MagicMock(return_value=[MagicMock(), MagicMock()])
+        mock_st.columns = lambda n: [MagicMock() for _ in range(n)]
         mock_st.metric = MagicMock()
         mock_st.button = MagicMock(return_value=False)
         mock_st.download_button = MagicMock()
@@ -74,7 +81,7 @@ class TestTab8WithPositions:
         mock_st.expander = MagicMock(return_value=MagicMock())
         mock_st.plotly_chart = MagicMock()
 
-        render_tab8(positions, pd.DataFrame(), pd.DataFrame(), "2026-05-20", "沪深300")
+        render_tab8()
         # Should not crash
 
 

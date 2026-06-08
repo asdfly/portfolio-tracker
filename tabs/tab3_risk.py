@@ -9,6 +9,7 @@ import numpy as np
 from src.utils.chart_utils import downsample, _add_min_max_annotations
 from config.settings import ETF_CATEGORIES
 from src.utils.database import get_db_connection
+from data_loader import load_positions, load_summary
 
 
 def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
@@ -1517,7 +1518,12 @@ def _render_alert_trend_analysis(hist_alerts):
                 st.plotly_chart(fig_trend, width="stretch")
 
 
-def render_tab3(positions, summary, index_quotes, selected_date, selected_benchmark, **kwargs):
+def render_tab3():
+    selected_date = st.session_state.get("selected_date", "")
+    selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
+    positions = load_positions(selected_date)
+    show_days = st.session_state.get("show_days", 250)
+    summary = load_summary(show_days, selected_date)
     """渲染Tab3: 风险分析（重构版 - 子函数调用）"""
     profit_count = int((positions["pnl"] > 0).sum()) if not positions.empty else 0
     loss_count = int((positions["pnl"] < 0).sum()) if not positions.empty else 0
@@ -1528,9 +1534,9 @@ def render_tab3(positions, summary, index_quotes, selected_date, selected_benchm
     else:
         volatility = None
         max_dd = None
-    technical = kwargs.get('technical', pd.DataFrame())
-    sharpe = kwargs.get('sharpe', None)
-    show_days = kwargs.get('show_days', len(summary) if not summary.empty else 250)
+    technical = pd.DataFrame()
+    sharpe = None
+    show_days = st.session_state.get('show_days', 250)
 
     _render_risk_gauge_and_metrics(sharpe, volatility, max_dd, selected_date, summary, positions, profit_count, loss_count, show_days=show_days)
     _render_drawdown_chart(summary)
