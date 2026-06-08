@@ -60,40 +60,8 @@ def load_etf_price_history(code, days=250, end_date=None):
         return pd.DataFrame()
 
 
-def _render_etf_detail_panel(row, selected_date, total_value=0):
 
-    """渲染ETF增强版详情面板：核心指标 + 价格走势 + 技术分析"""
-
-    code = row["code"]
-
-    name = row["name"]
-
-
-
-    # 加载详细数据（命中缓存时零延迟）
-
-    detail_df, etf_name = load_etf_detail(code, days=120, end_date=selected_date)
-
-    price_df = load_etf_price_history(code, days=250, end_date=selected_date)
-
-
-
-    # ===== 第一行：核心指标卡片（6列） =====
-
-    mv = row.get("market_value", 0)
-
-    pnl = row.get("pnl", 0)
-
-    pnl_rate = row.get("pnl_rate", 0)
-
-    cost = row.get("cost_price", 0)
-
-    current = row.get("current_price", 0)
-
-    _qty = row.get("quantity", 0)
-
-
-
+def _render_etf_metrics(row, total_value):
     c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 
@@ -142,10 +110,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
         st.metric("现价", f"{current:.3f}" if pd.notna(current) else "--", delta=delta_str)
 
-
-
-    # ===== 第二行：价格走势图 + 技术指标详情 =====
-
+def _render_etf_price_chart(price_df, detail_df, cost, current, code, selected_date):
     if not price_df.empty:
 
         col_chart, col_tech = st.columns([3, 1])
@@ -400,10 +365,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
                 st.info("暂无技术指标数据")
 
-
-
-    # ===== 第三行：收益率分布 + 关键统计 =====
-
+def _render_etf_stats(detail_df, mv, total_value):
     if not detail_df.empty:
 
         col_stats, col_dist = st.columns([1, 2])
@@ -523,6 +485,19 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
                 )
 
                 st.plotly_chart(fig_hist, width="stretch")
+
+def _render_etf_detail_panel(row, selected_date, total_value=0):
+    """渲染ETF增强版详情面板：核心指标 + 价格走势 + 技术分析"""
+    code = row["code"]
+    name = row["name"]
+    detail_df, etf_name = load_etf_detail(code, days=120, end_date=selected_date)
+    price_df = load_etf_price_history(code, days=250, end_date=selected_date)
+
+    _render_etf_metrics(row, total_value)
+    _render_etf_price_chart(price_df, detail_df, row.get("cost_price", 0),
+                            row.get("current_price", 0), code, selected_date)
+    _render_etf_stats(detail_df, row.get("market_value", 0), total_value)
+
 
 
 

@@ -85,6 +85,7 @@ def create_sidebar():
             "选择基准指数",
             benchmark_options,
             index=0,
+            key="benchmark_select",
         )
 
         st.markdown("---")
