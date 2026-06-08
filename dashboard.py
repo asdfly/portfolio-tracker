@@ -1130,92 +1130,6 @@ def _render_overview(positions, summary, technical, effective_max_dd):
         )
 
 
-def _render_tab1_body(tab1):
-    """Wrapper for tab1_net_value.render_tab1"""
-    from tabs.tab1_net_value import render_tab1
-    with tab1:
-        render_tab1()
-
-def _render_tab2_position(tab2):
-    """Wrapper for tab2_position.render_tab2"""
-    from tabs.tab2_position import render_tab2
-    with tab2:
-        render_tab2()
-
-def _render_tab3_risk(tab3):
-    """Wrapper for tab3_risk.render_tab3"""
-    from tabs.tab3_risk import render_tab3
-    with tab3:
-        render_tab3()
-
-def _render_tab4_calendar(tab4):
-    """Wrapper for tab4_calendar.render_tab4"""
-    from tabs.tab4_calendar import render_tab4
-    with tab4:
-        render_tab4()
-
-def _render_tab6_technical(tab6):
-    """Wrapper for tab6_technical.render_tab6"""
-    from tabs.tab6_technical import render_tab6
-    with tab6:
-        render_tab6()
-
-def _render_tab7_news(tab7):
-    """Wrapper for tab7_news.render_tab7"""
-    from tabs.tab7_news import render_tab7
-    with tab7:
-        render_tab7()
-
-def _render_tab8_advice(tab8):
-    """Wrapper for tab8_advice.render_tab8"""
-    from tabs.tab8_advice import render_tab8
-    with tab8:
-        render_tab8()
-
-def _render_tab5_advanced(tab5):
-    """Wrapper for tab5_advanced.render_tab5"""
-    from tabs.tab5_advanced import render_tab5
-    with tab5:
-        render_tab5()
-
-def _render_tab9_custom(tab9):
-    """Wrapper for tab9_custom.render_tab9"""
-    from tabs.tab9_custom import render_tab9
-    with tab9:
-        render_tab9()
-
-def _render_tab10_fund_flow(tab10):
-    """Wrapper for tab10_fund_flow.render_tab10"""
-    from tabs.tab10_fund_flow import render_tab10
-    with tab10:
-        render_tab10()
-
-def _render_tab11_gold(tab11):
-    """Wrapper for tab11_gold.render_tab11"""
-    from tabs.tab11_gold import render_tab11
-    with tab11:
-        render_tab11()
-
-def _render_tab12_macro(tab12):
-    """Wrapper for tab12_macro.render_tab12"""
-    from tabs.tab12_macro import render_tab12
-    with tab12:
-        render_tab12()
-
-def _render_tab13_data_quality(tab13):
-    """Wrapper for tab13_data_quality.render_tab13"""
-    from tabs.tab13_data_quality import render_tab13
-    with tab13:
-        render_tab13()
-
-def _render_tab14_market_events(tab14):
-    """Wrapper for tab14_market_events.render_tab14"""
-    from tabs.tab14_market_events import render_tab14
-    with tab14:
-        render_tab14()
-
-
-
 def _render_overview_cards(total_value, total_pnl, total_return, daily_return, daily_pnl,
                           sharpe, effective_max_dd, volatility):
     """Render the 6-column overview metric cards row."""
@@ -1393,40 +1307,31 @@ def main():
     _render_overview_cards(total_value, total_pnl, total_return, daily_return, daily_pnl,
                             sharpe, effective_max_dd, volatility)
     # ========== 图表行1: 净值曲线 + 收益分布 ==========
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs(
-        [
-            "📈 净值走势",
-            "📊 持仓分布",
-            "⚠️ 风险分析",
-            "📅 收益日历",
-            "💠 高级分析",
-            "📡 技术信号",
-            "📰 资讯与评估",
-            "💡 操作建议",
-            "🔬 自定义指标",
-            "💰 资金动向",
-            "🥇 黄金市场",
-            "🌐 宏观市场",
-            "📊 数据质量",
-            "📋 市场事件",
-        ]
-    )
+    # Tab 注册表: (标签名, 模块路径, 渲染函数名)
+    # 新增 Tab 只需在此列表末尾追加一项即可
+    TAB_REGISTRY = [
+        ("📈 净值走势",   "tabs.tab1_net_value",        "render_tab1"),
+        ("📊 持仓分布",   "tabs.tab2_position",         "render_tab2"),
+        ("⚠️ 风险分析",   "tabs.tab3_risk",             "render_tab3"),
+        ("📅 收益日历",   "tabs.tab4_calendar",         "render_tab4"),
+        ("💠 高级分析",   "tabs.tab5_advanced",         "render_tab5"),
+        ("📡 技术信号",   "tabs.tab6_technical",        "render_tab6"),
+        ("📰 资讯与评估", "tabs.tab7_news",             "render_tab7"),
+        ("💡 操作建议",   "tabs.tab8_advice",           "render_tab8"),
+        ("🔬 自定义指标", "tabs.tab9_custom",           "render_tab9"),
+        ("💰 资金动向",   "tabs.tab10_fund_flow",       "render_tab10"),
+        ("🥇 黄金市场",   "tabs.tab11_gold",            "render_tab11"),
+        ("🌐 宏观市场",   "tabs.tab12_macro",           "render_tab12"),
+        ("📊 数据质量",   "tabs.tab13_data_quality",     "render_tab13"),
+        ("📋 市场事件",   "tabs.tab14_market_events",   "render_tab14"),
+    ]
+    tab_objects = st.tabs([label for label, _, _ in TAB_REGISTRY])
 
     _render_quick_stats(positions, profit_count, loss_count, technical)
-    _render_tab1_body(tab1)
-    _render_tab2_position(tab2)
-    _render_tab3_risk(tab3)
-    _render_tab4_calendar(tab4)
-    _render_tab5_advanced(tab5)
-    _render_tab6_technical(tab6)
-    _render_tab7_news(tab7)
-    _render_tab8_advice(tab8)
-    _render_tab9_custom(tab9)
-    _render_tab10_fund_flow(tab10)
-    _render_tab11_gold(tab11)
-    _render_tab12_macro(tab12)
-    _render_tab13_data_quality(tab13)
-    _render_tab14_market_events(tab14)
+    for tab_obj, (_, module_path, func_name) in zip(tab_objects, TAB_REGISTRY):
+        mod = __import__(module_path, fromlist=[func_name])
+        with tab_obj:
+            getattr(mod, func_name)()
 
 if __name__ == "__main__":
     main()
