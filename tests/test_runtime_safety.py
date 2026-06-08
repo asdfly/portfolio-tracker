@@ -226,11 +226,14 @@ class TestDelegateParameterCompleteness:
 
         errors = []
 
-        # 收集同模块顶级函数/类名，它们作为全局名称安全可访问
+        # 收集同模块顶级函数/类名 + import 名称，它们作为全局名称安全可访问
         module_level_names = set()
         for top in ast.iter_child_nodes(tree):
             if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 module_level_names.add(top.name)
+            elif isinstance(top, (ast.ImportFrom, ast.Import)):
+                for alias in top.names:
+                    module_level_names.add(alias.name if alias.asname is None else alias.asname)
 
         for node in ast.walk(tree):
 
