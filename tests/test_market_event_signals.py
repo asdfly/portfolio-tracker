@@ -143,7 +143,7 @@ class TestSignalEngineEdgeCases:
                      "'日涨幅偏离值达7%','游资',1000,500)")
         conn.execute("INSERT INTO stock_block_trade VALUES (1,'2026-06-01','600001','测试',-0.25,5000,'机构A')")
         engine = MarketEventSignalEngine(conn)
-        signals = engine.generate_all_signals(lookback_days=5)
+        signals = engine.generate_all_signals(end_date='2026-06-02', lookback_days=5)
         assert len(signals) >= 1
         types = [s.signal_type for s in signals]
         assert SignalType.OPPORTUNITY in types
@@ -171,7 +171,7 @@ class TestSignalEngineEdgeCases:
         conn.execute("INSERT INTO stock_lhb VALUES (2,'2026-05-21','600002','B',6.0,"
                      "'日涨幅偏离值达7%','x',0,0)")
         engine = MarketEventSignalEngine(conn)
-        signals = engine.generate_all_signals(lookback_days=5)
+        signals = engine.generate_all_signals(end_date='2026-05-22', lookback_days=5)
         if len(signals) >= 2:
             lo = {SignalLevel.HIGH: 0, SignalLevel.MEDIUM: 1, SignalLevel.LOW: 2}
             for i in range(len(signals) - 1):
