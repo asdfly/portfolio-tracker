@@ -12,6 +12,9 @@ from typing import Dict, List, Optional
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+# 配置中文字体，解决图表中文标签显示为方块的问题
+matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'SimSun']
+matplotlib.rcParams['axes.unicode_minus'] = False
 import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
