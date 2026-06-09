@@ -1,3 +1,4 @@
+from config.settings import CACHE_TTL
 """
 黄金分析公共工具函数：数据获取、指标计算、通用图表配置
 """
@@ -257,7 +258,7 @@ def calc_rsi(series, period=14):
     return rsi
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['long'], show_spinner=False)
 def fetch_china_reserve_data():
     """获取中国黄金储备和外汇储备月度数据（macro_china_fx_gold）
     Returns: DataFrame with columns [月份, 黄金储备, 外汇储备, 黄金储备同比, 黄金储备环比]
@@ -282,7 +283,7 @@ def fetch_china_reserve_data():
         return None
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['long'], show_spinner=False)
 def fetch_global_etf_holdings(years=2):
     """获取全球黄金ETF持仓数据（macro_cons_gold）
     默认只取近2年数据，足够支撑月度趋势和央行对比图表。
@@ -314,7 +315,7 @@ def fetch_global_etf_holdings(years=2):
         return None
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['long'], show_spinner=False)
 def fetch_comex_inventory():
     """获取COMEX黄金库存数据（futures_comex_inventory）
     Returns: DataFrame with columns [date, inventory_ton, inventory_oz]

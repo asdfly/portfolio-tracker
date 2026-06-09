@@ -118,6 +118,11 @@ DATA_SOURCES = {
     }
 }
 
+# 性能与缓存配置
+CACHE_TTL = {"short": 300, "medium": 600, "long": 3600}  # Streamlit cache TTL (秒)
+DOWNSAMPLE_MAX_POINTS = 500       # 图表降采样最大点数
+CHART_DAYS = {"short": 120, "default": 250, "long": 5000}  # 图表时间窗口 (交易日)
+
 # 指数代码配置
 INDEX_CODES = {
     "sh000001": "上证指数",

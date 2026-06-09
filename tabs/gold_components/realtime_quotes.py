@@ -2,6 +2,7 @@
 SGE多品种行情面板：品种表展示、分组筛选、点击品种查看K线走势
 """
 
+from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -20,7 +21,7 @@ SYMBOL_GROUPS = {
     "其他": ["PGC30g", "NYAuTN06", "NYAuTN12"],
 }
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=CACHE_TTL['medium'])
 def _get_symbol_table():
     """获取SGE品种表"""
     try:
@@ -36,7 +37,7 @@ def _get_symbol_table():
         pass
     return [s for group in SYMBOL_GROUPS.values() for s in group]
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=CACHE_TTL['short'])
 def _get_quotations():
     """获取SGE实时行情，失败时回退到历史数据最新交易日"""
     # 尝试 akshare 实时接口
@@ -82,7 +83,7 @@ def _get_quotations():
         pass
     return None
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _get_hist_for_symbol(symbol, n_days=90):
     """获取指定品种历史数据"""
     return fetch_sge_hist(symbol=symbol)

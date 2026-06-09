@@ -8,11 +8,11 @@ from datetime import date, datetime
 from data_loader import get_db_connection
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=CACHE_TTL['medium'])
 def _get_available_dates():
     """获取所有有数据的交易日期列表（缓存10分钟）"""
     import sqlite3
-    from config.settings import DATABASE_PATH
+    from config.settings import CACHE_TTL, DATABASE_PATH
 
     conn = get_db_connection()
     cur = conn.cursor()

@@ -2,6 +2,7 @@
 黄金技术信号面板：MACD + RSI + Bollinger Bands 三合一技术分析
 """
 
+from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -14,7 +15,7 @@ from tabs.gold_components.gold_utils import (
 )
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _get_gold_data(symbol, n_days):
     """获取并截取黄金K线数据"""
     df = fetch_sge_hist(symbol=symbol)

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from config.settings import DATABASE_PATH, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
+from config.settings import CHART_DAYS, DATABASE_PATH, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
 
 # ==================== 数据库初始化 ====================
 
@@ -343,7 +343,7 @@ def compute_rolling_metrics(window=60, end_date=None):
     result = pd.DataFrame({"date": df["date"], "rolling_sharpe": rolling_sharpe, "rolling_vol": rolling_vol}).dropna()
     return result
 
-def load_correlation_matrix(days=250, end_date=None):
+def load_correlation_matrix(days=CHART_DAYS["default"], end_date=None):
     """计算持仓ETF之间的皮尔逊相关系数矩阵（基于各ETF市值变动）"""
     conn = get_db_connection()
     if end_date:
@@ -406,7 +406,7 @@ def load_correlation_matrix(days=250, end_date=None):
 
     return corr, short_names
 
-def load_etf_detail(code, days=120, end_date=None):
+def load_etf_detail(code, days=CHART_DAYS["short"], end_date=None):
     """加载单只ETF的快照数据和技术指标（含成本价、持仓量）"""
     conn = get_db_connection()
 
@@ -473,7 +473,7 @@ def load_etf_detail(code, days=120, end_date=None):
 
     return df, etf_name
 
-def load_etf_price_history(code, days=250, end_date=None):
+def load_etf_price_history(code, days=CHART_DAYS["default"], end_date=None):
     """加载单只ETF的价格历史，用于绘制K线/走势图"""
     conn = get_db_connection()
     if end_date:
@@ -504,7 +504,7 @@ def load_etf_price_history(code, days=250, end_date=None):
 
     return df
 
-def load_benchmark_comparison(code, days=250, end_date=None):
+def load_benchmark_comparison(code, days=CHART_DAYS["default"], end_date=None):
     """加载指定基准指数行情，用于净值曲线对比"""
     conn = get_db_connection()
     if end_date:
@@ -527,7 +527,7 @@ def load_benchmark_comparison(code, days=250, end_date=None):
     conn.close()
     return df
 
-def load_sector_weights(days=250, end_date=None):
+def load_sector_weights(days=CHART_DAYS["default"], end_date=None):
     """加载按行业聚合的持仓权重历史（堆叠面积图数据源）"""
     query = """
         SELECT ps.date, ps.code, ps.market_value, ps.quantity, ps.current_price
@@ -681,7 +681,7 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         "sample_start": sample_start,
     }
 
-def compute_return_attribution(days=250, end_date=None):
+def compute_return_attribution(days=CHART_DAYS["default"], end_date=None):
     """Brinson 收益归因：将组合收益分解为行业配置效应和选股效应
 
     使用基准指数（沪深300）的行业权重作为参考基准。

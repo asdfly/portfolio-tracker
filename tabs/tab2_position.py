@@ -7,13 +7,13 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
-from config.settings import ETF_CATEGORIES, SECTOR_COLORS, DATABASE_PATH
+from config.settings import CHART_DAYS, DATABASE_PATH, ETF_CATEGORIES, SECTOR_COLORS
 from tabs._helpers import _render_etf_detail_panel
 from src.utils.database import get_db_connection
 from data_loader import load_positions, load_summary
 
 
-def load_correlation_matrix(days=250, end_date=None):
+def load_correlation_matrix(days=CHART_DAYS["default"], end_date=None):
     """计算持仓ETF之间的皮尔逊相关系数矩阵（基于各ETF市值变动）"""
     conn = get_db_connection()
     if end_date:
@@ -75,7 +75,7 @@ def load_correlation_matrix(days=250, end_date=None):
 
 
 
-def load_sector_weights(days=250, end_date=None):
+def load_sector_weights(days=CHART_DAYS["default"], end_date=None):
     """加载按行业聚合的持仓权重历史（堆叠面积图数据源）"""
     query = """
         SELECT ps.date, ps.code, ps.market_value, ps.quantity, ps.current_price

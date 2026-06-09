@@ -24,7 +24,7 @@ import sqlite3
 
 from PIL import Image
 
-from config.settings import DATABASE_PATH, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
+from config.settings import CACHE_TTL, DATABASE_PATH, DOWNSAMPLE_MAX_POINTS, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
 from data_loader import (
     _ensure_indexes, get_db_connection,
     load_positions, load_summary, load_index_quotes, load_technical,
@@ -156,7 +156,7 @@ def _add_min_max_annotations(fig, x_data, y_data, row=None, col=None, y_label=No
         )
 
 
-def downsample(df, date_col="date", max_points=500):
+def downsample(df, date_col="date", max_points=DOWNSAMPLE_MAX_POINTS):
     """将时间序列降采样到max_points个点，保留边界值"""
     n = len(df)
     if n <= max_points:
@@ -178,47 +178,47 @@ def downsample(df, date_col="date", max_points=500):
 # ==================== 数据读取工具（带缓存） ====================
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
 # ==================== P1: 持仓相关性矩阵 ====================
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
 # ==================== P1: 单只ETF详情数据 ====================
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
 def _render_etf_detail_panel(row, selected_date, total_value=0):
@@ -275,8 +275,8 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
             df = price_df.sort_values("date").copy()
 
             # 降采样
-            if len(df) > 500:
-                step = max(1, len(df) // 500)
+            if len(df) > DOWNSAMPLE_MAX_POINTS:
+                step = max(1, len(df) // DOWNSAMPLE_MAX_POINTS)
                 df_plot = df.iloc[::step].copy()
             else:
                 df_plot = df.copy()
@@ -452,26 +452,26 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
                 st.plotly_chart(fig_hist, width="stretch")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
 # ==================== P1: 多基准指数对比数据 ====================
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
 # ==================== 样式工具 ====================
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
 def export_positions_csv(positions_df, filename="持仓数据"):
@@ -844,10 +844,10 @@ td {{ padding: 5px 8px; }}
     return html
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
 def _render_overview(positions, summary, technical, effective_max_dd):

@@ -6,6 +6,7 @@
 - 外汇投机情绪（macro_fx_sentiment）：XAUUSD + USDX 多空比，可选加载
 """
 
+from config.settings import CACHE_TTL
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -15,7 +16,7 @@ from plotly.subplots import make_subplots
 from .gold_utils import fetch_sge_benchmark, fetch_global_etf_holdings
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['long'], show_spinner=False)
 def fetch_fx_sentiment_daily(start_date="20250601", end_date=""):
     """获取金十外汇投机情绪日频数据（XAUUSD + USDX）
 

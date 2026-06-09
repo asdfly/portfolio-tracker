@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-from config.settings import DATABASE_PATH
+from config.settings import CACHE_TTL, DATABASE_PATH
 from data_loader import get_db_connection
 
 
@@ -35,7 +35,7 @@ _COL_CN = {
 }
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=CACHE_TTL['medium'])
 
 
 def _load_market_events(table: str, days: int = 30) -> pd.DataFrame:
@@ -53,7 +53,7 @@ def _load_market_events(table: str, days: int = 30) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=CACHE_TTL['medium'])
 def _load_date_list(table: str) -> list:
     """获取指定表的可用日期列表"""
     conn = get_db_connection()

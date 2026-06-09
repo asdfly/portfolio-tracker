@@ -5,6 +5,7 @@
 帮助评估黄金作为组合对冲资产的有效性。
 """
 
+from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -15,7 +16,7 @@ from tabs.gold_components.gold_utils import fetch_sge_hist, DARK_BG, DARK_FONT_C
 from src.utils.database import get_db_connection
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _load_portfolio_returns(n_days=365):
     """加载投资组合日收益率"""
     conn = get_db_connection()
@@ -35,7 +36,7 @@ def _load_portfolio_returns(n_days=365):
     return df[["date", "portfolio_return"]].dropna()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _load_gold_returns(n_days=365):
     """加载Au99.99日收益率"""
     gold_df = fetch_sge_hist("Au99.99")
@@ -50,7 +51,7 @@ def _load_gold_returns(n_days=365):
     return gold_df[["date", "gold_return"]].dropna()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _compute_rolling_corr(port_df, gold_df, window=60):
     """计算滚动相关性"""
     merged = port_df.merge(gold_df, on="date", how="inner").sort_values("date")

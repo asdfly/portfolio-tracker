@@ -1,3 +1,4 @@
+from config.settings import DOWNSAMPLE_MAX_POINTS
 """
 图表与工具函数（从 dashboard.py 提取的纯函数）
 """
@@ -7,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 
-def downsample(df, date_col="date", max_points=500):
+def downsample(df, date_col="date", max_points=DOWNSAMPLE_MAX_POINTS):
     """将时间序列降采样到max_points个点，保留边界值"""
     n = len(df)
     if n <= max_points:

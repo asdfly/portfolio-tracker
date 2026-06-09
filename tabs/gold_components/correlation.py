@@ -2,6 +2,7 @@
 黄金定价因子相关性分析模块
 """
 
+from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -14,7 +15,7 @@ from tabs.gold_components.gold_utils import (
 )
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _fetch_factor_gold(n_days):
     """获取金价数据"""
     gold_df = fetch_sge_hist("Au99.99")
@@ -28,7 +29,7 @@ def _fetch_factor_gold(n_days):
     return gold_df[["date", "close"]].dropna().rename(columns={"close": "gold_price"})
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _fetch_factor_bonds():
     """获取中美国债收益率"""
     bond_df = fetch_bond_yields()
@@ -40,7 +41,7 @@ def _fetch_factor_bonds():
     return bond_daily
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=CACHE_TTL['long'])
 def _load_all_factors(n_days):
     """并发加载所有因子数据并对齐"""
     from concurrent.futures import ThreadPoolExecutor, as_completed

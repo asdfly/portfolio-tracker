@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
 from src.utils.chart_utils import downsample, _add_min_max_annotations
-from config.settings import INDEX_CODES
+from config.settings import CACHE_TTL, CHART_DAYS, DOWNSAMPLE_MAX_POINTS, INDEX_CODES
 import plotly.graph_objects as go
 from datetime import datetime
 
@@ -18,8 +18,8 @@ from datetime import datetime
 # ===== Stub 函数（替代 dashboard.py 中的外部数据加载函数）=====
 # 这些函数在数据库无数据时返回空结果，避免 NameError
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_etf_detail(code, days=120, end_date=None):
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
+def load_etf_detail(code, days=CHART_DAYS["short"], end_date=None):
     """加载ETF详情数据（从portfolio_snapshots获取历史持仓快照）"""
     conn = get_db_connection()
     try:
@@ -38,8 +38,8 @@ def load_etf_detail(code, days=120, end_date=None):
         return df.sort_values("date"), code
     except Exception:
         return pd.DataFrame(), ""
-@st.cache_data(ttl=300, show_spinner=False)
-def load_etf_price_history(code, days=250, end_date=None):
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
+def load_etf_price_history(code, days=CHART_DAYS["default"], end_date=None):
     """加载ETF价格历史（从portfolio_snapshots获取收盘价）"""
     conn = get_db_connection()
     try:
@@ -133,9 +133,9 @@ def _render_etf_price_chart(price_df, detail_df, cost, current, code, selected_d
 
             # 降采样
 
-            if len(df) > 500:
+            if len(df) > DOWNSAMPLE_MAX_POINTS:
 
-                step = max(1, len(df) // 500)
+                step = max(1, len(df) // DOWNSAMPLE_MAX_POINTS)
 
                 df_plot = df.iloc[::step].copy()
 
@@ -503,7 +503,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
 
@@ -751,7 +751,7 @@ td {{ padding: 5px 8px; }}
 
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['medium'], show_spinner=False)
 
 
 
@@ -783,7 +783,7 @@ def _load_latest_news(_categories):
 
         return pd.DataFrame()
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
 
 

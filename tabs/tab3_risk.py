@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from src.utils.chart_utils import downsample, _add_min_max_annotations
-from config.settings import ETF_CATEGORIES
+from config.settings import CHART_DAYS, DOWNSAMPLE_MAX_POINTS, ETF_CATEGORIES
 from src.utils.database import get_db_connection
 from data_loader import load_positions, load_summary
 
@@ -120,7 +120,7 @@ def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
 
 
 
-def compute_return_attribution(days=250, end_date=None):
+def compute_return_attribution(days=CHART_DAYS["default"], end_date=None):
     """Brinson 收益归因：将组合收益分解为行业配置效应和选股效应
 
     使用基准指数（沪深300）的行业权重作为参考基准。
@@ -266,7 +266,7 @@ def load_alerts(limit=10):
 
 
 
-def _render_risk_gauge_and_metrics(sharpe, volatility, max_dd, selected_date, summary, positions, profit_count, loss_count, show_days=250):
+def _render_risk_gauge_and_metrics(sharpe, volatility, max_dd, selected_date, summary, positions, profit_count, loss_count, show_days=CHART_DAYS["default"]):
     """渲染风险仪表盘和风险指标详情。"""
 
     """渲染Tab3: 风险分析"""
@@ -401,7 +401,7 @@ def _render_drawdown_chart(summary):
         dd_data["drawdown"] = (
             (dd_data["total_value"] - dd_data["total_value"].cummax()) / dd_data["total_value"].cummax() * 100
         )
-        dd_chart = downsample(dd_data, max_points=500)
+        dd_chart = downsample(dd_data, max_points=DOWNSAMPLE_MAX_POINTS)
 
         fig_dd = go.Figure()
         fig_dd.add_trace(

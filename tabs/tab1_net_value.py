@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from src.utils.chart_utils import downsample, _add_min_max_annotations, _fmt, _fmt_cell
-from config.settings import INDEX_CODES, BENCHMARK_NAME_TO_CODE
+from config.settings import BENCHMARK_NAME_TO_CODE, CHART_DAYS, DOWNSAMPLE_MAX_POINTS, INDEX_CODES
 from src.utils.database import get_db_connection
 import sqlite3
 from data_loader import load_positions, load_summary
@@ -22,7 +22,7 @@ def _resolve_benchmark_code(name_or_code):
     if name_or_code in INDEX_CODES:
         return name_or_code  # 已经是code格式如 "sh000300"
     return BENCHMARK_NAME_TO_CODE.get(name_or_code, name_or_code)
-def load_benchmark_comparison(code, days=250, end_date=None):
+def load_benchmark_comparison(code, days=CHART_DAYS["default"], end_date=None):
     """加载指定基准指数行情，用于净值曲线对比"""
     conn = get_db_connection()
     if end_date:
@@ -87,7 +87,7 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
             summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
 
             # 降采样用于图表渲染
-            chart_data = downsample(summary_plot, max_points=500)
+            chart_data = downsample(summary_plot, max_points=DOWNSAMPLE_MAX_POINTS)
 
             # 基准指数对比（使用侧边栏选择的基准）
             bench_name = INDEX_CODES.get(selected_benchmark, selected_benchmark)
@@ -97,7 +97,7 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
                 bench_base = bench_df.iloc[0]["close"]
                 bench_plot = bench_df.copy()
                 bench_plot["nav"] = bench_plot["close"] / bench_base * 100
-                bench_chart = downsample(bench_plot, max_points=500)
+                bench_chart = downsample(bench_plot, max_points=DOWNSAMPLE_MAX_POINTS)
 
                 fig = go.Figure()
                 fig.add_trace(
@@ -226,7 +226,7 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
         unsafe_allow_html=True,
     )
     if not summary.empty and "total_value" in summary.columns and len(summary) > 1:
-        bar_data = downsample(summary_ret[["date"]].copy(), max_points=500)
+        bar_data = downsample(summary_ret[["date"]].copy(), max_points=DOWNSAMPLE_MAX_POINTS)
         bar_data["daily_pnl"] = summary_ret["total_value"].diff().values
         colors = ["#22c55e" if dp >= 0 else "#ef4444" for dp in bar_data["daily_pnl"]]
         fig_bar = go.Figure()
@@ -270,7 +270,7 @@ def _render_rolling_charts(summary, selected_date, show_days):
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            rolling_chart = downsample(rolling_data, max_points=500)
+            rolling_chart = downsample(rolling_data, max_points=DOWNSAMPLE_MAX_POINTS)
 
             fig_roll = make_subplots(
                 rows=2,
@@ -510,7 +510,7 @@ def _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark,
                     summary_plot = summary.iloc[ps_idx:].copy()
                     base_value = summary_plot.iloc[0]["total_value"]
                     summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
-                    chart_data = downsample(summary_plot, max_points=500)
+                    chart_data = downsample(summary_plot, max_points=DOWNSAMPLE_MAX_POINTS)
 
                     fig_multi = go.Figure()
                     # 组合线（粗线）
@@ -536,7 +536,7 @@ def _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark,
                             b_base = bdf.iloc[0]["close"]
                             b_plot = bdf.copy()
                             b_plot["nav"] = b_plot["close"] / b_base * 100
-                            b_chart = downsample(b_plot, max_points=500)
+                            b_chart = downsample(b_plot, max_points=DOWNSAMPLE_MAX_POINTS)
 
                             fig_multi.add_trace(
                                 go.Scatter(
