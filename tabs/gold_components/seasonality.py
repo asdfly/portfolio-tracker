@@ -2,6 +2,7 @@
 黄金季节性规律分析模块
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -71,7 +72,7 @@ def render_seasonality():
         height=max(300, len(years) * 28 + 80),
         **base_layout(margin=dict(l=50, r=30, t=50, b=30)),
     )
-    st.plotly_chart(fig_heat, width='stretch')
+    render_chart(fig_heat)
 
     # 月度统计柱状图
     stats = monthly.groupby("month")["monthly_return"].agg(["mean", "std", "count", lambda x: (x > 0).sum()])
@@ -107,7 +108,7 @@ def render_seasonality():
     )
     fig_bar.update_yaxes(title_text="平均收益率(%)", gridcolor="#333", secondary_y=False)
     fig_bar.update_yaxes(title_text="上涨概率(%)", range=[0, 100], gridcolor="#333", secondary_y=True)
-    st.plotly_chart(fig_bar, width='stretch')
+    render_chart(fig_bar)
 
     st.markdown("---")
     st.markdown("**季节性规律摘要**")

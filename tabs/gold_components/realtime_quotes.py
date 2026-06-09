@@ -2,6 +2,7 @@
 SGE多品种行情面板：品种表展示、分组筛选、点击品种查看K线走势
 """
 
+from components.ui import render_chart, render_empty_state
 from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
@@ -154,7 +155,7 @@ def _render_kline_panel(symbol, n_days=90):
         margin=dict(l=50, r=30, t=35, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
     # 最新数据
     latest = df.iloc[-1]

@@ -1,4 +1,5 @@
 """黄金供需平衡分析（Phase 4.2）"""
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -32,8 +33,7 @@ def _render_supply_demand_cards(df_comex, df_etf, df_sge):
 
 
 def _render_comex_inventory_trend(df):
-    if df is None or df.empty:
-        st.info("暂无COMEX库存数据"); return
+    if render_empty_state(df, "暂无COMEX库存数据"): return
     recent = df[df["date"] >= df["date"].max() - pd.DateOffset(years=2)].copy()
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=recent["date"], y=recent["inventory_ton"], mode="lines",
@@ -41,12 +41,11 @@ def _render_comex_inventory_trend(df):
         line=dict(color="#a855f7", width=2), hovertemplate="%{x|%Y-%m-%d}<br>库存: %{y:,.1f} 吨<extra></extra>"))
     fig.update_layout(title="COMEX黄金库存趋势（近2年）", height=350, template="plotly_dark",
         margin=dict(l=50, r=50, t=40, b=30), xaxis=dict(rangeslider=dict(visible=False)))
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_etf_monthly_flow(df):
-    if df is None or df.empty:
-        st.info("暂无ETF持仓数据"); return
+    if render_empty_state(df, "暂无ETF持仓数据"): return
     df = df.copy()
     df["month"] = df["date"].dt.to_period("M")
     monthly = df.groupby("month")["change"].sum().reset_index()
@@ -58,7 +57,7 @@ def _render_etf_monthly_flow(df):
         hovertemplate="%{x}<br>净流入: %{y:+.1f} 吨<extra></extra>"))
     fig.update_layout(title="全球黄金ETF月度净流入（吨）", height=350, template="plotly_dark",
         margin=dict(l=50, r=50, t=40, b=30), xaxis=dict(tickangle=-45))
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_etf_vs_price(df_etf, df_sge):
@@ -89,7 +88,7 @@ def _render_etf_vs_price(df_etf, df_sge):
         xaxis=dict(tickangle=-45))
     fig.update_yaxes(title_text="净流入（吨）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="¥/g", secondary_y=True, side="right")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def render_supply_demand():

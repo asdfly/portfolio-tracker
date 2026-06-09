@@ -1,3 +1,4 @@
+from components.ui import render_chart, render_empty_state
 from src.utils.screenshot import capture_screenshot, export_pdf
 """
 Tab5: 高级分析
@@ -166,7 +167,7 @@ def _render_monte_carlo(summary, selected_date):
                 orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10, color="#8b949e")
             ),
         )
-        st.plotly_chart(fig_mc, width="stretch")
+        render_chart(fig_mc)
 
         # 模拟摘要
         mc_sum1, mc_sum2, mc_sum3, mc_sum4 = st.columns(4)
@@ -228,7 +229,7 @@ def _render_monte_carlo(summary, selected_date):
                 yaxis=dict(title="频次", showgrid=True, gridcolor="#21262d"),
                 showlegend=False, bargap=0.02,
             )
-            st.plotly_chart(fig_var_hist, width="stretch")
+            render_chart(fig_var_hist)
     else:
         st.info("历史数据不足（需要至少30个交易日），暂无法进行 Monte Carlo 模拟")
 
@@ -269,7 +270,7 @@ def _render_monte_carlo(summary, selected_date):
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                             font=dict(size=10, color="#8b949e")),
             )
-            st.plotly_chart(fig_conv, width="stretch")
+            render_chart(fig_conv)
             st.caption(f"*采样池: {mc_result['sample_count']} 条，过滤异常值: {mc_result['filtered_count']} 条，起始: {mc_result['sample_start']}")
 
 
@@ -333,7 +334,7 @@ def _render_risk_attribution(positions, summary, volatility):
                     yaxis=dict(autorange="reversed"),
                     showlegend=False,
                 )
-                st.plotly_chart(fig_risk, width="stretch")
+                render_chart(fig_risk)
 
                 # Risk attribution summary
                 ra_c1, ra_c2, ra_c3 = st.columns(3)
@@ -497,7 +498,7 @@ def _render_stress_test(positions, summary):
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                 xanchor="center", x=0.5, font=dict(size=10, color="#8b949e")),
                 )
-                st.plotly_chart(fig_radar, width="stretch")
+                render_chart(fig_radar)
 
         with st.expander("查看压力测试详情", expanded=False):
             for sr in stress_results:
@@ -641,7 +642,7 @@ def _render_rebalance_advice():
                     font=dict(size=10, color="#8b949e"),
                 ),
             )
-            st.plotly_chart(fig_rb, width="stretch")
+            render_chart(fig_rb)
 
             # 摘要指标
             rb_s1, rb_s2, rb_s3 = st.columns(3)
@@ -700,7 +701,7 @@ def _render_rebalance_advice():
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                 xanchor="right", x=1, font=dict(size=10, color="#8b949e")),
                 )
-                st.plotly_chart(fig_rebal_sim, width="stretch")
+                render_chart(fig_rebal_sim)
                 st.caption("*调仓后模拟基于近期实际收益率，假设调仓降低最大行业偏离后波动率相应下降。仅供参考。*")
 
             # 调仓明细
@@ -852,7 +853,7 @@ def _render_investment_review(volatility, tech_signals, summary):
                             xaxis=dict(title="", tickfont=dict(size=10, color="#8b949e"), gridcolor="#21262d"),
                             yaxis=dict(title="累计收益率%", tickfont=dict(size=10, color="#8b949e"), gridcolor="#21262d"),
                         )
-                        st.plotly_chart(fig_yr, width="stretch")
+                        render_chart(fig_yr)
                     else:
                         st.caption("暂无近年数据")
 
@@ -888,7 +889,7 @@ def _render_investment_review(volatility, tech_signals, summary):
                             xaxis=dict(tickfont=dict(size=10, color="#8b949e")),
                             yaxis=dict(tickfont=dict(size=10, color="#8b949e")),
                         )
-                        st.plotly_chart(fig_heat, width="stretch")
+                        render_chart(fig_heat)
                     else:
                         st.caption("暂无近年月度数据")
 
@@ -933,7 +934,7 @@ def _render_investment_review(volatility, tech_signals, summary):
                                 plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
                                 showlegend=False,
                             )
-                            st.plotly_chart(fig_sec, width="stretch")
+                            render_chart(fig_sec)
                         with sec_c2:
                             attr_rows = []
                             for _, sr in sector_pnl.iterrows():

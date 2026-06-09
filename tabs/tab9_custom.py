@@ -2,6 +2,7 @@
 Tab9: 自定义指标
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -116,7 +117,7 @@ def _render_indicator_backtest(tab_obj, positions, summary, selected_date, selec
                             margin=dict(l=40, r=20, t=10, b=30),
                             bargap=0.3,
                         )
-                        st.plotly_chart(fig_bt, width="stretch")
+                        render_chart(fig_bt)
 
         except Exception as e:
             st.info(f"指标回测模块暂不可用: {str(e)[:80]}")
@@ -240,7 +241,7 @@ def _render_candlestick_patterns(tab_obj, positions, summary, selected_date):
                                 margin=dict(l=40, r=20, t=10, b=30),
                                 xaxis_rangeslider_visible=False,
                             )
-                            st.plotly_chart(fig_k, width="stretch")
+                            render_chart(fig_k)
                     else:
                         st.info(f"近 {n_candle} 日未检测到经典K线形态")
         except Exception as e:
@@ -286,7 +287,7 @@ def _render_backtest_history(tab_obj, positions, summary, selected_date):
                 fig_wr.update_layout(height=max(200, len(ist)*35), margin=dict(l=130, r=20, t=5, b=10),
                                      xaxis_title="平均胜率(%)", xaxis_range=[0, 70],
                                      yaxis=dict(autorange="reversed"))
-                st.plotly_chart(fig_wr, width='stretch')
+                render_chart(fig_wr)
                 # 胜率箱线图
                 fig_box = go.Figure()
                 for _, row in ist.iterrows():
@@ -295,7 +296,7 @@ def _render_backtest_history(tab_obj, positions, summary, selected_date):
                 fig_box.update_layout(height=280, margin=dict(l=20, r=20, t=5, b=60),
                                       boxmode='group', yaxis_title="胜率(%)",
                                       legend=dict(orientation="h", yanchor="bottom", y=-0.3, font=dict(size=9)))
-                st.plotly_chart(fig_box, width='stretch')
+                render_chart(fig_box)
                 # 明细表
                 sel = st.selectbox("筛选指标", ["全部"] + sorted(hdf['indicator_name'].unique()), key="hist_sel")
                 sdf = hdf if sel == "全部" else hdf[hdf['indicator_name'] == sel]

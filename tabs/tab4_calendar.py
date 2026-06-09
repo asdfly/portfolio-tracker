@@ -2,6 +2,7 @@
 Tab4: 收益日历
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 from datetime import datetime
 import calendar
@@ -321,7 +322,7 @@ def _render_heatmap():
             xaxis=dict(title="", showgrid=False, side="top"),
             yaxis=dict(title="", showgrid=False, autorange="reversed"),
         )
-        st.plotly_chart(fig_heat, width="stretch")
+        render_chart(fig_heat)
 
 
 def _render_annual_trend(all_cal):
@@ -370,7 +371,7 @@ def _render_annual_trend(all_cal):
             yaxis2=dict(title="年化收益率 (%)", overlaying="y", side="right",
                         gridcolor="rgba(255,255,255,0.05)"),
         )
-        st.plotly_chart(fig_cum, width="stretch")
+        render_chart(fig_cum)
 
 
 def _render_boxplot(all_cal):
@@ -406,7 +407,7 @@ def _render_boxplot(all_cal):
                 showlegend=False,
                 boxmode="group",
             )
-            st.plotly_chart(fig_box, width="stretch")
+            render_chart(fig_box)
 
 def _render_event_calendar():
     st.markdown("---")

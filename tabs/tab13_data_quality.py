@@ -3,6 +3,7 @@ Tab13: 数据质量监控面板
 展示数据新鲜度、覆盖率、回测完整度、综合质量评分
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -143,7 +144,7 @@ def render_tab13():
 
     with col_score:
         fig = _score_ring(report["total_score"], report["grade"])
-        st.plotly_chart(fig, width='stretch')
+        render_chart(fig)
 
     with col_dims:
         dims = [
@@ -174,7 +175,7 @@ def render_tab13():
     )
     freshness = report["details"]["freshness"]
     fig_fresh = _freshness_heatmap(freshness)
-    st.plotly_chart(fig_fresh, width='stretch')
+    render_chart(fig_fresh)
 
     # 新鲜度详情表
     fresh_rows = []
@@ -305,7 +306,7 @@ def render_tab13():
                                  legend=dict(orientation="h", yanchor="bottom", y=1.02),
                                  yaxis=dict(title="次数", gridcolor="#21262d"),
                                  yaxis2=dict(title="耗时(秒)", gridcolor="#21262d", overlaying="y", side="right"))
-            st.plotly_chart(fig_el, width='stretch')
+            render_chart(fig_el)
 
         # 详细表
         disp_el = el_df[['task_name', 'status', 'run_count', 'avg_duration', 'first_run', 'last_run']].copy()

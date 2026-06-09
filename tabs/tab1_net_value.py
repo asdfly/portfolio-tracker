@@ -2,6 +2,7 @@
 Tab1: 净值走势
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -113,7 +114,7 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
                 xaxis=dict(showgrid=False),
                 yaxis=dict(title="净值 (基准100)", showgrid=True, gridcolor="#21262d"),
             )
-            st.plotly_chart(fig, width="stretch")
+            render_chart(fig)
 
     with col_right:
         st.markdown(
@@ -176,7 +177,7 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
                     yaxis=dict(title="天数", showgrid=True, gridcolor="#21262d"),
                     showlegend=False,
                 )
-                st.plotly_chart(fig_hist, width="stretch")
+                render_chart(fig_hist)
 
                 # 补充统计指标
                 median_ret = np.median(daily_rets)
@@ -209,7 +210,7 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
             xaxis=dict(showgrid=False, tickfont=dict(size=9)),
             yaxis=dict(title="盈亏 (¥)", showgrid=True, gridcolor="#21262d"),
         )
-        st.plotly_chart(fig_bar, width="stretch")
+        render_chart(fig_bar)
 
 
 
@@ -294,7 +295,7 @@ def _render_rolling_charts(summary, selected_date, show_days):
             fig_roll.update_xaxes(showgrid=False, row=2, col=1)
             fig_roll.update_yaxes(title_text="夏普比率", showgrid=True, gridcolor="#21262d", row=1, col=1)
             fig_roll.update_yaxes(title_text="波动率 (%)", showgrid=True, gridcolor="#21262d", row=2, col=1)
-            st.plotly_chart(fig_roll, width="stretch")
+            render_chart(fig_roll)
 
 
 
@@ -538,7 +539,7 @@ def _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark,
                         yaxis=dict(title="净值 (基准100)", showgrid=True, gridcolor="#21262d"),
                         hovermode="x unified",
                     )
-                    st.plotly_chart(fig_multi, width="stretch")
+                    render_chart(fig_multi)
 
                     # 多基准收益排行卡片
                     if bench_stats:
@@ -808,7 +809,7 @@ def _render_annual_returns(summary):
                 yaxis=dict(title="年度收益率 (%)", showgrid=True, gridcolor="#21262d"),
                 showlegend=False,
             )
-            st.plotly_chart(fig_annual, width="stretch")
+            render_chart(fig_annual)
 
 
 def render_tab1():

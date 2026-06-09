@@ -5,6 +5,7 @@
 帮助评估黄金作为组合对冲资产的有效性。
 """
 
+from components.ui import render_chart, render_empty_state
 from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
@@ -78,12 +79,8 @@ def render_gold_portfolio_correlation():
     port_df = _load_portfolio_returns(n_days)
     gold_df = _load_gold_returns(n_days)
     
-    if port_df.empty:
-        st.info("暂无投资组合数据")
-        return
-    if gold_df.empty:
-        st.info("暂无黄金价格数据")
-        return
+    if render_empty_state(port_df, "暂无投资组合数据"): return
+    if render_empty_state(gold_df, "暂无黄金价格数据"): return
     
     # 合并数据
     merged = port_df.merge(gold_df, on="date", how="inner").sort_values("date")
@@ -139,7 +136,7 @@ def render_gold_portfolio_correlation():
             legend=dict(orientation="h", yanchor="bottom", y=1.02,
                         font=dict(size=10, color="#8b949e")),
         )
-        st.plotly_chart(fig_rolling, width="stretch")
+        render_chart(fig_rolling)
     
     # 收益率散点图
     fig_scatter = go.Figure()
@@ -174,4 +171,4 @@ def render_gold_portfolio_correlation():
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     font=dict(size=10, color="#8b949e")),
     )
-    st.plotly_chart(fig_scatter, width="stretch")
+    render_chart(fig_scatter)

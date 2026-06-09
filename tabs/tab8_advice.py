@@ -2,6 +2,7 @@
 Tab8: 操作建议
 """
 
+from components.ui import render_chart, render_empty_state
 import os
 from datetime import datetime
 import streamlit as st
@@ -214,7 +215,7 @@ def _render_suggestion_pie(suggestions, action_colors):
                 showlegend=False,
                 annotations=[dict(text=f"{len(suggestions)}只", x=0.5, y=0.5, font_size=20, font_color="#c9d1d9", showarrow=False)],
             )
-            st.plotly_chart(fig_pie)
+            render_chart(fig_pie)
 
         with viz_col2:
             # 信号强度热力图 (ETF x 指标维度)
@@ -255,7 +256,7 @@ def _render_suggestion_pie(suggestions, action_colors):
                 xaxis=dict(tickfont=dict(size=10, color="#8b949e")),
                 yaxis=dict(tickfont=dict(size=10, color="#c9d1d9")),
             )
-            st.plotly_chart(fig_heat)
+            render_chart(fig_heat)
 
 
 def _render_suggestion_details(suggestions, action_colors):

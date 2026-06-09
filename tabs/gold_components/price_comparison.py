@@ -2,6 +2,7 @@
 上海金基准价 vs SGE现货价格对比模块
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -101,7 +102,7 @@ def render_price_comparison():
         yaxis=dict(title="价格(元/克)", gridcolor="#333"),
         height=400, **base_layout(),
     )
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
     # 价差图
     if show_spread:
@@ -123,4 +124,4 @@ def render_price_comparison():
             yaxis=dict(title="价差(元/克)", gridcolor="#333"),
             height=300, **base_layout(),
         )
-        st.plotly_chart(fig_sp, width='stretch')
+        render_chart(fig_sp)

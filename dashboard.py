@@ -10,6 +10,7 @@
 - sidebar.py — 侧边栏 UI 与自定义样式
 """
 
+from components.ui import render_chart, render_empty_state
 import io
 import base64
 from datetime import datetime
@@ -319,7 +320,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
                 yaxis=dict(showgrid=True, gridcolor="#21262d", tickformat=".3f"),
                 hovermode="x unified",
             )
-            st.plotly_chart(fig, width="stretch")
+            render_chart(fig)
 
         with col_tech:
             st.markdown(
@@ -449,7 +450,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
                     yaxis=dict(title="频次", showgrid=True, gridcolor="#21262d"),
                     bargap=0.05,
                 )
-                st.plotly_chart(fig_hist, width="stretch")
+                render_chart(fig_hist)
 
 
 @st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
@@ -1081,9 +1082,7 @@ def main():
             load_summary(_days, available_dates[0])
             load_benchmark_comparison(selected_benchmark, _days, available_dates[0])
 
-    if positions.empty:
-        st.warning(f"{selected_date} 无持仓数据")
-        return
+    if render_empty_state(positions, f"{selected_date} 无持仓数据", warn=True): return
 
     # ========== 概览指标 ==========
     latest_summary = summary.iloc[-1] if not summary.empty else {}

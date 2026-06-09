@@ -3,6 +3,7 @@ Tab14: 市场事件监控面板
 展示龙虎榜、融资融券、股东增减持、机构调研、大宗交易数据。
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
@@ -87,9 +88,7 @@ def _render_lhb_panel():
         st.caption(f"共 {len(dates)} 个交易日有数据")
     
     df = _load_market_events("stock_lhb", 90)
-    if df.empty:
-        st.info("所选日期无数据")
-        return
+    if render_empty_state(df, "所选日期无数据"): return
     
     day_df = df[df['date'] == sel_date].copy()
     
@@ -122,7 +121,7 @@ def _render_lhb_panel():
         ))
         fig_freq.update_layout(height=max(200, len(freq)*30), margin=dict(l=120, r=20, t=5, b=10),
                                xaxis_title="上榜次数", yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_freq, width='stretch')
+        render_chart(fig_freq)
 
     # 深度分析: 净买入金额趋势(近30日合计)
     if 'lhb_net_buy' in df.columns and not df.empty:
@@ -137,7 +136,7 @@ def _render_lhb_panel():
                                      marker_color=colors, opacity=0.8))
         fig_trend.update_layout(height=220, margin=dict(l=40, r=20, t=5, b=30),
                                 xaxis_title="", yaxis_title="净买入(亿)", bargap=0.3)
-        st.plotly_chart(fig_trend, width='stretch')
+        render_chart(fig_trend)
 
     # 数据表
     show_cols = ['code', 'name', 'close', 'change_pct', 'lhb_net_buy',
@@ -216,7 +215,7 @@ def _render_margin_panel():
             ))
             fig_top.update_layout(height=max(200, len(top10)*30), margin=dict(l=120, r=20, t=5, b=10),
                                   xaxis_title="融资余额(亿)", yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_top, width='stretch')
+            render_chart(fig_top)
 
     # 深度分析: 融资余额日变化趋势
     if 'margin_balance' in df.columns and not df.empty:
@@ -235,7 +234,7 @@ def _render_margin_panel():
                                      line=dict(color='#58a6ff', width=2), marker=dict(size=4)))
         fig_mt.update_layout(height=220, margin=dict(l=40, r=20, t=5, b=30),
                              xaxis_title="", yaxis_title="融资余额(亿)")
-        st.plotly_chart(fig_mt, width='stretch')
+        render_chart(fig_mt)
 
     # 数据表
     show_cols = ['code', 'name', 'margin_balance', 'margin_buy', 'margin_repay',
@@ -262,9 +261,7 @@ def _render_holder_change_panel():
     st.markdown("#### 股东增减持")
     
     df = _load_market_events("stock_holder_change", 30)
-    if df.empty:
-        st.info("暂无股东增减持数据")
-        return
+    if render_empty_state(df, "暂无股东增减持数据"): return
     
     # 日期筛选
     dates = sorted(df['date'].unique(), reverse=True)
@@ -303,7 +300,7 @@ def _render_holder_change_panel():
                                 name='减持(万股)', marker_color='#ef4444', opacity=0.8))
         fig_hc.update_layout(height=220, margin=dict(l=40, r=20, t=5, b=30),
                              xaxis_title="", yaxis_title="变动量(万股)", barmode='relative')
-        st.plotly_chart(fig_hc, width='stretch')
+        render_chart(fig_hc)
 
     # 深度分析: 减持规模TOP10
     st.markdown(
@@ -323,7 +320,7 @@ def _render_holder_change_panel():
             ))
             fig_dec.update_layout(height=max(200, len(top_dec)*30), margin=dict(l=120, r=20, t=5, b=10),
                                   xaxis_title="减持量(万股)", yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_dec, width='stretch')
+            render_chart(fig_dec)
 
     # 数据表
     show_cols = ['code', 'name', 'holder_name', 'holder_type', 'qty_change',
@@ -353,9 +350,7 @@ def _render_institution_panel():
     st.markdown("#### 机构调研")
     
     df = _load_market_events("stock_institution_research", 30)
-    if df.empty:
-        st.info("暂无机构调研数据")
-        return
+    if render_empty_state(df, "暂无机构调研数据"): return
     
     dates = sorted(df['date'].unique(), reverse=True)
     col1, col2 = st.columns([1, 3])
@@ -394,7 +389,7 @@ def _render_institution_panel():
             xaxis_title="调研次数",
             yaxis=dict(autorange="reversed"),
         )
-        st.plotly_chart(fig, width="stretch")
+        render_chart(fig)
     
     # 深度分析: 调研热度趋势(被调研公司数)
     st.markdown(
@@ -419,7 +414,7 @@ def _render_institution_panel():
                              legend=dict(orientation="h", yanchor="bottom", y=1.02))
         fig_jt.update_yaxes(title_text="公司数", secondary_y=False)
         fig_jt.update_yaxes(title_text="机构数", secondary_y=True)
-        st.plotly_chart(fig_jt, width='stretch')
+        render_chart(fig_jt)
 
     # 深度分析: 机构类型分布
     if not df.empty and 'inst_type' in df.columns:
@@ -430,7 +425,7 @@ def _render_institution_panel():
                                         marker_colors=px.colors.qualitative.Set2[:len(type_dist)]))
             fig_pie.update_layout(height=250, margin=dict(l=20, r=20, t=5, b=5),
                                   legend=dict(font=dict(size=10), orientation="h", yanchor="bottom", y=-0.1))
-            st.plotly_chart(fig_pie, width='stretch')
+            render_chart(fig_pie)
 
     # 数据表
     show_cols = ['code', 'name', 'price', 'change_pct', 'institution',
@@ -500,7 +495,7 @@ def _render_block_trade_panel():
                 yaxis_title="笔数",
                 bargap=0.05,
             )
-            st.plotly_chart(fig, width="stretch")
+            render_chart(fig)
     
     # 深度分析: 买方营业部TOP10（按成交额）
     st.markdown(
@@ -518,7 +513,7 @@ def _render_block_trade_panel():
         fig_broker.update_layout(height=max(200, len(broker_buy)*30),
                                  margin=dict(l=200, r=20, t=5, b=10),
                                  xaxis_title="成交额(亿)", yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_broker, width='stretch')
+        render_chart(fig_broker)
 
     # 深度分析: 日成交额趋势
     if not df.empty and 'amount' in df.columns:
@@ -543,7 +538,7 @@ def _render_block_trade_panel():
                              legend=dict(orientation="h", yanchor="bottom", y=1.02))
         fig_bt.update_yaxes(title_text="成交额(亿)", secondary_y=False)
         fig_bt.update_yaxes(title_text="折溢率(%)", secondary_y=True)
-        st.plotly_chart(fig_bt, width='stretch')
+        render_chart(fig_bt)
 
     # 数据表
     show_cols = ['code', 'name', 'close', 'trade_price', 'premium_rate',

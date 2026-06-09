@@ -1,3 +1,4 @@
+from components.ui import render_chart, render_empty_state
 import sqlite3
 """
 Tab2: 持仓分布
@@ -195,7 +196,7 @@ def _render_etf_filter(positions, summary, technical, selected_date):
                 margin=dict(l=10, r=10, t=10, b=10),
                 showlegend=False,
             )
-            st.plotly_chart(fig_pie, width="stretch")
+            render_chart(fig_pie)
 
     with col_table:
         st.markdown(
@@ -340,7 +341,7 @@ def _render_sector_weights(positions, summary, selected_date):
             yaxis=dict(title="权重 %", showgrid=True, gridcolor="#21262d"),
             hovermode="x unified",
         )
-        st.plotly_chart(fig_sector, width="stretch")
+        render_chart(fig_sector)
 
         # 行业权重摘要卡片
         latest_weights = sector_weight_df.iloc[-1]
@@ -388,7 +389,7 @@ def _render_correlation_matrix(positions, selected_date):
         )
         fig_corr.update_xaxes(showgrid=False)
         fig_corr.update_yaxes(showgrid=False)
-        st.plotly_chart(fig_corr, width="stretch")
+        render_chart(fig_corr)
         st.caption(f"基于最近250个交易日的市值日收益率计算 | 数据截至 {selected_date}")
     else:
         st.info("持仓数据不足，暂无法计算相关性矩阵")
@@ -444,7 +445,7 @@ def _render_deep_analysis(positions, summary):
                     margin=dict(l=80, r=40, t=10, b=30),
                     showlegend=False,
                 )
-                st.plotly_chart(fig_hhi, width="stretch")
+                render_chart(fig_hhi)
 
         with col_beta:
             # Beta贡献分析
@@ -478,7 +479,7 @@ def _render_deep_analysis(positions, summary):
                         margin=dict(l=80, r=40, t=10, b=30),
                         showlegend=False,
                     )
-                    st.plotly_chart(fig_beta, width="stretch")
+                    render_chart(fig_beta)
                 else:
                     st.caption("暂无有效Beta数据")
             else:
@@ -525,7 +526,7 @@ def _render_cumulative_pnl(positions):
             ),
             bargap=0.35,
         )
-        st.plotly_chart(fig_pnl, width="stretch")
+        render_chart(fig_pnl)
         # 汇总统计
         total_pnl = positions["pnl"].sum()
         profit_positions = positions[positions["pnl"] > 0]

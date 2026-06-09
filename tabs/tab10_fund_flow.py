@@ -2,6 +2,7 @@
 Tab10: 资金动向
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -69,7 +70,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                         margin=dict(l=80, r=30, t=35, b=30),
                         bargap=0.2,
                     )
-                    st.plotly_chart(fig_sf, width="stretch")
+                    render_chart(fig_sf)
                     # TOP10行业资金净流入时间趋势
                     if sector_df["date"].nunique() >= 3:
                         # 只选至少有30天数据的行业，避免单日行业被选中导致趋势线无意义
@@ -121,7 +122,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                                     groupclick="toggleitem",
                                 ),
                             )
-                            st.plotly_chart(fig_trend, width="stretch")
+                            render_chart(fig_trend)
                 # 多日趋势热力图
                 if sector_df["date"].nunique() >= 3:
                     # 取最近30个交易日
@@ -166,7 +167,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                             yaxis=dict(tickfont=dict(size=10)),
                         )
 
-                        st.plotly_chart(fig_heat, width="stretch")
+                        render_chart(fig_heat)
 
                 # ===== 深度分析: 资金流背离信号 =====
                 st.markdown(
@@ -295,7 +296,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                                     height=250, margin=dict(l=50, r=20, t=10, b=30),
                                     showlegend=False,
                                 )
-                                st.plotly_chart(fig_speed, width="stretch")
+                                render_chart(fig_speed)
                 except Exception:  # UI渲染降级：风格切换图表
                     pass
             else:
@@ -410,7 +411,7 @@ def _render_etf_fund_flow(tab_obj, positions):
                             ),
                             showlegend=True,
                         )
-                        st.plotly_chart(fig_ef, width="stretch")
+                        render_chart(fig_ef)
                     with col_p2:
                         total_net = etf_single["net_inflow"].sum()
                         st.metric(
@@ -564,7 +565,7 @@ def _render_main_force_flow(tab_obj):
                     margin=dict(l=50, r=50, t=10, b=30),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10, color="#8b949e")),
                 )
-                st.plotly_chart(fig_mf, width="stretch")
+                render_chart(fig_mf)
 
                 # ----- 持仓ETF合计主力资金净流入 -----
                 st.markdown(
@@ -643,7 +644,7 @@ def _render_main_force_flow(tab_obj):
                                 orientation="h", yanchor="bottom", y=1.02, font=dict(size=10, color="#8b949e")
                             ),
                         )
-                        st.plotly_chart(fig_etf_total, width="stretch")
+                        render_chart(fig_etf_total)
                     else:
                         st.info("暂无ETF资金流数据")
                 except Exception as e2:

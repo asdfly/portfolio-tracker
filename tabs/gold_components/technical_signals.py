@@ -2,6 +2,7 @@
 黄金技术信号面板：MACD + RSI + Bollinger Bands 三合一技术分析
 """
 
+from components.ui import render_chart, render_empty_state
 from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
@@ -216,7 +217,7 @@ def render_technical_signals():
     fig.update_yaxes(gridcolor=GRID_COLOR, row=2, col=1)
     fig.update_yaxes(gridcolor=GRID_COLOR, row=3, col=1, range=[0, 100])
 
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
     with st.expander("技术指标解读", expanded=False):
         col_a, col_b = st.columns(2)
@@ -316,7 +317,7 @@ def render_technical_signals():
     fig.update_yaxes(gridcolor=GRID_COLOR, row=1, col=1)
     fig.update_yaxes(gridcolor=GRID_COLOR, row=2, col=1)
     fig.update_yaxes(gridcolor=GRID_COLOR, row=3, col=1, range=[0, 100])
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
     with st.expander("技术指标解读", expanded=False):
         col_a, col_b = st.columns(2)

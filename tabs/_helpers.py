@@ -3,6 +3,7 @@ Dashboard 辅助函数（依赖 streamlit / database / 外部数据源）
 从 dashboard.py 提取，供各 Tab 模块调用。
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -221,7 +222,7 @@ def _render_etf_price_chart(price_df, detail_df, cost, current, code, selected_d
 
             )
 
-            st.plotly_chart(fig, width="stretch")
+            render_chart(fig)
 
 
 
@@ -484,7 +485,7 @@ def _render_etf_stats(detail_df, mv, total_value):
 
                 )
 
-                st.plotly_chart(fig_hist, width="stretch")
+                render_chart(fig_hist)
 
 def _render_etf_detail_panel(row, selected_date, total_value=0):
     """渲染ETF增强版详情面板：核心指标 + 价格走势 + 技术分析"""

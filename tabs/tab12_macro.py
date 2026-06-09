@@ -3,6 +3,7 @@ Tab12: 宏观市场数据面板
 展示汇率、国债收益率、黄金基准、LPR、Shibor、两融余额等宏观数据
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -121,9 +122,7 @@ def render_tab12():
 def _render_exchange_rate(days: int):
     """USD/CNY汇率"""
     df = _load_macro_data(["USD_CNY"], days)
-    if df.empty:
-        st.info("暂无USD/CNY汇率数据")
-        return
+    if render_empty_state(df, "暂无USD/CNY汇率数据"): return
 
     df = df.sort_values("date")
     latest = df.iloc[-1]
@@ -139,16 +138,14 @@ def _render_exchange_rate(days: int):
                              name="USD/CNY", line=dict(color="#58a6ff", width=2),
                              hovertemplate="%{x|%Y-%m-%d}<br>汇率: %{y:.4f}<extra></extra>"))
     fig = _style_fig(fig, "USD/CNY 美元兑人民币汇率")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_bond_yields(days: int):
     """中美国债收益率对比"""
     codes = ["CN_10Y_BOND", "US_10Y_BOND", "CN_2Y_BOND", "US_2Y_BOND", "CN_US_SPREAD"]
     df = _load_macro_data(codes, days)
-    if df.empty:
-        st.info("暂无国债收益率数据")
-        return
+    if render_empty_state(df, "暂无国债收益率数据"): return
 
     pivot = df.pivot_table(index="date", columns="indicator_code", values="value", aggfunc="first").reset_index()
     pivot["date"] = pd.to_datetime(pivot["date"])
@@ -187,15 +184,13 @@ def _render_bond_yields(days: int):
     fig.update_yaxes(title_text="利差 (bp)", secondary_y=True, gridcolor="#21262d")
     fig = _style_fig(fig, "中美国债收益率对比 (10Y)")
     fig.update_layout(xaxis=dict(gridcolor="#21262d", rangeslider=dict(visible=False)))
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_gold_benchmark(days: int):
     """黄金基准价格（COMEX + SGE）"""
     df = _load_macro_data(["COMEX_GOLD", "SGE_GOLD"], days)
-    if df.empty:
-        st.info("暂无黄金基准数据")
-        return
+    if render_empty_state(df, "暂无黄金基准数据"): return
 
     pivot = df.pivot_table(index="date", columns="indicator_code", values="value", aggfunc="first").reset_index()
     pivot["date"] = pd.to_datetime(pivot["date"])
@@ -227,7 +222,7 @@ def _render_gold_benchmark(days: int):
     fig.update_yaxes(title_text="¥/g", secondary_y=True, gridcolor="#21262d")
     fig = _style_fig(fig, "COMEX黄金 vs 上海金基准价")
     fig.update_layout(xaxis=dict(gridcolor="#21262d", rangeslider=dict(visible=False)))
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_interest_rates(days: int):
@@ -268,7 +263,7 @@ def _render_interest_rates(days: int):
                                              marker=dict(size=4)))
             fig = _style_fig(fig, "")
             fig.update_layout(height=300)
-            st.plotly_chart(fig, width='stretch')
+            render_chart(fig)
 
     with col_shibor:
         st.markdown(
@@ -288,15 +283,13 @@ def _render_interest_rates(days: int):
                                      fill="tozeroy", fillcolor="rgba(34,197,94,0.1)"))
             fig = _style_fig(fig, "")
             fig.update_layout(height=300)
-            st.plotly_chart(fig, width='stretch')
+            render_chart(fig)
 
 
 def _render_margin_data(days: int):
     """两融余额（沪深合计）"""
     df = _load_sentiment_data(["MARGIN_TOTAL", "MARGIN_上", "MARGIN_深"], days)
-    if df.empty:
-        st.info("暂无两融余额数据")
-        return
+    if render_empty_state(df, "暂无两融余额数据"): return
 
     # 合计余额
     total = df[df["indicator_code"] == "MARGIN_TOTAL"].sort_values("date")
@@ -336,15 +329,13 @@ def _render_margin_data(days: int):
     fig.update_yaxes(title_text="日变化(亿元)", secondary_y=True, gridcolor="#21262d")
     fig = _style_fig(fig, "沪深两市融资融券余额")
     fig.update_layout(xaxis=dict(gridcolor="#21262d", rangeslider=dict(visible=False)))
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_pledge_data(days: int):
     """股权质押数据（市场概况）"""
     df = _load_sentiment_data(["PLEDGE_RATIO", "PLEDGE_COMPANY_COUNT", "PLEDGE_TOTAL_MV"], days)
-    if df.empty:
-        st.info("暂无股权质押数据")
-        return
+    if render_empty_state(df, "暂无股权质押数据"): return
 
     ratio = df[df["indicator_code"] == "PLEDGE_RATIO"].sort_values("date")
     count = df[df["indicator_code"] == "PLEDGE_COMPANY_COUNT"].sort_values("date")
@@ -386,4 +377,4 @@ def _render_pledge_data(days: int):
         fig.update_yaxes(title_text="公司数量", secondary_y=True, gridcolor="#21262d")
         fig = _style_fig(fig, "A股股权质押市场概况（周频）")
         fig.update_layout(xaxis=dict(gridcolor="#21262d", rangeslider=dict(visible=False)))
-        st.plotly_chart(fig, width='stretch')
+        render_chart(fig)

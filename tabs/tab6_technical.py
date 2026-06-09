@@ -2,6 +2,7 @@
 Tab6: 技术信号
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -137,7 +138,7 @@ def _render_signal_charts(tech_df, n_bullish_ma, n_bearish_ma, n_bull_macd, n_be
             height=320,
             margin=dict(l=40, r=40, t=40, b=40),
         )
-        st.plotly_chart(fig_radar, width="stretch")
+        render_chart(fig_radar)
 
     with radar_cols[1]:
         # 技术指标信号汇总堆叠柱状图
@@ -174,7 +175,7 @@ def _render_signal_charts(tech_df, n_bullish_ma, n_bearish_ma, n_bull_macd, n_be
             margin=dict(l=50, r=20, t=20, b=40),
             bargap=0.3,
         )
-        st.plotly_chart(fig_bar, width="stretch")
+        render_chart(fig_bar)
 
     st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
 
@@ -318,7 +319,7 @@ def _render_bollinger_chart(tech_df, n_total):
         margin=dict(l=80, r=30, t=30, b=40),
         bargap=0.2,
     )
-    st.plotly_chart(fig_boll, width="stretch")
+    render_chart(fig_boll)
 
     st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
 
@@ -375,7 +376,7 @@ def _render_rsi_chart(tech_df, n_total):
         margin=dict(l=80, r=30, t=30, b=40),
         bargap=0.2,
     )
-    st.plotly_chart(fig_rsi, width="stretch")
+    render_chart(fig_rsi)
 
 
 def render_tab6():

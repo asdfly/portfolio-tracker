@@ -6,6 +6,7 @@
 - 外汇投机情绪（macro_fx_sentiment）：XAUUSD + USDX 多空比，可选加载
 """
 
+from components.ui import render_chart, render_empty_state
 from config.settings import CACHE_TTL
 import streamlit as st
 import pandas as pd
@@ -87,9 +88,7 @@ def _render_intl_cards(df_etf, df_sge, df_sentiment):
 
 def _render_etf_holdings_trend(df_etf):
     """全球黄金ETF持仓趋势"""
-    if df_etf is None or df_etf.empty:
-        st.info("暂无ETF持仓数据")
-        return
+    if render_empty_state(df_etf, "暂无ETF持仓数据"): return
     recent = df_etf[df_etf["date"] >= df_etf["date"].max() - pd.DateOffset(years=2)].copy()
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(
@@ -114,13 +113,12 @@ def _render_etf_holdings_trend(df_etf):
     )
     fig.update_yaxes(title_text="持仓（吨）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="日增减（吨）", secondary_y=True, side="right")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 def _render_etf_value_vs_sge_price(df_etf, df_sge):
     """ETF总价值（国际金价代理） vs 上海金基准价"""
-    if df_etf is None or df_etf.empty or df_sge is None or df_sge.empty:
-        st.info("国际金价或上海金数据不足，无法对比")
-        return
+    if render_empty_state(df_etf, "国际金价或上海金数据不足，无法对比"): return
+    if render_empty_state(df_sge, "国际金价或上海金数据不足，无法对比"): return
     de = df_etf.copy()
     de["month"] = de["date"].dt.to_period("M")
     etf_m = de.groupby("month").agg(
@@ -135,9 +133,7 @@ def _render_etf_value_vs_sge_price(df_etf, df_sge):
     sge_m.columns = ["month", "sge_price"]
     sge_m["month_str"] = sge_m["month"].astype(str)
     merged = etf_m.merge(sge_m, on="month_str", how="inner").tail(24)
-    if merged is None or merged.empty:
-        st.info("无重叠月度数据")
-        return
+    if render_empty_state(merged, "无重叠月度数据"): return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(
         x=merged["month_str"], y=merged["etf_value"],
@@ -160,7 +156,7 @@ def _render_etf_value_vs_sge_price(df_etf, df_sge):
     )
     fig.update_yaxes(title_text="亿美元", secondary_y=False, side="left")
     fig.update_yaxes(title_text="¥/g", secondary_y=True, side="right")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_premium_discount(df_etf, df_sge):
@@ -181,9 +177,7 @@ def _render_premium_discount(df_etf, df_sge):
     merged = de[["date", "est_gold_usd_g", "total_value"]].merge(
         ds[["date", "close"]], on="date", how="inner"
     ).dropna().tail(120)
-    if merged is None or merged.empty:
-        st.info("数据不足，无法计算溢价")
-        return
+    if render_empty_state(merged, "数据不足，无法计算溢价"): return
     merged["est_cnyusd"] = merged["close"] / merged["est_gold_usd_g"]
     median_rate = merged["est_cnyusd"].median()
     merged["intl_cny"] = merged["est_gold_usd_g"] * median_rate
@@ -216,7 +210,7 @@ def _render_premium_discount(df_etf, df_sge):
     )
     fig.update_yaxes(title_text="溢价率%", secondary_y=False, side="left")
     fig.update_yaxes(title_text="\u00a5/g", secondary_y=True, side="right")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
     c1, c2, c3 = st.columns(3)
     c1.metric("当前溢价率", f"{latest['premium_pct']:+.2f}%")
     c2.metric("平均溢价率", f"{avg_prem:+.2f}%")
@@ -226,9 +220,7 @@ def _render_premium_discount(df_etf, df_sge):
 
 def _render_sentiment_analysis(df_sentiment):
     """XAUUSD / USDX 投机情绪分析"""
-    if df_sentiment is None or df_sentiment.empty:
-        st.info("暂无外汇投机情绪数据")
-        return
+    if render_empty_state(df_sentiment, "暂无外汇投机情绪数据"): return
     if "xauusd_sentiment" not in df_sentiment.columns:
         st.info("投机情绪数据缺少XAUUSD字段")
         return
@@ -250,7 +242,7 @@ def _render_sentiment_analysis(df_sentiment):
         xaxis=dict(rangeslider=dict(visible=False)),
         yaxis=dict(range=[30, 70]),
     )
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
     if "usdx_sentiment" in df_sentiment.columns:
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
@@ -267,15 +259,13 @@ def _render_sentiment_analysis(df_sentiment):
             xaxis=dict(rangeslider=dict(visible=False)),
             yaxis=dict(range=[30, 70]),
         )
-        st.plotly_chart(fig2, width='stretch')
+        render_chart(fig2)
 
 
 
 def _render_sentiment_analysis(df_sentiment):
     """XAUUSD / USDX 投机情绪分析"""
-    if df_sentiment is None or df_sentiment.empty:
-        st.info("暂无外汇投机情绪数据")
-        return
+    if render_empty_state(df_sentiment, "暂无外汇投机情绪数据"): return
     if "xauusd_sentiment" not in df_sentiment.columns:
         st.info("投机情绪数据缺少XAUUSD字段")
         return
@@ -297,7 +287,7 @@ def _render_sentiment_analysis(df_sentiment):
         xaxis=dict(rangeslider=dict(visible=False)),
         yaxis=dict(range=[30, 70]),
     )
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
     if "usdx_sentiment" in df_sentiment.columns:
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
@@ -314,7 +304,7 @@ def _render_sentiment_analysis(df_sentiment):
             xaxis=dict(rangeslider=dict(visible=False)),
             yaxis=dict(range=[30, 70]),
         )
-        st.plotly_chart(fig2, width='stretch')
+        render_chart(fig2)
 
 
 def render_international_comparison():

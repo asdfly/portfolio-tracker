@@ -1,4 +1,5 @@
 """央行购金全球趋势追踪（Phase 4.1）"""
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -31,8 +32,7 @@ def _render_reserve_cards(df_reserve, df_etf):
 
 
 def _render_china_reserve_trend(df):
-    if df is None or df.empty:
-        st.info("暂无中国黄金储备数据"); return
+    if render_empty_state(df, "暂无中国黄金储备数据"): return
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     recent = df[df["month"] >= df["month"].max() - pd.DateOffset(years=5)].copy()
     fig.add_trace(go.Scatter(x=recent["month"], y=recent["gold_reserve"], mode="lines+markers", name="黄金储备（万盎司）",
@@ -47,7 +47,7 @@ def _render_china_reserve_trend(df):
         xaxis=dict(rangeslider=dict(visible=False)))
     fig.update_yaxes(title_text="储备量（万盎司）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="增持/减持（万盎司）", secondary_y=True, side="right")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_reserve_ratio(df):
@@ -64,12 +64,11 @@ def _render_reserve_ratio(df):
     fig.add_hline(y=avg, line_dash="dash", line_color="#8b949e", annotation_text=f"均值 {avg:.1f}%")
     fig.update_layout(title="黄金储备占外汇储备比例（%）", height=320, template="plotly_dark",
         margin=dict(l=50, r=50, t=40, b=30), xaxis=dict(rangeslider=dict(visible=False)))
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_global_etf_trend(df):
-    if df is None or df.empty:
-        st.info("暂无全球黄金ETF持仓数据"); return
+    if render_empty_state(df, "暂无全球黄金ETF持仓数据"): return
     recent = df[df["date"] >= df["date"].max() - pd.DateOffset(years=2)].copy()
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=recent["date"], y=recent["total_holdings"], mode="lines", name="全球黄金ETF持仓（吨）",
@@ -83,7 +82,7 @@ def _render_global_etf_trend(df):
         xaxis=dict(rangeslider=dict(visible=False)))
     fig.update_yaxes(title_text="持仓量（吨）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="日增减（吨）", secondary_y=True, side="right")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def _render_reserve_vs_etf(df_reserve, df_etf):
@@ -106,7 +105,7 @@ def _render_reserve_vs_etf(df_reserve, df_etf):
         xaxis=dict(rangeslider=dict(visible=False)))
     fig.update_yaxes(title_text="储备（万盎司）", secondary_y=False, side="left")
     fig.update_yaxes(title_text="ETF持仓（吨）", secondary_y=True, side="right")
-    st.plotly_chart(fig, width='stretch')
+    render_chart(fig)
 
 
 def render_central_bank_trends():

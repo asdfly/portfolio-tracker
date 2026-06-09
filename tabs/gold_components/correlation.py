@@ -2,6 +2,7 @@
 黄金定价因子相关性分析模块
 """
 
+from components.ui import render_chart, render_empty_state
 from config.settings import CACHE_TTL
 import streamlit as st
 import plotly.graph_objects as go
@@ -124,7 +125,7 @@ def render_correlation():
         xaxis=dict(showgrid=False),
         yaxis=dict(showgrid=False),
     )
-    st.plotly_chart(fig_heat, width='stretch')
+    render_chart(fig_heat)
 
     # === 关键相关性摘要卡片 ===
     if "usdcny" in corr_matrix.columns:
@@ -196,7 +197,7 @@ def render_correlation():
             )
             fig2.update_yaxes(gridcolor=GRID_COLOR, title_text="Au99.99", secondary_y=False)
             fig2.update_yaxes(gridcolor=GRID_COLOR, title_text=factor_choice, secondary_y=True)
-            st.plotly_chart(fig2, width='stretch')
+            render_chart(fig2)
 
     # === 散点图 ===
     if factor_col and factor_col in daily.columns:
@@ -230,4 +231,4 @@ def render_correlation():
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 margin=dict(l=50, r=30, t=40, b=30),
             )
-            st.plotly_chart(fig3, width='stretch')
+            render_chart(fig3)

@@ -2,6 +2,7 @@
 Tab3: 风险分析
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -92,7 +93,7 @@ def _render_risk_gauge_and_metrics(sharpe, volatility, max_dd, selected_date, su
             font=dict(color="#c9d1d9"),
             margin=dict(l=30, r=30, t=10, b=10),
         )
-        st.plotly_chart(fig_gauge, width="stretch")
+        render_chart(fig_gauge)
 
         st.markdown(
             f'<div style="text-align:center;color:{risk_color};font-size:16px;font-weight:bold;">'
@@ -188,7 +189,7 @@ def _render_drawdown_chart(summary):
             xaxis=dict(showgrid=False),
             yaxis=dict(title="回撤 (%)", showgrid=True, gridcolor="#21262d"),
         )
-        st.plotly_chart(fig_dd, width="stretch")
+        render_chart(fig_dd)
 
 
 def _render_brinson_attribution(show_days, selected_date):
@@ -278,7 +279,7 @@ def _render_brinson_attribution(show_days, selected_date):
             showlegend=False,
             barmode="relative",
         )
-        st.plotly_chart(fig_wf, width="stretch")
+        render_chart(fig_wf)
 
         # 归因摘要卡片
         col_attr1, col_attr2, col_attr3 = st.columns(3)
@@ -380,7 +381,7 @@ def _render_multi_factor_attribution(positions):
                     margin=dict(l=100, r=30, t=10, b=30),
                     bargap=0.3,
                 )
-                st.plotly_chart(fig_beta, width="stretch")
+                render_chart(fig_beta)
 
             contributions = fa.get("factor_contributions", {})
             if contributions:
@@ -423,7 +424,7 @@ def _render_multi_factor_attribution(positions):
                             margin=dict(t=10, b=10, l=10, r=10),
                             showlegend=False,
                         )
-                        st.plotly_chart(fig_pie, width="stretch")
+                        render_chart(fig_pie)
 
                 with col_detail:
                     detail_rows = []
@@ -623,7 +624,7 @@ def _render_style_exposure(positions):
                         margin=dict(t=5, b=5, l=5, r=5),
                         showlegend=False,
                     )
-                    st.plotly_chart(fig_size, width="stretch")
+                    render_chart(fig_size)
 
             # 风格暴露
             with col_style:
@@ -650,7 +651,7 @@ def _render_style_exposure(positions):
                         margin=dict(t=5, b=5, l=5, r=5),
                         showlegend=False,
                     )
-                    st.plotly_chart(fig_sty, width="stretch")
+                    render_chart(fig_sty)
 
             # 行业暴露
             with col_sect:
@@ -682,7 +683,7 @@ def _render_style_exposure(positions):
                         margin=dict(l=60, r=20, t=5, b=25),
                         bargap=0.3,
                     )
-                    st.plotly_chart(fig_sec, width="stretch")
+                    render_chart(fig_sec)
 
             # 风格雷达图
             size_e = style_exp.get("size_exposure", {})
@@ -724,7 +725,7 @@ def _render_style_exposure(positions):
                     margin=dict(t=10, b=10, l=10, r=10),
                     showlegend=False,
                 )
-                st.plotly_chart(fig_radar_style, width="stretch")
+                render_chart(fig_radar_style)
     except Exception as e:
         st.info(f"风格暴露分析暂不可用: {str(e)[:80]}")
 
@@ -1049,7 +1050,7 @@ def _render_alert_center(positions, summary, selected_date):
                     xaxis=dict(showgrid=True, gridcolor="#21262d"),
                     yaxis=dict(showgrid=False, tickfont=dict(size=10)),
                 )
-                st.plotly_chart(fig_alert_dist, width="stretch")
+                render_chart(fig_alert_dist)
             _render_alert_trend_analysis(hist_alerts)
 
 
@@ -1122,7 +1123,7 @@ def _render_alert_gauge_dashboard(positions, summary):
                 font=dict(color="#c9d1d9"),
             )
             with [gc1, gc2, gc3, gc4, gc5][idx_g]:
-                st.plotly_chart(fig_gauge, width="stretch")
+                render_chart(fig_gauge)
 
         health_score = max(0, min(100, health_score))
         hc = "#22c55e" if health_score >= 80 else "#f59e0b" if health_score >= 60 else "#ef4444"
@@ -1199,7 +1200,7 @@ def _render_alert_trend_analysis(hist_alerts):
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                 font=dict(size=9, color="#8b949e")),
                 )
-                st.plotly_chart(fig_timeline, width="stretch")
+                render_chart(fig_timeline)
 
             with atc2:
                 st.markdown(
@@ -1238,7 +1239,7 @@ def _render_alert_trend_analysis(hist_alerts):
                         xaxis=dict(showgrid=False, tickfont=dict(size=10)),
                         yaxis=dict(showgrid=False, tickfont=dict(size=10)),
                     )
-                    st.plotly_chart(fig_heatmap, width="stretch")
+                    render_chart(fig_heatmap)
 
     # 规则触发趋势（按周统计堆叠面积图）
     if not hist_alerts.empty and "created_at" in hist_alerts.columns:
@@ -1276,7 +1277,7 @@ def _render_alert_trend_analysis(hist_alerts):
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                 font=dict(size=9, color="#8b949e")),
                 )
-                st.plotly_chart(fig_trend, width="stretch")
+                render_chart(fig_trend)
 
 
 def render_tab3():

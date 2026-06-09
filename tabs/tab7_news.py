@@ -2,6 +2,7 @@
 Tab7: 资讯与评估
 """
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -257,7 +258,7 @@ def _render_comprehensive_assessment(positions, summary, volatility, max_dd):
                 font=dict(color="#c9d1d9"),
                 margin=dict(l=20, r=20, t=5, b=5),
             )
-            st.plotly_chart(fig_score_gauge, width="stretch")
+            render_chart(fig_score_gauge)
             st.markdown(
                 f'<div style="text-align:center;color:{score_color};font-size:15px;font-weight:bold;">{score_label}</div>',
                 unsafe_allow_html=True,
@@ -439,7 +440,7 @@ def _render_market_sentiment(positions, summary):
                 margin=dict(l=10, r=10, t=10, b=10),
                 legend=dict(font=dict(size=10, color="#8b949e"), orientation="h", yanchor="bottom", y=-0.1),
             )
-            st.plotly_chart(fig_pie, width="stretch")
+            render_chart(fig_pie)
 
         with pc2:
             if "pnl_rate" in positions.columns and not positions.empty:
@@ -460,7 +461,7 @@ def _render_market_sentiment(positions, summary):
                     yaxis=dict(title="数量", showgrid=True, gridcolor="#21262d"),
                     bargap=0.15,
                 )
-                st.plotly_chart(fig_pnl_dist, width="stretch")
+                render_chart(fig_pnl_dist)
 
 
 def _render_news_sentiment(positions, summary):
@@ -510,7 +511,7 @@ def _render_news_sentiment(positions, summary):
                                    margin=dict(l=110, r=20, t=5, b=10),
                                    xaxis_title="情绪得分(0负面~0.5中性~1正面)", range=[0, 1],
                                    yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_sent, width='stretch')
+            render_chart(fig_sent)
 
             # 情绪概要卡片
             sc1, sc2, sc3, sc4 = st.columns(4)
@@ -554,7 +555,7 @@ def _render_news_sentiment(positions, summary):
                     yaxis2=dict(title="负面数", overlaying="y", side="right",
                                 gridcolor="rgba(255,255,255,0.05)"),
                 )
-                st.plotly_chart(fig_trend, width="stretch")
+                render_chart(fig_trend)
 
             # 各板块情绪明细表
             with st.expander("各板块情绪明细", expanded=False):

@@ -1,5 +1,6 @@
 """Tab11: 黄金市场"""
 
+from components.ui import render_chart, render_empty_state
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -90,7 +91,7 @@ def _render_gold_price_trend():
                         if pdf[mc].notna().sum() > 0:
                             fig.add_trace(go.Scatter(x=pdf["date"], y=pdf[mc], mode="lines", name=mn, line=dict(color=ml, width=1)))
                 fig.update_layout(title=dict(text=f"{sel} 日K线走势", font=dict(size=14)), xaxis_rangeslider_visible=False, height=450, xaxis=dict(gridcolor="#333"), yaxis=dict(gridcolor="#333"), plot_bgcolor="#1a1a2e", paper_bgcolor="#1a1a2e", font=dict(color="#ddd"), margin=dict(l=50, r=30, t=40, b=30), legend=dict(orientation="h", yanchor="bottom", y=1.02))
-                st.plotly_chart(fig, width='stretch')
+                render_chart(fig)
                 latest = gold_df.iloc[-1]
                 prev = gold_df.iloc[-2] if len(gold_df) > 1 else None
                 lc = float(latest["close"])
