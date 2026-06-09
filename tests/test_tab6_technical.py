@@ -59,7 +59,7 @@ class TestLoadTechnical:
     """Test load_technical utility function."""
 
     def test_returns_dataframe(self, monkeypatch, db_with_technical):
-        monkeypatch.setattr("tabs.tab6_technical.get_db_connection", lambda: db_with_technical)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_technical)
         from tabs.tab6_technical import load_technical
         result = load_technical()
         assert isinstance(result, pd.DataFrame)
@@ -67,14 +67,14 @@ class TestLoadTechnical:
 
     def test_filter_by_date(self, monkeypatch, db_with_technical):
         """Should filter results to specified date."""
-        monkeypatch.setattr("tabs.tab6_technical.get_db_connection", lambda: db_with_technical)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_technical)
         from tabs.tab6_technical import load_technical
         result = load_technical(end_date="2025-05-19")
         assert len(result) == 2
 
     def test_default_latest_date(self, monkeypatch, db_with_technical):
         """Without end_date, should use the latest available date."""
-        monkeypatch.setattr("tabs.tab6_technical.get_db_connection", lambda: db_with_technical)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_technical)
         from tabs.tab6_technical import load_technical
         result = load_technical()
         assert len(result) == 1
@@ -82,7 +82,7 @@ class TestLoadTechnical:
 
     def test_has_name_column(self, monkeypatch, db_with_technical):
         """Result should have a name column populated from portfolio join."""
-        monkeypatch.setattr("tabs.tab6_technical.get_db_connection", lambda: db_with_technical)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_technical)
         from tabs.tab6_technical import load_technical
         result = load_technical(end_date="2025-05-19")
         # The SQL uses SELECT t.*, p.name which produces duplicate 'name' columns.
@@ -99,7 +99,7 @@ class TestLoadTechnical:
         conn.execute("CREATE TABLE etf_technical (id INTEGER, date TEXT, code TEXT, name TEXT, close REAL, UNIQUE(date, code))")
         conn.execute("CREATE TABLE portfolio_snapshots (id INTEGER, date TEXT, code TEXT, name TEXT, UNIQUE(date, code))")
         conn.commit()
-        monkeypatch.setattr("tabs.tab6_technical.get_db_connection", lambda: conn)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: conn)
         from tabs.tab6_technical import load_technical
         result = load_technical()
         assert result.empty

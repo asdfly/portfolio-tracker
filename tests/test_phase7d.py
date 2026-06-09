@@ -77,7 +77,7 @@ class TestTab5StressRadar:
 class TestTab5RebalanceSim:
     """Test rebalance simulation chart feature (Phase 7A)"""
 
-    @patch("tabs.tab5_advanced.get_db_connection")
+    @patch("data_loader.get_db_connection")
     def test_rebalance_sim_chart_data_available(self, mock_db):
         """Simulation should use daily_return from portfolio_summary"""
         mock_conn = MagicMock()

@@ -7,23 +7,14 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
-from data_loader import load_positions, load_summary
+from data_loader import load_positions, load_summary, load_technical
 
 
 def load_technical(end_date=None):
-    """加载技术指标，关联ETF名称"""
-    conn = get_db_connection()
-    date_filter = f"WHERE t.date = '{end_date}'" if end_date else "WHERE t.date = (SELECT MAX(date) FROM etf_technical)"
-    query = f"""
-        SELECT t.*, p.name 
-        FROM etf_technical t 
-        LEFT JOIN portfolio_snapshots p ON t.code = p.code AND t.date = p.date
-        {date_filter}
-    """
-    df = pd.read_sql_query(query, conn)
-    if not df.empty:
-        df["name"] = df["name"].fillna(df["code"])
-    return df
+    """加载技术指标（委托到 data_loader）"""
+    import data_loader as _dl
+    return _dl.load_technical(end_date=end_date)
+
 
 
 

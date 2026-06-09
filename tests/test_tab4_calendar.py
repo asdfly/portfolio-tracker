@@ -52,7 +52,7 @@ class TestComputeMonthlyReturns:
 
     def test_returns_dataframe(self, monkeypatch, db_with_summary):
         """Should return a DataFrame with year index and month columns."""
-        monkeypatch.setattr("tabs.tab4_calendar.get_db_connection", lambda: db_with_summary)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_summary)
         from tabs.tab4_calendar import compute_monthly_returns
         result = compute_monthly_returns()
         assert isinstance(result, pd.DataFrame)
@@ -60,14 +60,14 @@ class TestComputeMonthlyReturns:
 
     def test_returns_have_yearly_column(self, monkeypatch, db_with_summary):
         """Result should include '年累计' column."""
-        monkeypatch.setattr("tabs.tab4_calendar.get_db_connection", lambda: db_with_summary)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_summary)
         from tabs.tab4_calendar import compute_monthly_returns
         result = compute_monthly_returns()
         assert "年累计" in result.columns
 
     def test_returns_have_summary_row(self, monkeypatch, db_with_summary):
         """Result should include '月均' summary row."""
-        monkeypatch.setattr("tabs.tab4_calendar.get_db_connection", lambda: db_with_summary)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_summary)
         from tabs.tab4_calendar import compute_monthly_returns
         result = compute_monthly_returns()
         assert "月均" in result.index
@@ -78,7 +78,7 @@ class TestComputeMonthlyReturns:
         conn.execute("""CREATE TABLE portfolio_summary (
             date TEXT PRIMARY KEY, total_value REAL, daily_pnl REAL, daily_return REAL)""")
         conn.commit()
-        monkeypatch.setattr("tabs.tab4_calendar.get_db_connection", lambda: conn)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: conn)
         from tabs.tab4_calendar import compute_monthly_returns
         result = compute_monthly_returns()
         assert isinstance(result, pd.DataFrame)
@@ -90,7 +90,7 @@ class TestLoadCalendarData:
     """Test load_calendar_data with mocked DB."""
 
     def test_returns_dataframe(self, monkeypatch, db_with_summary):
-        monkeypatch.setattr("tabs.tab4_calendar.get_db_connection", lambda: db_with_summary)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: db_with_summary)
         from tabs.tab4_calendar import load_calendar_data
         result = load_calendar_data()
         assert isinstance(result, pd.DataFrame)
@@ -104,7 +104,7 @@ class TestLoadCalendarData:
         conn.execute("""CREATE TABLE portfolio_summary (
             date TEXT PRIMARY KEY, total_value REAL, daily_pnl REAL, daily_return REAL)""")
         conn.commit()
-        monkeypatch.setattr("tabs.tab4_calendar.get_db_connection", lambda: conn)
+        monkeypatch.setattr("data_loader.get_db_connection", lambda: conn)
         from tabs.tab4_calendar import load_calendar_data
         result = load_calendar_data()
         assert result.empty

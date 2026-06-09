@@ -63,15 +63,15 @@ class TestTab3Structure:
 
     def test_total_function_count(self):
         fns = _get_functions(TAB3_PATH.read_text(encoding="utf-8"))
-        assert len(fns) == 15, f"Expected 15 functions, got {len(fns)}"
+        assert len(fns) == 14, f"Expected 14 functions, got {len(fns)}"
 
     def test_original_helpers_preserved(self):
         expected_helpers = [
             "compute_extended_risk_metrics",
             "compute_return_attribution",
             "load_alerts",
-            "get_sector",
         ]
+        # get_sector 已迁移到 data_loader.compute_return_attribution 内部
         fns = _get_functions(TAB3_PATH.read_text(encoding="utf-8"))
         names = [f[0] for f in fns]
         for name in expected_helpers:

@@ -11,7 +11,7 @@ from src.utils.chart_utils import downsample, _add_min_max_annotations, _fmt, _f
 from config.settings import BENCHMARK_NAME_TO_CODE, CHART_DAYS, DOWNSAMPLE_MAX_POINTS, INDEX_CODES
 from src.utils.database import get_db_connection
 import sqlite3
-from data_loader import load_positions, load_summary
+from data_loader import load_positions, load_summary, load_benchmark_comparison, compute_rolling_metrics
 
 
 
@@ -23,49 +23,15 @@ def _resolve_benchmark_code(name_or_code):
         return name_or_code  # 已经是code格式如 "sh000300"
     return BENCHMARK_NAME_TO_CODE.get(name_or_code, name_or_code)
 def load_benchmark_comparison(code, days=CHART_DAYS["default"], end_date=None):
-    """加载指定基准指数行情，用于净值曲线对比"""
-    conn = get_db_connection()
-    if end_date:
-        query = """
-            SELECT date, close 
-            FROM index_quotes 
-            WHERE code = ? AND date <= ? 
-            ORDER BY date DESC LIMIT ?
-        """
-        df = pd.read_sql_query(query, conn, params=(code, end_date, days))
-    else:
-        query = """
-            SELECT date, close 
-            FROM index_quotes 
-            WHERE code = ? 
-            ORDER BY date DESC LIMIT ?
-        """
-        df = pd.read_sql_query(query, conn, params=(code, days))
-    df = df.sort_values("date").reset_index(drop=True)
-    return df
+    """加载指定基准指数行情，用于净值曲线对比（委托到 data_loader）"""
+    import data_loader as _dl
+    return _dl.load_benchmark_comparison(code, days=days, end_date=end_date)
 
 
 def compute_rolling_metrics(window=60, end_date=None):
-    """计算滚动夏普比率和滚动波动率（支持end_date过滤）"""
-    conn = get_db_connection()
-    query = "SELECT date, daily_return, total_value FROM portfolio_summary ORDER BY date"
-    df = pd.read_sql_query(query, conn)
-    if df.empty or len(df) < window:
-        return pd.DataFrame()
-    df["date"] = pd.to_datetime(df["date"])
-    if end_date:
-        df = df[df["date"] <= pd.Timestamp(end_date)]
-    if len(df) < window:
-        return pd.DataFrame()
-    ret = df["total_value"].pct_change()
-    rolling_sharpe = ret.rolling(window).mean() / ret.rolling(window).std() * np.sqrt(252)
-    rolling_vol = ret.rolling(window).std() * np.sqrt(252)
-    result = pd.DataFrame({
-        "date": df["date"],
-        "rolling_sharpe": rolling_sharpe,
-        "rolling_vol": rolling_vol
-    }).dropna()
-    return result
+    """计算滚动夏普比率和滚动波动率（委托到 data_loader）"""
+    import data_loader as _dl
+    return _dl.compute_rolling_metrics(window=window, end_date=end_date)
 
 
 def _render_basic_metrics(positions, summary, index_quotes, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe, cal_data, tech_signals, show_days):

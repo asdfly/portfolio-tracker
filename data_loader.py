@@ -98,14 +98,15 @@ def load_index_quotes(code="sh000300", days=60, end_date=None):
     conn.close()
     return df
 
-def load_technical():
+def load_technical(end_date=None):
     """加载技术指标，关联ETF名称"""
     conn = get_db_connection()
-    query = """
-        SELECT t.*, p.name 
-        FROM etf_technical t 
+    date_filter = f"WHERE t.date = '{end_date}'" if end_date else "WHERE t.date = (SELECT MAX(date) FROM etf_technical)"
+    query = f"""
+        SELECT t.*, p.name
+        FROM etf_technical t
         LEFT JOIN portfolio_snapshots p ON t.code = p.code AND t.date = p.date
-        WHERE t.date = (SELECT MAX(date) FROM etf_technical)
+        {date_filter}
     """
     df = pd.read_sql_query(query, conn)
     if not df.empty:
@@ -312,13 +313,26 @@ def compute_monthly_returns():
     df["daily_return"] = df["total_value"].pct_change()
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
-    monthly = df.groupby(["year", "month"])["daily_return"].sum().reset_index()
-    pivot = monthly.pivot(index="year", columns="month", values="daily_return")
+    # 使用月首末日 total_value 计算正确的月度收益率
+    monthly = df.groupby(["year", "month"]).agg(
+        first_value=("total_value", "first"),
+        last_value=("total_value", "last"),
+    ).reset_index()
+    monthly["monthly_return"] = monthly["last_value"] / monthly["first_value"] - 1
+    pivot = monthly.pivot(index="year", columns="month", values="monthly_return")
     pivot.columns = [f"{m}月" for m in pivot.columns]
-    # 年度合计列（各月收益率简单求和作为年度累计收益率）
-    pivot["年累计"] = pivot.sum(axis=1)
-    # 汇总行（各年份同月收益率均值，作为月均收益率参考）
-    summary_row = pivot.mean(axis=0)
+    # 年度合计列
+    yearly = df.groupby("year").agg(
+        first_value=("total_value", "first"), last_value=("total_value", "last")
+    ).reset_index()
+    yearly["yearly_return"] = yearly["last_value"] / yearly["first_value"] - 1
+    pivot = pivot.merge(
+        yearly[["year", "yearly_return"]].rename(columns={"yearly_return": "年累计"}),
+        left_index=True, right_on="year", how="left",
+    ).set_index("year")
+    # 汇总行（各年份同月收益率均值，年累计为年均复合收益率）
+    summary_row = pivot.drop(columns=["年累计"]).mean(axis=0)
+    summary_row["年累计"] = (1 + pivot["年累计"]).prod() ** (1 / len(pivot)) - 1
     summary_row.name = "月均"
     pivot = pd.concat([pivot, summary_row.to_frame().T])
     return pivot

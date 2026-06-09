@@ -14,119 +14,14 @@ from data_loader import load_positions, load_summary
 
 
 def load_correlation_matrix(days=CHART_DAYS["default"], end_date=None):
-    """计算持仓ETF之间的皮尔逊相关系数矩阵（基于各ETF市值变动）"""
-    conn = get_db_connection()
-    if end_date:
-        query = """
-            SELECT date, code, market_value 
-            FROM portfolio_snapshots 
-            WHERE date <= ? 
-            ORDER BY date DESC
-        """
-        df = pd.read_sql_query(query, conn, params=(end_date,))
-    else:
-        query = """
-            SELECT date, code, market_value 
-            FROM portfolio_snapshots 
-            ORDER BY date DESC
-        """
-        df = pd.read_sql_query(query, conn)
-    if df.empty:
-        return pd.DataFrame(), []
-
-    # 取最近N个交易日
-    dates = df["date"].unique()[:days]
-    df = df[df["date"].isin(dates)]
-
-    # 构建透视表：行=日期, 列=code, 值=market_value
-    pivot = df.pivot_table(index="date", columns="code", values="market_value", aggfunc="first")
-
-    # 只保留有足够数据的ETF（至少80%的交易日有数据）
-    min_count = int(len(pivot) * 0.8)
-    valid_cols = pivot.columns[pivot.notna().sum() >= min_count]
-    pivot = pivot[valid_cols]
-
-    if pivot.shape[1] < 2:
-        return pd.DataFrame(), []
-
-    # 计算日收益率
-    returns = pivot.pct_change().dropna()
-
-    # 计算相关系数矩阵
-    corr = returns.corr()
-
-    # 获取ETF名称
-    conn = get_db_connection()
-    names = {}
-    for code in corr.columns:
-        row = conn.execute(
-            "SELECT name FROM portfolio_snapshots WHERE code = ? ORDER BY date DESC LIMIT 1", (code,)
-        ).fetchone()
-        names[code] = row[0] if row else code
-    # 简化名称（取前4个字 + "..."）
-    short_names = {}
-    for code, name in names.items():
-        if len(name) > 6:
-            short_names[code] = name[:6] + ".."
-        else:
-            short_names[code] = name
-
-    return corr, short_names
-
-
+    """load_correlation_matrix（委托到 data_loader）"""
+    import data_loader as _dl
+    return _dl.load_correlation_matrix(days=days, end_date=end_date)
 
 def load_sector_weights(days=CHART_DAYS["default"], end_date=None):
-    """加载按行业聚合的持仓权重历史（堆叠面积图数据源）"""
-    query = """
-        SELECT ps.date, ps.code, ps.market_value, ps.quantity, ps.current_price
-        FROM portfolio_snapshots ps
-        WHERE ps.date IN (
-            SELECT DISTINCT date FROM portfolio_snapshots
-            ORDER BY date DESC
-            LIMIT ?
-        )
-    """
-    if end_date:
-        query += " AND ps.date <= ?"
-    query += " ORDER BY ps.date, ps.code"
-
-    try:
-        conn = get_db_connection()
-        params = [days]
-        if end_date:
-            params.append(end_date)
-        df = pd.read_sql_query(query, conn, params=params)
-    except sqlite3.OperationalError as e:
-        import logging
-        logging.getLogger(__name__).warning(f"load_sector_weights 查询失败: {e}")
-        return pd.DataFrame(), {}
-
-    if df.empty:
-        return pd.DataFrame(), {}
-
-    # 按行业分类
-    df["sector"] = df["code"].map(lambda c: ETF_CATEGORIES.get(c, {}).get("sector", "其他"))
-
-    # 每日各行业总市值
-    pivot = df.pivot_table(index="date", columns="sector", values="market_value", aggfunc="sum", fill_value=0)
-    # 计算每日权重百分比
-    daily_total = pivot.sum(axis=1)
-    weight_df = pivot.div(daily_total, axis=0) * 100
-
-    # 确定显示顺序（按最新日期的权重降序）
-    if not weight_df.empty:
-        latest = weight_df.iloc[-1].sort_values(ascending=False)
-        weight_df = weight_df[latest.index]
-
-    # 扇区颜色映射
-    sector_color_map = {}
-    for sector in weight_df.columns:
-        sector_color_map[sector] = SECTOR_COLORS.get(sector, "#6b7280")
-
-    return weight_df, sector_color_map
-
-
-
+    """load_sector_weights（委托到 data_loader）"""
+    import data_loader as _dl
+    return _dl.load_sector_weights(days=days, end_date=end_date)
 
 def _render_etf_filter(positions, summary, technical, selected_date):
     # ===== ETF 多维筛选器 =====

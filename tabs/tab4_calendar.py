@@ -9,55 +9,21 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
+from data_loader import compute_monthly_returns, load_calendar_data
+
 
 
 def compute_monthly_returns():
-    """计算月度收益率矩阵（年份 x 月份，含年度合计列和汇总行）"""
-    conn = get_db_connection()
-    query = "SELECT date, daily_return, total_value FROM portfolio_summary ORDER BY date"
-    df = pd.read_sql_query(query, conn)
-    if df.empty:
-        return pd.DataFrame()
-    df["date"] = pd.to_datetime(df["date"])
-    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
-    df["daily_return"] = df["total_value"].pct_change()
-    df["year"] = df["date"].dt.year
-    df["month"] = df["date"].dt.month
-    # 使用月首末日 total_value 计算正确的月度收益率
-    monthly = df.groupby(["year", "month"]).agg(
-        first_value=("total_value", "first"),
-        last_value=("total_value", "last"),
-    ).reset_index()
-    monthly["monthly_return"] = monthly["last_value"] / monthly["first_value"] - 1
-    pivot = monthly.pivot(index="year", columns="month", values="monthly_return")
-    pivot.columns = [f"{m}月" for m in pivot.columns]
-    # 年度合计列
-    yearly = df.groupby("year").agg(first_value=("total_value", "first"), last_value=("total_value", "last")).reset_index()
-    yearly["yearly_return"] = yearly["last_value"] / yearly["first_value"] - 1
-    pivot = pivot.merge(yearly[["year", "yearly_return"]].rename(columns={"yearly_return": "年累计"}), left_index=True, right_on="year", how="left").set_index("year")
-    # 汇总行（各年份同月收益率均值，年累计为年均复合收益率）
-    summary_row = pivot.drop(columns=["年累计"]).mean(axis=0)
-    summary_row["年累计"] = (1 + pivot["年累计"]).prod() ** (1 / len(pivot)) - 1
-    summary_row.name = "月均"
-    pivot = pd.concat([pivot, summary_row.to_frame().T])
-    return pivot
+    """计算月度收益率矩阵（委托到 data_loader）"""
+    import data_loader as _dl
+    return _dl.compute_monthly_returns()
 
 
 
 def load_calendar_data():
-    """加载全部日历收益数据（年/月/日汇总）"""
-    conn = get_db_connection()
-    query = "SELECT date, daily_pnl, daily_return, total_value FROM portfolio_summary ORDER BY date"
-    df = pd.read_sql_query(query, conn)
-    if df.empty:
-        return df
-    df["date"] = pd.to_datetime(df["date"])
-    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
-    df["daily_return"] = df["total_value"].pct_change()
-    df["year"] = df["date"].dt.year
-    df["month"] = df["date"].dt.month
-    df["day"] = df["date"].dt.day
-    return df
+    """加载全部日历收益数据（委托到 data_loader）"""
+    import data_loader as _dl
+    return _dl.load_calendar_data()
 
 
 
