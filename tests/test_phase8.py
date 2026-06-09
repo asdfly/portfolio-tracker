@@ -370,48 +370,33 @@ class TestGaugeIndicatorStructure:
 # Integration: AST Verification
 # ============================================================
 class TestPhase8ASTIntegrity:
-    """Verify tabs/tab3_risk.py contains Phase 8A/8B/8C markers"""
+    """Verify tab3 sub-modules contain Phase 8A/8B markers (after modular split)."""
+
+    TAB3_ALERTS_PATH = r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs\tab3_risk_alerts.py"
 
     def test_8a_timeline_marker(self):
-        """8A alert timeline code present."""
-        import ast
-        source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab3_risk.py",
-            encoding="utf-8",
-        ).read()
+        """8A alert timeline code present in alerts sub-module."""
+        source = open(self.TAB3_ALERTS_PATH, encoding="utf-8").read()
         assert "告警时间线" in source
 
     def test_8a_heatmap_marker(self):
-        """8A alert frequency heatmap code present."""
-        import ast
-        source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab3_risk.py",
-            encoding="utf-8",
-        ).read()
+        """8A alert frequency heatmap code present in alerts sub-module."""
+        source = open(self.TAB3_ALERTS_PATH, encoding="utf-8").read()
         assert "告警频率热力图" in source
 
     def test_8a_trend_marker(self):
-        """8A rule trigger trend code present."""
-        source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab3_risk.py",
-            encoding="utf-8",
-        ).read()
+        """8A rule trigger trend code present in alerts sub-module."""
+        source = open(self.TAB3_ALERTS_PATH, encoding="utf-8").read()
         assert "规则触发趋势" in source
 
     def test_8b_gauge_marker(self):
-        """8B gauge dashboard code present."""
-        source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab3_risk.py",
-            encoding="utf-8",
-        ).read()
+        """8B gauge dashboard code present in alerts sub-module."""
+        source = open(self.TAB3_ALERTS_PATH, encoding="utf-8").read()
         assert "指标阈值监控" in source
 
     def test_8b_health_score_marker(self):
-        """8B health score code present."""
-        source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab3_risk.py",
-            encoding="utf-8",
-        ).read()
+        """8B health score code present in alerts sub-module."""
+        source = open(self.TAB3_ALERTS_PATH, encoding="utf-8").read()
         assert "告警健康评分" in source
 
     def test_8c_review_marker(self):
