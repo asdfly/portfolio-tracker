@@ -69,7 +69,6 @@ def compute_rolling_metrics(window=60, end_date=None):
 
 
 def _render_basic_metrics(positions, summary, index_quotes, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe, cal_data, tech_signals, show_days):
-    st.caption("📈 展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
     col_left, col_right = st.columns([2, 1])
 
     with col_left:
