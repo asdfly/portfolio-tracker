@@ -17,6 +17,10 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import calendar
+import sqlite3
 
 from PIL import Image
 
@@ -32,42 +36,6 @@ from data_loader import (
     _cleanse_daily_returns, _load_latest_news, _load_tech_signals,
 )
 from sidebar import _inject_custom_css, _render_sidebar
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-投资组合跟踪分析系统 - Streamlit 可视化 Dashboard
-启动方式: streamlit run dashboard.py
-
-性能优化:
-  - @st.cache_data 缓存所有数据库查询，相同参数命中缓存零延迟
-  - 图表数据自动降采样，4000天数据压缩到<=500个点
-  - SQLite 索引加速查询
-"""
-
-import os
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-import base64
-import calendar
-import sqlite3
-from datetime import datetime
-
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-import streamlit as st
-from plotly.subplots import make_subplots
-
-from config.settings import DATABASE_PATH, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
-
-
-# ==================== 数据库索引 ====================
-
 
 _ensure_indexes()
 
