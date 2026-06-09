@@ -1,8 +1,7 @@
 """浏览器截图与 PDF 导出工具
 
-基于 Selenium headless Chrome，提供 Streamlit Dashboard 的
-截图（PNG）和 PDF 导出能力。依赖 selenium + webdriver_manager，
-缺失时优雅降级。
+基于 Playwright headless Chromium，提供 Streamlit Dashboard 的
+截图（PNG）和 PDF 导出能力。依赖 playwright，缺失时优雅降级。
 
 用法::
 
@@ -17,61 +16,54 @@ from datetime import datetime
 
 
 def _launch_headless_chrome(port=8501):
-    """启动 headless Chrome 并导航到 Streamlit 应用。
+    """启动 headless Chromium 并导航到 Streamlit 应用。
 
     Returns:
-        webdriver.Chrome 实例，失败返回 None。
+        playwright Browser 实例的 (browser, page) 元组，失败返回 None。
     """
     try:
-        import time
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.common.by import By
-        from webdriver_manager.chrome import ChromeDriverManager
+        from playwright.sync_api import sync_playwright
     except ImportError:
-        print("浏览器驱动缺失: 请执行 pip install selenium webdriver-manager")
+        print("浏览器驱动缺失: 请执行 pip install playwright && python -m playwright install chromium")
         return None
 
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--window-size=1920,3000")
+    try:
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-gpu"],
+        )
+        page = browser.new_page(viewport={"width": 1920, "height": 3000})
+        page.goto(f"http://localhost:{port}", wait_until="networkidle", timeout=60000)
 
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.get(f"http://localhost:{port}")
+        # Step 1: 等待 Streamlit App 容器就绪
+        page.wait_for_selector("[data-testid='stApp']", state="visible", timeout=30000)
 
-    # Step 1: 等待 Streamlit App 容器就绪
-    from selenium.common.exceptions import WebDriverException
-    for _ in range(30):
+        # Step 2: 等待 Plotly 图表渲染（至少 2 个 SVG 出现）
+        page.wait_for_function(
+            "() => document.querySelectorAll('.js-plotly-plot .main-svg').length >= 2",
+            timeout=45000,
+        )
+        page.wait_for_timeout(2000)
+
+        # Step 3: 滚动到底部触发懒加载，再滚回顶部
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(2000)
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(1000)
+
+        return pw, browser, page
+    except Exception as e:
+        print(f"浏览器启动失败: {e}")
         try:
-            el = driver.find_element(By.CSS_SELECTOR, "[data-testid='stApp']")
-            if el.is_displayed():
-                break
-        except WebDriverException:
+            browser.close()
+        except Exception:
             pass
-        time.sleep(1)
-
-    # Step 2: 等待 Plotly 图表渲染（至少 2 个 SVG 出现）
-    for _ in range(45):
         try:
-            charts = driver.find_elements(By.CSS_SELECTOR, ".js-plotly-plot .main-svg")
-            if len(charts) >= 2:
-                time.sleep(2)
-                break
-        except WebDriverException:
+            pw.stop()
+        except Exception:
             pass
-        time.sleep(1)
-
-    # Step 3: 滚动到底部触发懒加载，再滚回顶部
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(2)
-    driver.execute_script("window.scrollTo(0, 0);")
-    time.sleep(1)
-
-    return driver
+        return None
 
 
 def capture_screenshot(port=8501, output_dir=None, filename_prefix="dashboard"):
@@ -85,8 +77,6 @@ def capture_screenshot(port=8501, output_dir=None, filename_prefix="dashboard"):
     Returns:
         str: PNG 文件路径，失败返回 None。
     """
-    from selenium.common.exceptions import WebDriverException
-
     if output_dir is None:
         from config.settings import PROJECT_ROOT
         output_dir = PROJECT_ROOT / "output"
@@ -96,18 +86,20 @@ def capture_screenshot(port=8501, output_dir=None, filename_prefix="dashboard"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     png_path = str(output_dir / f"{filename_prefix}_{timestamp}.png")
 
-    driver = _launch_headless_chrome(port)
-    if driver is None:
+    result = _launch_headless_chrome(port)
+    if result is None:
         return None
 
+    pw, browser, page = result
     try:
-        driver.save_screenshot(png_path)
+        page.screenshot(path=png_path, full_page=True)
         return png_path
-    except WebDriverException as e:
+    except Exception as e:
         print(f"截图失败: {e}")
         return None
     finally:
-        driver.quit()
+        browser.close()
+        pw.stop()
 
 
 def export_pdf(port=8501, output_dir=None, filename_prefix="dashboard"):
@@ -121,9 +113,6 @@ def export_pdf(port=8501, output_dir=None, filename_prefix="dashboard"):
     Returns:
         str: PDF 文件路径，失败返回 None。
     """
-    import base64
-    from selenium.common.exceptions import WebDriverException
-
     if output_dir is None:
         from config.settings import PROJECT_ROOT
         output_dir = PROJECT_ROOT / "output"
@@ -133,31 +122,23 @@ def export_pdf(port=8501, output_dir=None, filename_prefix="dashboard"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pdf_path = str(output_dir / f"{filename_prefix}_{timestamp}.pdf")
 
-    driver = _launch_headless_chrome(port)
-    if driver is None:
+    result = _launch_headless_chrome(port)
+    if result is None:
         return None
 
+    pw, browser, page = result
     try:
-        pdf_result = driver.execute_cdp_cmd(
-            "Page.printToPDF",
-            {
-                "landscape": False,
-                "displayHeaderFooter": False,
-                "printBackground": True,
-                "paperWidth": 13.0,
-                "paperHeight": 19.0,
-                "marginTop": 0.4,
-                "marginBottom": 0.4,
-                "marginLeft": 0.4,
-                "marginRight": 0.4,
-            },
+        page.pdf(
+            path=pdf_path,
+            landscape=False,
+            print_background=True,
+            format="A3",
+            margin={"top": "0.4in", "bottom": "0.4in", "left": "0.4in", "right": "0.4in"},
         )
-        pdf_bytes = base64.b64decode(pdf_result["data"])
-        with open(pdf_path, "wb") as f:
-            f.write(pdf_bytes)
         return pdf_path
-    except WebDriverException as e:
+    except Exception as e:
         print(f"PDF导出失败: {e}")
         return None
     finally:
-        driver.quit()
+        browser.close()
+        pw.stop()
