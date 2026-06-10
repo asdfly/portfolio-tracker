@@ -4,6 +4,7 @@
 不依赖外部API，使用requests直接抓取东方财富等公开数据源
 """
 import logging
+import os
 import re
 import time
 import requests

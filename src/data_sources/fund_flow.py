@@ -165,7 +165,7 @@ def fetch_main_fund_flow(days: int = 120) -> pd.DataFrame:
     try:
         import akshare as ak
         df = ak.stock_fund_flow_industry(symbol='即时')
-    except requests.RequestException as e:
+    except _requests.RequestException as e:
         logger.warning(f"同花顺也失败: {e}")
         return pd.DataFrame()
     if df is None or df.empty:
@@ -203,7 +203,7 @@ def fetch_north_flow(days: int = 60) -> pd.DataFrame:
                 keep_cols = ['date', 'code', 'name', 'net_inflow', 'buy_amount', 'sell_amount', 'category']
                 df = df[[c for c in keep_cols if c in df.columns]]
                 all_dfs.append(df)
-        except requests.RequestException as e:
+        except _requests.RequestException as e:
             logger.warning(f"获取{symbol}数据失败: {e}")
     if not all_dfs:
         return pd.DataFrame()
