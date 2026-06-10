@@ -64,6 +64,12 @@ def load_etf_price_history(code, days=CHART_DAYS["default"], end_date=None):
 
 
 def _render_etf_metrics(row, total_value):
+    mv = row.get("market_value", 0)
+    pnl = row.get("pnl", 0)
+    pnl_rate = row.get("pnl_rate", 0)
+    cost = row.get("cost_price", 0)
+    current = row.get("current_price", 0)
+
     c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 
