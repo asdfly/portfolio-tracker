@@ -78,3 +78,7 @@ tab_current_*.png
 
 # Windows device file
 NUL
+
+.coverage
+coverage.json
+htmlcov/
