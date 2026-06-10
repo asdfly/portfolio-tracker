@@ -11,6 +11,7 @@ import logging
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 from src.analysis.advisor import SmartAdvisor, AdviceType, AdvicePriority
 from data_loader import get_db_connection
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class SmartReportGenerator:
                 strategy_advice = self.advisor.generate_strategy_advice(backtest_results)
                 if strategy_advice:
                     advices.append(strategy_advice)
-        except Exception as e:
+        except (ImportError, ModuleNotFoundError) as e:
             logger.debug(f'策略建议生成跳过: {e}')
 
         # 2. 获取回测结果（简化版，使用已有数据）
@@ -89,7 +90,7 @@ class SmartReportGenerator:
             _conn_fb.commit()
             logger.info(f'建议历史已记录: {len(advices)}条')
             _conn_fb.close()
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.debug(f'建议历史记录跳过: {e}')
 
         return report

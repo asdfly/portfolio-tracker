@@ -13,6 +13,7 @@ from config.settings import ETF_CATEGORIES, SECTOR_COLORS, DATABASE_PATH
 from tabs._helpers import _load_tech_signals
 from src.utils.database import get_db_connection
 from data_loader import load_positions, load_summary
+import sqlite3
 
 
 
@@ -25,7 +26,7 @@ def _render_suggestions_compute(positions, summary):
         else:
             tech_df = pd.DataFrame()
 
-    except Exception:
+    except sqlite3.OperationalError:
         tech_df = pd.DataFrame()
     suggestions = []
     action_colors = {

@@ -22,6 +22,7 @@ from src.analysis.portfolio_risk import PortfolioRiskAnalyzer
 from src.utils.database import DatabaseManager
 from src.utils.position_reader import PositionReader
 from data_loader import get_db_connection
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +237,7 @@ class PortfolioAnalyzer:
             logger.info("分析完成!")
             return results
 
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             logger.error(f"分析过程出错: {e}", exc_info=True)
             raise
 
@@ -291,7 +292,7 @@ class PortfolioAnalyzer:
             try:
                 quote = self.ds_manager.get_quote(code)
                 quotes[code] = quote
-            except Exception as e:
+            except OSError as e:
                 logger.warning(f"获取指数 {code} 失败: {e}")
         return quotes
 

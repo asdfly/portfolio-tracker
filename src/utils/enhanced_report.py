@@ -368,7 +368,7 @@ class EnhancedReportBuilder:
             result = {row[0]: row[1] for row in cur.fetchall()}
             conn.close()
             return result
-        except Exception:
+        except sqlite3.OperationalError:
             return {}
 
     def _build_index_comparison(self, index_today, summary, clr, sign):

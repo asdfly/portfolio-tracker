@@ -359,7 +359,7 @@ def save_macro_daily(conn: sqlite3.Connection, records: list) -> int:
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (r['date'], r['indicator_code'], r['name'], r['value'], r.get('change_pct'), r.get('source')))
             count += 1
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.debug(f"保存失败 {r}: {e}")
     conn.commit()
     return count
@@ -409,7 +409,7 @@ def fetch_all_macro_daily() -> dict:
             count = save_macro_daily(conn, records)
             stats[name] = count
             logger.info(f"宏观[{name}]: {count}条")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             logger.warning(f"宏观[{name}] 采集失败: {e}")
             stats[name] = 0
     

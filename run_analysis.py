@@ -23,6 +23,8 @@ from src.analysis.portfolio import PortfolioAnalyzer
 from src.utils.database import DatabaseManager
 from src.utils.monitor import Monitor
 from src.utils.notification import NotificationManager
+import requests
+import sqlite3
 from src.utils.enhanced_report import EnhancedReportBuilder
 from src.utils.news_fetcher import NewsFetcher, save_news_to_db
 from src.data_sources.macro_daily import fetch_all_macro_daily
@@ -267,7 +269,7 @@ def run_stage_fund_flow():
                 logger.info(f"  行业资金流: {n} 条")
             else:
                 logger.warning("  行业资金流: 无数据返回")
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             stats["errors"].append(f"行业资金流: {e}")
             logger.warning(f"  行业资金流采集失败(不影响主流程): {e}")
 
@@ -276,7 +278,7 @@ def run_stage_fund_flow():
             bf_sector = backfill_sector_fund_flow(conn)
             if bf_sector > 0:
                 logger.info(f"  行业资金流回填: {bf_sector} 条")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             logger.warning(f"  行业资金流回填失败(跳过): {e}")
 
         # --- ETF 资金流 ---
@@ -333,7 +335,7 @@ def run_stage_fund_flow():
             bf_count = sum(v for v in bf_stats.values() if v > 0)
             if bf_count > 0:
                 logger.info(f"  ETF历史回填: {bf_count} 条")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             logger.warning(f"  ETF历史回填失败(跳过): {e}")
 
         # --- 主力资金净流入（替代已停更的北向资金） ---
@@ -345,7 +347,7 @@ def run_stage_fund_flow():
                 logger.info(f"  主力资金: {n} 条")
             else:
                 logger.warning("  主力资金: 无数据返回")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"主力资金: {e}")
             logger.warning(f"  主力资金采集失败(不影响主流程): {e}")
 
@@ -357,14 +359,14 @@ def run_stage_fund_flow():
                 if not batch_df.empty:
                     n = save_fund_flows(conn, batch_df)
                     logger.info(f"  ETF实时资金流补充: {n} 条")
-            except Exception as e:
+            except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                 logger.warning(f"  ETF实时资金流补充失败(跳过): {e}")
 
         logger.info(f"资金流采集完成: 行业{stats['sector']}条 + ETF{stats['etf']}条 + 主力资金{stats['main_fund']}条")
         if stats["errors"]:
             logger.warning(f"失败项: {len(stats['errors'])} 个")
 
-    except Exception as e:
+    except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
         logger.error(f"资金流采集阶段异常(不影响主流程): {e}")
     finally:
         conn.close()
@@ -514,7 +516,7 @@ def send_daily_report(results, alerts, advice_summary, news_result):
             enh_report_name = f"enhanced_report_{date.today().strftime('%Y%m%d')}.html"
             enh_builder.save_report(enh_html, enh_report_name, news_data=news_result)
             logger.info(f"增强版报告已保存: {enh_report_name}")
-        except Exception as enh_err:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as enh_err:
             logger.warning(f"增强版报告生成失败: {enh_err}")
 
         # 检查是否有notification.json配置
@@ -702,7 +704,7 @@ def main():
                     _ms = (_time.time() - _t0) * 1000
                     _status = 'OK' if _df is not None and len(_df) > 0 else 'EMPTY'
                     health_results.append((_name, _status, f'{_ms:.0f}ms'))
-                except Exception as _e:
+                except requests.RequestException as _e:
                     _err_str = str(_e)
                     # ProxyError/ConnectionError = 网络不可达，非数据源故障
                     if 'ProxyError' in _err_str or 'ConnectionError' in _err_str or 'Max retries' in _err_str:

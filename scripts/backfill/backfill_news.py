@@ -23,6 +23,7 @@
 
 import os
 import sys
+import requests
 import argparse
 import logging
 import re

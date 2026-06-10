@@ -7,6 +7,7 @@ import logging
 from .sina import SinaDataSource
 from .akshare_ds import AKShareDataSource
 from .base import DataSourceError
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class DataSourceManager:
                     self.sources[name] = source_classes[name](cfg)
                     self.source_order.append(name)
                     logger.info(f"数据源初始化成功: {name}")
-                except Exception as e:
+                except requests.RequestException as e:
                     logger.error(f"数据源初始化失败 {name}: {e}")
 
     def get_quote(self, code: str) -> Dict[str, Any]:

@@ -21,6 +21,8 @@ push2his.eastmoney.com 封锁状态监测脚本
 import urllib.request, json, time, sys, os, logging, argparse
 from datetime import datetime
 from data_loader import get_db_connection
+import sqlite3
+import json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ def _urllib_probe():
             "sample": klines[0] if klines else None,
             "date_range": f"{klines[0].split(',')[0]} ~ {klines[-1].split(',')[0]}" if klines else "",
         }
-    except Exception as e:
+    except json.JSONDecodeError as e:
         elapsed = round(time.time() - start, 2)
         return {"ok": False, "elapsed": elapsed, "error": f"{type(e).__name__}: {e}"}
 
@@ -90,7 +92,7 @@ def _backfill(days):
                 logger.warning("回填失败: fetch_main_fund_flow 返回空数据")
         finally:
             conn.close()
-    except Exception as e:
+    except sqlite3.OperationalError as e:
         logger.error(f"回填出错: {e}")
 
 

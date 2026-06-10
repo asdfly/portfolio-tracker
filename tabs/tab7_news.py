@@ -12,6 +12,7 @@ from config.settings import ETF_CATEGORIES, SECTOR_COLORS
 from tabs._helpers import _load_latest_news, _load_tech_signals
 from src.utils.database import get_db_connection
 from data_loader import load_positions, load_summary
+import sqlite3
 
 
 
@@ -167,7 +168,7 @@ def _render_comprehensive_assessment(positions, summary, volatility, max_dd):
             else:
                 tech_df = pd.DataFrame()
 
-        except Exception:
+        except sqlite3.OperationalError:
             tech_df = pd.DataFrame()
         finally:
             conn2.close()

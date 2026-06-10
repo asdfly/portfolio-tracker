@@ -12,6 +12,7 @@ from src.utils.chart_utils import downsample, _add_min_max_annotations
 from config.settings import CACHE_TTL, CHART_DAYS, DOWNSAMPLE_MAX_POINTS, INDEX_CODES
 import plotly.graph_objects as go
 from datetime import datetime
+import sqlite3
 
 
 
@@ -37,7 +38,7 @@ def load_etf_detail(code, days=CHART_DAYS["short"], end_date=None):
                        ORDER BY date DESC LIMIT ?"""
             df = pd.read_sql_query(query, conn, params=(code, days))
         return df.sort_values("date"), code
-    except Exception:
+    except sqlite3.OperationalError:
         return pd.DataFrame(), ""
 @st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 def load_etf_price_history(code, days=CHART_DAYS["default"], end_date=None):
@@ -57,7 +58,7 @@ def load_etf_price_history(code, days=CHART_DAYS["default"], end_date=None):
         # 去掉quantity列，只保留date/close（volume不可用，用None占位）
         df = df[["date", "close"]].copy()
         return df.sort_values("date")
-    except Exception:
+    except sqlite3.OperationalError:
         return pd.DataFrame()
 
 

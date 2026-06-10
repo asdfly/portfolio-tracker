@@ -54,7 +54,7 @@ class HistoricalDataBackfiller:
                 logger.info(f"{code}: 回填 {new_count} 天数据 (共获取 {len(klines)} 条)")
                 success_count += 1
 
-            except Exception as e:
+            except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                 logger.error(f"{code} 回填失败: {e}")
                 fail_count += 1
 

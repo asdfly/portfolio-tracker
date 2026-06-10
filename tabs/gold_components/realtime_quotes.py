@@ -8,6 +8,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+import requests
 
 from tabs.gold_components.gold_utils import (
     fetch_sge_hist, DARK_BG, DARK_FONT_COLOR, GRID_COLOR,
@@ -34,7 +35,7 @@ def _get_symbol_table():
                 if "品种" in c:
                     df = df.rename(columns={c: "symbol"})
             return df["symbol"].tolist() if "symbol" in df.columns else df.iloc[:, -1].tolist()
-    except Exception:  # akshare 品种列表获取失败，使用默认列表
+    except requests.RequestException:  # akshare 品种列表获取失败，使用默认列表
         pass
     return [s for group in SYMBOL_GROUPS.values() for s in group]
 
@@ -48,7 +49,7 @@ def _get_quotations():
         if df is not None and not df.empty:
             df.columns = [c.strip() for c in df.columns]
             return df
-    except Exception:  # akshare 实时行情获取失败
+    except requests.RequestException:  # akshare 实时行情获取失败
         pass
 
     # 回退方案：只获取5个核心品种，避免17次串行网络请求

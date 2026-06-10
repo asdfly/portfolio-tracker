@@ -99,7 +99,7 @@ class DataQualityChecker:
                     "distinct_codes": codes,
                     "date_range": date_range,
                 }
-            except Exception:
+            except sqlite3.OperationalError:
                 results[table] = {"total_rows": 0, "distinct_codes": 0, "date_range": "ERROR"}
 
         conn.close()

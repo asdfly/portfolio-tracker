@@ -23,6 +23,7 @@
 
 import os
 import sys
+import sqlite3
 import logging
 import time
 from datetime import datetime, timedelta
@@ -81,7 +82,7 @@ def fetch_current_snapshot():
                 df = df.rename(columns={'行业': 'name', '净额': 'net'})
                 df['net'] = pd.to_numeric(df['net'], errors='coerce')
                 all_data[sym] = df[['name', 'net']].copy()
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             logger.warning(f"获取{sym}失败: {e}")
     
     if len(all_data) < 3:

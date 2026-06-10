@@ -58,7 +58,7 @@ def fetch_lhb_data(date_str: str) -> pd.DataFrame:
                 'net_buy_ratio', 'volume_ratio', 'turnover_rate', 'float_mv', 'reason']
         df = df[[c for c in keep if c in df.columns]]
         return df
-    except Exception as e:
+    except (ValueError, TypeError) as e:
         logger.warning(f"获取龙虎榜数据失败 ({date_str}): {e}")
         return pd.DataFrame()
 
@@ -209,7 +209,7 @@ def fetch_institution_research_data(date_str: str) -> pd.DataFrame:
                 'receive_location', 'research_date', 'announce_date']
         df = df[[c for c in keep if c in df.columns]]
         return df
-    except Exception as e:
+    except (ValueError, TypeError) as e:
         logger.warning(f"获取机构调研数据失败 ({date_str}): {e}")
         return pd.DataFrame()
 
@@ -348,7 +348,7 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
             df = fetch_lhb_data(date_param)
             stats["lhb"] = save_market_events(conn, df, "stock_lhb", ["date", "code"])
             logger.info(f"  龙虎榜: {stats['lhb']} 条")
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             stats["errors"].append(f"龙虎榜: {e}")
             logger.warning(f"  龙虎榜失败(跳过): {e}")
         
@@ -359,7 +359,7 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
             df = fetch_margin_data(date_param)
             stats["margin"] = save_market_events(conn, df, "stock_margin", ["date", "code"])
             logger.info(f"  融资融券: {stats['margin']} 条")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"融资融券: {e}")
             logger.warning(f"  融资融券失败(跳过): {e}")
         
@@ -371,7 +371,7 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
             stats["holder_change"] = save_market_events(
                 conn, df, "stock_holder_change", ["date", "holder_name"])
             logger.info(f"  股东增减持: {stats['holder_change']} 条")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"股东增减持: {e}")
             logger.warning(f"  股东增减持失败(跳过): {e}")
         
@@ -383,7 +383,7 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
             stats["institution_research"] = save_market_events(
                 conn, df, "stock_institution_research", ["date", "code", "institution"])
             logger.info(f"  机构调研: {stats['institution_research']} 条")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"机构调研: {e}")
             logger.warning(f"  机构调研失败(跳过): {e}")
         
@@ -395,14 +395,14 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
             stats["block_trade"] = save_market_events(
                 conn, df, "stock_block_trade", ["date", "code", "buyer_broker", "seller_broker"])
             logger.info(f"  大宗交易: {stats['block_trade']} 条")
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"大宗交易: {e}")
             logger.warning(f"  大宗交易失败(跳过): {e}")
 
         # 6. 数据源健康检查 - 检测并回填缺失交易日
         try:
             _check_and_backfill_stale(conn, target_date, stats)
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             logger.warning(f"数据源健康检查异常(不影响主流程): {e}")
 
     finally:
@@ -463,7 +463,7 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                     df = fetch_lhb_data(date_str)
                     n = save_market_events(conn, df, "stock_lhb", ["date", "code"])
                     totals["lhb"] += n
-                except Exception as e:
+                except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  龙虎榜失败: {e}")
             
             time.sleep(1)
@@ -473,7 +473,7 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                     df = fetch_margin_data(date_str)
                     n = save_market_events(conn, df, "stock_margin", ["date", "code"])
                     totals["margin"] += n
-                except Exception as e:
+                except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  融资融券失败: {e}")
             
             time.sleep(1)
@@ -484,7 +484,7 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                     n = save_market_events(conn, df, "stock_holder_change",
                                           ["date", "holder_name"])
                     totals["holder_change"] += n
-                except Exception as e:
+                except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  股东增减持失败: {e}")
             
             time.sleep(1)
@@ -495,7 +495,7 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                     n = save_market_events(conn, df, "stock_institution_research",
                                           ["date", "code", "institution"])
                     totals["institution_research"] += n
-                except Exception as e:
+                except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  机构调研失败: {e}")
             
             time.sleep(1)
@@ -506,7 +506,7 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                     n = save_market_events(conn, df, "stock_block_trade",
                                           ["date", "code", "buyer_broker", "seller_broker"])
                     totals["block_trade"] += n
-                except Exception as e:
+                except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  大宗交易失败: {e}")
             
             time.sleep(0.5)
@@ -614,7 +614,7 @@ def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
                 backfill_total += n
                 if n > 0:
                     logger.info(f"  {table} {d}: 回填 {n} 条")
-            except Exception as e:
+            except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                 logger.debug(f"  {table} {d} 回填失败: {e}")
             time.sleep(0.5)
 

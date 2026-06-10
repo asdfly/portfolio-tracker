@@ -7,6 +7,7 @@ import logging
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +310,7 @@ def fetch_global_etf_holdings(years=2):
         cutoff = df["date"].max() - pd.DateOffset(years=years)
         df = df[df["date"] >= cutoff].reset_index(drop=True)
         return df
-    except Exception as e:
+    except (ValueError, TypeError) as e:
         import streamlit as st
         st.warning(f"获取全球ETF持仓数据失败: {e}")
         return None

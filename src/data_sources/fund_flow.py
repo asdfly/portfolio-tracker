@@ -43,7 +43,7 @@ def _urllib_get_json(url, retries=2, delay=1.0):
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             resp = opener.open(req, timeout=15)
             return json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
+        except sqlite3.OperationalError as e:
             if attempt < retries - 1:
                 time.sleep(delay)
             else:
@@ -165,7 +165,7 @@ def fetch_main_fund_flow(days: int = 120) -> pd.DataFrame:
     try:
         import akshare as ak
         df = ak.stock_fund_flow_industry(symbol='即时')
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"同花顺也失败: {e}")
         return pd.DataFrame()
     if df is None or df.empty:
@@ -203,7 +203,7 @@ def fetch_north_flow(days: int = 60) -> pd.DataFrame:
                 keep_cols = ['date', 'code', 'name', 'net_inflow', 'buy_amount', 'sell_amount', 'category']
                 df = df[[c for c in keep_cols if c in df.columns]]
                 all_dfs.append(df)
-        except Exception as e:
+        except requests.RequestException as e:
             logger.warning(f"获取{symbol}数据失败: {e}")
     if not all_dfs:
         return pd.DataFrame()
@@ -297,7 +297,7 @@ def backfill_etf_fund_flow_from_kline(
                 logger.info(f"  ETF回填 {code} {name}: {n}天({source})")
             else:
                 stats[code] = 0
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             logger.warning(f"  ETF回填 {code} 失败: {e}")
             stats[code] = -1
     return stats

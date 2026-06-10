@@ -124,5 +124,5 @@ class SinaDataSource(BaseDataSource):
                     'volume': float(item.get('volume', 0))
                 })
             return result
-        except Exception as e:
+        except json.JSONDecodeError as e:
             raise DataSourceError(f"获取K线失败 {code}: {e}")

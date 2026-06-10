@@ -12,6 +12,7 @@ from datetime import date
 from src.utils.data_quality import DataQualityChecker
 from src.utils.database import get_db_connection
 from config.settings import DATABASE_PATH
+import sqlite3
 
 
 def _score_ring(score: float, grade: str) -> go.Figure:
@@ -232,7 +233,7 @@ def render_tab13():
             try:
                 count_df = pd.read_sql_query(f"SELECT COUNT(*) as cnt FROM [{tname}]", conn)
                 cnt = count_df.iloc[0]["cnt"]
-            except Exception:
+            except sqlite3.OperationalError:
                 cnt = 0
             overview_rows.append({"数据表": tname, "记录数": f"{cnt:,}"})
         st.markdown(pd.DataFrame(overview_rows).to_html(index=False, escape=False), unsafe_allow_html=True)

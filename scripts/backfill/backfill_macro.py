@@ -15,6 +15,7 @@ import argparse
 import logging
 import time
 from datetime import datetime
+import sqlite3
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
@@ -55,7 +56,7 @@ def run_backfill(dry_run: bool = False):
             stats['COMEX_GOLD'] = count
             total += count
             logger.info(f"  已保存: {count}条")
-    except Exception as e:
+    except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
         logger.error(f"  COMEX黄金回填失败: {e}")
     
     time.sleep(1)
@@ -70,7 +71,7 @@ def run_backfill(dry_run: bool = False):
             stats['SGE_GOLD'] = count
             total += count
             logger.info(f"  已保存: {count}条")
-    except Exception as e:
+    except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
         logger.error(f"  上海金回填失败: {e}")
     
     time.sleep(1)
@@ -85,7 +86,7 @@ def run_backfill(dry_run: bool = False):
             stats['SHIBOR_ON'] = count
             total += count
             logger.info(f"  已保存: {count}条")
-    except Exception as e:
+    except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
         logger.error(f"  Shibor回填失败: {e}")
     
     time.sleep(1)
