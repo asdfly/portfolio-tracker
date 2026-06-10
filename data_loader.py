@@ -15,6 +15,14 @@ import streamlit as st
 
 from config.settings import CHART_DAYS, DATABASE_PATH, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
 
+from src.models import (
+    MonteCarloResult,
+    RebalanceSuggestion,
+    RebalanceTrade,
+    ReturnAttribution,
+    RiskMetrics,
+)
+
 # ==================== 数据库初始化 ====================
 
 def _ensure_indexes():
@@ -215,14 +223,14 @@ def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
     df = pd.read_sql_query(query, conn)
     conn.close()
     if df.empty or len(df) < 10:
-        return {}
+        return RiskMetrics.empty()
     df["date"] = pd.to_datetime(df["date"])
     if min_date:
         df = df[df["date"] >= pd.Timestamp(min_date)]
     if end_date:
         df = df[df["date"] <= pd.Timestamp(end_date)]
     if len(df) < 10:
-        return {}
+        return RiskMetrics.empty()
 
     # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change() 获取正确的小数日收益率
     returns = df["total_value"].pct_change().dropna()
@@ -286,19 +294,19 @@ def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
     skewness = returns.skew()
     kurtosis = returns.kurtosis()
 
-    return {
-        "sortino": sortino,
-        "calmar": calmar,
-        "win_rate": win_rate,
-        "pl_ratio": pl_ratio,
-        "max_consec_win": max_consec_win,
-        "max_consec_loss": max_consec_loss,
-        "max_dd_duration": max_dd_duration,
-        "skewness": skewness,
-        "kurtosis": kurtosis,
-        "annual_return": annual_return,
-        "annual_std": annual_std,
-    }
+    return RiskMetrics(
+        sortino=sortino,
+        calmar=calmar,
+        win_rate=win_rate,
+        pl_ratio=pl_ratio,
+        max_consec_win=max_consec_win,
+        max_consec_loss=max_consec_loss,
+        max_dd_duration=max_dd_duration,
+        skewness=skewness,
+        kurtosis=kurtosis,
+        annual_return=annual_return,
+        annual_std=annual_std,
+    )
 
 def compute_monthly_returns():
     """计算月度收益率矩阵（年份 x 月份，含年度合计列和汇总行）"""
@@ -684,16 +692,16 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         percentiles_data[f"p{p}"] = np.percentile(paths, p, axis=0)
     percentiles_df = pd.DataFrame(percentiles_data)
 
-    return {
-        "paths": paths,
-        "percentiles": percentiles_df,
-        "last_value": last_value,
-        "mean_return": mean_ret,
-        "daily_std": std_ret,
-        "sample_count": len(returns),
-        "filtered_count": filtered_count,
-        "sample_start": sample_start,
-    }
+    return MonteCarloResult(
+        paths=paths,
+        percentiles=percentiles_df,
+        last_value=last_value,
+        mean_return=mean_ret,
+        daily_std=std_ret,
+        sample_count=len(returns),
+        filtered_count=filtered_count,
+        sample_start=sample_start,
+    )
 
 def compute_return_attribution(days=CHART_DAYS["default"], end_date=None):
     """Brinson 收益归因：将组合收益分解为行业配置效应和选股效应
@@ -820,15 +828,15 @@ def compute_return_attribution(days=CHART_DAYS["default"], end_date=None):
         allocation_effect[s] = (w_p - w_b) * r_b
         selection_effect[s] = w_p * (r_p - r_b)
 
-    return {
-        "total_return": total_return,
-        "benchmark_return": benchmark_return,
-        "allocation_effect": allocation_effect,
-        "selection_effect": selection_effect,
-        "sector_returns": sector_returns,
-        "sector_weights": sector_weights,
-        "bench_weights": bench_weights,
-    }
+    return ReturnAttribution(
+        total_return=total_return,
+        benchmark_return=benchmark_return,
+        allocation_effect=allocation_effect,
+        selection_effect=selection_effect,
+        sector_returns=sector_returns,
+        sector_weights=sector_weights,
+        bench_weights=bench_weights,
+    )
 
 def compute_rebalance_suggestion(target_weights=None, threshold=0.05):
     """计算再平衡建议：基于目标权重与实际权重的偏离，生成调仓方案
@@ -911,27 +919,27 @@ def compute_rebalance_suggestion(target_weights=None, threshold=0.05):
             if shares == 0:
                 continue
             suggestions.append(
-                {
-                    "sector": sector,
-                    "code": etf["code"],
-                    "name": etf["name"],
-                    "current_weight": current,
-                    "target_weight": target,
-                    "diff": diff,
-                    "trade_value": per_etf_value,
-                    "shares": shares,
-                    "direction": "买入" if per_etf_value > 0 else "卖出",
-                    "price": etf["current_price"],
-                }
+                RebalanceTrade(
+                    sector=sector,
+                    code=etf["code"],
+                    name=etf["name"],
+                    current_weight=current,
+                    target_weight=target,
+                    diff=diff,
+                    trade_value=per_etf_value,
+                    shares=shares,
+                    direction="买入" if per_etf_value > 0 else "卖出",
+                    price=etf["current_price"],
+                )
             )
 
-    return {
-        "current_weights": current_weights,
-        "target_weights": target_weights,
-        "suggestions": suggestions,
-        "total_value": total_mv,
-        "threshold": threshold,
-    }
+    return RebalanceSuggestion(
+        current_weights=current_weights,
+        target_weights=target_weights,
+        suggestions=suggestions,
+        total_value=total_mv,
+        threshold=threshold,
+    )
 
 def _load_latest_news(_categories):
     """加载最新新闻（带缓存）"""
