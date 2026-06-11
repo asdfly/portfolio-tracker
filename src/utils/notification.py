@@ -138,7 +138,7 @@ class NotificationManager:
                 server.send_message(msg)
 
             logger.info(f"邮件发送成功: {subject}")
-        except Exception as e:
+        except (ConnectionError, OSError, ValueError, RuntimeError) as e:
             logger.error(f"邮件发送失败: {e}")
 
     def _send_wechat(self, report_data: dict):

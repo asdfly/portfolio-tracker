@@ -575,7 +575,7 @@ def _render_news_sentiment(positions, summary):
                             unsafe_allow_html=True)
         else:
             st.info("近7天无新闻情感数据")
-    except Exception:
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
         st.info("新闻情感分析暂不可用")
 
 

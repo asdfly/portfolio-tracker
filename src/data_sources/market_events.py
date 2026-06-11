@@ -90,7 +90,7 @@ def fetch_margin_data(date_str: str) -> pd.DataFrame:
             df['date'] = df['date'].apply(lambda x: (
                 f'{x[:4]}-{x[4:6]}-{x[6:8]}' if isinstance(x, str) and len(x) == 8 else x))
         return df
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, OSError) as e:
         logger.warning(f'获取融资融券数据失败 ({date_str}): {e}')
         return pd.DataFrame()
 
@@ -164,7 +164,7 @@ def fetch_holder_change_data(date_str: str) -> pd.DataFrame:
         keep2 = ['date', 'holder_name', 'holder_type', 'float_mv']
         return df2[[c for c in keep2 if c in df2.columns]]
 
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, OSError) as e:
         logger.warning(f'获取股东增减持数据失败 ({date_str}): {e}')
         return pd.DataFrame()
 
@@ -251,7 +251,7 @@ def fetch_block_trade_data(start_date: str, end_date: str) -> pd.DataFrame:
                 'buyer_broker', 'seller_broker']
         df = df[[c for c in keep if c in df.columns]]
         return df
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError, OSError) as e:
         logger.warning(f"获取大宗交易数据失败 ({start_date}~{end_date}): {e}")
         return pd.DataFrame()
 

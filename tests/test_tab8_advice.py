@@ -36,7 +36,7 @@ class TestTab8EmptyPositions:
         mock_st.caption = MagicMock()
         mock_st.info = MagicMock()
         mock_st.markdown = MagicMock()
-        mock_st.columns = lambda n: [MagicMock() for _ in range(n)]
+        mock_st.columns = lambda spec: [MagicMock() for _ in range(len(spec) if isinstance(spec, list) else spec)]
         mock_st.metric = MagicMock()
         mock_st.button = MagicMock(return_value=False)
         mock_st.download_button = MagicMock()
@@ -71,7 +71,7 @@ class TestTab8WithPositions:
         mock_st.caption = MagicMock()
         mock_st.info = MagicMock()
         mock_st.markdown = MagicMock()
-        mock_st.columns = lambda n: [MagicMock() for _ in range(n)]
+        mock_st.columns = lambda spec: [MagicMock() for _ in range(len(spec) if isinstance(spec, list) else spec)]
         mock_st.metric = MagicMock()
         mock_st.button = MagicMock(return_value=False)
         mock_st.download_button = MagicMock()

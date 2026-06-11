@@ -665,7 +665,7 @@ def _render_rebalance_advice():
                     conn_sim,
                 )
                 conn_sim.close()
-            except Exception:
+            except (pd.errors.DatabaseError, sqlite3.OperationalError, ValueError, TypeError):
                 conn_sim.close()
                 recent_ret = pd.DataFrame()
 
@@ -1033,10 +1033,10 @@ def _render_investment_review(volatility, tech_signals, summary):
                             st.caption("暂无技术信号翻转记录可供复盘")
                     else:
                         st.caption("暂无技术指标数据")
-                except Exception:  # UI渲染降级：技术信号异常提示
+                except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):  # UI渲染降级：技术信号异常提示
                     st.caption("技术信号复盘数据加载异常")
 
-        except Exception:  # UI渲染降级：外层 Tab 容错
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):  # UI渲染降级：外层 Tab 容错
             pass
 
 

@@ -787,7 +787,7 @@ def _load_latest_news(_categories):
 
         )
 
-    except Exception:
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
 
         return pd.DataFrame()
 
@@ -823,7 +823,7 @@ def _load_tech_signals(_codes, _full=False):
 
         )
 
-    except Exception:
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
 
         return pd.DataFrame()
 

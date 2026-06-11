@@ -42,7 +42,7 @@ def _compute_sentiment_score(text):
         fin_score = sum(FIN_POS.get(w, 0) - FIN_NEG.get(w, 0) for w in words)
         adjusted = base * 0.3 + (fin_score / 4.0) * 0.7 + 0.5
         return round(max(0.0, min(1.0, adjusted)), 4)
-    except Exception:
+    except (ImportError, FileNotFoundError, ValueError):
         return 0.5
 
 
@@ -111,7 +111,7 @@ class NewsFetcher:
                     "news": [asdict(n) for n in news_list[:self.MAX_NEWS_PER_TOPIC]]
                 }
                 logger.info(f"[新闻] {label}: 获取{len(results[key]['news'])}条")
-            except Exception as e:
+            except (ConnectionError, OSError, ValueError, KeyError, TypeError) as e:
                 logger.warning(f"[新闻] {label} 抓取失败: {e}")
                 results[key] = {"label": label, "news": []}
 
@@ -130,7 +130,7 @@ class NewsFetcher:
             items = self._fetch_from_eastmoney_search(keyword)
             if items:
                 return items
-        except Exception as e:
+        except (ConnectionError, ValueError, KeyError, TypeError, AttributeError) as e:
             logger.debug(f"东方财富搜索失败: {e}")
 
         # 方式2: 东方财富资讯频道
@@ -138,7 +138,7 @@ class NewsFetcher:
             items = self._fetch_from_eastmoney_news(keyword)
             if items:
                 return items
-        except Exception as e:
+        except (ConnectionError, ValueError, KeyError, TypeError, AttributeError) as e:
             logger.debug(f"东方财富资讯失败: {e}")
 
         return items

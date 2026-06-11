@@ -107,7 +107,7 @@ class PortfolioAnalyzer:
                 else:
                     logger.info(f"持仓文件日期 {file_date} == 数据库最新日期 {db_date}，持仓数量一致，无需更新")
                     return False
-            except Exception as e:
+            except (sqlite3.OperationalError, sqlite3.IntegrityError, KeyError, ValueError) as e:
                 logger.warning(f"同日持仓比对失败，跳过更新检测: {e}")
                 return False
 
@@ -314,7 +314,7 @@ class PortfolioAnalyzer:
                 else:
                     logger.warning(f"{code} K线数据不足")
 
-            except Exception as e:
+            except (ValueError, KeyError, TypeError, IndexError) as e:
                 logger.warning(f"计算 {code} 技术指标失败: {e}")
 
         return results

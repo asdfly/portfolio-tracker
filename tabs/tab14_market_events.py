@@ -48,7 +48,7 @@ def _load_market_events(table: str, days: int = 30) -> pd.DataFrame:
             f"SELECT * FROM {table} WHERE date >= ? ORDER BY date DESC, id DESC",
             conn, params=(cutoff,)
         )
-    except Exception:
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
         df = pd.DataFrame()
     conn.close()
     return df
@@ -63,7 +63,7 @@ def _load_date_list(table: str) -> list:
             f"SELECT DISTINCT date FROM {table} ORDER BY date DESC", conn
         )
         dates = df['date'].tolist()
-    except Exception:
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
         dates = []
     conn.close()
     return dates

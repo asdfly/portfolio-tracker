@@ -366,7 +366,7 @@ def _render_market_events(positions, summary):
                 st.success("近5日无持仓关联的市场事件信号")
         else:
             st.info("无持仓数据，跳过关联分析")
-    except Exception as e:
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError, ValueError, KeyError) as e:
         st.warning(f"市场事件信号加载失败: {e}")
 
 
@@ -396,7 +396,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date):
                         width='stretch',
                     key="dl_excel_advice",
                     )
-            except Exception as e:
+            except (OSError, ValueError, ImportError, RuntimeError) as e:
                 st.error(f"导出失败: {e}")
     with ec2:
         if st.button("📄 导出 HTML 日报", key="export_html_advice"):
@@ -416,7 +416,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date):
                         width='stretch',
                     key="dl_html_advice",
                     )
-            except Exception as e:
+            except (OSError, ValueError, ImportError, RuntimeError) as e:
                 st.error(f"导出失败: {e}")
 
 
@@ -517,11 +517,11 @@ def _render_feedback_tracking(positions, summary):
                             upd_conn.close()
                             st.toast(f"建议 #{row['id']} 状态更新为: {status_labels.get(new_status, new_status)}")
                             st.rerun()
-                        except Exception as upd_e:
+                        except (pd.errors.DatabaseError, sqlite3.OperationalError, sqlite3.ProgrammingError, KeyError, ValueError) as upd_e:
                             st.warning(f"状态更新失败: {upd_e}")
         else:
             st.info("暂无建议历史记录。建议会在每日分析时自动记录。")
-    except Exception as e:
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
         st.warning(f"建议历史加载失败: {e}")
 
 
@@ -559,7 +559,7 @@ def _render_feedback_tracking(positions, summary):
                 st.dataframe(mc_latest, hide_index=True)
 
             env_conn.close()
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
             st.warning(f"市场环境数据加载失败: {e}")
 def render_tab8():
     selected_date = st.session_state.get("selected_date", "")

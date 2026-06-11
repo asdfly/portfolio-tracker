@@ -119,7 +119,7 @@ def _render_indicator_backtest(tab_obj, positions, summary, selected_date, selec
                         )
                         render_chart(fig_bt)
 
-        except Exception as e:
+        except (ImportError, ValueError, KeyError, TypeError) as e:
             st.info(f"指标回测模块暂不可用: {str(e)[:80]}")
 
 def _render_candlestick_patterns(tab_obj, positions, summary, selected_date):
@@ -244,7 +244,7 @@ def _render_candlestick_patterns(tab_obj, positions, summary, selected_date):
                             render_chart(fig_k)
                     else:
                         st.info(f"近 {n_candle} 日未检测到经典K线形态")
-        except Exception as e:
+        except (ImportError, ValueError, KeyError, TypeError) as e:
             st.info(f"K线形态识别暂不可用: {str(e)[:80]}")
 
 def _render_backtest_history(tab_obj, positions, summary, selected_date):
@@ -305,7 +305,7 @@ def _render_backtest_history(tab_obj, positions, summary, selected_date):
                 disp['avg_pnl'] = disp['avg_pnl'].apply(lambda x: f"{x:+.3f}%")
                 disp['created_at'] = disp['created_at'].str[:16]
                 st.dataframe(disp, width="stretch", hide_index=True, height=350)
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError, ValueError, KeyError) as e:
             st.info(f"回测历史加载失败: {str(e)[:80]}")
 
 def render_tab9():

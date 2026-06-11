@@ -55,7 +55,7 @@ class DataQualityChecker:
                     latest = None
                     lag = 999
                     status = "EMPTY"
-            except Exception:
+            except (sqlite3.OperationalError, ValueError, TypeError):
                 latest = None
                 lag = 999
                 status = "ERROR"

@@ -377,7 +377,7 @@ def save_market_sentiment(conn: sqlite3.Connection, records: list) -> int:
             """, (r['date'], r['indicator_code'], r['name'], r['value'],
                   r.get('change_value'), r.get('change_pct'), r.get('source')))
             count += 1
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError, KeyError, TypeError) as e:
             logger.debug(f"保存失败 {r}: {e}")
     conn.commit()
     return count

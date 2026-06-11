@@ -689,7 +689,7 @@ def _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark,
                             def _fmt(v, suffix="", dec=2, inv=False):
                                 try:
                                     fv = float(v)
-                                except:
+                                except (ValueError, TypeError):
                                     return '<span style="color:#8b949e;">--</span>'
                                 c = "#22c55e" if (fv >= 0 and not inv) or (fv < 0 and inv) else "#ef4444"
                                 if abs(fv) < 0.005:

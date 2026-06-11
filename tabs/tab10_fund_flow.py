@@ -239,7 +239,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                             st.caption("当前无显著背离信号")
                     finally:
                         conn_dv.close()
-                except Exception:  # UI渲染降级：资金流背离信号
+                except (KeyError, ValueError, IndexError, TypeError):  # UI渲染降级：资金流背离信号
                     pass
 
                 # ===== 深度分析: 板块轮动速度 =====
@@ -298,7 +298,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                                     showlegend=False,
                                 )
                                 render_chart(fig_speed)
-                except Exception:  # UI渲染降级：风格切换图表
+                except (KeyError, ValueError, IndexError, TypeError):  # UI渲染降级：风格切换图表
                     pass
             else:
                 st.info("暂无行业资金流数据，请先运行数据采集任务")
@@ -320,11 +320,11 @@ def _render_industry_fund_flow(tab_obj, positions):
                                     st.warning("采集返回空数据")
                             finally:
                                 conn_f.close()
-                        except Exception as e:
+                        except (pd.errors.DatabaseError, sqlite3.OperationalError, ConnectionError, ValueError, KeyError) as e:
                             st.error(f"采集失败: {str(e)[:100]}")
                         st.rerun()
 
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
             st.info(f"行业资金流模块暂不可用: {str(e)[:80]}")
 
 
@@ -458,7 +458,7 @@ def _render_etf_fund_flow(tab_obj, positions):
                             )
                         else:
                             st.caption("该ETF近期无显著资金流-价格背离信号")
-                except Exception:  # UI渲染降级：背离信号表格
+                except (KeyError, ValueError, IndexError, TypeError):  # UI渲染降级：背离信号表格
                     pass
             else:
                 st.info("暂无ETF资金流数据")
@@ -483,11 +483,11 @@ def _render_etf_fund_flow(tab_obj, positions):
                                     st.success("采集完成")
                                 finally:
                                     conn_f2.close()
-                            except Exception as e:
+                            except (pd.errors.DatabaseError, sqlite3.OperationalError, ConnectionError, ValueError, KeyError) as e:
                                 st.error(f"采集失败: {str(e)[:100]}")
                             st.rerun()
 
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
             st.info(f"ETF资金流模块暂不可用: {str(e)[:80]}")
 
 
@@ -648,7 +648,7 @@ def _render_main_force_flow(tab_obj):
                         render_chart(fig_etf_total)
                     else:
                         st.info("暂无ETF资金流数据")
-                except Exception as e2:
+                except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e2:
                     st.caption(f"ETF合计资金流: {str(e2)[:60]}")
             else:
                 st.info("暂无主力资金数据")
@@ -668,11 +668,11 @@ def _render_main_force_flow(tab_obj):
                                     st.success(f"采集成功，写入 {cnt} 条记录")
                             finally:
                                 conn_f3.close()
-                        except Exception as e:
+                        except (pd.errors.DatabaseError, sqlite3.OperationalError, ConnectionError, ValueError, KeyError) as e:
                             st.error(f"采集失败: {str(e)[:100]}")
                         st.rerun()
 
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
             st.info(f"主力资金模块暂不可用: {str(e)[:80]}")
 
 

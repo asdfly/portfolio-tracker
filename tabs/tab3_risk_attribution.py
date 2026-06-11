@@ -270,7 +270,7 @@ def _render_multi_factor_attribution(positions):
         else:
             err_msg = fa.get("error", "数据不足") if fa else "因子归因计算失败"
             st.info(f"多因子归因: {err_msg}")
-    except Exception as e:
+    except (sqlite3.OperationalError, ImportError, ValueError, KeyError) as e:
         st.info(f"多因子归因模块暂不可用: {str(e)[:80]}")
 
 

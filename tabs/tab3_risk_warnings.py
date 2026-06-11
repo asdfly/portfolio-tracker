@@ -282,7 +282,7 @@ def _render_style_exposure(positions):
                     showlegend=False,
                 )
                 render_chart(fig_radar_style)
-    except Exception as e:
+    except (ImportError, ValueError, KeyError, TypeError) as e:
         st.info(f"风格暴露分析暂不可用: {str(e)[:80]}")
 
 
@@ -359,7 +359,7 @@ def _render_sector_rotation():
                         st.markdown(
                             pd.DataFrame(table_rows).to_html(index=False, escape=False), unsafe_allow_html=True
                         )
-    except Exception as e:
+    except (sqlite3.OperationalError, ImportError, ValueError, KeyError) as e:
         st.info(f"行业轮动分析暂不可用: {str(e)[:80]}")
 
 

@@ -53,15 +53,15 @@ def _launch_headless_chrome(port=8501):
         page.wait_for_timeout(1000)
 
         return pw, browser, page
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         print(f"浏览器启动失败: {e}")
         try:
             browser.close()
-        except Exception:
+        except (OSError, RuntimeError):
             pass
         try:
             pw.stop()
-        except Exception:
+        except (OSError, RuntimeError):
             pass
         return None
 
@@ -94,7 +94,7 @@ def capture_screenshot(port=8501, output_dir=None, filename_prefix="dashboard"):
     try:
         page.screenshot(path=png_path, full_page=True)
         return png_path
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         print(f"截图失败: {e}")
         return None
     finally:
@@ -136,7 +136,7 @@ def export_pdf(port=8501, output_dir=None, filename_prefix="dashboard"):
             margin={"top": "0.4in", "bottom": "0.4in", "left": "0.4in", "right": "0.4in"},
         )
         return pdf_path
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         print(f"PDF导出失败: {e}")
         return None
     finally:

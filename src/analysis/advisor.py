@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 import logging
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -726,7 +727,7 @@ class SmartAdvisor:
                             related_codes=[], confidence=0.45,
                             created_at=datetime.now()
                         ))
-        except Exception as e:
+        except (KeyError, ValueError, TypeError) as e:
             logger.warning(f"新闻情感分析异常: {e}")
 
         return advices
@@ -921,7 +922,7 @@ class SmartAdvisor:
                             created_at=datetime.now()
                         ))
 
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, sqlite3.IntegrityError, KeyError, ValueError, TypeError) as e:
             logger.warning(f"融资融券分析异常: {e}")
 
         return advices
@@ -1049,7 +1050,7 @@ class SmartAdvisor:
                             created_at=datetime.now()
                         ))
 
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, sqlite3.IntegrityError, KeyError, ValueError, TypeError) as e:
             logger.warning(f"机构调研分析异常: {e}")
 
         return advices
@@ -1256,7 +1257,7 @@ class SmartAdvisor:
                         created_at=datetime.now()
                     ))
 
-        except Exception as e:
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, sqlite3.IntegrityError, KeyError, ValueError, TypeError) as e:
             logger.warning(f"大宗交易分析异常: {e}")
 
         return advices

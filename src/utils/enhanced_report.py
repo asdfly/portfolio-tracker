@@ -97,7 +97,7 @@ class EnhancedReportBuilder:
                 if fv != fv:
                     return 'N/A'
                 return f'{fv:{fmt}}'
-            except Exception:
+            except (ValueError, TypeError):
                 return 'N/A'
 
         ss = sf(sharpe, '.3f')
