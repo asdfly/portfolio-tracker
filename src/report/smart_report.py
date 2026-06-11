@@ -34,8 +34,10 @@ class SmartReportGenerator:
         try:
             from src.analysis.backtest import StrategyBacktester
             backtester = StrategyBacktester(self.db)
-            backtest_results = backtester.run_all_strategies()
-            if backtest_results and not backtest_results.empty:
+            backtest_results = backtester.compare_strategies(
+                codes=[], weights={}, start_date='2024-01-01', end_date='2026-06-01'
+            )
+            if backtest_results is not None and not backtest_results.empty:
                 strategy_advice = self.advisor.generate_strategy_advice(backtest_results)
                 if strategy_advice:
                     advices.append(strategy_advice)

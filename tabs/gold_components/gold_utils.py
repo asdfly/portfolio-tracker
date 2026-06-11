@@ -294,6 +294,8 @@ def fetch_global_etf_holdings(years=2):
     try:
         import akshare as ak
         df = ak.macro_cons_gold()
+        if df.empty or '商品' not in df.columns:
+            return None
         df = df[df['商品'] == '黄金'].copy()
         df = df.rename(columns={
             '日期': 'date',
@@ -310,7 +312,7 @@ def fetch_global_etf_holdings(years=2):
         cutoff = df["date"].max() - pd.DateOffset(years=years)
         df = df[df["date"] >= cutoff].reset_index(drop=True)
         return df
-    except (ValueError, TypeError) as e:
+    except Exception as e:
         import streamlit as st
         st.warning(f"获取全球ETF持仓数据失败: {e}")
         return None

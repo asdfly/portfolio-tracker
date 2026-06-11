@@ -30,7 +30,7 @@ for _a in ["plotly_chart","markdown","info","success","warning","error","metric"
     setattr(mock_st, _a, MagicMock())
 mock_st.expander = MagicMock(return_value=MagicMock())
 # tabs 返回支持 __getitem__ 的列表
-mock_st.tabs = MagicMock(return_value=[MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)) for _ in range(5)])
+mock_st.tabs = MagicMock(return_value=[MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)) for _ in range(10)])
 mock_st.container = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
 mock_st.spinner = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
 mock_st.empty = MagicMock(return_value=MagicMock())

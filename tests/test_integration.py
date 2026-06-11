@@ -47,6 +47,15 @@ def test_render_tab1_real_data():
     mock_st = MagicMock()
     mock_st.columns = MagicMock(return_value=[MagicMock(), MagicMock()])
     mock_st.session_state = {}
+    mock_st.selectbox = MagicMock(return_value=60)  # rolling_window default
+    def _mock_tabs_list(labels):
+        return [MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)) for _ in labels]
+    mock_st.tabs = _mock_tabs_list
+    mock_st.multiselect = MagicMock(return_value=[])  # empty selection
+    mock_st.container = MagicMock(return_value=MagicMock())
+    mock_st.expander = MagicMock(return_value=MagicMock())
+    mock_st.cache_data = lambda ttl=None, show_spinner=False: (lambda f: f)  # passthrough
+    mock_st.cache_resource = lambda ttl=None: (lambda f: f)
 
     # 加载真实数据
     conn = get_db_connection()
