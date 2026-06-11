@@ -17,8 +17,7 @@ for _k in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy'
     os.environ.pop(_k, None)
 
 
-def get_db_connection() -> sqlite3.Connection:
-    return get_db_connection()
+from src.utils.database import get_db_connection
 
 
 # ==================== macro_daily 指标采集 ====================

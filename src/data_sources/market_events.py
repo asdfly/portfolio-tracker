@@ -12,8 +12,7 @@ import time
 logger = logging.getLogger(__name__)
 
 
-def get_db_connection() -> sqlite3.Connection:
-    return get_db_connection()
+from src.utils.database import get_db_connection
 
 
 # ============================================================

@@ -4,8 +4,7 @@ import pandas as pd
 import sqlite3
 
 
-def get_db_connection() -> sqlite3.Connection:
-    return get_db_connection()
+from src.utils.database import get_db_connection
 
 
 def backtest_indicator_signals(df, signal_col='signal', hold_days=5, forward_col='close'):
