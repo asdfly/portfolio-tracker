@@ -443,331 +443,280 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
 
 
 
+def _calc_range_metrics(range_data):
+    """纯数据函数：计算区间指标（累计/年化收益、波动率、夏普、回撤等）"""
+    import math as _math
+    r_start_val = range_data.iloc[0]["total_value"]
+    r_end_val = range_data.iloc[-1]["total_value"]
+    r_cum_ret = (r_end_val / r_start_val - 1) * 100 if r_start_val > 0 else 0
+    r_daily = range_data["total_value"].pct_change().dropna()
+    n_days = len(r_daily)
+    r_ann_ret = (r_daily.mean() * 252 * 100) if n_days > 0 else 0
+    r_vol = (r_daily.std() * _math.sqrt(252) * 100) if n_days > 1 else 0
+    r_sharpe = (
+        (r_daily.mean() / r_daily.std() * _math.sqrt(252)) if r_daily.std() > 0 else 0
+    )
+    r_cummax = range_data["total_value"].cummax()
+    r_dd = ((range_data["total_value"] - r_cummax) / r_cummax * 100).min()
+    r_best_day = r_daily.max() if len(r_daily) > 0 else 0
+    r_worst_day = r_daily.min() if len(r_daily) > 0 else 0
+    r_up_days = (r_daily > 0).sum()
+    r_dn_days = (r_daily < 0).sum()
+    r_wr = (r_up_days / n_days * 100) if n_days > 0 else 0
+    avg_win = r_daily[r_daily > 0].mean() if r_up_days > 0 else 0
+    avg_loss = abs(r_daily[r_daily < 0].mean()) if r_dn_days > 0 else 0.0001
+    r_pnl_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+    return {
+        "cum_ret": r_cum_ret, "ann_ret": r_ann_ret, "vol": r_vol,
+        "sharpe": r_sharpe, "dd": r_dd, "best_day": r_best_day,
+        "worst_day": r_worst_day, "wr": r_wr, "pnl_ratio": r_pnl_ratio, "n_days": n_days,
+    }
+
+def _render_benchmark_comparison_tab1(summary, selected_date, show_days):
+    """Tab1 子块：多基准叠加对比图表 + 收益排行卡片"""
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        "多基准叠加对比"
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        "将投资组合与多个基准指数归一化到同一起点，直观比较不同时间段的相对走势强弱。"
+        "</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    bench_options = {k: v for k, v in INDEX_CODES.items()}
+    default_benches = ["sh000300", "sz399006", "sh000852"]
+    selected_benches = st.multiselect(
+        "选择对比基准（最多5个）",
+        options=list(bench_options.keys()),
+        default=default_benches,
+        format_func=lambda x: bench_options[x],
+        max_selections=5,
+        key="multi_bench_select",
+    )
+
+    if not summary.empty and len(summary) > 1 and selected_benches:
+        plot_end2 = selected_date if selected_date else summary["date"].iloc[-1]
+        ps_idx = max(0, len(summary) - show_days - 30)
+        summary_plot = summary.iloc[ps_idx:].copy()
+        base_value = summary_plot.iloc[0]["total_value"]
+        summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
+        chart_data = downsample(summary_plot, max_points=DOWNSAMPLE_MAX_POINTS)
+
+        fig_multi = go.Figure()
+        fig_multi.add_trace(
+            go.Scatter(
+                x=chart_data["date"], y=chart_data["nav"], mode="lines",
+                name="投资组合", line=dict(color="#58a6ff", width=2.5),
+            )
+        )
+        _add_min_max_annotations(fig_multi, chart_data["date"], chart_data["nav"], y_label="净值")
+
+        bench_colors = ["#f59e0b", "#22c55e", "#ef4444", "#a855f7", "#06b6d4"]
+        bench_stats = []
+
+        for idx, bcode in enumerate(selected_benches):
+            bname = bench_options.get(bcode, bcode)
+            bdf = load_benchmark_comparison(bcode, show_days + 10, selected_date)
+            if not bdf.empty:
+                b_base = bdf.iloc[0]["close"]
+                b_plot = bdf.copy()
+                b_plot["nav"] = b_plot["close"] / b_base * 100
+                b_chart = downsample(b_plot, max_points=DOWNSAMPLE_MAX_POINTS)
+                fig_multi.add_trace(
+                    go.Scatter(
+                        x=b_chart["date"], y=b_chart["nav"], mode="lines",
+                        name=bname,
+                        line=dict(color=bench_colors[idx % len(bench_colors)], width=1.2, dash="dash"),
+                    )
+                )
+                b_start = bdf.iloc[0]["close"]
+                b_end = bdf.iloc[-1]["close"]
+                b_ret = (b_end / b_start - 1) * 100 if b_start > 0 else 0
+                bench_stats.append({"基准": bname, "累计收益": f"{b_ret:+.2f}%"})
+
+        fig_multi.update_layout(
+            height=350, plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+            font=dict(color="#c9d1d9", size=11),
+            margin=dict(l=50, r=20, t=10, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=10, color="#8b949e")),
+            xaxis=dict(showgrid=False),
+            yaxis=dict(title="净值 (基准100)", showgrid=True, gridcolor="#21262d"),
+            hovermode="x unified",
+        )
+        render_chart(fig_multi)
+
+        if bench_stats:
+            port_end = summary_plot.iloc[-1]["total_value"]
+            port_ret = (port_end / base_value - 1) * 100 if base_value > 0 else 0
+            all_items = [{"基准": "投资组合", "累计收益": f"{port_ret:+.2f}%"}] + bench_stats
+            all_items.sort(key=lambda x: float(x["累计收益"].replace("%", "").replace("+", "")), reverse=True)
+            n_cards = len(all_items)
+            card_cols = st.columns(min(n_cards, 6))
+            for i, item in enumerate(all_items):
+                val = float(item["累计收益"].replace("%", "").replace("+", ""))
+                c = "#22c55e" if val >= 0 else "#ef4444"
+                rank_icon = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}."
+                with card_cols[i % len(card_cols)]:
+                    st.markdown(
+                        f'<div style="padding:6px 10px;border-radius:6px;background:#161b22;'
+                        f'border-left:3px solid {c};text-align:center;">'
+                        f'<div style="font-size:10px;color:#8b949e;">{rank_icon} {item["基准"]}</div>'
+                        f'<div style="font-size:14px;font-weight:bold;color:{c};">{item["累计收益"]}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+def _render_range_analysis_tab2(summary, selected_date, selected_benchmark, show_days):
+    """Tab2 子块：区间收益分析（日期选择 + 指标计算委托）"""
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        "区间收益分析"
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        "选择起止日期，查看该时间段内组合与基准的累计收益、年化收益、最大回撤、波动率等核心指标对比。"
+        "</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    if not summary.empty and len(summary) > 1:
+        all_dates_list = summary["date"].tolist()
+        date_range = st.columns(2)
+        with date_range[0]:
+            start_dt = st.selectbox("起始日期", all_dates_list, index=min(len(all_dates_list) - 1, 60), key="range_start")
+        with date_range[1]:
+            end_dt = st.selectbox("结束日期", all_dates_list, index=0, key="range_end")
+
+        if start_dt < end_dt:
+            mask = (summary["date"] >= start_dt) & (summary["date"] <= end_dt)
+            range_data = summary[mask].copy()
+            if len(range_data) > 1:
+                r = _calc_range_metrics(range_data)
+                bench_code = _resolve_benchmark_code(selected_benchmark)
+                bname = INDEX_CODES.get(bench_code, bench_code)
+                bdf = load_benchmark_comparison(bench_code, show_days, selected_date)
+                b_stats = {}
+                if not bdf.empty:
+                    import math as _math
+                    b_mask = (bdf["date"] >= start_dt) & (bdf["date"] <= end_dt)
+                    b_range = bdf[b_mask].copy()
+                    if len(b_range) > 1:
+                        b_start_c = b_range.iloc[0]["close"]
+                        b_end_c = b_range.iloc[-1]["close"]
+                        b_daily = b_range["close"].pct_change().dropna()
+                        b_stats = {
+                            "cum_ret": (b_end_c / b_start_c - 1) * 100 if b_start_c > 0 else 0,
+                            "ann_ret": b_daily.mean() * 252 * 100 if len(b_daily) > 0 else 0,
+                            "vol": b_daily.std() * _math.sqrt(252) * 100 if len(b_daily) > 1 else 0,
+                            "sharpe": (b_daily.mean() / b_daily.std() * _math.sqrt(252)) if b_daily.std() > 0 else 0,
+                            "dd": ((b_range["close"] - b_range["close"].cummax()) / b_range["close"].cummax() * 100).min(),
+                        }
+                _render_range_metrics_cards(r, b_stats, bname, start_dt, end_dt)
+            else:
+                st.info("所选区间内交易日不足，请调整日期范围")
+        else:
+            st.warning("起始日期须早于结束日期")
+
+def _render_range_metrics_cards(r, b_stats, bname, start_dt, end_dt):
+    """区间指标卡片 + 详细对比表渲染"""
+
+    def _fmt(v, suffix="", dec=2, inv=False):
+        try:
+            fv = float(v)
+        except (ValueError, TypeError):
+            return '<span style="color:#8b949e;">--</span>'
+        c = "#22c55e" if (fv >= 0 and not inv) or (fv < 0 and inv) else "#ef4444"
+        if abs(fv) < 0.005:
+            c = "#c9d1d9"
+        return f'<span style="color:{c};font-weight:bold;">{fv:+.{dec}f}{suffix}</span>'
+
+    ic1, ic2, ic3, ic4 = st.columns(4)
+    with ic1:
+        c = "#22c55e" if r["cum_ret"] >= 0 else "#ef4444"
+        st.markdown(f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c};"><div style="font-size:10px;color:#8b949e;">累计收益</div><div style="font-size:16px;font-weight:bold;color:{c};">{r["cum_ret"]:+.2f}%</div></div>', unsafe_allow_html=True)
+    with ic2:
+        c2 = "#22c55e" if r["sharpe"] >= 0.5 else "#f59e0b" if r["sharpe"] >= 0 else "#ef4444"
+        st.markdown(f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c2};"><div style="font-size:10px;color:#8b949e;">区间夏普</div><div style="font-size:16px;font-weight:bold;color:{c2};">{r["sharpe"]:.3f}</div></div>', unsafe_allow_html=True)
+    with ic3:
+        c3 = "#ef4444" if abs(r["dd"]) > 15 else "#f59e0b" if abs(r["dd"]) > 8 else "#22c55e"
+        st.markdown(f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c3};"><div style="font-size:10px;color:#8b949e;">最大回撤</div><div style="font-size:16px;font-weight:bold;color:{c3};">{r["dd"]:.2f}%</div></div>', unsafe_allow_html=True)
+    with ic4:
+        c4 = "#22c55e" if r["wr"] >= 60 else "#f59e0b" if r["wr"] >= 45 else "#ef4444"
+        st.markdown(f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c4};"><div style="font-size:10px;color:#8b949e;">胜率 / 盈亏比</div><div style="font-size:14px;font-weight:bold;color:{c4};">{r["wr"]:.0f}% / {r["pnl_ratio"]:.2f}</div></div>', unsafe_allow_html=True)
+
+    b_cum_s = _fmt(b_stats.get("cum_ret", 0), "%")
+    b_ann_s = _fmt(b_stats.get("ann_ret", 0), "%")
+    b_sh_s = f'<span style="color:#8b949e;">{b_stats.get("sharpe", 0):.3f}</span>'
+    b_dd_s = f'<span style="color:#ef4444;">{b_stats.get("dd", 0):.2f}%</span>'
+    b_vol_s = f'<span style="color:#8b949e;">{b_stats.get("vol", 0):.2f}%</span>'
+    alpha = r["cum_ret"] - b_stats.get("cum_ret", 0)
+    alpha_c = "#22c55e" if alpha >= 0 else "#ef4444"
+
+    html_range = f"""
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    <thead><tr style="background:#161b22;">
+    <th style="padding:7px 10px;color:#8b949e;text-align:left;font-size:12px;">指标</th>
+    <th style="padding:7px 10px;color:#58a6ff;text-align:center;font-size:12px;">投资组合</th>
+    <th style="padding:7px 10px;color:#f59e0b;text-align:center;font-size:12px;">{bname}</th>
+    <th style="padding:7px 10px;color:#c9d1d9;text-align:center;font-size:12px;">差异</th>
+    </tr></thead><tbody>
+    <tr style="border-bottom:1px solid #21262d;">
+    <td style="padding:6px 10px;color:#c9d1d9;">累计收益率</td>
+    <td style="padding:6px 10px;text-align:center;">{_fmt(r["cum_ret"], "%")}</td>
+    <td style="padding:6px 10px;text-align:center;">{b_cum_s}</td>
+    <td style="padding:6px 10px;text-align:center;font-weight:bold;color:{alpha_c};">{alpha:+.2f}%</td>
+    </tr>
+    <tr style="background:#161b22;border-bottom:1px solid #21262d;">
+    <td style="padding:6px 10px;color:#c9d1d9;">年化收益率</td>
+    <td style="padding:6px 10px;text-align:center;">{_fmt(r["ann_ret"], "%")}</td>
+    <td style="padding:6px 10px;text-align:center;">{b_ann_s}</td>
+    <td style="padding:6px 10px;text-align:center;">{_fmt(r["ann_ret"] - b_stats.get("ann_ret", 0), "%")}</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d;">
+    <td style="padding:6px 10px;color:#c9d1d9;">夏普比率</td>
+    <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r["sharpe"]:.3f}</span></td>
+    <td style="padding:6px 10px;text-align:center;">{b_sh_s}</td>
+    <td style="padding:6px 10px;text-align:center;">{_fmt(r["sharpe"] - b_stats.get("sharpe", 0), dec=3)}</td>
+    </tr>
+    <tr style="background:#161b22;border-bottom:1px solid #21262d;">
+    <td style="padding:6px 10px;color:#c9d1d9;">最大回撤</td>
+    <td style="padding:6px 10px;text-align:center;"><span style="color:#ef4444;">{r["dd"]:.2f}%</span></td>
+    <td style="padding:6px 10px;text-align:center;">{b_dd_s}</td>
+    <td style="padding:6px 10px;text-align:center;">{_fmt(r["dd"] - b_stats.get("dd", 0), "%", inv=True)}</td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d;">
+    <td style="padding:6px 10px;color:#c9d1d9;">年化波动率</td>
+    <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r["vol"]:.2f}%</span></td>
+    <td style="padding:6px 10px;text-align:center;">{b_vol_s}</td>
+    <td style="padding:6px 10px;text-align:center;">{_fmt(r["vol"] - b_stats.get("vol", 0), "%", inv=True)}</td>
+    </tr>
+    <tr style="background:#161b22;border-bottom:1px solid #21262d;">
+    <td style="padding:6px 10px;color:#c9d1d9;">胜率</td>
+    <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r["wr"]:.1f}%</span></td>
+    <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
+    </tr>
+    <tr style="border-bottom:1px solid #21262d;">
+    <td style="padding:6px 10px;color:#c9d1d9;">盈亏比</td>
+    <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r["pnl_ratio"]:.2f}</span></td>
+    <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
+    </tr>
+    <tr style="background:#161b22;">
+    <td style="padding:6px 10px;color:#c9d1d9;">最佳/最差单日</td>
+    <td style="padding:6px 10px;text-align:center;">{_fmt(r["best_day"], "%")} / {_fmt(r["worst_day"], "%")}</td>
+    <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
+    </tr>
+    </tbody></table></div>"""
+    st.markdown(html_range, unsafe_allow_html=True)
+    st.caption(f"*区间: {start_dt} ~ {end_dt}，共 {r['n_days']} 个交易日*")
+
 def _render_multi_benchmark_analysis(summary, selected_date, selected_benchmark, show_days):
-            # ========== 多基准对比 & 区间分析 ==========
-            st.markdown("---")
-            compare_tab1, compare_tab2 = st.tabs(["📊 多基准对比", "📅 区间收益分析"])
-
-            with compare_tab1:
-                st.markdown(
-                    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
-                    "多基准叠加对比"
-                    '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
-                    '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
-                    "将投资组合与多个基准指数归一化到同一起点，直观比较不同时间段的相对走势强弱。"
-                    "</span></div>",
-                    unsafe_allow_html=True,
-                )
-
-                # 多基准选择器
-                bench_options = {k: v for k, v in INDEX_CODES.items()}
-                default_benches = ["sh000300", "sz399006", "sh000852"]
-                selected_benches = st.multiselect(
-                    "选择对比基准（最多5个）",
-                    options=list(bench_options.keys()),
-                    default=default_benches,
-                    format_func=lambda x: bench_options[x],
-                    max_selections=5,
-                    key="multi_bench_select",
-                )
-
-                if not summary.empty and len(summary) > 1 and selected_benches:
-                    plot_end2 = selected_date if selected_date else summary["date"].iloc[-1]
-                    ps_idx = max(0, len(summary) - show_days - 30)
-                    summary_plot = summary.iloc[ps_idx:].copy()
-                    base_value = summary_plot.iloc[0]["total_value"]
-                    summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
-                    chart_data = downsample(summary_plot, max_points=DOWNSAMPLE_MAX_POINTS)
-
-                    fig_multi = go.Figure()
-                    # 组合线（粗线）
-                    fig_multi.add_trace(
-                        go.Scatter(
-                            x=chart_data["date"],
-                            y=chart_data["nav"],
-                            mode="lines",
-                            name="投资组合",
-                            line=dict(color="#58a6ff", width=2.5),
-                        )
-                    )
-                    _add_min_max_annotations(fig_multi, chart_data["date"], chart_data["nav"], y_label="净值")
-
-                    # 基准线（虚线，不同颜色）
-                    bench_colors = ["#f59e0b", "#22c55e", "#ef4444", "#a855f7", "#06b6d4"]
-                    bench_stats = []
-
-                    for idx, bcode in enumerate(selected_benches):
-                        bname = bench_options.get(bcode, bcode)
-                        bdf = load_benchmark_comparison(bcode, show_days + 10, selected_date)
-                        if not bdf.empty:
-                            b_base = bdf.iloc[0]["close"]
-                            b_plot = bdf.copy()
-                            b_plot["nav"] = b_plot["close"] / b_base * 100
-                            b_chart = downsample(b_plot, max_points=DOWNSAMPLE_MAX_POINTS)
-
-                            fig_multi.add_trace(
-                                go.Scatter(
-                                    x=b_chart["date"],
-                                    y=b_chart["nav"],
-                                    mode="lines",
-                                    name=bname,
-                                    line=dict(color=bench_colors[idx % len(bench_colors)], width=1.2, dash="dash"),
-                                )
-                            )
-
-                            # 计算基准统计
-                            b_start = bdf.iloc[0]["close"]
-                            b_end = bdf.iloc[-1]["close"]
-                            b_ret = (b_end / b_start - 1) * 100 if b_start > 0 else 0
-                            bench_stats.append({"基准": bname, "累计收益": f"{b_ret:+.2f}%"})
-
-                    fig_multi.update_layout(
-                        height=350,
-                        plot_bgcolor="#0d1117",
-                        paper_bgcolor="#0d1117",
-                        font=dict(color="#c9d1d9", size=11),
-                        margin=dict(l=50, r=20, t=10, b=40),
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="right",
-                            x=1,
-                            font=dict(size=10, color="#8b949e"),
-                        ),
-                        xaxis=dict(showgrid=False),
-                        yaxis=dict(title="净值 (基准100)", showgrid=True, gridcolor="#21262d"),
-                        hovermode="x unified",
-                    )
-                    render_chart(fig_multi)
-
-                    # 多基准收益排行卡片
-                    if bench_stats:
-                        port_end = summary_plot.iloc[-1]["total_value"]
-                        port_ret = (port_end / base_value - 1) * 100 if base_value > 0 else 0
-                        all_items = [{"基准": "投资组合", "累计收益": f"{port_ret:+.2f}%"}] + bench_stats
-                        all_items.sort(
-                            key=lambda x: float(x["累计收益"].replace("%", "").replace("+", "")), reverse=True
-                        )
-                        n_cards = len(all_items)
-                        card_cols = st.columns(min(n_cards, 6))
-                        for i, item in enumerate(all_items):
-                            val = float(item["累计收益"].replace("%", "").replace("+", ""))
-                            c = "#22c55e" if val >= 0 else "#ef4444"
-                            rank_icon = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}."
-                            with card_cols[i % len(card_cols)]:
-                                st.markdown(
-                                    f'<div style="padding:6px 10px;border-radius:6px;background:#161b22;'
-                                    f'border-left:3px solid {c};text-align:center;">'
-                                    f'<div style="font-size:10px;color:#8b949e;">{rank_icon} {item["基准"]}</div>'
-                                    f'<div style="font-size:14px;font-weight:bold;color:{c};">{item["累计收益"]}</div>'
-                                    f"</div>",
-                                    unsafe_allow_html=True,
-                                )
-
-            with compare_tab2:
-                st.markdown(
-                    '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
-                    "区间收益分析"
-                    '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
-                    '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
-                    "选择起止日期，查看该时间段内组合与基准的累计收益、年化收益、最大回撤、波动率等核心指标对比。"
-                    "</span></div>",
-                    unsafe_allow_html=True,
-                )
-
-                if not summary.empty and len(summary) > 1:
-                    all_dates_list = summary["date"].tolist()
-                    date_range = st.columns(2)
-                    with date_range[0]:
-                        start_dt = st.selectbox(
-                            "起始日期", all_dates_list, index=min(len(all_dates_list) - 1, 60), key="range_start"
-                        )
-                    with date_range[1]:
-                        end_dt = st.selectbox("结束日期", all_dates_list, index=0, key="range_end")
-
-                    if start_dt < end_dt:
-                        mask = (summary["date"] >= start_dt) & (summary["date"] <= end_dt)
-                        range_data = summary[mask].copy()
-                        if len(range_data) > 1:
-                            import math as _math
-
-                            # 组合区间指标
-                            r_start_val = range_data.iloc[0]["total_value"]
-                            r_end_val = range_data.iloc[-1]["total_value"]
-                            r_cum_ret = (r_end_val / r_start_val - 1) * 100 if r_start_val > 0 else 0
-                            # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
-                            r_daily = range_data["total_value"].pct_change().dropna()
-                            n_days = len(r_daily)
-                            r_ann_ret = (r_daily.mean() * 252 * 100) if n_days > 0 else 0
-                            r_vol = (r_daily.std() * _math.sqrt(252) * 100) if n_days > 1 else 0
-                            r_sharpe = (
-                                (r_daily.mean() / r_daily.std() * _math.sqrt(252)) if r_daily.std() > 0 else 0
-                            )
-                            r_cummax = range_data["total_value"].cummax()
-                            r_dd = ((range_data["total_value"] - r_cummax) / r_cummax * 100).min()
-                            # 最大单日涨跌
-                            r_best_day = r_daily.max() if len(r_daily) > 0 else 0
-                            r_worst_day = r_daily.min() if len(r_daily) > 0 else 0
-                            # 正负天数
-                            r_up_days = (r_daily > 0).sum()
-                            r_dn_days = (r_daily < 0).sum()
-                            r_wr = (r_up_days / n_days * 100) if n_days > 0 else 0
-                            # 盈亏比
-                            avg_win = r_daily[r_daily > 0].mean() if r_up_days > 0 else 0
-                            avg_loss = abs(r_daily[r_daily < 0].mean()) if r_dn_days > 0 else 0.0001
-                            r_pnl_ratio = avg_win / avg_loss if avg_loss > 0 else 0
-
-                            # 基准区间指标
-                            bench_code = _resolve_benchmark_code(selected_benchmark)
-                            bname = INDEX_CODES.get(bench_code, bench_code)
-                            bdf = load_benchmark_comparison(bench_code, show_days, selected_date)
-                            b_stats = {}
-                            if not bdf.empty:
-                                b_mask = (bdf["date"] >= start_dt) & (bdf["date"] <= end_dt)
-                                b_range = bdf[b_mask].copy()
-                                if len(b_range) > 1:
-                                    b_start_c = b_range.iloc[0]["close"]
-                                    b_end_c = b_range.iloc[-1]["close"]
-                                    b_daily = b_range["close"].pct_change().dropna()
-                                    b_stats = {
-                                        "cum_ret": (b_end_c / b_start_c - 1) * 100 if b_start_c > 0 else 0,
-                                        "ann_ret": b_daily.mean() * 252 * 100 if len(b_daily) > 0 else 0,
-                                        "vol": b_daily.std() * _math.sqrt(252) * 100 if len(b_daily) > 1 else 0,
-                                        "sharpe": (
-                                            (b_daily.mean() / b_daily.std() * _math.sqrt(252))
-                                            if b_daily.std() > 0
-                                            else 0
-                                        ),
-                                        "dd": (
-                                            (b_range["close"] - b_range["close"].cummax())
-                                            / b_range["close"].cummax()
-                                            * 100
-                                        ).min(),
-                                    }
-
-                            # 渲染区间分析卡片
-                            ic1, ic2, ic3, ic4 = st.columns(4)
-                            with ic1:
-                                c = "#22c55e" if r_cum_ret >= 0 else "#ef4444"
-                                st.markdown(
-                                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c};">'
-                                    f'<div style="font-size:10px;color:#8b949e;">累计收益</div>'
-                                    f'<div style="font-size:16px;font-weight:bold;color:{c};">{r_cum_ret:+.2f}%</div>'
-                                    f"</div>",
-                                    unsafe_allow_html=True,
-                                )
-                            with ic2:
-                                c2 = "#22c55e" if r_sharpe >= 0.5 else "#f59e0b" if r_sharpe >= 0 else "#ef4444"
-                                st.markdown(
-                                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c2};">'
-                                    f'<div style="font-size:10px;color:#8b949e;">区间夏普</div>'
-                                    f'<div style="font-size:16px;font-weight:bold;color:{c2};">{r_sharpe:.3f}</div>'
-                                    f"</div>",
-                                    unsafe_allow_html=True,
-                                )
-                            with ic3:
-                                c3 = "#ef4444" if abs(r_dd) > 15 else "#f59e0b" if abs(r_dd) > 8 else "#22c55e"
-                                st.markdown(
-                                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c3};">'
-                                    f'<div style="font-size:10px;color:#8b949e;">最大回撤</div>'
-                                    f'<div style="font-size:16px;font-weight:bold;color:{c3};">{r_dd:.2f}%</div>'
-                                    f"</div>",
-                                    unsafe_allow_html=True,
-                                )
-                            with ic4:
-                                c4 = "#22c55e" if r_wr >= 60 else "#f59e0b" if r_wr >= 45 else "#ef4444"
-                                st.markdown(
-                                    f'<div style="padding:8px;border-radius:6px;background:#161b22;border-left:3px solid {c4};">'
-                                    f'<div style="font-size:10px;color:#8b949e;">胜率 / 盈亏比</div>'
-                                    f'<div style="font-size:14px;font-weight:bold;color:{c4};">{r_wr:.0f}% / {r_pnl_ratio:.2f}</div>'
-                                    f"</div>",
-                                    unsafe_allow_html=True,
-                                )
-
-                            # 详细对比表
-                            def _fmt(v, suffix="", dec=2, inv=False):
-                                try:
-                                    fv = float(v)
-                                except (ValueError, TypeError):
-                                    return '<span style="color:#8b949e;">--</span>'
-                                c = "#22c55e" if (fv >= 0 and not inv) or (fv < 0 and inv) else "#ef4444"
-                                if abs(fv) < 0.005:
-                                    c = "#c9d1d9"
-                                return f'<span style="color:{c};font-weight:bold;">{fv:+.{dec}f}{suffix}</span>'
-
-                            b_cum_s = _fmt(b_stats.get("cum_ret", 0), "%")
-                            b_ann_s = _fmt(b_stats.get("ann_ret", 0), "%")
-                            b_sh_s = f'<span style="color:#8b949e;">{b_stats.get("sharpe", 0):.3f}</span>'
-                            b_dd_s = f'<span style="color:#ef4444;">{b_stats.get("dd", 0):.2f}%</span>'
-                            b_vol_s = f'<span style="color:#8b949e;">{b_stats.get("vol", 0):.2f}%</span>'
-
-                            alpha = r_cum_ret - b_stats.get("cum_ret", 0)
-                            alpha_c = "#22c55e" if alpha >= 0 else "#ef4444"
-
-                            html_range = f"""
-                            <div style="overflow-x:auto;">
-                            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                            <thead><tr style="background:#161b22;">
-                            <th style="padding:7px 10px;color:#8b949e;text-align:left;font-size:12px;">指标</th>
-                            <th style="padding:7px 10px;color:#58a6ff;text-align:center;font-size:12px;">投资组合</th>
-                            <th style="padding:7px 10px;color:#f59e0b;text-align:center;font-size:12px;">{bname}</th>
-                            <th style="padding:7px 10px;color:#c9d1d9;text-align:center;font-size:12px;">差异</th>
-                            </tr></thead><tbody>
-                            <tr style="border-bottom:1px solid #21262d;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">累计收益率</td>
-                            <td style="padding:6px 10px;text-align:center;">{_fmt(r_cum_ret, "%")}</td>
-                            <td style="padding:6px 10px;text-align:center;">{b_cum_s}</td>
-                            <td style="padding:6px 10px;text-align:center;font-weight:bold;color:{alpha_c};">{alpha:+.2f}%</td>
-                            </tr>
-                            <tr style="background:#161b22;border-bottom:1px solid #21262d;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">年化收益率</td>
-                            <td style="padding:6px 10px;text-align:center;">{_fmt(r_ann_ret, "%")}</td>
-                            <td style="padding:6px 10px;text-align:center;">{b_ann_s}</td>
-                            <td style="padding:6px 10px;text-align:center;">{_fmt(r_ann_ret - b_stats.get("ann_ret", 0), "%")}</td>
-                            </tr>
-                            <tr style="border-bottom:1px solid #21262d;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">夏普比率</td>
-                            <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_sharpe:.3f}</span></td>
-                            <td style="padding:6px 10px;text-align:center;">{b_sh_s}</td>
-                            <td style="padding:6px 10px;text-align:center;">{_fmt(r_sharpe - b_stats.get("sharpe", 0), dec=3)}</td>
-                            </tr>
-                            <tr style="background:#161b22;border-bottom:1px solid #21262d;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">最大回撤</td>
-                            <td style="padding:6px 10px;text-align:center;"><span style="color:#ef4444;">{r_dd:.2f}%</span></td>
-                            <td style="padding:6px 10px;text-align:center;">{b_dd_s}</td>
-                            <td style="padding:6px 10px;text-align:center;">{_fmt(r_dd - b_stats.get("dd", 0), "%", inv=True)}</td>
-                            </tr>
-                            <tr style="border-bottom:1px solid #21262d;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">年化波动率</td>
-                            <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_vol:.2f}%</span></td>
-                            <td style="padding:6px 10px;text-align:center;">{b_vol_s}</td>
-                            <td style="padding:6px 10px;text-align:center;">{_fmt(r_vol - b_stats.get("vol", 0), "%", inv=True)}</td>
-                            </tr>
-                            <tr style="background:#161b22;border-bottom:1px solid #21262d;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">胜率</td>
-                            <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_wr:.1f}%</span></td>
-                            <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
-                            </tr>
-                            <tr style="border-bottom:1px solid #21262d;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">盈亏比</td>
-                            <td style="padding:6px 10px;text-align:center;"><span style="color:#8b949e;">{r_pnl_ratio:.2f}</span></td>
-                            <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
-                            </tr>
-                            <tr style="background:#161b22;">
-                            <td style="padding:6px 10px;color:#c9d1d9;">最佳/最差单日</td>
-                            <td style="padding:6px 10px;text-align:center;">{_fmt(r_best_day, "%")} / {_fmt(r_worst_day, "%")}</td>
-                            <td style="padding:6px 10px;text-align:center;" colspan="2"><span style="color:#484f58;">--</span></td>
-                            </tr>
-                            </tbody></table></div>"""
-                            st.markdown(html_range, unsafe_allow_html=True)
-                            st.caption(f"*区间: {start_dt} ~ {end_dt}，共 {n_days} 个交易日*")
-                        else:
-                            st.info("所选区间内交易日不足，请调整日期范围")
-                    else:
-                        st.warning("起始日期须早于结束日期")
-
-
+    """编排函数：多基准对比 & 区间分析"""
+    st.markdown("---")
+    compare_tab1, compare_tab2 = st.tabs(["📊 多基准对比", "📅 区间收益分析"])
+    with compare_tab1:
+        _render_benchmark_comparison_tab1(summary, selected_date, show_days)
+    with compare_tab2:
+        _render_range_analysis_tab2(summary, selected_date, selected_benchmark, show_days)
 
 def _render_annual_returns(summary):
     # --- 年度收益对比条形图 ---
