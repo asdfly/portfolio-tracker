@@ -3,8 +3,7 @@
 """
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List
 from dataclasses import dataclass
 from enum import Enum
 import logging
@@ -49,7 +48,6 @@ class StrategyBacktester:
 
     def get_historical_data(self, codes: List[str], start_date: str, end_date: str) -> pd.DataFrame:
         """获取历史价格数据"""
-        import sqlite3
 
         query = """
             SELECT date, code, current_price as close

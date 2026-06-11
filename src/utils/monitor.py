@@ -1,13 +1,11 @@
 """
 监控和告警模块 - 运行状态监控和异常检测
 """
-import os
-import json
 import sqlite3
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-from dataclasses import dataclass, asdict
+from typing import Dict, List
+from dataclasses import dataclass
 from data_loader import get_db_connection
 
 # Fix Python 3.12+ deprecation: register adapters for datetime/date passed to sqlite3
@@ -139,7 +137,6 @@ class Monitor:
         """初始化监控表（委托 db_schema 统一管理）"""
         # 表结构由 DatabaseManager._init_db() -> db_schema.init_all_tables() 统一创建
         # 此方法保留为空以维持接口兼容
-        pass
 
     def check_alerts(self, portfolio_data: dict, risk_data: dict) -> List[Alert]:
         """检查告警条件（含去重逻辑）"""

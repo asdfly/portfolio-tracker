@@ -72,12 +72,6 @@ class AKShareDataSource(BaseDataSource):
         try:
             symbol = self._normalize_code(code)
 
-            # 判断交易所
-            if symbol.startswith('51') or symbol.startswith('56') or symbol.startswith('58'):
-                market = "sh"
-            else:
-                market = "sz"
-
             # 获取历史K线
             df = self._ak.fund_etf_hist_em(
                 symbol=symbol,

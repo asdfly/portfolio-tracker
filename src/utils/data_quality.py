@@ -8,7 +8,7 @@
 import sqlite3
 import logging
 from datetime import datetime, timedelta, date
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class DataQualityChecker:
                     latest = None
                     lag = 999
                     status = "EMPTY"
-            except Exception as e:
+            except Exception:
                 latest = None
                 lag = 999
                 status = "ERROR"

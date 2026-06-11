@@ -2,9 +2,8 @@
 智能建议引擎 - 基于规则和数据驱动的投资建议
 """
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 import logging
@@ -409,12 +408,6 @@ class SmartAdvisor:
         # 找出夏普比率最高的策略
         best_sharpe = backtest_results.loc[backtest_results['夏普比率'].idxmax()]
 
-        # 找出收益最高的策略
-        best_return = backtest_results.loc[backtest_results['年化收益(%)'].idxmax()]
-
-        # 找出回撤最小的策略
-        best_dd = backtest_results.loc[backtest_results['最大回撤(%)'].idxmax()]
-
         return InvestmentAdvice(
             type=AdviceType.STRATEGY,
             priority=AdvicePriority.MEDIUM,
@@ -808,8 +801,6 @@ class SmartAdvisor:
         Returns:
             投资建议列表
         """
-        import pandas as pd
-        import numpy as np
 
         advices = []
 

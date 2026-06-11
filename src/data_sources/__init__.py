@@ -1,7 +1,7 @@
 """
 数据源管理器 - 支持多源切换和故障转移
 """
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import logging
 
 from .sina import SinaDataSource

@@ -3,14 +3,11 @@
 """
 Excel 专业报告生成器 — 多 Sheet 投资组合分析报告
 """
-import sqlite3
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter

@@ -2,11 +2,9 @@
 import numpy as np
 import pandas as pd
 import sqlite3
-from typing import Dict, List, Optional
 
 
 def get_db_connection() -> sqlite3.Connection:
-    from config.settings import DATABASE_PATH
     return get_db_connection()
 
 
@@ -120,7 +118,6 @@ def _backtest_by_signal_only(df):
 
     # 尝试从数据库获取实际收盘价
     code = df.iloc[0].get('code', '') if 'code' in df.columns else ''
-    date_col = 'date'
     prices_map = {}
     if code:
         try:
@@ -138,7 +135,6 @@ def _backtest_by_signal_only(df):
             pass
 
     signals = []
-    dates = df[date_col].tolist()
     for idx in range(len(df) - 1):
         if df.iloc[idx].get('signal', 0) == 1:
             sig_date = str(df.iloc[idx].get('date', ''))

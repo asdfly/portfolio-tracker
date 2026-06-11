@@ -6,7 +6,6 @@
 import pandas as pd
 import sqlite3
 from datetime import datetime
-from typing import Optional
 import logging
 import os
 import urllib.request
@@ -32,7 +31,6 @@ def _NoProxySessionInit(self, *args, **kwargs):
 _requests.Session.__init__ = _NoProxySessionInit
 
 def get_db_connection() -> sqlite3.Connection:
-    from config.settings import DATABASE_PATH
     return get_db_connection()
 
 def _urllib_get_json(url, retries=2, delay=1.0):
@@ -352,7 +350,7 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
 def backfill_sector_fund_flow(conn, trading_days=None):
     """行业资金流历史回填，利用同花顺多周期排行(3/5/10/20日)差值分解估算每日数据。"""
     import akshare as ak
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     try:
         # 获取各周期排行数据
@@ -382,7 +380,6 @@ def backfill_sector_fund_flow(conn, trading_days=None):
         code_map = dict(zip(raw['行业'].values, raw['序号'].values))
 
         # 构建交易日历(基于ETF数据的真实交易日)
-        today = datetime.now().strftime('%Y-%m-%d')
         if trading_days is None:
             cursor2 = conn.cursor()
             etf_dates_raw = cursor2.execute(

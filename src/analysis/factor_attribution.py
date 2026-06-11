@@ -12,9 +12,8 @@
 
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
 import sqlite3
-from typing import Optional, Dict, Tuple, List
+from typing import Dict, List
 
 # 无风险利率（年化），用于计算超额收益
 RISK_FREE_RATE_ANNUAL = 0.02  # 2% 年化
@@ -30,7 +29,6 @@ FACTOR_INDEX_CODES = {
 
 def get_db_connection() -> sqlite3.Connection:
     """获取数据库连接"""
-    from config.settings import DATABASE_PATH
     conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     return conn
@@ -163,7 +161,6 @@ def compute_factor_attribution(portfolio_returns: pd.Series,
     X = merged[available_factors].values
     y = merged['portfolio'].values
     n = len(y)
-    k = len(available_factors)
     
     # OLS: beta = (X'X)^(-1) X'y
     X_with_intercept = np.column_stack([np.ones(n), X])  # 加入截距
@@ -319,33 +316,7 @@ def compute_sector_rotation(conn: sqlite3.Connection,
     if periods is None:
         periods = ['20d', '60d', '120d', '250d']
     
-    # 获取所有行业相关的指数代码
-    sector_codes = {
-        '医药': 'sz399989',
-        '白酒': 'sz399987',
-        '科技': 'sz399989',  # 用医疗 proxy
-        '金融': 'sh000015',  # 用红利 proxy
-    }
-    
-    # 可用行业指数
-    all_index_query = "SELECT DISTINCT code, name FROM index_quotes"
-    all_indices = pd.read_sql_query(all_index_query, conn)
-    
-    # 构建行业代码映射（使用主要ETF对应的行业指数）
-    sector_map = {
-        '医药': ['sz399989'],
-        '消费': ['sz399987'],
-        '金融': ['sh000015'],
-        '科技': ['sz399989'],
-        '大盘': ['sh000300'],
-        '中小盘': ['sh000905', 'sh000852'],
-        '创业板': ['sz399006', 'sz399673'],
-        '红利': ['sh000015'],
-    }
-    
     # 实际上我们用 index_quotes 中所有指数来做行业轮动
-    # 因为数据库中行业指数有限，我们直接用所有指数做分析
-    end_date = pd.read_sql_query("SELECT MAX(date) FROM index_quotes", conn).iloc[0, 0]
     
     # 加载所有指数数据
     all_data = pd.read_sql_query("""
@@ -409,7 +380,6 @@ def compute_sector_rotation(conn: sqlite3.Connection,
         
         # 轮动速度 = 收益排名的标准差（标准差越大说明行业分化越大）
         if len(sorted_sectors) > 1:
-            ranks_only = list(range(1, len(sorted_sectors) + 1))
             # 用收益的离散度衡量
             returns_only = [r for _, r in sorted_sectors]
             std_dev = np.std(returns_only)

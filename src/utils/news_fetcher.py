@@ -217,7 +217,6 @@ class NewsFetcher:
         if resp.status_code != 200:
             return []
 
-        import json
         data = resp.json()
         news_list = data.get("data", {}).get("list", [])
 
@@ -410,7 +409,6 @@ def save_news_to_db(db_path: str, news_data: Dict[str, Any], date_str: str = Non
     """
     将新闻数据保存到数据库
     """
-    import sqlite3
     if date_str is None:
         date_str = date.today().strftime("%Y-%m-%d")
 

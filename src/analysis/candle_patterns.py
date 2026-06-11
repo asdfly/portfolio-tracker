@@ -7,9 +7,7 @@ K线形态识别模块 - Phase 5 Batch 3
   - 持续形态：红三兵、三只乌鸦、上升三法
 """
 
-import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
 
 
 def detect_candle_patterns(df: pd.DataFrame) -> pd.DataFrame:

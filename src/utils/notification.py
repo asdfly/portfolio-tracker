@@ -2,12 +2,11 @@
 通知模块 - 支持邮件和企业微信通知
 """
 import smtplib
-import json
 import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 import logging
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,6 @@
 import pandas as pd
 import re
 from typing import List, Dict, Any
-from datetime import datetime
 import logging
 
 from config.settings import POSITION_FILE

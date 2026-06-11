@@ -4,7 +4,6 @@ from config.settings import DOWNSAMPLE_MAX_POINTS
 """
 
 import numpy as np
-import pandas as pd
 import plotly.graph_objects as go
 
 
@@ -111,7 +110,7 @@ def _fmt_cell(val, suffix="", decimals=2, invert_color=False):
     try:
         v = float(val)
     except (TypeError, ValueError):
-        return f'<span style="color:#8b949e;">--</span>'
+        return '<span style="color:#8b949e;">--</span>'
     color = "#22c55e" if (v >= 0 and not invert_color) or (v < 0 and invert_color) else "#ef4444"
     if abs(v) < 0.01:
         color = "#c9d1d9"

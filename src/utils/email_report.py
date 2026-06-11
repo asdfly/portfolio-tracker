@@ -6,7 +6,7 @@ HTML邮件报告生成器 - 生成专业的投资组合日报HTML内容
 import sqlite3
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from pathlib import Path
 from data_loader import get_db_connection
 
@@ -116,7 +116,6 @@ class EmailReportBuilder:
         if alerts:
             alert_items = ''
             for a in alerts:
-                level_color = '#e74c3c' if a['level'] == 'error' else '#f39c12'
                 level_icon = '🚨' if a['level'] == 'error' else '⚠️'
                 alert_items += (
                     '<tr><td style="padding:8px 12px;font-size:13px;">{icon} {msg}</td></tr>'

@@ -2,14 +2,11 @@
 """
 智能分析报告生成器 - 整合回测和建议生成报告
 """
-import os
-import sys
-from datetime import datetime, timedelta
-from typing import List, Dict
+from datetime import datetime
 import logging
 
-from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
-from src.analysis.advisor import SmartAdvisor, AdviceType, AdvicePriority
+from src.analysis.backtest import StrategyBacktester
+from src.analysis.advisor import SmartAdvisor
 from data_loader import get_db_connection
 import sqlite3
 
@@ -59,7 +56,6 @@ class SmartReportGenerator:
 
         # 闭环反馈: 记录建议到数据库
         try:
-            import sqlite3 as _sqlite3
             _db_path = 'data/database/portfolio.db'
             _conn_fb = get_db_connection(_db_path)
             _conn_fb.execute("""

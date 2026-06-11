@@ -7,7 +7,6 @@ import base64
 import io
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import matplotlib
 matplotlib.use('Agg')

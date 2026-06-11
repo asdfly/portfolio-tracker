@@ -1,8 +1,7 @@
 """市场事件驱动风险信号引擎"""
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import logging

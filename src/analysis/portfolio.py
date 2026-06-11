@@ -2,8 +2,8 @@
 投资组合分析器 - 整合所有分析功能（含风险分析）
 """
 import logging
-from datetime import datetime, date
-from typing import Dict, List, Any, Tuple
+from datetime import date
+from typing import Dict, List, Any
 import sys
 from pathlib import Path
 
@@ -11,9 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import (
-    DATA_SOURCES, INDEX_CODES, MAJOR_ETFS, 
-    TECH_INDICATORS, RISK_CONFIG,
-    POSITION_FILE,
+    DATA_SOURCES, INDEX_CODES, TECH_INDICATORS, 
+    RISK_CONFIG,
 )
 from src.data_sources import DataSourceManager
 from src.analysis.technical import TechnicalAnalyzer
@@ -65,7 +64,7 @@ class PortfolioAnalyzer:
         latest_db = self.db.get_latest_portfolio()
         if not latest_db:
             # 数据库中没有任何记录，需要导入
-            logger.info(f"数据库无持仓记录，需要导入持仓文件")
+            logger.info("数据库无持仓记录，需要导入持仓文件")
             return True
 
         db_date = latest_db[0].get('date', '')
@@ -76,7 +75,6 @@ class PortfolioAnalyzer:
         # 同日文件更新检测
         if file_date == db_date:
             # 方法1: 比较文件修改时间与DB快照时间
-            import sqlite3
             try:
                 conn = get_db_connection(self.db.db_path)
                 cur = conn.cursor()

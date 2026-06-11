@@ -4,9 +4,8 @@
 """
 import sqlite3
 import logging
-from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional
-from pathlib import Path
+from datetime import date
+from typing import List
 from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -190,7 +189,7 @@ class HistoricalDataBackfiller:
         """回填指数历史数据"""
         from config.settings import INDEX_CODES
 
-        logger.info(f"回填指数历史数据...")
+        logger.info("回填指数历史数据...")
 
         conn = get_db_connection(self.db_path)
         cursor = conn.cursor()

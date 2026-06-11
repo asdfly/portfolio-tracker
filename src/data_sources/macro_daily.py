@@ -9,7 +9,6 @@ import sqlite3
 import logging
 import os
 from datetime import datetime, date
-from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,6 @@ for _k in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy'
 
 
 def get_db_connection() -> sqlite3.Connection:
-    from config.settings import DATABASE_PATH
     return get_db_connection()
 
 
