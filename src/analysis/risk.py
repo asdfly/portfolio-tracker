@@ -97,11 +97,12 @@ class RiskAnalyzer:
         if len(prices) < 2:
             return {}
 
-        # 计算累计最大值
-        cumulative_max = np.maximum.accumulate(prices)
+        # 计算累计最大值（转为 numpy array 确保负索引兼容）
+        prices_arr = np.array(prices, dtype=float)
+        cumulative_max = np.maximum.accumulate(prices_arr)
 
         # 计算回撤
-        drawdowns = (cumulative_max - prices) / cumulative_max
+        drawdowns = (cumulative_max - prices_arr) / cumulative_max
 
         # 最大回撤
         max_drawdown = np.max(drawdowns)
