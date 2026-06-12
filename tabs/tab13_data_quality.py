@@ -315,6 +315,6 @@ def render_tab13():
         disp_el['first_run'] = disp_el['first_run'].str[:16]
         disp_el['last_run'] = disp_el['last_run'].str[:16]
         disp_el.columns = ["任务名称", "状态", "执行次数", "平均耗时", "首次执行", "最近执行"]
-        st.dataframe(disp_el, width="stretch", hide_index=True, height=200)
+        st.dataframe(disp_el, use_container_width=True, hide_index=True, height=200)
     else:
         st.info("暂无执行日志记录")

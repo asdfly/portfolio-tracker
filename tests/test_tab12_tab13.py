@@ -5,55 +5,80 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # 清除已加载模块
-_rm = [k for k in list(sys.modules) if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("src")]
-for m in _rm:
-    del sys.modules[m]
 
+import pytest
 import pandas as pd, numpy as np
 from unittest.mock import MagicMock, patch
 
+
 # === Mock Streamlit ===
-mock_st = MagicMock()
-mock_st.session_state = {}
+def _create_mock_st():
+    """Create a comprehensive streamlit mock for render testing."""
+    mock_st = MagicMock()
+    mock_st.session_state = {}
 
-def _mock_columns(n):
-    """st.columns(n) 返回 n 个 MagicMock 容器，每个支持 with 上下文管理。
-    支持参数为 int 或 list（如 st.columns([3,1])）。
-    """
-    count = n if isinstance(n, int) else len(n)
-    return [MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)) for _ in range(count)]
+    def _mock_columns(n):
+        count = n if isinstance(n, int) else len(n)
+        return [MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)) for _ in range(count)]
 
-mock_st.columns = _mock_columns
+    mock_st.columns = _mock_columns
 
-for _a in ["plotly_chart","markdown","info","success","warning","error","metric",
-           "dataframe","title","subheader","header","divider","caption","text","write","json","code"]:
-    setattr(mock_st, _a, MagicMock())
-mock_st.expander = MagicMock(return_value=MagicMock())
-# tabs 返回支持 __getitem__ 的列表
-mock_st.tabs = MagicMock(return_value=[MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)) for _ in range(10)])
-mock_st.container = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
-mock_st.spinner = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
-mock_st.empty = MagicMock(return_value=MagicMock())
-def _mock_selectbox(label, options=None, index=0, **kw):
-    if options and isinstance(options, list):
-        return options[min(index, len(options)-1)]
-    return "sh000300"
-mock_st.selectbox = _mock_selectbox
-mock_st.slider = MagicMock(return_value=365)
-mock_st.checkbox = MagicMock(return_value=True)
-mock_st.button = MagicMock(return_value=False)
-mock_st.number_input = MagicMock(return_value=365)
-class _CacheDec:
-    def __call__(self, func=None, **kw):
-        return func if func else (lambda f: f)
-    def __getattr__(self, name):
-        return self
-mock_st.cache_data = _CacheDec()
-mock_st.cache_resource = _CacheDec()
-mock_st.set_page_config = MagicMock()
-mock_st.set_option = MagicMock()
-sys.modules["streamlit"] = mock_st
+    for _a in ["plotly_chart","markdown","info","success","warning","error","metric",
+               "dataframe","title","subheader","header","divider","caption","text","write","json","code"]:
+        setattr(mock_st, _a, MagicMock())
+    mock_st.expander = MagicMock(return_value=MagicMock())
+    mock_st.tabs = MagicMock(return_value=[MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)) for _ in range(10)])
+    mock_st.container = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
+    mock_st.spinner = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
+    mock_st.empty = MagicMock(return_value=MagicMock())
 
+    def _mock_selectbox(label, options=None, index=0, **kw):
+        if options and isinstance(options, list):
+            return options[min(index, len(options)-1)]
+        return "sh000300"
+    mock_st.selectbox = _mock_selectbox
+    mock_st.slider = MagicMock(return_value=365)
+    mock_st.checkbox = MagicMock(return_value=True)
+    mock_st.button = MagicMock(return_value=False)
+    mock_st.number_input = MagicMock(return_value=365)
+
+    class _CacheDec:
+        def __call__(self, func=None, **kw):
+            return func if func else (lambda f: f)
+        def __getattr__(self, name):
+            return self
+    mock_st.cache_data = _CacheDec()
+    mock_st.cache_resource = _CacheDec()
+    mock_st.set_page_config = MagicMock()
+    mock_st.set_option = MagicMock()
+    return mock_st
+
+mock_st = _create_mock_st()
+
+@pytest.fixture(scope="module", autouse=True)
+def _setup_streamlit_mock():
+    """Install streamlit mock before tests, restore real streamlit after."""
+    # Save all streamlit-related modules
+    saved = {k: v for k, v in sys.modules.items() if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("src")}
+    saved_keys = set(saved.keys())
+
+    # Clean and install mock
+    for k in list(sys.modules):
+        if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("src"):
+            del sys.modules[k]
+    sys.modules["streamlit"] = mock_st
+
+    yield
+
+    # Restore original modules
+    to_remove = [k for k in list(sys.modules) if k.startswith("streamlit") and k not in saved_keys]
+    for k in to_remove:
+        del sys.modules[k]
+    sys.modules["streamlit"] = saved.get("streamlit")
+    # Restore any other saved modules
+    for k, v in saved.items():
+        if k not in sys.modules:
+            sys.modules[k] = v
 
 # === Tab12: 宏观市场 ===
 class TestTab12Macro:

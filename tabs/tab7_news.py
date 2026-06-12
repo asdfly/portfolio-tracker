@@ -562,7 +562,7 @@ def _render_news_sentiment(positions, summary):
             with st.expander("各板块情绪明细", expanded=False):
                 disp_s = cat_sent[["category", "cnt", "avg_s", "pos", "neg"]].copy()
                 disp_s.columns = ["板块", "新闻数", "平均情绪", "正面数", "负面数"]
-                st.dataframe(disp_s, width="stretch", hide_index=True, height=250)
+                st.dataframe(disp_s, use_container_width=True, hide_index=True, height=250)
 
             # 负面新闻列表
             neg_news = sent_df[sent_df["sentiment"] < 0.4].nsmallest(5, "sentiment")
