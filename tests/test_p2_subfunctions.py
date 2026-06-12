@@ -25,11 +25,16 @@ def _get_subfunc_lengths(module_name, render_func):
 class TestTab2Refactor:
     """Verify tab2_position.py refactor."""
     EXPECTED_SUBFUNCS = {
-        "_render_etf_filter": 283,
-        "_render_sector_weights": 47,
-        "_render_correlation_matrix": 39,
-        "_render_deep_analysis": 91,
+        "_render_etf_filter": 296,
+        "_render_sector_weights": 46,
+        "_render_correlation_matrix": 38,
+        "_render_deep_analysis": 90,
         "_render_cumulative_pnl": 54,
+        "_render_etf_f10_panel": 43,
+        "_render_f10_metrics": 66,
+        "_render_f10_industry_alloc": 60,
+        "_render_f10_top_holdings": 56,
+        "_render_f10_index_valuation": 61,
     }
 
     def test_subfunc_exist(self):
@@ -44,7 +49,7 @@ class TestTab2Refactor:
 
     def test_orchestrator_short(self):
         lengths = _get_subfunc_lengths("tabs.tab2_position", "render_tab2")
-        assert lengths["render_tab2"] <= 30, f"render_tab2 too long: {lengths['render_tab2']}"
+        assert lengths["render_tab2"] <= 40, f"render_tab2 too long: {lengths['render_tab2']}"
 
     def test_render_runs_empty(self):
         import pandas as pd

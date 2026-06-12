@@ -11,7 +11,7 @@ import numpy as np
 from config.settings import CHART_DAYS, DATABASE_PATH, ETF_CATEGORIES, SECTOR_COLORS
 from tabs._helpers import _render_etf_detail_panel
 from src.utils.database import get_db_connection
-from data_loader import load_positions, load_summary
+from data_loader import load_positions, load_summary, load_etf_fundamental, load_etf_industry_alloc, load_etf_top_holdings
 
 
 def load_correlation_matrix(days=CHART_DAYS["default"], end_date=None):
@@ -209,6 +209,14 @@ def _render_etf_filter(positions, summary, technical, selected_date):
                 ["name", "code", "quantity", "cost_price", "current_price", "market_value", "pnl", "pnl_rate"]
             ].copy()
             display_df.columns = ["名称", "代码", "持仓量", "成本价", "现价", "市值", "盈亏", "收益率%"]
+            # F10 扩展列：折价率和资金流向
+            if "discount_rate" in positions.columns:
+                display_df["折价率"] = positions["discount_rate"].apply(
+                    lambda x: f"{x:+.2f}%" if pd.notna(x) else "--")
+            if "main_net_inflow" in positions.columns:
+                display_df["主力净流入"] = positions["main_net_inflow"].apply(
+                    lambda x: (f"¥{x/1e8:+.2f}亿" if abs(x) >= 1e8 else f"¥{x/1e4:+.0f}万")
+                    if pd.notna(x) else "--")
             display_df["持仓量"] = display_df["持仓量"].apply(lambda x: f"{x:,.0f}")
             display_df["成本价"] = display_df["成本价"].apply(lambda x: f"{x:.3f}")
             display_df["现价"] = display_df["现价"].apply(lambda x: f"{x:.3f}")
@@ -270,6 +278,8 @@ def _render_etf_filter(positions, summary, technical, selected_date):
                     f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;">{row_data["市值"]}</td>'
                     f'<td style="padding:5px 8px;text-align:right;color:{pnl_c};border-bottom:1px solid #21262d;">{row_data["盈亏"]}</td>'
                     f'<td style="padding:5px 8px;text-align:right;color:{pnl_c};border-bottom:1px solid #21262d;">{row_data["收益率%"]}</td>'
+                    f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;font-size:11px;">{row_data["折价率"]}</td>'
+                    f'<td style="padding:5px 8px;text-align:right;color:#c9d1d9;border-bottom:1px solid #21262d;font-size:11px;">{row_data["主力净流入"]}</td>'
                     f'<td style="padding:5px 8px;text-align:center;border-bottom:1px solid #21262d;white-space:nowrap;">{row_data["技术信号"]}</td>'
                     f"</tr>"
                 )
@@ -285,6 +295,8 @@ def _render_etf_filter(positions, summary, technical, selected_date):
                 f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">市值</th>'
                 f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">盈亏</th>'
                 f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">收益率%</th>'
+                f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">折价率</th>'
+                f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">主力净流入</th>'
                 f'<th style="padding:6px 8px;color:#8b949e;text-align:center;font-size:11px;">技术信号</th>'
                 f'</tr></thead><tbody>{"".join(html_rows)}</tbody></table></div>',
                 unsafe_allow_html=True,
@@ -307,6 +319,7 @@ def _render_etf_filter(positions, summary, technical, selected_date):
                     unsafe_allow_html=True,
                 )
                 _render_etf_detail_panel(row, selected_date, summary.iloc[-1]["total_value"])
+                _render_etf_f10_panel(str(row["code"]), row["name"])
 
 def _render_sector_weights(positions, summary, selected_date):
     # ===== 行业权重堆叠面积图 =====
@@ -540,10 +553,315 @@ def _render_cumulative_pnl(positions):
             unsafe_allow_html=True,
         )
 
+
+def _render_etf_f10_panel(code, name):
+    """渲染 ETF F10 基本面面板：实时行情指标、行业配置、重仓股、指数估值"""
+    # 加载 F10 数据
+    fund_df = load_etf_fundamental()
+    industry_df = load_etf_industry_alloc(code)
+    holdings_df = load_etf_top_holdings(code, top_n=10)
+
+    # 获取该 ETF 的 fundamental 行
+    fund_row = None
+    if not fund_df.empty and "code" in fund_df.columns:
+        match = fund_df[fund_df["code"] == code]
+        if not match.empty:
+            fund_row = match.iloc[0]
+
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        f'{name} 基本面数据 (F10)'
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '展示该ETF的实时行情指标（折价率/资金流向/换手率）、行业配置、重仓股及追踪指数估值。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ===== 第一行：实时行情指标卡片 =====
+    if fund_row is not None:
+        _render_f10_metrics(fund_row)
+    else:
+        st.info("暂无该 ETF 的基本面数据，请在每日分析时运行数据采集。")
+
+    # ===== 第二行：行业配置 + 重仓股 =====
+    col_ind, col_hol = st.columns([1, 1])
+
+    with col_ind:
+        _render_f10_industry_alloc(code, industry_df)
+
+    with col_hol:
+        _render_f10_top_holdings(code, holdings_df)
+
+    # ===== 第三行：指数估值（仅宽基 ETF） =====
+    if fund_row is not None:
+        _render_f10_index_valuation(fund_row)
+
+
+def _render_f10_metrics(fund_row):
+    """渲染 F10 实时行情指标卡片"""
+    cols = st.columns(6)
+    metrics = []
+
+    # IOPV
+    iopv = fund_row.get("iopv")
+    if pd.notna(iopv) and iopv != 0:
+        metrics.append(("IOPV", f"{iopv:.4f}", "#c9d1d9"))
+    else:
+        metrics.append(("IOPV", "--", "#484f58"))
+
+    # 折价率
+    dr = fund_row.get("discount_rate")
+    if pd.notna(dr):
+        dr_color = "#22c55e" if dr < 0 else "#ef4444" if dr > 0 else "#c9d1d9"
+        metrics.append(("折价率", f"{dr:+.2f}%", dr_color))
+    else:
+        metrics.append(("折价率", "--", "#484f58"))
+
+    # 主力净流入
+    inflow = fund_row.get("main_net_inflow")
+    if pd.notna(inflow):
+        inf_color = "#22c55e" if inflow > 0 else "#ef4444"
+        if abs(inflow) >= 1e8:
+            inf_str = f"{'+' if inflow > 0 else ''}{inflow/1e8:.2f}亿"
+        elif abs(inflow) >= 1e4:
+            inf_str = f"{'+' if inflow > 0 else ''}{inflow/1e4:.0f}万"
+        else:
+            inf_str = f"{'+' if inflow > 0 else ''}{inflow:,.0f}"
+        metrics.append(("主力净流入", inf_str, inf_color))
+    else:
+        metrics.append(("主力净流入", "--", "#484f58"))
+
+    # 换手率
+    tr = fund_row.get("turnover_rate")
+    if pd.notna(tr):
+        metrics.append(("换手率", f"{tr:.2f}%", "#c9d1d9"))
+    else:
+        metrics.append(("换手率", "--", "#484f58"))
+
+    # 量比
+    vr = fund_row.get("volume_ratio")
+    if pd.notna(vr):
+        vr_color = "#22c55e" if vr > 1.5 else "#ef4444" if vr < 0.5 else "#c9d1d9"
+        metrics.append(("量比", f"{vr:.2f}", vr_color))
+    else:
+        metrics.append(("量比", "--", "#484f58"))
+
+    # 份额（亿份）
+    shares = fund_row.get("shares")
+    if pd.notna(shares) and shares > 0:
+        shares_str = f"{shares/1e8:.2f}亿" if shares >= 1e8 else f"{shares/1e4:.0f}万"
+        metrics.append(("份额", shares_str, "#c9d1d9"))
+    else:
+        metrics.append(("份额", "--", "#484f58"))
+
+    for i, (label, value, color) in enumerate(metrics):
+        with cols[i]:
+            st.markdown(
+                f'<div style="text-align:center;padding:8px 4px;">'
+                f'<div style="font-size:10px;color:#8b949e;margin-bottom:4px;">{label}</div>'
+                f'<div style="font-size:14px;font-weight:bold;color:{color};">{value}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+
+def _render_f10_industry_alloc(code, industry_df):
+    """渲染行业配置饼图"""
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
+        '行业配置<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '基于最新持仓报告期的行业分布，展示该ETF在各行业的配置权重。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    if industry_df is None or industry_df.empty:
+        render_empty_state("暂无行业配置数据")
+        return
+
+    # 合并小行业（<1%）为"其他"
+    df = industry_df.copy()
+    small = df[df["weight_pct"] < 1]
+    if not small.empty:
+        df = df[df["weight_pct"] >= 1].copy()
+        other_row = pd.DataFrame({
+            "industry": ["其他"],
+            "weight_pct": [small["weight_pct"].sum()],
+            "market_value": [small["market_value"].sum()]
+        })
+        df = pd.concat([df, other_row], ignore_index=True)
+    df = df.sort_values("weight_pct", ascending=True)
+
+    fig = go.Figure(
+        go.Pie(
+            labels=df["industry"],
+            values=df["weight_pct"],
+            hole=0.35,
+            textinfo="label+percent",
+            textfont=dict(size=9),
+            marker=dict(
+                colors=[
+                    "#58a6ff", "#22c55e", "#f59e0b", "#ef4444", "#a855f7",
+                    "#06b6d4", "#f97316", "#ec4899", "#84cc16", "#6366f1",
+                    "#14b8a6", "#e11d48", "#8b5cf6", "#0ea5e9", "#d946ef",
+                ],
+            ),
+            hovertemplate="<b>%{label}</b><br>权重: %{value:.2f}%<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=320,
+        plot_bgcolor="#0d1117",
+        paper_bgcolor="#0d1117",
+        font=dict(color="#c9d1d9"),
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False,
+    )
+    render_chart(fig)
+
+    # 摘要行
+    top3 = industry_df.nlargest(3, "weight_pct")
+    top3_str = "、".join([f"{r['industry']} {r['weight_pct']:.1f}%" for _, r in top3.iterrows()])
+    report_date = industry_df["report_date"].iloc[0] if "report_date" in industry_df.columns else ""
+    st.caption(f"前三大: {top3_str} | 报告期: {report_date}")
+
+
+def _render_f10_top_holdings(code, holdings_df):
+    """渲染重仓股表格"""
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
+        '前十大重仓股<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '展示该ETF最新的前十大重仓股票及其权重，反映基金的实际投资方向。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    if holdings_df is None or holdings_df.empty:
+        render_empty_state("暂无重仓股数据")
+        return
+
+    # HTML 表格
+    html_rows = []
+    for idx, (_, row) in enumerate(holdings_df.iterrows()):
+        zebra = "background:#161b22;" if idx % 2 == 0 else ""
+        wp = row.get("weight_pct", 0)
+        mv = row.get("market_value", 0)
+        wp_str = f"{wp:.2f}%"
+        # 市值格式化
+        if pd.notna(mv) and mv > 0:
+            if mv >= 1e8:
+                mv_str = f"¥{mv/1e8:.2f}亿"
+            elif mv >= 1e4:
+                mv_str = f"¥{mv/1e4:.0f}万"
+            else:
+                mv_str = f"¥{mv:,.0f}"
+        else:
+            mv_str = "--"
+
+        html_rows.append(
+            f'<tr style="{zebra}">'
+            f'<td style="padding:4px 8px;color:#8b949e;border-bottom:1px solid #21262d;text-align:center;font-size:11px;">{idx+1}</td>'
+            f'<td style="padding:4px 8px;color:#c9d1d9;border-bottom:1px solid #21262d;">{row.get("stock_name","")}</td>'
+            f'<td style="padding:4px 8px;color:#8b949e;border-bottom:1px solid #21262d;text-align:center;">{row.get("stock_code","")}</td>'
+            f'<td style="padding:4px 8px;color:#c9d1d9;border-bottom:1px solid #21262d;text-align:right;font-weight:bold;">{wp_str}</td>'
+            f'<td style="padding:4px 8px;color:#c9d1d9;border-bottom:1px solid #21262d;text-align:right;">{mv_str}</td>'
+            f'</tr>'
+        )
+
+    quarter = holdings_df["quarter"].iloc[0] if "quarter" in holdings_df.columns else ""
+    st.markdown(
+        f'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">'
+        f'<thead><tr style="background:#0d1117;">'
+        f'<th style="padding:6px 8px;color:#8b949e;text-align:center;font-size:11px;width:30px;">#</th>'
+        f'<th style="padding:6px 8px;color:#8b949e;text-align:left;font-size:11px;">股票名称</th>'
+        f'<th style="padding:6px 8px;color:#8b949e;text-align:center;font-size:11px;">代码</th>'
+        f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">权重</th>'
+        f'<th style="padding:6px 8px;color:#8b949e;text-align:right;font-size:11px;">市值</th>'
+        f'</tr></thead><tbody>{"".join(html_rows)}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(f"报告期: {quarter}")
+
+
+def _render_f10_index_valuation(fund_row):
+    """渲染追踪指数估值（仅宽基 ETF）"""
+    index_code = fund_row.get("index_code")
+    index_name = fund_row.get("index_name")
+    pe1 = fund_row.get("pe1")
+    pe2 = fund_row.get("pe2")
+    dy1 = fund_row.get("div_yield1")
+    dy2 = fund_row.get("div_yield2")
+
+    if pd.isna(index_code) or not index_code:
+        return  # 非宽基 ETF，无指数估值
+
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
+        f'追踪指数估值: {index_name}'
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '展示该ETF追踪指数的市盈率(PE-TTM/PE-PB)和股息率，用于判断指数整体估值水平。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(4)
+    items = []
+
+    # PE-TTM
+    if pd.notna(pe1) and pe1 > 0:
+        pe1_color = "#ef4444" if pe1 > 20 else "#f59e0b" if pe1 > 14 else "#22c55e"
+        items.append(("PE-TTM", f"{pe1:.2f}", pe1_color))
+    else:
+        items.append(("PE-TTM", "--", "#484f58"))
+
+    # PE-PB
+    if pd.notna(pe2) and pe2 > 0:
+        pe2_color = "#ef4444" if pe2 > 20 else "#f59e0b" if pe2 > 14 else "#22c55e"
+        items.append(("PE(市净率)", f"{pe2:.2f}", pe2_color))
+    else:
+        items.append(("PE(市净率)", "--", "#484f58"))
+
+    # 股息率1
+    if pd.notna(dy1) and dy1 > 0:
+        items.append(("股息率", f"{dy1:.2f}%", "#22c55e"))
+    else:
+        items.append(("股息率", "--", "#484f58"))
+
+    # 股息率2
+    if pd.notna(dy2) and dy2 > 0:
+        items.append(("股息率(等权)", f"{dy2:.2f}%", "#22c55e"))
+    else:
+        items.append(("股息率(等权)", "--", "#484f58"))
+
+    for i, (label, value, color) in enumerate(items):
+        with cols[i]:
+            st.markdown(
+                f'<div style="text-align:center;padding:10px 8px;background:#161b22;border-radius:6px;">'
+                f'<div style="font-size:10px;color:#8b949e;margin-bottom:4px;">{label}</div>'
+                f'<div style="font-size:18px;font-weight:bold;color:{color};">{value}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
 def render_tab2():
     selected_date = st.session_state.get("selected_date", "")
     selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
     positions = load_positions(selected_date)
+    # 加载 ETF 基本面数据，merge 到 positions 用于表格展示
+    fund_df = load_etf_fundamental()
+    if not fund_df.empty and not positions.empty:
+        fund_subset = fund_df[["code", "iopv", "discount_rate", "main_net_inflow",
+                               "main_net_inflow_pct", "turnover_rate", "volume_ratio", "shares"]].copy()
+        fund_subset["code"] = fund_subset["code"].astype(str)
+        positions = positions.copy()
+        positions["code"] = positions["code"].astype(str)
+        positions = positions.merge(fund_subset, on="code", how="left")
     show_days = st.session_state.get("show_days", 250)
     summary = load_summary(show_days, selected_date)
     """渲染Tab2: 持仓分布"""

@@ -987,7 +987,9 @@ def load_etf_fundamental(date_str: str = None) -> pd.DataFrame:
     conn = get_db_connection()
     try:
         if date_str is None:
-            date_str = get_available_dates("etf_fundamental")
+            latest = pd.read_sql_query(
+                "SELECT MAX(date) as d FROM etf_fundamental", conn)
+            date_str = latest["d"].iloc[0] if not latest.empty and pd.notna(latest["d"].iloc[0]) else None
             if not date_str:
                 return pd.DataFrame()
         return pd.read_sql_query(
