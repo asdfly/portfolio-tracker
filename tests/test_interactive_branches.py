@@ -10,14 +10,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-_rm = [
-    k for k in list(sys.modules)
-    if k.startswith("streamlit") or k.startswith("tabs")
-    or k.startswith("dashboard_main") or k.startswith("src")
-]
-for m in _rm:
-    del sys.modules[m]
-
+import pytest
 import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock
@@ -82,7 +75,30 @@ mock_st.toggle = MagicMock(return_value=True)
 mock_st.radio = MagicMock(return_value="option1")
 mock_st.multiselect = MagicMock(return_value=[])
 
-sys.modules["streamlit"] = mock_st
+@pytest.fixture(scope="module", autouse=True)
+def _setup_streamlit_mock():
+    """Save original streamlit-related modules, inject mock, restore on teardown."""
+    saved = {k: v for k, v in list(sys.modules.items())
+             if k.startswith("streamlit") or k.startswith("tabs")
+             or k.startswith("dashboard_main") or k.startswith("src")}
+    saved_keys = set(saved.keys())
+    to_remove = [k for k in list(sys.modules)
+                 if k.startswith("streamlit") or k.startswith("tabs")
+                 or k.startswith("dashboard_main") or k.startswith("src")]
+    for k in to_remove:
+        del sys.modules[k]
+    sys.modules["streamlit"] = mock_st
+    yield
+    to_cleanup = [k for k in list(sys.modules)
+                   if k.startswith("streamlit") or k.startswith("tabs")
+                   or k.startswith("dashboard_main") or k.startswith("src")]
+    for k in to_cleanup:
+        if k not in saved_keys:
+            del sys.modules[k]
+    for k, v in saved.items():
+        if k not in sys.modules:
+            sys.modules[k] = v
+
 
 
 def _empty_df():

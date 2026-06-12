@@ -4,10 +4,6 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# 清除已加载的项目模块，确保用mock的streamlit重新导入
-_rm = [k for k in list(sys.modules) if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard_main") or k.startswith("src")]
-for m in _rm:
-    del sys.modules[m]
 
 import pandas as pd, numpy as np
 from unittest.mock import MagicMock, patch
@@ -49,7 +45,35 @@ mock_st.cache_data = _CacheDecorator()
 mock_st.cache_resource = _CacheDecorator()
 mock_st.set_page_config = MagicMock()
 mock_st.set_option = MagicMock()
-sys.modules["streamlit"] = mock_st
+
+import pytest
+
+@pytest.fixture(scope="module", autouse=True)
+def _setup_streamlit_mock():
+    """Inject mock_st as streamlit; save/restore originals; clear cached tabs/src modules."""
+    saved = {k: v for k, v in list(sys.modules.items())
+             if k.startswith("streamlit") or k.startswith("tabs")
+             or k.startswith("dashboard_main") or k.startswith("src")}
+    saved_keys = set(saved.keys())
+    # Remove all cached streamlit.* modules so fresh imports use mock
+    to_remove = [k for k in list(sys.modules)
+                 if k.startswith("streamlit") or k.startswith("tabs")
+                 or k.startswith("dashboard_main") or k.startswith("src")]
+    for k in to_remove:
+        del sys.modules[k]
+    sys.modules["streamlit"] = mock_st
+    yield
+    # Teardown: clean up modules injected during this test module
+    to_cleanup = [k for k in list(sys.modules)
+                   if k.startswith("streamlit") or k.startswith("tabs")
+                   or k.startswith("dashboard_main") or k.startswith("src")]
+    for k in to_cleanup:
+        if k not in saved_keys:
+            del sys.modules[k]
+    # Restore originals
+    for k, v in saved.items():
+        if k not in sys.modules:
+            sys.modules[k] = v
 
 def _empty_df(): return pd.DataFrame()
 
@@ -67,10 +91,10 @@ def _sample_idx(n=10):
 KW = {"selected_date":"2024-01-30","selected_benchmark":"sh000300"}
 
 # 空数据边界 11个Tab
-@patch("tabs.tab1_net_value.load_positions", return_value=pd.DataFrame())
-@patch("tabs.tab1_net_value.load_summary", return_value=pd.DataFrame())
-def test_tab1_empty(mock_summary, mock_positions):
-    from tabs.tab1_net_value import render_tab1; render_tab1()
+def test_tab1_empty():
+    with patch("tabs.tab1_net_value.load_positions", return_value=pd.DataFrame()), \
+         patch("tabs.tab1_net_value.load_summary", return_value=pd.DataFrame()):
+        from tabs.tab1_net_value import render_tab1; render_tab1()
 def test_tab2_empty():
     from tabs.tab2_position import render_tab2; render_tab2()
 def test_tab3_empty():
@@ -99,10 +123,10 @@ def test_tab11_empty(sample_index_quotes, sample_positions, sample_summary, monk
     from tabs.tab11_gold import render_tab11; render_tab11()
 
 # 正常数据 5个关键Tab
-@patch("tabs.tab1_net_value.load_positions", return_value=pd.DataFrame())
-@patch("tabs.tab1_net_value.load_summary", return_value=pd.DataFrame())
-def test_tab1_normal(mock_summary, mock_positions, sample_index_quotes, sample_positions, sample_summary):
-    from tabs.tab1_net_value import render_tab1; render_tab1()
+def test_tab1_normal(sample_index_quotes, sample_positions, sample_summary):
+    with patch("tabs.tab1_net_value.load_positions", return_value=pd.DataFrame()), \
+         patch("tabs.tab1_net_value.load_summary", return_value=pd.DataFrame()):
+        from tabs.tab1_net_value import render_tab1; render_tab1()
 def test_tab2_normal(sample_index_quotes, sample_positions, sample_summary):
     from tabs.tab2_position import render_tab2; render_tab2()
 def test_tab3_normal(sample_index_quotes, sample_positions, sample_summary):

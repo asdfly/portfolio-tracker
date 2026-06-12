@@ -1121,3 +1121,188 @@ def load_peer_etfs(code):
         return pd.DataFrame()
     finally:
         conn.close()
+
+
+def load_signal_score(code, date=None):
+    """加载单只 ETF 最新技术信号评分。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+    date : str, optional
+        指定日期，默认最新
+
+    Returns
+    -------
+    dict : compute_signal_score 返回的评分字典，无数据时返回 None
+    """
+    conn = get_db_connection()
+    try:
+        if date:
+            df = pd.read_sql_query(
+                "SELECT * FROM etf_technical WHERE code = ? AND date = ?",
+                conn, params=(code, date)
+            )
+        else:
+            df = pd.read_sql_query(
+                "SELECT * FROM etf_technical WHERE code = ? ORDER BY date DESC LIMIT 1",
+                conn, params=(code,)
+            )
+        if df.empty:
+            return None
+        from src.analysis.signal_score import compute_signal_score
+        return compute_signal_score(df.iloc[0])
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def load_all_signal_scores(date=None):
+    """加载所有 ETF 最新技术信号评分。
+
+    Returns
+    -------
+    pd.DataFrame : code, date, total_score, grade 及各维度评分
+    """
+    conn = get_db_connection()
+    try:
+        if date:
+            df = pd.read_sql_query(
+                "SELECT * FROM etf_technical WHERE date = ?", conn, params=(date,)
+            )
+        else:
+            df = pd.read_sql_query(
+                "SELECT * FROM etf_technical WHERE date = "
+                "(SELECT MAX(date) FROM etf_technical)",
+                conn
+            )
+        if df.empty:
+            return pd.DataFrame()
+        from src.analysis.signal_score import compute_signal_scores
+        return compute_signal_scores(df)
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+# === P0-A: 同类 ETF 横向对比 ===
+# 按跟踪指数或行业分类，将同一类别的 ETF 聚合对比
+PEER_GROUPS = {
+    "沪深300": ["510300", "159300"],
+    "中证500": ["510500"],
+    "中证1000": ["512100"],
+    "创业板50": ["159949"],
+    "科创50": ["588000"],
+    "医药": ["512010", "159992", "515120"],
+    "金融": ["515010"],
+    "军工": ["512810", "159267"],
+    "新能源": ["516160", "561910", "159796"],
+    "科技/AI": ["159819", "159770", "159732"],
+    "红利": ["159220", "563020"],
+    "债券": ["511520", "159650", "511380"],
+}
+
+
+def load_peer_etfs(code):
+    """加载与指定 ETF 同类（同指数/同行业）的其他 ETF 基本面数据。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+
+    Returns
+    -------
+    tuple : (group_name, pd.DataFrame)
+    """
+    for group_name, codes in PEER_GROUPS.items():
+        if code in codes:
+            break
+    else:
+        return None, pd.DataFrame()
+
+    conn = get_db_connection()
+    try:
+        placeholders = ",".join(["?"] * len(codes))
+        df = pd.read_sql_query(
+            "SELECT code, name, sector, price, iopv, discount_rate, change_pct, "
+            "volume, amount, turnover_rate, volume_ratio, main_net_inflow, main_net_inflow_pct, "
+            "super_large_net_inflow, shares, float_mv, total_mv "
+            "FROM etf_fundamental WHERE code IN (%s)" % placeholders,
+            conn, params=codes
+        )
+        return group_name, df
+    except Exception:
+        return group_name, pd.DataFrame()
+
+
+# === P0-B: 技术信号综合评分 ===
+def load_signal_score(code, end_date=None):
+    """加载单只 ETF 最新技术信号评分。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+    end_date : str, optional
+        截止日期
+
+    Returns
+    -------
+    dict or None : {total_score, grade, signals}
+    """
+    from src.analysis.signal_score import compute_signal_score
+    conn = get_db_connection()
+    try:
+        if end_date:
+            df = pd.read_sql_query(
+                "SELECT * FROM etf_technical WHERE code = ? AND date <= ? ORDER BY date DESC LIMIT 1",
+                conn, params=(code, str(end_date))
+            )
+        else:
+            df = pd.read_sql_query(
+                "SELECT * FROM etf_technical WHERE code = ? ORDER BY date DESC LIMIT 1",
+                conn, params=(code,)
+            )
+        if df.empty:
+            return None
+        return compute_signal_score(df.iloc[0])
+    except Exception:
+        return None
+
+
+def load_all_signal_scores(end_date=None):
+    """加载所有 ETF 最新技术信号评分。
+
+    Parameters
+    ----------
+    end_date : str, optional
+        截止日期
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    from src.analysis.signal_score import compute_signal_scores
+    conn = get_db_connection()
+    try:
+        if end_date:
+            df = pd.read_sql_query(
+                "SELECT e.* FROM etf_technical e INNER JOIN "
+                "(SELECT code, MAX(date) as dt FROM etf_technical WHERE date <= ? GROUP BY code) l "
+                "ON e.code = l.code AND e.date = l.dt",
+                conn, params=(str(end_date),)
+            )
+        else:
+            df = pd.read_sql_query(
+                "SELECT e.* FROM etf_technical e INNER JOIN "
+                "(SELECT code, MAX(date) as dt FROM etf_technical GROUP BY code) l "
+                "ON e.code = l.code AND e.date = l.dt",
+                conn
+            )
+        return compute_signal_scores(df)
+    except Exception:
+        return pd.DataFrame()

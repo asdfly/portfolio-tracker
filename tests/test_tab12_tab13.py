@@ -71,11 +71,12 @@ def _setup_streamlit_mock():
     yield
 
     # Restore original modules
-    to_remove = [k for k in list(sys.modules) if k.startswith("streamlit") and k not in saved_keys]
+    to_remove = [k for k in list(sys.modules)
+                 if (k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("src"))
+                 and k not in saved_keys]
     for k in to_remove:
         del sys.modules[k]
-    sys.modules["streamlit"] = saved.get("streamlit")
-    # Restore any other saved modules
+    # Restore originals
     for k, v in saved.items():
         if k not in sys.modules:
             sys.modules[k] = v
