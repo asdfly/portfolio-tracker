@@ -770,6 +770,16 @@ def main():
         except Exception as e:
             logger.warning(f"市场事件采集失败(不影响主流程): {e}")
 
+        # === 阶段三.七b: ETF基本面数据采集（持仓F10数据）===
+        try:
+            from src.data_sources.etf_fundamental import run_etf_fundamental_collection
+            etf_codes = list(ETF_CATEGORIES.keys())
+            f10_stats = run_etf_fundamental_collection(etf_codes, ETF_CATEGORIES)
+            f10_total = sum(v for k, v in f10_stats.items() if k != 'errors')
+            logger.info(f"ETF基本面采集完成: {f10_total} 条 ({f10_stats})")
+        except Exception as e:
+            logger.warning(f"ETF基本面采集失败(不影响主流程): {e}")
+
         # === 阶段三.八: 市场事件信号分析 + 告警 ===
         try:
             import sqlite3 as _sqlite3

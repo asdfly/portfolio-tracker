@@ -972,3 +972,62 @@ def _load_tech_signals(_codes, _full=False):
         )
     finally:
         conn.close()
+
+
+# ==================== ETF基本面数据加载 ====================
+
+def load_etf_fundamental(date_str: str = None) -> pd.DataFrame:
+    """加载指定日期的ETF基本面快照(行情+估值)。
+    
+    Args:
+        date_str: 日期 YYYY-MM-DD, 默认最新
+    Returns:
+        DataFrame with code as index
+    """
+    conn = get_db_connection()
+    try:
+        if date_str is None:
+            date_str = get_available_dates("etf_fundamental")
+            if not date_str:
+                return pd.DataFrame()
+        return pd.read_sql_query(
+            "SELECT * FROM etf_fundamental WHERE date=? ORDER BY code", 
+            conn, params=[date_str])
+    finally:
+        conn.close()
+
+
+def load_etf_industry_alloc(code: str) -> pd.DataFrame:
+    """加载指定ETF的行业配置。
+    
+    Args:
+        code: ETF代码
+    Returns:
+        DataFrame [industry, weight_pct, market_value]
+    """
+    conn = get_db_connection()
+    try:
+        return pd.read_sql_query(
+            "SELECT industry, weight_pct, market_value FROM etf_industry_alloc "
+            "WHERE code=? ORDER BY weight_pct DESC", conn, params=[code])
+    finally:
+        conn.close()
+
+
+def load_etf_top_holdings(code: str, top_n: int = 10) -> pd.DataFrame:
+    """加载指定ETF的前N大重仓股。
+    
+    Args:
+        code: ETF代码
+        top_n: 前N大持仓
+    Returns:
+        DataFrame [stock_code, stock_name, weight_pct, market_value]
+    """
+    conn = get_db_connection()
+    try:
+        return pd.read_sql_query(
+            "SELECT stock_code, stock_name, weight_pct, market_value "
+            "FROM etf_top_holdings WHERE code=? ORDER BY weight_pct DESC LIMIT ?",
+            conn, params=[code, top_n])
+    finally:
+        conn.close()
