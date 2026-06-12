@@ -25,6 +25,7 @@ from src.models import (
 
 # ==================== 数据库初始化 ====================
 
+from src.analysis.signal_score import compute_signal_score, compute_signal_scores
 def _ensure_indexes():
     """确保数据库索引存在（只执行一次）"""
     conn = get_db_connection()
@@ -1031,5 +1032,92 @@ def load_etf_top_holdings(code: str, top_n: int = 10) -> pd.DataFrame:
             "SELECT stock_code, stock_name, weight_pct, market_value "
             "FROM etf_top_holdings WHERE code=? ORDER BY weight_pct DESC LIMIT ?",
             conn, params=[code, top_n])
+    finally:
+        conn.close()
+
+
+def load_signal_score(code):
+    """加载单只 ETF 的最新技术信号评分。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+
+    Returns
+    -------
+    dict or None : compute_signal_score 返回的评分字典
+    """
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql_query(
+            "SELECT * FROM etf_technical WHERE code = ? ORDER BY date DESC LIMIT 1",
+            conn, params=(code,)
+        )
+        if df.empty:
+            return None
+        return compute_signal_score(df.iloc[0])
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def load_all_signal_scores():
+    """加载所有 ETF 的最新技术信号评分。
+
+    Returns
+    -------
+    pd.DataFrame : columns [code, total_score, grade, trend_score, momentum_score, ...]
+    """
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql_query(
+            "SELECT * FROM etf_technical WHERE date = (SELECT MAX(date) FROM etf_technical)",
+            conn
+        )
+        if df.empty:
+            return pd.DataFrame()
+        return compute_signal_scores(df)
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+def load_peer_etfs(code):
+    """加载与给定 ETF 同类（同指数或同行业）的 ETF 列表。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+
+    Returns
+    -------
+    pd.DataFrame : 同类 ETF 的基本面数据（从 etf_fundamental 表）
+    """
+    conn = get_db_connection()
+    try:
+        # 1. 获取目标 ETF 的 index_code 或 sector
+        target = pd.read_sql_query(
+            "SELECT index_code, sector FROM etf_fundamental WHERE code = ? LIMIT 1",
+            conn, params=(code,)
+        )
+        if target.empty:
+            return pd.DataFrame()
+
+        idx_code = target.iloc[0].get("index_code")
+        sector = target.iloc[0].get("sector")
+
+        # 2. 查找同类：相同 index_code（宽基/红利）或相同 sector（行业/主题）
+        peers = pd.read_sql_query(
+            "SELECT * FROM etf_fundamental WHERE "
+            "(index_code = ? AND index_code IS NOT NULL) OR sector = ?",
+            conn, params=(idx_code, sector)
+        )
+        return peers
+    except Exception:
+        return pd.DataFrame()
     finally:
         conn.close()
