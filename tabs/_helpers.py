@@ -495,7 +495,7 @@ def _render_etf_stats(detail_df, mv, total_value):
                 render_chart(fig_hist)
 
 def _render_etf_detail_panel(row, selected_date, total_value=0):
-    """渲染ETF增强版详情面板：核心指标 + 价格走势 + 技术分析"""
+    """渲染ETF增强版详情面板：核心指标 + 价格走势 + 同类对比 + 技术评分"""
     code = row["code"]
     name = row["name"]
     detail_df, etf_name = load_etf_detail(code, days=120, end_date=selected_date)
@@ -506,6 +506,36 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
                             row.get("current_price", 0), code, selected_date)
     _render_etf_stats(detail_df, row.get("market_value", 0), total_value)
 
+    # 新增 tab：同类对比 + 技术评分
+    from data_loader import load_etf_fundamental
+    from src.analysis.signal_score import compute_signal_score
+    from config.settings import ETF_CATEGORIES, CACHE_TTL
+    from src.utils.database import get_db_connection
+
+    fund_df = load_etf_fundamental()
+    sector = ETF_CATEGORIES.get(str(code), {}).get("sector", "")
+
+    # 加载最新技术指标
+    conn = get_db_connection()
+    try:
+        tech_df = pd.read_sql_query(
+            "SELECT * FROM etf_technical ORDER BY date DESC LIMIT 500",
+            conn
+        )
+    except Exception:
+        tech_df = pd.DataFrame()
+    finally:
+        conn.close()
+
+    tab_peer, tab_signal = st.tabs(["同类ETF对比", "技术信号评分"])
+    with tab_peer:
+        if sector:
+            _render_peer_comparison(code, sector, fund_df)
+        else:
+            st.info("该ETF未配置行业分类，无法进行同类对比")
+    with tab_signal:
+        _render_signal_score_panel(code, tech_df)
+
 
 
 
@@ -513,6 +543,182 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
 @st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
 
+
+
+
+def _render_peer_comparison(code, sector, fund_df):
+    """渲染同类ETF横向对比：排序表格 + 雷达图。
+
+    Parameters
+    ----------
+    code : str - 当前 ETF 代码
+    sector : str - 所属行业板块（宽基/医药/金融/军工/新能源/科技/红利/债券）
+    fund_df : pd.DataFrame - etf_fundamental 全量数据
+    """
+    if fund_df is None or fund_df.empty:
+        st.info("暂无同类ETF数据")
+        return
+
+    from config.settings import ETF_CATEGORIES
+
+    # 找出同类 ETF：同 sector 的所有 ETF
+    peer_codes = [c for c, info in ETF_CATEGORIES.items() if info.get("sector") == sector]
+    peer_df = fund_df[fund_df["code"].astype(str).isin(peer_codes)].copy()
+    if peer_df.empty:
+        st.info("该行业暂无同类ETF数据")
+        return
+
+    # 排序表格
+    sort_col = st.selectbox(
+        "排序指标",
+        ["折价率", "资金净流入(万)", "换手率", "量比", "规模(亿)"],
+        key="peer_sort_" + code,
+        horizontal=True,
+    )
+    sort_map = {
+        "折价率": ("discount_rate", False),
+        "资金净流入(万)": ("main_net_inflow", True),
+        "换手率": ("turnover_rate", False),
+        "量比": ("volume_ratio", False),
+        "规模(亿)": ("total_mv", True),
+    }
+    col_name, ascending = sort_map[sort_col]
+
+    display_df = peer_df[["code", "name", "price", "iopv", "discount_rate",
+                           "change_pct", "turnover_rate", "volume_ratio",
+                           "main_net_inflow", "main_net_inflow_pct",
+                           "total_mv"]].copy()
+    display_df["total_mv"] = display_df["total_mv"] / 1e8  # 转亿
+    display_df["main_net_inflow"] = display_df["main_net_inflow"] / 1e4  # 转万
+    display_df.columns = ["代码", "名称", "价格", "IOPV", "折价率%",
+                          "涨跌幅%", "换手率%", "量比",
+                          "资金净流入(万)", "资金净流入%", "规模(亿)"]
+    display_df = display_df.sort_values(by=col_name, ascending=ascending).reset_index(drop=True)
+
+    # 高亮当前 ETF
+    def highlight_current(row_idx):
+        return code in str(display_df.iloc[row_idx]["代码"])
+
+    st.dataframe(display_df, use_container_width=True, height=min(200 + len(display_df) * 28, 400),
+                 hide_index=True)
+
+    # 雷达图：取规模TOP5同类ETF对比
+    if len(peer_df) >= 2:
+        top5 = peer_df.nlargest(min(5, len(peer_df)), "total_mv")
+        categories_radar = ["折价率(归一化)", "换手率", "量比", "资金流入", "规模"]
+        fig = go.Figure()
+        colors = ["#1a5276", "#e74c3c", "#2980b9", "#27ae60", "#e67e22"]
+        for i, (_, r) in enumerate(top5.iterrows()):
+            # 归一化各维度到 0-1
+            vals = [
+                max(0, (r.get("discount_rate", 0) + 2) / 4),  # 折价率 -2%~2% -> 0~1
+                min(r.get("turnover_rate", 0) / 15, 1),
+                min(r.get("volume_ratio", 1) / 5, 1),
+                min(max((r.get("main_net_inflow", 0) / 1e4 + 5000) / 10000, 0), 1),
+                min(r.get("total_mv", 0) / peer_df["total_mv"].max(), 1) if peer_df["total_mv"].max() > 0 else 0.5,
+            ]
+            is_current = str(r["code"]) == str(code)
+            fig.add_trace(go.Scatterpolar(
+                r=vals + [vals[0]],
+                theta=categories_radar + [categories_radar[0]],
+                fill="toself" if is_current else None,
+                name=r.get("name", r["code"]),
+                line_color=colors[i % len(colors)],
+                opacity=0.9 if is_current else 0.5,
+                line_width=2.5 if is_current else 1.5,
+            ))
+
+        fig.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+            showlegend=True,
+            legend=dict(font_size=10, x=0.02, y=0.98),
+            margin=dict(l=40, r=40, t=30, b=30),
+            height=350,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_signal_score_panel(code, technical_df):
+    """渲染技术信号综合评分面板。
+
+    Parameters
+    ----------
+    code : str - ETF 代码
+    technical_df : pd.DataFrame - etf_technical 表数据（全部或最新日期）
+    """
+    from src.analysis.signal_score import compute_signal_score
+
+    if technical_df is None or technical_df.empty:
+        st.info("暂无技术指标数据")
+        return
+
+    # 取最新一行
+    latest = technical_df[technical_df["code"].astype(str) == str(code)]
+    if latest.empty:
+        st.info(f"{code} 暂无技术指标数据")
+        return
+    row = latest.iloc[-1]
+
+    result = compute_signal_score(row)
+    score = result["total_score"]
+    grade = result["grade"]
+
+    # 评分颜色映射
+    if score >= 70:
+        score_color = "#27ae60"
+        bg_color = "#eafaf1"
+    elif score >= 55:
+        score_color = "#2980b9"
+        bg_color = "#eaf2f8"
+    elif score >= 40:
+        score_color = "#f39c12"
+        bg_color = "#fef9e7"
+    else:
+        score_color = "#e74c3c"
+        bg_color = "#fdedec"
+
+    # 顶部评分展示
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.markdown(
+            '<div style="text-align:center;padding:15px;border-radius:8px;'
+            'background:%s;border:2px solid %s;">'
+            '<div style="font-size:36px;font-weight:bold;color:%s;">%s</div>'
+            '<div style="font-size:14px;color:%s;margin-top:5px;">%s</div>'
+            '</div>' % (bg_color, score_color, score_color, score, score_color, grade),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        # 各维度条形图
+        dim_names = {
+            "trend": ("趋势", 0.30),
+            "momentum": ("动量", 0.25),
+            "volatility": ("波动", 0.20),
+            "oversold_overbought": ("超买超卖", 0.15),
+            "volume": ("成交量", 0.10),
+        }
+        for key, (label, weight) in dim_names.items():
+            sig = result["signals"][key]
+            s = sig["score"]
+            detail = sig["detail"]
+            if s >= 70:
+                bar_color = "#27ae60"
+            elif s >= 40:
+                bar_color = "#f39c12"
+            else:
+                bar_color = "#e74c3c"
+            st.markdown(
+                '<div style="margin:2px 0;">'
+                '<span style="font-size:11px;color:#555;display:inline-block;width:65px;">%s(%d%%)</span>'
+                '<div style="display:inline-block;width:65%%;height:14px;background:#ecf0f1;'
+                'border-radius:3px;vertical-align:middle;position:relative;">'
+                '<div style="width:%s%%;height:14px;background:%s;border-radius:3px;"></div>'
+                '</div>'
+                '<span style="font-size:11px;color:#333;margin-left:5px;">%s</span>'
+                '</div>' % (label, int(weight * 100), s, bar_color, "%.0f" % s),
+                unsafe_allow_html=True,
+            )
+            st.caption(detail)
 
 
 def _generate_oneclick_report(positions, summary, technical, selected_date, selected_benchmark):
