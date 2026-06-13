@@ -586,3 +586,134 @@ def render_tab8():
     _render_market_events(positions, summary)
     _render_data_export(positions, summary, selected_benchmark, selected_date)
     _render_feedback_tracking(positions, summary)
+
+    # P2-F: 盘前/盘后分析助手
+    _render_pre_market_panel()
+    _render_post_market_panel()
+
+
+# ============================================================
+#  P2-F: 盘前/盘后分析助手
+# ============================================================
+
+def _render_pre_market_panel():
+    """渲染盘前研判面板"""
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '盘前研判</div>',
+        unsafe_allow_html=True,
+    )
+    try:
+        from data_loader import load_pre_market_report
+        report = load_pre_market_report()
+        if not report:
+            st.info("暂无盘前数据")
+            return
+        if report.summary_text:
+            st.info(report.summary_text)
+        if report.index_changes:
+            idx_data = [{"指数": ic.name, "涨跌幅": f"{ic.change_pct:+.2f}%"} for ic in report.index_changes]
+            st.dataframe(idx_data, use_container_width=True, hide_index=True,
+                         height=min(200 + len(idx_data) * 28, 400))
+        if report.macro_alerts:
+            st.markdown("**宏观异动**")
+            for a in report.macro_alerts:
+                icon = {"warning": "🔴", "caution": "🟡"}.get(a.alert_level, "ℹ️")
+                st.markdown(f"{icon} **{a.indicator_name}**: {a.description}")
+        if report.etf_signals:
+            st.markdown("**持仓信号预览**")
+            sig_data = [{"名称": es.name, "代码": es.code, "趋势": es.trend,
+                         "MACD": es.macd_signal, "RSI": f"{es.rsi_value:.0f}",
+                         "技术评分": f"{es.signal_score:.0f}", "风险评分": f"{es.risk_score:.0f}",
+                         "资金流(万)": f"{es.fund_flow_net:+.0f}"} for es in report.etf_signals]
+            st.dataframe(sig_data, use_container_width=True, hide_index=True,
+                         height=min(200 + len(sig_data) * 28, 500))
+        ns = report.news_sentiment
+        if ns.get("total", 0) > 0:
+            nc1, nc2, nc3 = st.columns(3)
+            nc1.metric("近3日新闻", ns["total"])
+            nc2.metric("正面", ns["positive"])
+            nc3.metric("负面", ns["negative"])
+        if report.risk_warnings:
+            with st.expander("⚠️ 风险预警", expanded=True):
+                for w in report.risk_warnings:
+                    st.markdown(f"**{w['code']}**: 综合评分 {w['total_score']:.0f} "
+                                f"(波动{w['volatility']:.0f}/折价{w['discount']:.0f}/"
+                                f"流动{w['liquidity']:.0f}/下行{w['downside']:.0f}/偏离{w['deviation']:.0f})")
+    except Exception as e:
+        st.warning(f"盘前研判加载失败: {e}")
+
+
+
+def _render_post_market_panel():
+    """渲染盘后复盘面板"""
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '盘后复盘</div>',
+        unsafe_allow_html=True,
+    )
+    try:
+        from data_loader import load_post_market_report
+        report = load_post_market_report()
+        if not report:
+            st.info("暂无盘后数据")
+            return
+        if report.summary_text:
+            st.info(report.summary_text)
+        pnl = report.portfolio_pnl
+        if pnl:
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            with pc1:
+                c = "#22c55e" if pnl.get("total_pnl", 0) >= 0 else "#ef4444"
+                st.markdown(
+                    f'<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+                    f'<div style="font-size:11px;color:#666;">总盈亏</div>'
+                    f'<div style="font-size:18px;font-weight:bold;color:{c};">{pnl["total_pnl"]:+,.0f}</div></div>',
+                    unsafe_allow_html=True)
+            with pc2:
+                ret = pnl.get("total_return_pct", 0)
+                rc = "#22c55e" if ret >= 0 else "#ef4444"
+                st.markdown(
+                    f'<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+                    f'<div style="font-size:11px;color:#666;">收益率</div>'
+                    f'<div style="font-size:18px;font-weight:bold;color:{rc};">{ret:+.2f}%</div></div>',
+                    unsafe_allow_html=True)
+            with pc3:
+                st.markdown(
+                    f'<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+                    f'<div style="font-size:11px;color:#666;">盈/亏</div>'
+                    f'<div style="font-size:18px;font-weight:bold;">{pnl.get("profit_count",0)} / {pnl.get("loss_count",0)}</div></div>',
+                    unsafe_allow_html=True)
+            with pc4:
+                st.markdown(
+                    f'<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+                    f'<div style="font-size:11px;color:#666;">胜率</div>'
+                    f'<div style="font-size:18px;font-weight:bold;">{pnl.get("win_rate",0):.0f}%</div></div>',
+                    unsafe_allow_html=True)
+        if report.pnl_attribution:
+            attr_data = [{"名称": a["name"], "代码": a["code"], "盈亏": a["pnl"],
+                          "收益率%": round(a["pnl_rate"], 2),
+                          "贡献度%": round(a["contribution_pct"], 1)}
+                         for a in sorted(report.pnl_attribution, key=lambda x: x["pnl"], reverse=True)]
+            st.dataframe(attr_data, use_container_width=True, hide_index=True,
+                         height=min(200 + len(attr_data) * 28, 500))
+        if report.signal_changes:
+            st.markdown("**技术信号变化**")
+            for sc in report.signal_changes:
+                for ch in sc["changes"]:
+                    st.markdown(f"- **{sc['code']}** {ch['dimension']}: {ch['from']} → {ch['to']}")
+        if report.fund_flow_changes:
+            with st.expander("资金流向变化", expanded=False):
+                flow_data = [{"代码": fc["code"], "今日(万)": round(fc["today_flow"]),
+                              "昨日(万)": round(fc["yesterday_flow"]),
+                              "变化(万)": round(fc["flow_change"])} for fc in report.fund_flow_changes[:20]]
+                st.dataframe(flow_data, use_container_width=True, hide_index=True)
+        if report.news_highlights:
+            with st.expander("今日重大新闻", expanded=False):
+                for nh in report.news_highlights:
+                    icon = "🟢" if nh["sentiment"] == "正面" else ("🔴" if nh["sentiment"] == "负面" else "⚪")
+                    st.markdown(f"{icon} [{nh['date']}] **{nh['title']}** — {nh['category']}")
+    except Exception as e:
+        st.warning(f"盘后复盘加载失败: {e}")

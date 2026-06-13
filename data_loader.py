@@ -1454,3 +1454,33 @@ def load_sector_sentiment(code, days=30):
     """
     from src.data_sources.research import load_sector_sentiment
     return load_sector_sentiment(code, days)
+
+
+def load_pre_market_report():
+    """生成盘前研判报告。
+
+    Returns
+    -------
+    PreMarketReport
+    """
+    from src.analysis.pre_post_market import generate_pre_market_report
+    conn = get_db_connection()
+    try:
+        return generate_pre_market_report(conn)
+    finally:
+        conn.close()
+
+
+def load_post_market_report():
+    """生成盘后复盘报告。
+
+    Returns
+    -------
+    PostMarketReport
+    """
+    from src.analysis.pre_post_market import generate_post_market_report
+    conn = get_db_connection()
+    try:
+        return generate_post_market_report(conn)
+    finally:
+        conn.close()
