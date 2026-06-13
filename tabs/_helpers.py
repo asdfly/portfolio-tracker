@@ -527,7 +527,7 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
     finally:
         conn.close()
 
-    tab_peer, tab_signal = st.tabs(["同类ETF对比", "技术信号评分"])
+    tab_peer, tab_signal, tab_risk, tab_flow, tab_trades, tab_news = st.tabs(["同类ETF对比", "技术信号评分", "风险全景", "资金流向", "交易复盘", "行业观点"])
     with tab_peer:
         if sector:
             _render_peer_comparison(code, sector, fund_df)
@@ -535,6 +535,14 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
             st.info("该ETF未配置行业分类，无法进行同类对比")
     with tab_signal:
         _render_signal_score_panel(code, tech_df)
+    with tab_risk:
+        _render_risk_scan_panel(code, fund_df)
+    with tab_flow:
+        _render_fund_flow_panel(code)
+    with tab_trades:
+        _render_trade_review_panel(code)
+    with tab_news:
+        _render_industry_news_panel(code)
 
 
 
@@ -720,6 +728,400 @@ def _render_signal_score_panel(code, technical_df):
             )
             st.caption(detail)
 
+
+
+def _render_risk_scan_panel(code, fund_df):
+    """渲染单品风险全景扫描面板。
+
+    Parameters
+    ----------
+    code : str - ETF 代码
+    fund_df : pd.DataFrame - etf_fundamental 全量数据
+    """
+    from data_loader import load_etf_risk_scan
+
+    result = load_etf_risk_scan(code)
+    if result is None:
+        st.info("暂无风险扫描数据")
+        return
+
+    score = result["total_score"]
+    risk_level = result["risk_level"]
+    grade = result["grade"]
+
+    # 颜色映射（风险越高颜色越红）
+    if score >= 70:
+        score_color, bg_color = "#e74c3c", "#fdedec"
+    elif score >= 55:
+        score_color, bg_color = "#e67e22", "#fef5e7"
+    elif score >= 40:
+        score_color, bg_color = "#f39c12", "#fef9e7"
+    else:
+        score_color, bg_color = "#27ae60", "#eafaf1"
+
+    # 顶部风险评分卡
+    st.markdown(
+        '<div style="text-align:center;padding:15px;border-radius:8px;'
+        'background:%s;border:2px solid %s;margin-bottom:10px;">'
+        '<div style="font-size:12px;color:#666;">综合风险评分</div>'
+        '<div style="font-size:36px;font-weight:bold;color:%s;">%s</div>'
+        '<div style="font-size:14px;color:%s;">%s - %s</div>'
+        '<div style="font-size:12px;color:#888;margin-top:5px;">%s</div>'
+        '</div>' % (bg_color, score_color, score_color, score,
+                    score_color, risk_level, grade,
+                    result["summary"].replace("<", "&lt;").replace(">", "&gt;")),
+        unsafe_allow_html=True,
+    )
+
+    # 5 维度风险详情
+    dim_config = {
+        "volatility": ("波动率", "25%"),
+        "discount": ("折价风险", "20%"),
+        "liquidity": ("流动性", "20%"),
+        "downside": ("下行压力", "20%"),
+        "deviation": ("偏离度", "15%"),
+    }
+
+    cols = st.columns(5)
+    for idx, (key, (label, weight)) in enumerate(dim_config.items()):
+        dim = result["dimensions"][key]
+        d_score = dim["score"]
+        d_level = dim["level"]
+        detail = dim["detail"]
+
+        if d_score >= 70:
+            d_color = "#e74c3c"
+        elif d_score >= 45:
+            d_color = "#f39c12"
+        else:
+            d_color = "#27ae60"
+
+        with cols[idx]:
+            st.markdown(
+                '<div style="text-align:center;padding:10px;border-radius:6px;'
+                'background:#f8f9fa;border-left:3px solid %s;margin-bottom:5px;">'
+                '<div style="font-size:11px;color:#666;">%s(%s)</div>'
+                '<div style="font-size:24px;font-weight:bold;color:%s;">%s</div>'
+                '<div style="font-size:10px;color:%s;">%s</div>'
+                '</div>' % (d_color, label, weight, d_color, "%.0f" % d_score, d_color, d_level),
+                unsafe_allow_html=True,
+            )
+            st.caption(detail)
+
+    # 风险雷达图
+    import plotly.graph_objects as go
+    categories = list(dim_config.keys())
+    labels = [v[0] for v in dim_config.values()]
+    values = [result["dimensions"][k]["score"] for k in categories]
+
+    fig = go.Figure(data=go.Scatterpolar(
+        r=values + [values[0]],
+        theta=labels + [labels[0]],
+        fill="toself",
+        fillcolor="rgba(231,76,60,0.15)",
+        line_color=score_color,
+        line_width=2,
+    ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        margin=dict(l=50, r=50, t=30, b=30),
+        height=300,
+        showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+
+def _render_fund_flow_panel(code):
+    """渲染 ETF 资金流向面板。
+
+    Parameters
+    ----------
+    code : str - ETF 代码
+    """
+    from data_loader import load_etf_fund_flow
+    import plotly.graph_objects as go
+
+    df = load_etf_fund_flow(code, days=60)
+    if df.empty:
+        st.info("暂无资金流向数据")
+        return
+
+    # 资金流向柱状图（正负）
+    fig = go.Figure()
+    colors = ["#27ae60" if v >= 0 else "#e74c3c" for v in df["net_inflow"]]
+    fig.add_trace(go.Bar(
+        x=df["date"],
+        y=df["net_inflow"] / 1e4,
+        marker_color=colors,
+        name="净流入",
+    ))
+    # 大单 vs 小单对比
+    fig.add_trace(go.Scatter(
+        x=df["date"],
+        y=df.get("super_large_inflow", pd.Series(dtype=float)) / 1e4,
+        mode="lines+markers",
+        name="超大单",
+        line=dict(color="#e67e22", width=1.5),
+        marker=dict(size=3),
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["date"],
+        y=df.get("small_inflow", pd.Series(dtype=float)) / 1e4,
+        mode="lines+markers",
+        name="小单",
+        line=dict(color="#3498db", width=1.5),
+        marker=dict(size=3),
+    ))
+    fig.update_layout(
+        title="资金流向（万元）",
+        xaxis_title="",
+        yaxis_title="万元",
+        legend=dict(font_size=10, orientation="h", y=1.1),
+        margin=dict(l=40, r=20, t=40, b=30),
+        height=320,
+        xaxis=dict(tickangle=-45, nticks=10),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 资金流统计摘要
+    c1, c2, c3 = st.columns(3)
+    total_net = df["net_inflow"].sum() / 1e8
+    avg_daily = df["net_inflow"].mean() / 1e4
+    positive_days = (df["net_inflow"] > 0).sum()
+    negative_days = (df["net_inflow"] < 0).sum()
+
+    with c1:
+        color = "#e74c3c" if total_net < 0 else "#27ae60"
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;'
+            'background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">累计净流入</div>'
+            '<div style="font-size:20px;font-weight:bold;color:%s;">%+.2f亿</div>'
+            '</div>' % (color, total_net),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;'
+            'background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">日均净流入</div>'
+            '<div style="font-size:20px;font-weight:bold;color:#333;">%+.0f万</div>'
+            '</div>' % avg_daily,
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;'
+            'background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">净流入/流出天数</div>'
+            '<div style="font-size:20px;font-weight:bold;color:#27ae60;">%d / '
+            '<span style="color:#e74c3c;">%d</span></div>'
+            '</div>' % (positive_days, negative_days),
+            unsafe_allow_html=True,
+        )
+
+    # 最近资金流向明细
+    recent = df.tail(10).copy()
+    recent["net_inflow"] = recent["net_inflow"] / 1e4
+    recent["super_large_inflow"] = recent.get("super_large_inflow", 0) / 1e4
+    recent["large_inflow"] = recent.get("large_inflow", 0) / 1e4
+    recent["small_inflow"] = recent.get("small_inflow", 0) / 1e4
+    display = recent[["date", "net_inflow", "net_inflow_pct",
+                       "super_large_inflow", "large_inflow", "small_inflow"]].copy()
+    display.columns = ["日期", "净流入(万)", "净流入%", "超大单(万)", "大单(万)", "小单(万)"]
+    st.dataframe(display, use_container_width=True, hide_index=True)
+
+
+def _render_trade_review_panel(code):
+    """渲染交易复盘面板。
+
+    Parameters
+    ----------
+    code : str - ETF 代码
+    """
+    from data_loader import load_trade_analysis
+
+    analysis = load_trade_analysis(code)
+    if not analysis:
+        st.info("暂无交易记录。可通过 CSV 导入券商交易流水后在持仓详情查看复盘。")
+        return
+
+    trades_df = analysis["trades"]
+
+    # 顶部统计卡片
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        pnl = analysis["realized_pnl"]
+        color = "#27ae60" if pnl >= 0 else "#e74c3c"
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">已实现盈亏</div>'
+            '<div style="font-size:18px;font-weight:bold;color:%s;">%+.2f</div>'
+            '</div>' % (color, pnl),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">胜率</div>'
+            '<div style="font-size:18px;font-weight:bold;color:#333;">%.1f%%</div>'
+            '</div>' % analysis["win_rate"],
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">总交易次数</div>'
+            '<div style="font-size:18px;font-weight:bold;color:#333;">%d</div>'
+            '</div>' % analysis["total_trades"],
+            unsafe_allow_html=True,
+        )
+    with c4:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">累计手续费</div>'
+            '<div style="font-size:18px;font-weight:bold;color:#e74c3c;">%.2f</div>'
+            '</div>' % analysis["total_fee"],
+            unsafe_allow_html=True,
+        )
+
+    # 交易明细表
+    if not trades_df.empty:
+        display = trades_df[["date", "direction", "price", "quantity", "fee", "note"]].copy()
+        display.columns = ["日期", "方向", "价格", "数量", "手续费", "备注"]
+        display["金额"] = display["价格"] * display["数量"]
+        display.columns = list(display.columns[:-1]) + ["金额"]
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
+    # 买卖点标注价格图
+    if not trades_df.empty:
+        try:
+            from data_loader import load_etf_price_history
+            import plotly.graph_objects as go
+
+            price_df = load_etf_price_history(code, days=250)
+            if price_df is not None and not price_df.empty:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=price_df["date"],
+                    y=price_df["close"],
+                    mode="lines",
+                    name="收盘价",
+                    line=dict(color="#3498db", width=1.5),
+                ))
+
+                buys = trades_df[trades_df["direction"] == "BUY"]
+                sells = trades_df[trades_df["direction"] == "SELL"]
+
+                if not buys.empty:
+                    fig.add_trace(go.Scatter(
+                        x=buys["date"],
+                        y=buys["price"],
+                        mode="markers",
+                        name="买入",
+                        marker=dict(symbol="triangle-up", size=12, color="#27ae60"),
+                    ))
+                if not sells.empty:
+                    fig.add_trace(go.Scatter(
+                        x=sells["date"],
+                        y=sells["price"],
+                        mode="markers",
+                        name="卖出",
+                        marker=dict(symbol="triangle-down", size=12, color="#e74c3c"),
+                    ))
+
+                fig.update_layout(
+                    title="买卖点标注",
+                    xaxis_title="",
+                    yaxis_title="价格",
+                    legend=dict(font_size=10, orientation="h", y=1.1),
+                    margin=dict(l=40, r=20, t=40, b=30),
+                    height=300,
+                    xaxis=dict(tickangle=-45, nticks=10),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        except Exception:
+            pass
+
+
+def _render_industry_news_panel(code):
+    """渲染行业观点与研报聚合面板。
+
+    Parameters
+    ----------
+    code : str - ETF 代码
+    """
+    from data_loader import load_etf_industry_news, load_sector_sentiment
+
+    # 行业情绪概览
+    sentiment = load_sector_sentiment(code, days=30)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        avg = sentiment["avg_sentiment"]
+        color = "#27ae60" if avg > 0.1 else ("#e74c3c" if avg < -0.1 else "#f39c12")
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">行业情绪</div>'
+            '<div style="font-size:18px;font-weight:bold;color:%s;">%s</div>'
+            '</div>' % (color, "偏多" if avg > 0.1 else ("偏空" if avg < -0.1 else "中性")),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">相关资讯</div>'
+            '<div style="font-size:18px;font-weight:bold;color:#333;">%d 条</div>'
+            '</div>' % sentiment["news_count"],
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">正面</div>'
+            '<div style="font-size:18px;font-weight:bold;color:#27ae60;">%d</div>'
+            '</div>' % sentiment["positive_count"],
+            unsafe_allow_html=True,
+        )
+    with c4:
+        st.markdown(
+            '<div style="text-align:center;padding:10px;border-radius:6px;background:#f8f9fa;">'
+            '<div style="font-size:11px;color:#666;">负面</div>'
+            '<div style="font-size:18px;font-weight:bold;color:#e74c3c;">%d</div>'
+            '</div>' % sentiment["negative_count"],
+            unsafe_allow_html=True,
+        )
+
+    # Top headlines
+    headlines = sentiment.get("top_headlines", [])
+    if headlines:
+        st.markdown("**近期行业要闻**")
+        for h in headlines:
+            sent_val = h.get("sentiment_score", 0)
+            if pd.isna(sent_val):
+                sent_val = 0
+            icon = "🟢" if sent_val > 0.1 else ("🔴" if sent_val < -0.1 else "⚪")
+            st.markdown(
+                '- %s **[%s]** %s — *%s*' % (
+                    icon,
+                    h.get("date", "")[:10],
+                    h.get("title", ""),
+                    h.get("source", ""),
+                )
+            )
+    else:
+        st.info("暂无该 ETF 相关的行业资讯")
+
+    # 新闻明细表
+    news_df = load_etf_industry_news(code, days=30)
+    if not news_df.empty:
+        display = news_df[["date", "title", "source", "sentiment_score"]].copy()
+        display.columns = ["日期", "标题", "来源", "情绪"]
+        display["情绪"] = display["情绪"].apply(
+            lambda x: "偏多" if (pd.notna(x) and x > 0.1) else ("偏空" if (pd.notna(x) and x < -0.1) else "中性")
+        )
+        st.dataframe(display, use_container_width=True, hide_index=True, height=min(200 + len(display) * 28, 400))
 
 def _generate_oneclick_report(positions, summary, technical, selected_date, selected_benchmark):
 

@@ -1034,36 +1034,6 @@ def load_etf_top_holdings(code: str, top_n: int = 10) -> pd.DataFrame:
             conn, params=[code, top_n])
     finally:
         conn.close()
-
-
-def load_signal_score(code):
-    """加载单只 ETF 的最新技术信号评分。
-
-    Parameters
-    ----------
-    code : str
-        ETF 代码
-
-    Returns
-    -------
-    dict or None : compute_signal_score 返回的评分字典
-    """
-    conn = get_db_connection()
-    try:
-        df = pd.read_sql_query(
-            "SELECT * FROM etf_technical WHERE code = ? ORDER BY date DESC LIMIT 1",
-            conn, params=(code,)
-        )
-        if df.empty:
-            return None
-        return compute_signal_score(df.iloc[0])
-    except Exception:
-        return None
-    finally:
-        conn.close()
-
-
-def load_all_signal_scores():
     """加载所有 ETF 的最新技术信号评分。
 
     Returns
@@ -1121,45 +1091,6 @@ def load_peer_etfs(code):
         return pd.DataFrame()
     finally:
         conn.close()
-
-
-def load_signal_score(code, date=None):
-    """加载单只 ETF 最新技术信号评分。
-
-    Parameters
-    ----------
-    code : str
-        ETF 代码
-    date : str, optional
-        指定日期，默认最新
-
-    Returns
-    -------
-    dict : compute_signal_score 返回的评分字典，无数据时返回 None
-    """
-    conn = get_db_connection()
-    try:
-        if date:
-            df = pd.read_sql_query(
-                "SELECT * FROM etf_technical WHERE code = ? AND date = ?",
-                conn, params=(code, date)
-            )
-        else:
-            df = pd.read_sql_query(
-                "SELECT * FROM etf_technical WHERE code = ? ORDER BY date DESC LIMIT 1",
-                conn, params=(code,)
-            )
-        if df.empty:
-            return None
-        from src.analysis.signal_score import compute_signal_score
-        return compute_signal_score(df.iloc[0])
-    except Exception:
-        return None
-    finally:
-        conn.close()
-
-
-def load_all_signal_scores(date=None):
     """加载所有 ETF 最新技术信号评分。
 
     Returns
@@ -1306,3 +1237,220 @@ def load_all_signal_scores(end_date=None):
         return compute_signal_scores(df)
     except Exception:
         return pd.DataFrame()
+
+
+# === P1-H: 单品风险全景扫描 ===
+def load_etf_risk_scan(code):
+    """加载单只 ETF 的风险全景评分。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+
+    Returns
+    -------
+    dict or None : compute_etf_risk_scan 返回的评分字典
+    """
+    from src.analysis.etf_risk_scan import compute_etf_risk_scan
+    conn = get_db_connection()
+    try:
+        tech_df = pd.read_sql_query(
+            "SELECT * FROM etf_technical WHERE code = ? ORDER BY date DESC LIMIT 1",
+            conn, params=(code,)
+        )
+        fund_df = pd.read_sql_query(
+            "SELECT * FROM etf_fundamental WHERE code = ?", conn, params=(code,)
+        )
+        snap_df = pd.read_sql_query(
+            "SELECT * FROM portfolio_snapshots WHERE code = ? ORDER BY date DESC",
+            conn, params=(code,)
+        )
+        tech_row = tech_df.iloc[-1] if not tech_df.empty else None
+        fund_row = fund_df.iloc[0] if not fund_df.empty else None
+        hist_prices = snap_df["current_price"] if not snap_df.empty else None
+        hist_snapshot = snap_df if not snap_df.empty else None
+        return compute_etf_risk_scan(code, tech_row, fund_row, hist_prices, hist_snapshot)
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def load_all_etf_risk_scans():
+    """加载所有 ETF 的风险全景评分。
+
+    Returns
+    -------
+    pd.DataFrame : code, total_score, risk_level, grade, 各维度分数
+    """
+    from src.analysis.etf_risk_scan import compute_all_etf_risk_scans
+    conn = get_db_connection()
+    try:
+        tech_df = pd.read_sql_query(
+            "SELECT * FROM etf_technical WHERE date = (SELECT MAX(date) FROM etf_technical)",
+            conn
+        )
+        fund_df = pd.read_sql_query("SELECT * FROM etf_fundamental", conn)
+        snap_df = pd.read_sql_query("SELECT * FROM portfolio_snapshots", conn)
+        return compute_all_etf_risk_scans(tech_df, fund_df, snap_df)
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+# === P1-C: ETF 资金流向与异动监控 ===
+def load_etf_fund_flow(code, days=60):
+    """加载单只 ETF 的资金流向数据。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+    days : int
+        回溯天数，默认 60
+
+    Returns
+    -------
+    pd.DataFrame : date, net_inflow, super/large/medium/small_inflow, net_inflow_pct
+    """
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql_query(
+            "SELECT date, code, name, net_inflow, net_inflow_pct, "
+            "super_large_inflow, super_large_pct, large_inflow, large_pct, "
+            "medium_inflow, medium_pct, small_inflow, small_pct "
+            "FROM fund_flows WHERE code = ? AND category = 'etf' "
+            "ORDER BY date DESC LIMIT ?",
+            conn, params=(code, days)
+        )
+        return df.sort_values("date") if not df.empty else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+def load_etf_fund_flow_alerts(threshold_pct=200):
+    """检测 ETF 资金异动（净流入环比变动超阈值）。
+
+    Parameters
+    ----------
+    threshold_pct : float
+        异动阈值（百分比），默认 200%
+
+    Returns
+    -------
+    pd.DataFrame : code, name, date, net_inflow, prev_inflow, change_pct
+    """
+    conn = get_db_connection()
+    try:
+        # 获取最近两天的 ETF 资金流
+        df = pd.read_sql_query(
+            "SELECT f.* FROM fund_flows f "
+            "INNER JOIN (SELECT code, MAX(date) as latest FROM fund_flows "
+            "WHERE category='etf' GROUP BY code) l "
+            "ON f.code = l.code AND f.date = l.latest "
+            "WHERE f.category = 'etf'",
+            conn
+        )
+        if df.empty:
+            return pd.DataFrame()
+
+        # 获取前一天数据
+        alerts = []
+        for _, row in df.iterrows():
+            prev = pd.read_sql_query(
+                "SELECT net_inflow FROM fund_flows WHERE code = ? AND category = 'etf' "
+                "AND date < ? ORDER BY date DESC LIMIT 1",
+                conn, params=(row["code"], row["date"])
+            )
+            if not prev.empty and prev.iloc[0]["net_inflow"] != 0:
+                change_pct = (row["net_inflow"] - prev.iloc[0]["net_inflow"]) / abs(prev.iloc[0]["net_inflow"]) * 100
+                if abs(change_pct) >= threshold_pct:
+                    alerts.append({
+                        "code": row["code"],
+                        "name": row["name"],
+                        "date": row["date"],
+                        "net_inflow": row["net_inflow"],
+                        "prev_inflow": prev.iloc[0]["net_inflow"],
+                        "change_pct": round(change_pct, 1),
+                    })
+        return pd.DataFrame(alerts) if alerts else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+
+# === P1-D: 交易历史复盘 ===
+def load_trade_history(code=None, start_date=None, end_date=None):
+    """加载交易记录。
+
+    Parameters
+    ----------
+    code : str, optional
+        ETF 代码
+    start_date, end_date : str, optional
+        日期范围
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    from src.utils.trade_importer import load_trades
+    return load_trades(code, start_date, end_date)
+
+
+def load_trade_analysis(code):
+    """加载单只 ETF 的交易复盘分析。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+
+    Returns
+    -------
+    dict : 交易分析结果
+    """
+    from src.utils.trade_importer import compute_trade_analysis
+    return compute_trade_analysis(code)
+
+
+# === P1-E: 券商研报集成与行业观点聚合 ===
+def load_etf_industry_news(code, days=30):
+    """加载与 ETF 相关的行业新闻/观点。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+    days : int
+        回溯天数
+
+    Returns
+    -------
+    pd.DataFrame : 匹配的新闻列表
+    """
+    from src.data_sources.research import load_etf_industry_news
+    return load_etf_industry_news(code, days)
+
+
+def load_sector_sentiment(code, days=30):
+    """计算 ETF 对应行业的新闻情绪。
+
+    Parameters
+    ----------
+    code : str
+        ETF 代码
+    days : int
+        回溯天数
+
+    Returns
+    -------
+    dict : {avg_sentiment, positive/negative/neutral_count, news_count, top_headlines}
+    """
+    from src.data_sources.research import load_sector_sentiment
+    return load_sector_sentiment(code, days)
