@@ -639,6 +639,7 @@ def render_tab8():
         _render_suggestion_pie(suggestions, action_colors)
         _render_multi_factor_radar(suggestions)
         _render_suggestion_details(suggestions, action_colors)
+        _render_position_advice_panel(positions)
     else:
         st.info("暂无持仓数据")
     
@@ -649,6 +650,57 @@ def render_tab8():
     # P2-F: 盘前/盘后分析助手
     _render_pre_market_panel()
     _render_post_market_panel()
+
+
+
+
+def _render_position_advice_panel(positions):
+    """渲染仓位管理建议面板。"""
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '仓位管理建议</div>', unsafe_allow_html=True,
+    )
+    try:
+        from data_loader import load_position_advices, load_sector_exposures
+        advices = load_position_advices(positions)
+        exposures = load_sector_exposures(positions)
+    except Exception:
+        st.info("仓位建议数据加载失败")
+        return
+
+    # 行业暴露度
+    if exposures:
+        st.markdown("**行业暴露度**")
+        exp_data = []
+        for e in exposures:
+            color = "#ef4444" if e.status == "超限" else ("#f59e0b" if e.status == "偏高" else "#22c55e")
+            exp_data.append({
+                "行业": e.sector,
+                "占比": f"{e.total_weight:.1f}%",
+                "ETF数量": e.etf_count,
+                "状态": e.status,
+                "建议": e.advice if e.advice else "-",
+            })
+        st.dataframe(exp_data, use_container_width=True, hide_index=True,
+                     height=min(200 + len(exp_data) * 28, 400))
+
+    # 仓位建议明细
+    if advices:
+        st.markdown("**个股仓位建议**")
+        adj_data = []
+        for a in advices:
+            adj_data.append({
+                "代码": a.code, "名称": a.name, "行业": a.sector,
+                "当前占比": f"{a.current_weight:.1f}%",
+                "综合评分": f"{a.mf_total:.0f}",
+                "操作": a.adjust_action,
+                "调整幅度": f"{a.adjust_min_pct:.0%}-{a.adjust_max_pct:.0%}" if a.adjust_action != "维持" else "-",
+                "目标占比": f"{a.target_weight_min:.1f}-{a.target_weight_max:.1f}%",
+                "建议": a.advice_text,
+            })
+        st.dataframe(adj_data, use_container_width=True, hide_index=True,
+                     height=min(200 + len(adj_data) * 28, 500))
 
 
 # ============================================================

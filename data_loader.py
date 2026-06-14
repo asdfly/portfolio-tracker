@@ -1499,3 +1499,47 @@ def load_multi_factor_scores(positions):
     """
     from src.analysis.multi_factor_score import compute_multi_factor_scores
     return compute_multi_factor_scores(positions)
+
+
+def load_position_advices(positions):
+    """加载所有持仓ETF的仓位管理建议。
+
+    Parameters
+    ----------
+    positions : pd.DataFrame - 持仓数据
+
+    Returns
+    -------
+    List[PositionAdvice]
+    """
+    from src.analysis.position_advisor import compute_all_position_advice
+    from src.analysis.multi_factor_score import compute_multi_factor_scores
+    mf_scores = compute_multi_factor_scores(positions)
+    return compute_all_position_advice(positions, mf_scores)
+
+
+def load_sector_exposures(positions):
+    """加载行业暴露度汇总。
+
+    Returns
+    -------
+    List[SectorExposure]
+    """
+    from src.analysis.position_advisor import compute_sector_exposures
+    return compute_sector_exposures(positions)
+
+
+def load_pe_percentile(index_code, current_pe=None):
+    """加载指数PE历史分位数。
+
+    Returns
+    -------
+    dict : {percentile_3y, percentile_5y, percentile_all, pe_min, pe_max, pe_median}
+    """
+    from src.data_sources.valuation_percentile import load_pe_percentile as _lpp
+    from src.utils.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        return _lpp(conn, index_code, current_pe)
+    finally:
+        conn.close()
