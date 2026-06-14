@@ -1484,3 +1484,18 @@ def load_post_market_report():
         return generate_post_market_report(conn)
     finally:
         conn.close()
+
+
+def load_multi_factor_scores(positions):
+    """加载所有持仓ETF的多因子综合评分。
+
+    Parameters
+    ----------
+    positions : pd.DataFrame - 持仓数据，需含code, name列
+
+    Returns
+    -------
+    List[MultiFactorScore] - 按综合评分降序排列
+    """
+    from src.analysis.multi_factor_score import compute_multi_factor_scores
+    return compute_multi_factor_scores(positions)

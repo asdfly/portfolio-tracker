@@ -168,6 +168,64 @@ def _render_suggestions_compute(positions, summary):
     # 按净信号排序
     suggestions.sort(key=lambda x: x["net_signal"], reverse=True)
     return suggestions, action_colors
+
+def _render_suggestions_compute_v2(positions, summary):
+    """基于多因子综合评分生成操作建议（v2: 替代纯技术面逻辑）。
+    四维因子: 技术(40%) + 风险(25%) + 资金(20%) + 基本面(15%)
+    风险约束: 高风险ETF建议上限为"持有"
+    """
+    from data_loader import load_multi_factor_scores
+    action_colors = {
+        "买入": "#22c55e", "持有": "#f59e0b", "观望": "#8b949e",
+        "卖出": "#ef4444", "加仓": "#22c55e", "减仓": "#ef4444",
+    }
+    try:
+        mf_scores = load_multi_factor_scores(positions)
+    except Exception:
+        return [], action_colors
+    suggestions = []
+    for mf in mf_scores:
+        suggestions.append({
+            "name": mf.name, "code": mf.code, "sector": "",
+            "action": mf.action, "urgency": mf.urgency,
+            "reasons": mf.reasons,
+            "buy_score": mf.technical.score,
+            "sell_score": 100.0 - mf.technical.score,
+            "net_signal": mf.total_score,
+            "pnl_rate": 0, "market_value": 0,
+            "trend": mf.technical.level, "rsi": 50,
+            "mf_total": mf.total_score,
+            "mf_tech": mf.technical.score,
+            "mf_risk": 100.0 - mf.risk.score,
+            "mf_flow": mf.fund_flow.score,
+            "mf_fund": mf.fundamental.score,
+            "mf_risk_constrained": mf.risk_constrained,
+        })
+    return suggestions, action_colors
+
+
+def _render_multi_factor_radar(suggestions):
+    """渲染多因子评分雷达图（仅当suggestions含mf_字段时显示）。"""
+    if not suggestions or "mf_total" not in suggestions[0]:
+        return
+    categories = ["技术面", "风险面", "资金面", "基本面"]
+    fig = go.Figure()
+    for s in suggestions[:6]:
+        fig.add_trace(go.Scatterpolar(
+            r=[s["mf_tech"], s["mf_risk"], s["mf_flow"], s["mf_fund"]],
+            theta=categories, fill="toself", name=s["name"], opacity=0.5,
+        ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10, color="#c9d1d9")),
+        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        height=350, margin=dict(l=40, r=40, t=40, b=40),
+        title=dict(text="多因子评分对比", font=dict(size=13, color="#c9d1d9")),
+    )
+    render_chart(fig)
+
+
 def _render_suggestion_cards(suggestions, action_colors):
     # ===== 操作建议汇总卡片 =====
     st.markdown(
@@ -576,9 +634,10 @@ def render_tab8():
     st.caption("💡 基于技术信号和持仓状态，生成具体操作建议")
     
     if not positions.empty:
-        suggestions, action_colors = _render_suggestions_compute(positions, summary)
+        suggestions, action_colors = _render_suggestions_compute_v2(positions, summary)
         _render_suggestion_cards(suggestions, action_colors)
         _render_suggestion_pie(suggestions, action_colors)
+        _render_multi_factor_radar(suggestions)
         _render_suggestion_details(suggestions, action_colors)
     else:
         st.info("暂无持仓数据")
