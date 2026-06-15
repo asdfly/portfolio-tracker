@@ -453,7 +453,7 @@ def _render_etf_fund_flow(tab_obj, positions):
                             dv_df = pd.DataFrame(divergences[-10:])  # 最近10条
                             st.dataframe(
                                 dv_df.style.format({"5日净流入(亿)": "{:+.2f}"}),
-                                width="stretch",
+                                use_container_width=True,
                                 hide_index=True,
                             )
                         else:

@@ -451,7 +451,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date):
                         data=f.read(),
                         file_name=os.path.basename(output),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        width='stretch',
+                        use_container_width=True,
                     key="dl_excel_advice",
                     )
             except (OSError, ValueError, ImportError, RuntimeError) as e:
@@ -471,7 +471,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date):
                         data=f.read(),
                         file_name=os.path.basename(report_path),
                         mime="text/html",
-                        width='stretch',
+                        use_container_width=True,
                     key="dl_html_advice",
                     )
             except (OSError, ValueError, ImportError, RuntimeError) as e:
