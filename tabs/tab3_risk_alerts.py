@@ -451,7 +451,7 @@ def _render_alert_trend_analysis(hist_alerts):
                 hour_bins = [0, 6, 12, 18, 24]
                 hour_labels = ["凌晨", "上午", "下午", "晚间"]
                 hist_valid_copy["hour_bin"] = pd.cut(hist_valid_copy["hour"], bins=hour_bins, labels=hour_labels, right=False)
-                heatmap_data = hist_valid_copy.groupby(["dow", "hour_bin"]).size().unstack(fill_value=0)
+                heatmap_data = hist_valid_copy.groupby(["dow", "hour_bin"], observed=False).size().unstack(fill_value=0)
                 heatmap_data.index = [dow_labels[i] if i < len(dow_labels) else str(i) for i in heatmap_data.index]
                 if not heatmap_data.empty:
                     fig_heatmap = go.Figure(go.Heatmap(

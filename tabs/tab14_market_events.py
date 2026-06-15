@@ -111,7 +111,7 @@ def _render_lhb_panel():
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">近30日上榜频率 TOP10<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">统计近30个交易日内各股票登上龙虎榜的次数，上榜频率越高表示市场关注度越高。</span></div>',
         unsafe_allow_html=True,
     )
-    freq = df.groupby(['code', 'name']).size().reset_index(name='上榜次数')
+    freq = df.groupby(['code', 'name'], observed=False).size().reset_index(name='上榜次数')
     freq = freq.sort_values('上榜次数', ascending=False).head(10)
     if not freq.empty:
         fig_freq = go.Figure(go.Bar(
@@ -372,7 +372,7 @@ def _render_institution_panel():
     
     # 被调研公司统计
     if 'code' in day_df.columns and 'name' in day_df.columns:
-        code_stats = day_df.groupby(['code', 'name']).size().reset_index(name='调研次数')
+        code_stats = day_df.groupby(['code', 'name'], observed=False).size().reset_index(name='调研次数')
         code_stats = code_stats.sort_values('调研次数', ascending=False)
         
         fig = go.Figure(go.Bar(

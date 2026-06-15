@@ -334,7 +334,7 @@ def _render_annual_trend(all_cal):
     )
     all_cal = load_calendar_data()
     if not all_cal.empty:
-        yearly_cumret = all_cal.groupby("year").apply(
+        yearly_cumret = all_cal.groupby("year", group_keys=False).apply(
             lambda g: g["total_value"].iloc[-1] / g["total_value"].iloc[0] - 1,
             include_groups=False
         )
