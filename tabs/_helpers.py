@@ -585,7 +585,6 @@ def _render_peer_comparison(code, sector, fund_df):
         "排序指标",
         ["折价率", "资金净流入(万)", "换手率", "量比", "规模(亿)"],
         key="peer_sort_" + code,
-        horizontal=True,
     )
     sort_map = {
         "折价率": ("discount_rate", False),

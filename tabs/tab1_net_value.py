@@ -733,9 +733,9 @@ def _render_annual_returns(summary):
         summary_annual = summary.copy()
         summary_annual["date"] = pd.to_datetime(summary_annual["date"])
         summary_annual["year"] = summary_annual["date"].dt.year
-        yearly_returns = summary_annual.groupby("year", group_keys=False).apply(
+        yearly_returns = summary_annual.groupby("year").apply(
             lambda g: g["total_value"].iloc[-1] / g["total_value"].iloc[0] - 1
-        , include_groups=False) * 100
+        ) * 100
         if not yearly_returns.empty:
             bar_colors = ["#22c55e" if v >= 0 else "#ef4444" for v in yearly_returns.values]
             fig_annual = go.Figure()
