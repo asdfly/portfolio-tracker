@@ -530,7 +530,11 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
     tab_peer, tab_signal, tab_risk, tab_flow, tab_trades, tab_news = st.tabs(["同类ETF对比", "技术信号评分", "风险全景", "资金流向", "交易复盘", "行业观点"])
     with tab_peer:
         if sector:
-            _render_peer_comparison(code, sector, fund_df)
+            sub_tab_basic, sub_tab_pen = st.tabs(["行情对比", "穿透分析"])
+            with sub_tab_basic:
+                _render_peer_comparison(code, sector, fund_df)
+            with sub_tab_pen:
+                _render_peer_penetration_panel(code, sector)
         else:
             st.info("该ETF未配置行业分类，无法进行同类对比")
     with tab_signal:
@@ -1122,6 +1126,22 @@ def _render_industry_news_panel(code):
             lambda x: "偏多" if (pd.notna(x) and x > 0.1) else ("偏空" if (pd.notna(x) and x < -0.1) else "中性")
         )
         st.dataframe(display, use_container_width=True, hide_index=True, height=min(200 + len(display) * 28, 400))
+        # P2: Sentiment trend chart
+        try:
+            from data_loader import load_news_sentiment_for_positions
+            from config.settings import ETF_CATEGORIES
+            held_sectors = list(set(v.get("sector", "") for v in ETF_CATEGORIES.values() if v.get("sector")))
+            if held_sectors:
+                sent = load_news_sentiment_for_positions(held_sectors, days=14)
+                if sent and sent.trend_df is not None and not sent.trend_df.empty:
+                    import plotly.express as px
+                    from components.ui import render_chart
+                    fig = px.line(sent.trend_df, x="date", y="avg_score", color="sector",
+                                  title="板块情绪趋势(14日)", markers=True)
+                    fig.update_yaxes(range=[0, 1])
+                    render_chart(fig, use_container_width=True)
+        except Exception:
+            pass
 
 def _generate_oneclick_report(positions, summary, technical, selected_date, selected_benchmark):
 
@@ -1435,3 +1455,126 @@ def _load_tech_signals(_codes, _full=False):
 
         return pd.DataFrame()
 
+
+def _render_peer_penetration_panel(code, sector):
+    """Render peer ETF penetration: overlap matrix + ranking."""
+    from data_loader import load_peer_penetration
+    from config.settings import ETF_CATEGORIES
+    cat_info = ETF_CATEGORIES.get(code, {})
+    name = cat_info.get('name', code)
+    pen = load_peer_penetration(code, name, sector)
+    if pen is None:
+        st.info('No peer data available')
+        return
+
+    st.markdown('**\u91cd\u4ed3\u80a1\u91cd\u53e0\u5ea6\u77e9\u9635**')
+    if pen.overlap_results:
+        overlap_rows = []
+        for o in pen.overlap_results:
+            peer_name = ETF_CATEGORIES.get(o.code_b, {}).get('name', o.code_b)
+            overlap_rows.append({
+                "code": o.code_b, "name": peer_name,
+                "jaccard": f"{o.jaccard_index:.1%}",
+                "common": len(o.common_stocks),
+                "detail": o.overlap_detail,
+            })
+        odf = pd.DataFrame(overlap_rows)
+        st.dataframe(odf, use_container_width=True, hide_index=True)
+        # Show top overlap detail
+        if pen.overlap_results:
+            top_o = pen.overlap_results[0]
+            if top_o.common_stocks:
+                st.markdown(f'*Top \u91cd\u53e0: {ETF_CATEGORIES.get(top_o.code_b, {}).get("name", top_o.code_b)}*')
+                for cs in top_o.common_stocks[:5]:
+                    st.markdown(f"  - {cs["stock_name"]}: \u6301\u4ed3A {cs["weight_a"]:.1%} / \u6301\u4ed3B {cs["weight_b"]:.1%}")
+    else:
+        st.info('\u6682\u65e0\u91cd\u4ed3\u80a1\u6570\u636e\u7528\u4e8e\u91cd\u53e0\u5ea6\u8ba1\u7b97')
+
+    st.markdown('---')
+    st.markdown('**\u591a\u7ef4\u6392\u540d**')
+    if pen.ranking_results and pen.target_rank:
+        rank_rows = []
+        for r in pen.ranking_results:
+            mark = ' <<<' if r.code == code else ''
+            rank_rows.append({
+                "\u4ee3\u7801": r.code, "\u540d\u79f0": r.name,
+                "\u89c4\u6a21(\u4ebf)": r.total_mv,
+                "\u6298\u4ef7\u7387%": r.discount_rate,
+                "\u6362\u624b\u7387%": r.turnover_rate,
+                "\u8d44\u91d1\u6d41\u5165(\u4e07)": r.main_net_inflow,
+                "\u91cf\u6bd4": r.volume_ratio,
+                "\u7efc\u5408\u5f97\u5206": r.composite_rank,
+            })
+        rdf = pd.DataFrame(rank_rows)
+        st.dataframe(rdf, use_container_width=True, hide_index=True)
+
+def _render_signal_cross_validate(code):
+    """Render signal cross-validation panel."""
+    from data_loader import load_technical_signals
+    from src.utils.database import get_db_connection
+    import sqlite3, pandas as pd
+    # Load tech score
+    tech_df = load_technical_signals([code])
+    tech_score = None
+    if tech_df is not None and not tech_df.empty:
+        row = tech_df.iloc[0]
+        cols = ['ma_signal', 'macd_signal', 'rsi_status', 'kdj_signal', 'bollinger_position', 'trend']
+        s = 50
+        for col in cols:
+            if col in row.index:
+                v = str(row[col])
+                if v in ['golden_cross', 'bullish', 'oversold', 'up']: s += 8
+                elif v in ['death_cross', 'bearish', 'overbought', 'down']: s -= 8
+        tech_score = max(0, min(100, s))
+    # Load risk score
+    risk_score = None
+    conn = get_db_connection()
+    try:
+        rdf = pd.read_sql_query(
+            "SELECT risk_score FROM etf_risk_scan WHERE code=? ORDER BY date DESC LIMIT 1",
+            conn, params=[code]
+        )
+        if not rdf.empty:
+            risk_score = float(rdf.iloc[0]['risk_score'])
+    except Exception:
+        pass
+    finally:
+        conn.close()
+    # Load sentiment direction
+    news_dir = None
+    try:
+        conn = get_db_connection()
+        ndf = pd.read_sql_query(
+            "SELECT AVG(sentiment_score) as avg_s FROM daily_news WHERE sentiment_score IS NOT NULL LIMIT 10",
+            conn
+        )
+        if not ndf.empty and pd.notna(ndf.iloc[0]['avg_s']):
+            avg_s = float(ndf.iloc[0]['avg_s'])
+            news_dir = 1 if avg_s >= 0.6 else (-1 if avg_s <= 0.4 else 0)
+        conn.close()
+    except Exception:
+        pass
+    # Cross validate
+    from src.analysis.signal_cross_validate import cross_validate_signals
+    result = cross_validate_signals(
+        code, tech_score=tech_score, risk_score=risk_score, news_direction=news_dir
+    )
+    # Render
+    if not result.signals:
+        st.info('No signals available for cross-validation')
+        return
+    st.markdown(f'**{result.action}**')
+    st.markdown(result.summary)
+    # Signal details table
+    sig_rows = []
+    for s in result.signals:
+        arrow = "\u2191" if s.direction > 0 else ("\u2193" if s.direction < 0 else "\u2192")
+        dir_label = "\u770b\u591a" if s.direction > 0 else ("\u770b\u7a7a" if s.direction < 0 else "\u4e2d\u6027")
+        sig_rows.append({
+            "\u7ef4\u5ea6": s.dimension,
+            "\u65b9\u5411": f"{arrow} {dir_label}",
+            "\u5f97\u5206": f"{s.score:.1f}",
+            "\u6743\u91cd": f"{s.weight:.0%}",
+            "\u8bf4\u660e": s.detail,
+        })
+    st.dataframe(pd.DataFrame(sig_rows), use_container_width=True, hide_index=True)

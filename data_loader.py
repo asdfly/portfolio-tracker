@@ -1543,3 +1543,148 @@ def load_pe_percentile(index_code, current_pe=None):
         return _lpp(conn, index_code, current_pe)
     finally:
         conn.close()
+
+
+def load_news_sentiment_for_positions(held_sectors, days=30):
+    """加载持仓板块的新闻情绪分析。
+
+    Parameters
+    ----------
+    held_sectors : list[str] — 持仓板块列表
+    days : int — 回溯天数
+
+    Returns
+    -------
+    PortfolioSentimentSummary
+    """
+    from src.analysis.news_sentiment import compute_portfolio_sentiment
+    from src.utils.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        news_df = pd.read_sql_query(
+            "SELECT category, title, sentiment_score, date FROM daily_news "
+            "WHERE sentiment_score IS NOT NULL AND date >= date('now', ?) "
+            "ORDER BY date DESC",
+            conn, params=[f"-{days} days"]
+        )
+    except Exception:
+        news_df = pd.DataFrame()
+    finally:
+        conn.close()
+    return compute_portfolio_sentiment(news_df, held_sectors, trend_days=days)
+
+
+def load_peer_penetration(code, name, sector):
+    """加载同类ETF穿透对比数据。
+
+    Parameters
+    ----------
+    code, name, sector : str
+
+    Returns
+    -------
+    PeerPenetration
+    """
+    from src.analysis.peer_comparison import compute_peer_penetration
+    from config.settings import ETF_CATEGORIES
+    from src.utils.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        peer_codes = [c for c, info in ETF_CATEGORIES.items()
+                      if info.get("sector") == sector]
+        if not peer_codes:
+            return None
+        ph = ",".join(["?"] * len(peer_codes))
+        fund_df = pd.read_sql_query(
+            f"SELECT code, name, total_mv, discount_rate, turnover_rate, "
+            f"volume_ratio, main_net_inflow, main_net_inflow_pct, price, iopv "
+            f"FROM etf_fundamental WHERE code IN ({ph}) "
+            f"ORDER BY date DESC",
+            conn, params=peer_codes
+        )
+        fund_df = fund_df.drop_duplicates("code", keep="first")
+        holdings_df = pd.read_sql_query(
+            f"SELECT code, stock_code, stock_name, weight_pct FROM etf_top_holdings "
+            f"WHERE code IN ({ph})",
+            conn, params=peer_codes
+        )
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    return compute_peer_penetration(code, name, fund_df, holdings_df)
+
+def load_news_sentiment_for_positions(held_sectors, days=30):
+    """Load news sentiment for portfolio sectors."""
+    from src.analysis.news_sentiment import compute_portfolio_sentiment
+    from src.utils.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        news_df = pd.read_sql_query(
+            "SELECT category, title, sentiment_score, date FROM daily_news "
+            "WHERE sentiment_score IS NOT NULL AND date >= date('now', ?) "
+            "ORDER BY date DESC",
+            conn, params=[f"-{days} days"]
+        )
+    except Exception:
+        news_df = pd.DataFrame()
+    finally:
+        conn.close()
+    return compute_portfolio_sentiment(news_df, held_sectors, trend_days=days)
+
+
+def load_peer_penetration(code, name, sector):
+    """Load peer ETF penetration comparison data."""
+    from src.analysis.peer_comparison import compute_peer_penetration
+    from config.settings import ETF_CATEGORIES
+    from src.utils.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        peer_codes = [c for c, info in ETF_CATEGORIES.items() if info.get("sector") == sector]
+        if not peer_codes:
+            return None
+        ph = ",".join(["?"] * len(peer_codes))
+        fund_df = pd.read_sql_query(
+            f"SELECT code, name, total_mv, discount_rate, turnover_rate, "
+            f"volume_ratio, main_net_inflow, main_net_inflow_pct "
+            f"FROM etf_fundamental WHERE code IN ({ph}) ORDER BY date DESC",
+            conn, params=peer_codes
+        )
+        fund_df = fund_df.drop_duplicates("code", keep="first")
+        holdings_df = pd.read_sql_query(
+            f"SELECT code, stock_code, stock_name, weight_pct FROM etf_top_holdings "
+            f"WHERE code IN ({ph})", conn, params=peer_codes
+        )
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    return compute_peer_penetration(code, name, fund_df, holdings_df)
+
+def load_peer_penetration(code, name, sector):
+    """Load peer ETF penetration comparison data."""
+    from src.analysis.peer_comparison import compute_peer_penetration
+    from config.settings import ETF_CATEGORIES
+    from src.utils.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        peer_codes = [c for c, info in ETF_CATEGORIES.items() if info.get('sector') == sector]
+        if not peer_codes:
+            return None
+        ph = ",".join(["?"] * len(peer_codes))
+        fund_df = pd.read_sql_query(
+            f"SELECT code, name, total_mv, discount_rate, turnover_rate, "
+            f"volume_ratio, main_net_inflow, main_net_inflow_pct "
+            f"FROM etf_fundamental WHERE code IN ({ph}) ORDER BY date DESC",
+            conn, params=peer_codes
+        )
+        fund_df = fund_df.drop_duplicates("code", keep="first")
+        holdings_df = pd.read_sql_query(
+            f"SELECT code, stock_code, stock_name, weight_pct FROM etf_top_holdings "
+            f"WHERE code IN ({ph})", conn, params=peer_codes
+        )
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    return compute_peer_penetration(code, name, fund_df, holdings_df)
