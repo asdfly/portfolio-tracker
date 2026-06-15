@@ -553,34 +553,20 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
 
 
 
-@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
-
-
-
-
 def _render_peer_comparison(code, sector, fund_df):
-    """渲染同类ETF横向对比：排序表格 + 雷达图。
-
-    Parameters
-    ----------
-    code : str - 当前 ETF 代码
-    sector : str - 所属行业板块（宽基/医药/金融/军工/新能源/科技/红利/债券）
-    fund_df : pd.DataFrame - etf_fundamental 全量数据
-    """
+    """渲染同类ETF横向对比：排序表格 + 雷达图。"""
     if fund_df is None or fund_df.empty:
         st.info("暂无同类ETF数据")
         return
 
     from config.settings import ETF_CATEGORIES
 
-    # 找出同类 ETF：同 sector 的所有 ETF
     peer_codes = [c for c, info in ETF_CATEGORIES.items() if info.get("sector") == sector]
     peer_df = fund_df[fund_df["code"].astype(str).isin(peer_codes)].copy()
     if peer_df.empty:
         st.info("该行业暂无同类ETF数据")
         return
 
-    # 排序表格
     sort_col = st.selectbox(
         "排序指标",
         ["折价率", "资金净流入(万)", "换手率", "量比", "规模(亿)"],
@@ -599,30 +585,24 @@ def _render_peer_comparison(code, sector, fund_df):
                            "change_pct", "turnover_rate", "volume_ratio",
                            "main_net_inflow", "main_net_inflow_pct",
                            "total_mv"]].copy()
-    display_df["total_mv"] = display_df["total_mv"] / 1e8  # 转亿
-    display_df["main_net_inflow"] = display_df["main_net_inflow"] / 1e4  # 转万
+    display_df["total_mv"] = display_df["total_mv"] / 1e8
+    display_df["main_net_inflow"] = display_df["main_net_inflow"] / 1e4
     display_df.columns = ["代码", "名称", "价格", "IOPV", "折价率%",
                           "涨跌幅%", "换手率%", "量比",
                           "资金净流入(万)", "资金净流入%", "规模(亿)"]
     display_df = display_df.sort_values(by=col_name, ascending=ascending).reset_index(drop=True)
 
-    # 高亮当前 ETF
-    def highlight_current(row_idx):
-        return code in str(display_df.iloc[row_idx]["代码"])
-
     st.dataframe(display_df, use_container_width=True, height=min(200 + len(display_df) * 28, 400),
                  hide_index=True)
 
-    # 雷达图：取规模TOP5同类ETF对比
     if len(peer_df) >= 2:
         top5 = peer_df.nlargest(min(5, len(peer_df)), "total_mv")
         categories_radar = ["折价率(归一化)", "换手率", "量比", "资金流入", "规模"]
         fig = go.Figure()
         colors = ["#1a5276", "#e74c3c", "#2980b9", "#27ae60", "#e67e22"]
         for i, (_, r) in enumerate(top5.iterrows()):
-            # 归一化各维度到 0-1
             vals = [
-                max(0, (r.get("discount_rate", 0) + 2) / 4),  # 折价率 -2%~2% -> 0~1
+                max(0, (r.get("discount_rate", 0) + 2) / 4),
                 min(r.get("turnover_rate", 0) / 15, 1),
                 min(r.get("volume_ratio", 1) / 5, 1),
                 min(max((r.get("main_net_inflow", 0) / 1e4 + 5000) / 10000, 0), 1),
@@ -638,7 +618,6 @@ def _render_peer_comparison(code, sector, fund_df):
                 opacity=0.9 if is_current else 0.5,
                 line_width=2.5 if is_current else 1.5,
             ))
-
         fig.update_layout(
             polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
             showlegend=True,
