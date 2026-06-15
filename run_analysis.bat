@@ -2,10 +2,10 @@
 chcp 65001 >nul
 
 set PROJECT_DIR=%~dp0
-set PYTHON=C:\Users\HUAWEI\AppData\Local\Programs\Python\Python311\python.exe
+set PYTHON=C:\Users\HUAWEI\AppData\Roaming\WPS 灵犀\python-env\python.exe
 
 echo ============================================
-echo   投资组合智能分析系统 v1.2
+echo   投资组合智能分析系统 v2.0
 echo   执行时间: %date% %time%
 echo ============================================
 echo.
@@ -22,11 +22,11 @@ cd /d "%PROJECT_DIR%"
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [错误] 分析任务执行失败，错误码: %ERRORLEVEL%
-    echo [%date% %time%] 请检查日志文件: logs\portfolio_%date:~0,4%%date:~5,2%%date:~8,2%.log
+    echo [ERROR] analysis failed, rc=%ERRORLEVEL%
+    echo [%date% %time%] Check logs: logs\scheduled_run.log
     exit /b 1
 ) else (
     echo.
     echo [成功] 分析任务执行完成
-    echo [%date% %time%] 全部四个阶段执行完毕
+    echo [%date% %time%] All stages completed
 )

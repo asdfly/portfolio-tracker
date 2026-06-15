@@ -236,7 +236,7 @@ class EmailReportBuilder:
     {advice_block}
 
     <div class="footer">
-        投资组合跟踪分析系统 v1.3 自动生成<br>
+        投资组合跟踪分析系统 v2.0 自动生成<br>
         本报告仅供参考，不构成投资建议 | 生成时间: {now}
     </div>
 </div>

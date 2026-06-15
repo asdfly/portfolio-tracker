@@ -196,7 +196,7 @@ class EnhancedReportBuilder:
             + tech_block
             + adv_block
             + news_block
-            + '<div class="ft">投资组合跟踪分析系统 v1.3 自动生成<br>本报告仅供参考，不构成任何投资建议或买卖操作指令。投资有风险，入市需谨慎。 | 生成时间: ' + now.strftime('%Y-%m-%d %H:%M:%S') + '</div>'
+            + '<div class="ft">投资组合跟踪分析系统 v2.0 自动生成<br>本报告仅供参考，不构成任何投资建议或买卖操作指令。投资有风险，入市需谨慎。 | 生成时间: ' + now.strftime('%Y-%m-%d %H:%M:%S') + '</div>'
             '</div></body></html>'
         )
         return html

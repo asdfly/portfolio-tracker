@@ -670,7 +670,7 @@ def main():
     try:
         logger.info("")
         logger.info("=" * 60)
-        logger.info("   投资组合智能分析系统 v1.3")
+        logger.info("   投资组合智能分析系统 v2.0")
         logger.info(f"   执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
         logger.info("")
