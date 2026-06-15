@@ -587,10 +587,10 @@ def _render_peer_comparison(code, sector, fund_df):
                            "total_mv"]].copy()
     display_df["total_mv"] = display_df["total_mv"] / 1e8
     display_df["main_net_inflow"] = display_df["main_net_inflow"] / 1e4
+    display_df = display_df.sort_values(by=col_name, ascending=ascending).reset_index(drop=True)
     display_df.columns = ["代码", "名称", "价格", "IOPV", "折价率%",
                           "涨跌幅%", "换手率%", "量比",
                           "资金净流入(万)", "资金净流入%", "规模(亿)"]
-    display_df = display_df.sort_values(by=col_name, ascending=ascending).reset_index(drop=True)
 
     st.dataframe(display_df, use_container_width=True, height=min(200 + len(display_df) * 28, 400),
                  hide_index=True)
