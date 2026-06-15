@@ -3,6 +3,9 @@ chcp 65001 >nul
 title 投资组合智能分析系统 v2.0
 
 set PROJECT_DIR=%~dp0
+set "PYTHON_ENV=C:\Users\HUAWEI\AppData\Roaming\WPS 灵犀\python-env\python.exe"
+set "VENV_ACTIVATE=%PROJECT_DIR%venv\Scripts\activate.bat"
+set "PYTHON=%PYTHON_ENV%"
 
 echo.
 echo ============================================
@@ -16,11 +19,12 @@ echo  [4] 可视化Dashboard (Streamlit Web界面)
 echo  [5] 增强版报告 (生成含图表的HTML报告)
 echo  [6] 通知配置向导 (配置邮件/企业微信)
 echo  [7] 历史数据回填 (补充历史使风险指标可用)
-echo  [8] 退出
+echo  [8] 使用虚拟环境启动Dashboard
+echo  [9] 退出
 echo.
 echo ============================================
 
-set /p choice="请选择 (1-8): "
+set /p choice="请选择 (1-9): "
 
 if "%choice%"=="1" goto full
 if "%choice%"=="2" goto basic
@@ -29,7 +33,8 @@ if "%choice%"=="4" goto dashboard
 if "%choice%"=="5" goto report
 if "%choice%"=="6" goto notify
 if "%choice%"=="7" goto backfill
-if "%choice%"=="8" goto exit
+if "%choice%"=="8" goto dashboard_venv
+if "%choice%"=="9" goto exit
 goto :eof
 
 :full
@@ -42,7 +47,7 @@ echo [4/5] 智能分析 - 建议生成+报告输出
 echo [5/5] 通知报告 - HTML邮件+企业微信
 echo.
 cd /d "%PROJECT_DIR%"
-python run_analysis.py
+"%PYTHON%" run_analysis.py
 echo.
 pause
 goto :eof
@@ -51,7 +56,7 @@ goto :eof
 echo.
 echo 正在运行快速分析...
 cd /d "%PROJECT_DIR%"
-python run_analysis.py
+"%PYTHON%" run_analysis.py
 echo.
 pause
 goto :eof
@@ -73,28 +78,28 @@ set /p mon="请选择 (1-5): "
 
 if "%mon%"=="1" (
     cd /d "%PROJECT_DIR%"
-    python -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; m=Monitor(str(DATABASE_PATH)); print(json.dumps(m.get_health_status(), indent=2, ensure_ascii=False))"
+    "%PYTHON%" -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; m=Monitor(str(DATABASE_PATH)); print(json.dumps(m.get_health_status(), indent=2, ensure_ascii=False))"
     echo.
     pause
     goto monitor
 )
 if "%mon%"=="2" (
     cd /d "%PROJECT_DIR%"
-    python -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; [print(f\"[{a.level}] {a.rule_name}: {a.message}\") for a in Monitor(str(DATABASE_PATH)).get_recent_alerts(24)]"
+    "%PYTHON%" -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; [print(f'[{a.level}] {a.rule_name}: {a.message}') for a in Monitor(str(DATABASE_PATH)).get_recent_alerts(24)]"
     echo.
     pause
     goto monitor
 )
 if "%mon%"=="3" (
     cd /d "%PROJECT_DIR%"
-    python -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; m=Monitor(str(DATABASE_PATH)); print(json.dumps(m.get_execution_stats(7), indent=2, ensure_ascii=False))"
+    "%PYTHON%" -c "from src.utils.monitor import Monitor; from config.settings import DATABASE_PATH; import json; m=Monitor(str(DATABASE_PATH)); print(json.dumps(m.get_execution_stats(7), indent=2, ensure_ascii=False))"
     echo.
     pause
     goto monitor
 )
 if "%mon%"=="4" (
     cd /d "%PROJECT_DIR%"
-    python run_analysis.py
+    "%PYTHON%" run_analysis.py
     echo.
     pause
     goto monitor
@@ -108,21 +113,40 @@ echo 访问地址: http://localhost:8501
 echo 按 Ctrl+C 停止服务
 echo.
 cd /d "%PROJECT_DIR%"
-set "PYTHON_ENV=C:\Users\HUAWEI\AppData\Roaming\WPS 灵犀\python-env\python.exe"
-if exist "%PYTHON_ENV%" (
-    "%PYTHON_ENV%" -m streamlit run dashboard.py --server.port 8501
+if exist "%PYTHON%" (
+    "%PYTHON%" -m streamlit run dashboard.py --server.port 8501
 ) else (
-    echo [错误] 未找到WPS灵犀Python环境，尝试使用系统Python...
+    echo [ERROR] Python not found: %PYTHON%
+    echo Fallback to system python...
     python -m streamlit run dashboard.py --server.port 8501
 )
 pause
 goto :eof
 
+:dashboard_venv
+echo.
+if exist "%VENV_ACTIVATE%" (
+    echo 激活虚拟环境...
+    call "%VENV_ACTIVATE%"
+    echo 启动可视化Dashboard (venv)...
+    echo 访问地址: http://localhost:8501
+    echo 按 Ctrl+C 停止服务
+    echo.
+    cd /d "%PROJECT_DIR%"
+    streamlit run dashboard.py --server.port 8501
+) else (
+    echo [ERROR] venv not found: %VENV_ACTIVATE%
+    echo Please run: python -m venv venv
+)
+echo.
+pause
+goto :eof
+
 :report
 echo.
-echo 正在生成增强版HTML报告（含净值走势图+回撤曲线）...
+echo 正在生成增强版HTML报告...
 cd /d "%PROJECT_DIR%"
-python -c "from src.utils.enhanced_report import EnhancedReportBuilder; from config.settings import DATABASE_PATH; b=EnhancedReportBuilder(str(DATABASE_PATH)); h=b.build_full_report(); p=b.save_report(h); print(f'报告已生成: {p}')"
+"%PYTHON%" -c "from src.utils.enhanced_report import EnhancedReportBuilder; from config.settings import DATABASE_PATH; b=EnhancedReportBuilder(str(DATABASE_PATH)); h=b.build_full_report(); p=b.save_report(h); print(f'报告已生成: {p}')"
 echo.
 pause
 goto :eof
@@ -130,7 +154,7 @@ goto :eof
 :notify
 echo.
 cd /d "%PROJECT_DIR%"
-python scripts\setup\setup_notification.py
+"%PYTHON%" scripts\setup\setup_notification.py
 pause
 goto :eof
 
@@ -138,7 +162,7 @@ goto :eof
 echo.
 echo 正在执行历史数据回填...
 cd /d "%PROJECT_DIR%"
-python scripts\run_backfill.py all
+"%PYTHON%" scripts\run_backfill.py all
 echo.
 pause
 goto :eof
