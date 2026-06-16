@@ -308,6 +308,26 @@ TABLE_DEFS = [
         "CREATE INDEX IF NOT EXISTS idx_jgdy_code ON stock_institution_research(code)",
     ]),
 
+    ("trade_records", """
+        CREATE TABLE IF NOT EXISTS trade_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            market TEXT,
+            code TEXT,
+            name TEXT,
+            action TEXT,
+            quantity REAL,
+            price REAL,
+            amount REAL,
+            commission REAL,
+            stamp_tax REAL,
+            change_amount REAL
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_trade_date ON trade_records(date)",
+        "CREATE INDEX IF NOT EXISTS idx_trade_code ON trade_records(code)",
+    ]),
+
     ("stock_block_trade", """
         CREATE TABLE IF NOT EXISTS stock_block_trade (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -351,6 +371,7 @@ QUALITY_CHECK_TABLES = {
     "stock_margin": {"date_col": "date", "code_col": "code", "label": "融资融券"},
     "stock_holder_change": {"date_col": "date", "code_col": "code", "label": "股东增减持"},
     "stock_institution_research": {"date_col": "date", "code_col": "code", "label": "机构调研"},
+    "trade_records": {"date_col": "date", "code_col": "code", "label": "交易流水"},
     "stock_block_trade": {"date_col": "date", "code_col": "code", "label": "大宗交易"},
 }
 

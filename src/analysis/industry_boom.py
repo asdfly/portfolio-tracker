@@ -11,6 +11,7 @@
 输出: IndustryBoomResult (0-100景气度评分 + 信号)
 """
 
+import sqlite3
 import logging
 import pandas as pd
 import numpy as np

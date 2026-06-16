@@ -1044,6 +1044,7 @@ def main():
         ("🌐 宏观市场",   "tabs.tab12_macro",           "render_tab12"),
         ("📊 数据质量",   "tabs.tab13_data_quality",     "render_tab13"),
         ("📋 市场事件",   "tabs.tab14_market_events",   "render_tab14"),
+        ("🔁 交易复盘",   "tabs.tab15_trade_review",   "render_tab15"),
     ]
     tab_objects = st.tabs([label for label, _, _ in TAB_REGISTRY])
 
