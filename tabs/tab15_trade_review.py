@@ -266,7 +266,7 @@ def _render_cost_section(df_trades):
     fig = go.Figure()
     fig.add_trace(go.Bar(x=monthly['month'], y=monthly['total_commission'], name='佣金'))
     fig.add_trace(go.Bar(x=monthly['month'], y=monthly['total_stamp_tax'], name='印花税'))
-    fig.update_layout(barmode='stacked', title="月度交易费用",
+    fig.update_layout(barmode='stack', title="月度交易费用",
                       height=350, xaxis_title='月份', yaxis_title='费用(¥)')
     render_chart(fig)
 
