@@ -1049,7 +1049,11 @@ def load_etf_top_holdings(code: str, top_n: int = 10) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame()
         return compute_signal_scores(df)
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading top holdings: {e}")
+        return pd.DataFrame()
+    except (KeyError, IndexError, ImportError) as e:
+        logger.warning(f"Data format error in top holdings: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
@@ -1087,7 +1091,11 @@ def load_peer_etfs(code):
             conn, params=(idx_code, sector)
         )
         return peers
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading peer ETFs: {e}")
+        return pd.DataFrame()
+    except (KeyError, IndexError) as e:
+        logger.warning(f"Data format error in peer ETFs: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
@@ -1113,7 +1121,11 @@ def load_peer_etfs(code):
             return pd.DataFrame()
         from src.analysis.signal_score import compute_signal_scores
         return compute_signal_scores(df)
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error computing signal scores: {e}")
+        return pd.DataFrame()
+    except (ImportError, KeyError, IndexError) as e:
+        logger.warning(f"Compute error for signal scores: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
@@ -1166,7 +1178,11 @@ def load_peer_etfs(code):
             conn, params=codes
         )
         return group_name, df
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading peer ETF group: {e}")
+        return group_name, pd.DataFrame()
+    except (KeyError, IndexError) as e:
+        logger.warning(f"Data format error in peer ETF group: {e}")
         return group_name, pd.DataFrame()
 
 
@@ -1201,7 +1217,11 @@ def load_signal_score(code, end_date=None):
         if df.empty:
             return None
         return compute_signal_score(df.iloc[0])
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading signal score for {{code}}: {e}")
+        return None
+    except (KeyError, IndexError, ImportError) as e:
+        logger.warning(f"Compute error for signal score {{code}}: {e}")
         return None
 
 
@@ -1235,7 +1255,11 @@ def load_all_signal_scores(end_date=None):
                 conn
             )
         return compute_signal_scores(df)
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading all signal scores: {e}")
+        return pd.DataFrame()
+    except (ImportError, KeyError) as e:
+        logger.warning(f"Compute error for all signal scores: {e}")
         return pd.DataFrame()
 
 
@@ -1271,7 +1295,11 @@ def load_etf_risk_scan(code):
         hist_prices = snap_df["current_price"] if not snap_df.empty else None
         hist_snapshot = snap_df if not snap_df.empty else None
         return compute_etf_risk_scan(code, tech_row, fund_row, hist_prices, hist_snapshot)
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading risk scan for {code}: {e}")
+        return None
+    except (KeyError, IndexError, ImportError) as e:
+        logger.warning(f"Compute error for risk scan {code}: {e}")
         return None
     finally:
         conn.close()
@@ -1294,7 +1322,11 @@ def load_all_etf_risk_scans():
         fund_df = pd.read_sql_query("SELECT * FROM etf_fundamental", conn)
         snap_df = pd.read_sql_query("SELECT * FROM portfolio_snapshots", conn)
         return compute_all_etf_risk_scans(tech_df, fund_df, snap_df)
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading all risk scans: {e}")
+        return pd.DataFrame()
+    except (ImportError, KeyError) as e:
+        logger.warning(f"Compute error for all risk scans: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
@@ -1326,7 +1358,11 @@ def load_etf_fund_flow(code, days=60):
             conn, params=(code, days)
         )
         return df.sort_values("date") if not df.empty else pd.DataFrame()
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading fund flow for {code}: {e}")
+        return pd.DataFrame()
+    except (KeyError, IndexError) as e:
+        logger.warning(f"Data format error in fund flow {code}: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
@@ -1378,7 +1414,11 @@ def load_etf_fund_flow_alerts(threshold_pct=200):
                         "change_pct": round(change_pct, 1),
                     })
         return pd.DataFrame(alerts) if alerts else pd.DataFrame()
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading fund flow alerts: {e}")
+        return pd.DataFrame()
+    except (KeyError, IndexError, ZeroDivisionError) as e:
+        logger.warning(f"Data format error in fund flow alerts: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
@@ -1567,7 +1607,8 @@ def load_news_sentiment_for_positions(held_sectors, days=30):
             "ORDER BY date DESC",
             conn, params=[f"-{days} days"]
         )
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading news sentiment: {e}")
         news_df = pd.DataFrame()
     finally:
         conn.close()
@@ -1608,7 +1649,11 @@ def load_peer_penetration(code, name, sector):
             f"WHERE code IN ({ph})",
             conn, params=peer_codes
         )
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading peer penetration: {e}")
+        return None
+    except (KeyError, IndexError) as e:
+        logger.warning(f"Data format error in peer penetration: {e}")
         return None
     finally:
         conn.close()
@@ -1626,7 +1671,8 @@ def load_news_sentiment_for_positions(held_sectors, days=30):
             "ORDER BY date DESC",
             conn, params=[f"-{days} days"]
         )
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading news sentiment: {e}")
         news_df = pd.DataFrame()
     finally:
         conn.close()
@@ -1655,7 +1701,11 @@ def load_peer_penetration(code, name, sector):
             f"SELECT code, stock_code, stock_name, weight_pct FROM etf_top_holdings "
             f"WHERE code IN ({ph})", conn, params=peer_codes
         )
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading peer penetration: {e}")
+        return None
+    except (KeyError, IndexError) as e:
+        logger.warning(f"Data format error in peer penetration: {e}")
         return None
     finally:
         conn.close()
@@ -1683,7 +1733,11 @@ def load_peer_penetration(code, name, sector):
             f"SELECT code, stock_code, stock_name, weight_pct FROM etf_top_holdings "
             f"WHERE code IN ({ph})", conn, params=peer_codes
         )
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading peer penetration: {e}")
+        return None
+    except (KeyError, IndexError) as e:
+        logger.warning(f"Data format error in peer penetration: {e}")
         return None
     finally:
         conn.close()
@@ -1705,7 +1759,11 @@ def load_erp_analysis(indices=None):
     try:
         from src.analysis.equity_risk_premium import compute_erp_multi
         return compute_erp_multi(indices)
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"Import error in load_erp_analysis: {e}")
+        return []
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Compute error in load_erp_analysis: {e}")
         return []
 
 
@@ -1729,7 +1787,11 @@ def load_erp_for_etf(etf_code):
         if index_code is None:
             return None
         return compute_erp_for_index(index_code)
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"Import error in load_erp_for_etf: {e}")
+        return None
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Compute error in load_erp_for_etf: {e}")
         return None
 
 
@@ -1754,7 +1816,11 @@ def load_dca_backtest(etf_code, period_amount=1000, freq="W"):
         if prices is None or prices.empty:
             return None
         return backtest_dca_uniform(prices, period_amount, freq)
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"Import error in load_dca_backtest: {e}")
+        return None
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Compute error in load_dca_backtest: {e}")
         return None
 
 
@@ -1770,7 +1836,11 @@ def load_industry_boom(etf_code):
     try:
         from src.analysis.industry_boom import compute_boom_for_position
         return compute_boom_for_position(etf_code)
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"Import error in load_industry_boom: {e}")
+        return None
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Compute error in load_industry_boom: {e}")
         return None
 
 
@@ -1782,7 +1852,11 @@ def load_all_industry_booms(etf_codes=None):
     try:
         from src.analysis.industry_boom import compute_boom_multi
         return compute_boom_multi(etf_codes)
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"Import error in load_all_industry_booms: {e}")
+        return []
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Compute error in load_all_industry_booms: {e}")
         return []
 
 
@@ -1807,7 +1881,8 @@ def load_smart_alerts(etf_code, etf_name=""):
                 "SELECT close, date FROM etf_daily WHERE code=? ORDER BY date DESC LIMIT 60",
                 conn, params=[etf_code]
             )
-        except Exception:
+        except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+            logger.warning(f"DB error loading price for smart alerts: {e}")
             price_df = pd.DataFrame()
         finally:
             conn.close()
@@ -1844,7 +1919,8 @@ def load_smart_alerts(etf_code, etf_name=""):
             current_vol=current_vol, avg_vol=avg_vol, vol_std=vol_std,
             pe_percentile=pe_pct,
         )
-    except Exception:
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as e:
+        logger.warning(f"Data error in load_smart_alerts: {e}")
         return []
 
 
@@ -1863,6 +1939,11 @@ def load_all_smart_alerts():
             events = load_smart_alerts(code, name)
             all_events.extend(events)
         return summarize_alerts(all_events)
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"Import error in load_all_smart_alerts: {e}")
+        from src.analysis.smart_alert import AlertSummary
+        return AlertSummary()
+    except (KeyError, IndexError, TypeError, ValueError) as e:
+        logger.warning(f"Compute error in load_all_smart_alerts: {e}")
         from src.analysis.smart_alert import AlertSummary
         return AlertSummary()
