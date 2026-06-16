@@ -110,7 +110,8 @@ def load_index_pe_from_db(index_code, days=365*3):
             "SELECT date, pe FROM index_pe_history WHERE index_code=? AND date >= date('now', ?) ORDER BY date",
             conn, params=[index_code, f"-{days} days"]
         )
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError, KeyError) as e:
+        logger.warning(f"PE history query error: {e}")
         df = pd.DataFrame()
     finally:
         conn.close()
@@ -139,8 +140,6 @@ def load_risk_free_rate(days=30):
                 )
                 if not df.empty:
                     break
-    except Exception:
-        return None
     except (sqlite3.OperationalError, pd.errors.DatabaseError, KeyError) as e:
         logger.warning(f"DB error loading risk-free rate: {e}")
         return None

@@ -261,8 +261,6 @@ def load_industry_fund_flow(industry: str, days: int = 20) -> Tuple[float, float
             "WHERE sector_name=? AND date >= date('now', ?) ORDER BY date",
             conn, params=[INDUSTRY_NAMES.get(industry, industry), f"-{days} days"]
         )
-    except Exception:
-        return (0.0, 0.0)
     except (sqlite3.OperationalError, pd.errors.DatabaseError, KeyError) as e:
         logger.warning(f"DB error loading industry fund flow: {e}")
         return (0.0, 0.0)

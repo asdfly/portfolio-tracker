@@ -526,8 +526,6 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
             "SELECT * FROM etf_technical ORDER BY date DESC LIMIT 500",
             conn
         )
-    except Exception:
-        tech_df = pd.DataFrame()
     except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
         logger.warning(f"DB error loading technical data: {e}")
         tech_df = pd.DataFrame()
