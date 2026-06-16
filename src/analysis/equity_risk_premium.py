@@ -10,11 +10,16 @@
   - ERP > 历史均值: 股票便宜，偏多
   - ERP < 历史均值: 股票贵，偏空
 """
+import logging
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from dataclasses import dataclass
 from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+from src.utils.database import get_db_connection
 
 @dataclass
 class ERPResult:
@@ -135,6 +140,9 @@ def load_risk_free_rate(days=30):
                 if not df.empty:
                     break
     except Exception:
+        return None
+    except (sqlite3.OperationalError, pd.errors.DatabaseError, KeyError) as e:
+        logger.warning(f"DB error loading risk-free rate: {e}")
         return None
     finally:
         conn.close()

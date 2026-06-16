@@ -844,8 +844,8 @@ def main():
                         'data_quality_check', 'warning',
                         f"score={total_score}, alerts={len(dq_alerts)}, grade={grade}"
                     )
-                except Exception:  # 日志写入失败可忽略
-                    pass
+                except (ConnectionError, OSError, ValueError) as e:
+                    logger.debug(f"Log write skipped: {e}")
             else:
                 logger.info("数据质量检查通过，无告警")
                 monitor.log_execution('data_quality_check', 'success',
@@ -879,8 +879,8 @@ def main():
 
             notifier = NotificationManager(NOTIFICATION_CONFIG)
             notifier.send_alert("Daily Analysis Failed", str(e), "error")
-        except:
-            pass
+        except Exception as e:
+            logger.critical(f"Unhandled error in task {task_name}: {e}")
 
         return 1
 

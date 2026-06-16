@@ -136,7 +136,7 @@ def _render_sidebar(available_dates):
                 st.sidebar.warning(f"数据截止 {latest_avail}（{gap}天前）")
             else:
                 st.sidebar.error(f"数据截止 {latest_avail}（{gap}天前），请检查采集服务")
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError) as e:
             st.sidebar.caption(f"数据截止: {latest_avail}")
 
     # Render sidebar controls. Returns (selected_date, show_days, selected_benchmark).

@@ -5,6 +5,8 @@
 """
 
 import sqlite3
+import logging
+logger = logging.getLogger(__name__)
 import pandas as pd
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -265,7 +267,8 @@ def load_trades(code: Optional[str] = None, start_date: Optional[str] = None,
         query += " ORDER BY date"
         df = pd.read_sql_query(query, conn, params=params)
         return df if not df.empty else pd.DataFrame()
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading trades: {e}")
         return pd.DataFrame()
     finally:
         conn.close()

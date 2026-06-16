@@ -11,10 +11,13 @@
 输出: IndustryBoomResult (0-100景气度评分 + 信号)
 """
 
+import logging
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -259,6 +262,9 @@ def load_industry_fund_flow(industry: str, days: int = 20) -> Tuple[float, float
             conn, params=[INDUSTRY_NAMES.get(industry, industry), f"-{days} days"]
         )
     except Exception:
+        return (0.0, 0.0)
+    except (sqlite3.OperationalError, pd.errors.DatabaseError, KeyError) as e:
+        logger.warning(f"DB error loading industry fund flow: {e}")
         return (0.0, 0.0)
     finally:
         conn.close()

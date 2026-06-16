@@ -4,7 +4,9 @@
 预留 AKShare 研报 API 接口（stock_research_report_em 恢复后可激活）。
 """
 
+import logging
 import re
+logger = logging.getLogger(__name__)
 import pandas as pd
 import sqlite3
 from typing import Dict, List, Optional
@@ -110,7 +112,8 @@ def load_etf_industry_news(code: str, days: int = 30) -> pd.DataFrame:
             ["relevance", "date"], ascending=[False, False]
         )
         return matched.head(20)
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error fetching research: {e}")
         return pd.DataFrame()
     finally:
         conn.close()
@@ -122,7 +125,8 @@ def _get_etf_sector(code: str) -> str:
         from config.settings import ETF_CATEGORIES
         info = ETF_CATEGORIES.get(str(code), {})
         return info.get("sector", "")
-    except Exception:
+    except (KeyError, TypeError, AttributeError) as e:
+        logger.warning(f"ETF sector lookup error: {e}")
         return ""
 
 
@@ -200,5 +204,6 @@ def fetch_research_reports(industry: str = "", limit: int = 50) -> pd.DataFrame:
             mask = df.apply(lambda r: industry in str(r.values), axis=1)
             df = df[mask]
         return df.head(limit)
-    except Exception:
+    except (KeyError, IndexError, TypeError, ValueError) as e:
+        logger.warning(f"Research data parse error: {e}")
         return pd.DataFrame()

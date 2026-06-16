@@ -7,8 +7,10 @@
 """
 
 from components.ui import render_chart, render_empty_state
+import logging
 from config.settings import CACHE_TTL
 import streamlit as st
+logger = logging.getLogger(__name__)
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -41,7 +43,8 @@ def fetch_fx_sentiment_daily(start_date="20250601", end_date=""):
                 if "USDX" in df.columns:
                     row["usdx_sentiment"] = df["USDX"].mean()
                 records.append(row)
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as e:
+            logger.debug(f"FX record parse skipped: {e}")
             continue
     if not records:
         return pd.DataFrame()

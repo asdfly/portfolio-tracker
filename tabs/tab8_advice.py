@@ -3,9 +3,11 @@ Tab8: 操作建议
 """
 
 from components.ui import render_chart, render_empty_state
+import logging
 import os
 from datetime import datetime
 import streamlit as st
+logger = logging.getLogger(__name__)
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
@@ -181,7 +183,8 @@ def _render_suggestions_compute_v2(positions, summary):
     }
     try:
         mf_scores = load_multi_factor_scores(positions)
-    except Exception:
+    except (ImportError, ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Multi-factor load error: {e}")
         return [], action_colors
     suggestions = []
     for mf in mf_scores:
@@ -665,7 +668,8 @@ def _render_position_advice_panel(positions):
         from data_loader import load_position_advices, load_sector_exposures
         advices = load_position_advices(positions)
         exposures = load_sector_exposures(positions)
-    except Exception:
+    except (ImportError, ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Advice load error: {e}")
         st.info("仓位建议数据加载失败")
         return
 

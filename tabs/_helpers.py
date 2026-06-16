@@ -4,8 +4,12 @@ Dashboard 辅助函数（依赖 streamlit / database / 外部数据源）
 """
 
 from components.ui import render_chart, render_empty_state
+import logging
+
 import streamlit as st
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 import numpy as np
 from src.utils.database import get_db_connection
 from src.utils.chart_utils import downsample, _add_min_max_annotations
@@ -524,6 +528,9 @@ def _render_etf_detail_panel(row, selected_date, total_value=0):
         )
     except Exception:
         tech_df = pd.DataFrame()
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading technical data: {e}")
+        tech_df = pd.DataFrame()
     finally:
         conn.close()
 
@@ -1023,8 +1030,8 @@ def _render_trade_review_panel(code):
                     xaxis=dict(tickangle=-45, nticks=10),
                 )
                 st.plotly_chart(fig, use_container_width=True)
-        except Exception:
-            pass
+        except (ValueError, TypeError, KeyError) as e:
+            logger.debug(f"Chart render skipped: {e}")
 
 
 def _render_industry_news_panel(code):
@@ -1118,8 +1125,8 @@ def _render_industry_news_panel(code):
                                   title="板块情绪趋势(14日)", markers=True)
                     fig.update_yaxes(range=[0, 1])
                     render_chart(fig, use_container_width=True)
-        except Exception:
-            pass
+        except (ValueError, TypeError, KeyError) as e:
+            logger.debug(f"Chart render skipped: {e}")
 
 def _generate_oneclick_report(positions, summary, technical, selected_date, selected_benchmark):
 
@@ -1514,7 +1521,11 @@ def _render_signal_cross_validate(code):
         )
         if not rdf.empty:
             risk_score = float(rdf.iloc[0]['risk_score'])
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading risk score: {e}")
+        pass
+    except (KeyError, IndexError, TypeError) as e:
+        logger.debug(f"Risk score parse error: {e}")
         pass
     finally:
         conn.close()
@@ -1530,7 +1541,11 @@ def _render_signal_cross_validate(code):
             avg_s = float(ndf.iloc[0]['avg_s'])
             news_dir = 1 if avg_s >= 0.6 else (-1 if avg_s <= 0.4 else 0)
         conn.close()
-    except Exception:
+    except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
+        logger.warning(f"DB error loading news sentiment: {e}")
+        pass
+    except (KeyError, IndexError, TypeError) as e:
+        logger.debug(f"News sentiment parse error: {e}")
         pass
     # Cross validate
     from src.analysis.signal_cross_validate import cross_validate_signals

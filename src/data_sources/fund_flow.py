@@ -461,7 +461,8 @@ def check_push2his_available(timeout=5) -> bool:
         )
         data = _urllib_get_json(url)
         return bool(data and data.get("data", {}).get("klines"))
-    except Exception:
+    except (ConnectionError, OSError, ValueError, KeyError, TypeError) as e:
+        logger.debug(f"Push2his check error: {e}")
         return False
 
 

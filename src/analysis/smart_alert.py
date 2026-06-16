@@ -12,8 +12,12 @@
 预警级别: 紧急(红)/重要(橙)/关注(黄)/信息(蓝)
 """
 
+import logging
 import pandas as pd
-import numpy as np
+import numpy
+
+logger = logging.getLogger(__name__)
+
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -303,7 +307,8 @@ def scan_all_alerts(
             result = checker()
             if result is not None:
                 events.append(result)
-        except Exception:
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
+            logger.debug(f"Alert check error: {e}")
             continue
 
     # 按级别排序

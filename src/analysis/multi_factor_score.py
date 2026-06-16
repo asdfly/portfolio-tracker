@@ -14,7 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+import logging
 import numpy as np
+logger = logging.getLogger(__name__)
 import pandas as pd
 
 
@@ -560,16 +562,19 @@ def compute_multi_factor_scores(positions):
         try:
             sig_df = load_signal_score(code)
             sig_val = float(sig_df["total_score"].iloc[0]) if sig_df is not None and not sig_df.empty else 50.0
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
+            logger.warning(f"Signal score error for {code}: {e}")
             sig_val = 50.0
         try:
             risk_df = load_etf_risk_scan(code)
             risk_val = float(risk_df["total_score"].iloc[0]) if risk_df is not None and not risk_df.empty else 50.0
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
+            logger.warning(f"Risk scan error for {code}: {e}")
             risk_val = 50.0
         try:
             flow_df = load_etf_fund_flow(code, days=60)
-        except Exception:
+        except (ConnectionError, OSError, ValueError, KeyError) as e:
+            logger.warning(f"Fund flow error for {code}: {e}")
             flow_df = None
         try:
             fund_df = load_etf_fundamental()
@@ -578,7 +583,8 @@ def compute_multi_factor_scores(positions):
                 fund_data = fund_row.iloc[0].to_dict() if not fund_row.empty else {}
             else:
                 fund_data = {}
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
+            logger.warning(f"Fundamental data error for {code}: {e}")
             fund_data = {}
         result = compute_multi_factor_score(code, name, sig_val, risk_val, flow_df, fund_data)
         results.append(result)

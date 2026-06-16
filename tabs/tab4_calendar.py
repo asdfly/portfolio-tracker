@@ -4,6 +4,8 @@ Tab4: 收益日历
 
 from components.ui import render_chart, render_empty_state
 import streamlit as st
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime
 import calendar
 import plotly.graph_objects as go
@@ -493,8 +495,8 @@ def _render_event_calendar():
                         "desc": "沪深300/中证1000股指期权到期，注意波动加剧",
                     }
                 )
-        except Exception:  # UI渲染降级：股指期权交割日计算
-            pass
+        except (ValueError, TypeError, KeyError, IndexError) as e:
+            logger.debug(f"Calendar option date calc skipped: {e}")
 
     # 基金分红提醒
     for m_offset in range(0, 4):
