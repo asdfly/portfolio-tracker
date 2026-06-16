@@ -208,7 +208,7 @@ class SmartAdvisor:
 
         # 检查最大回撤
         max_drawdown = dm.get('max_drawdown', summary.get('max_drawdown', 0))
-        if max_drawdown < -15:
+        if max_drawdown is not None and max_drawdown < -15:
             advices.append(InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT,
                 priority=AdvicePriority.HIGH,
@@ -226,7 +226,7 @@ class SmartAdvisor:
 
         # 检查夏普比率
         sharpe = ram.get('sharpe_ratio', summary.get('sharpe_ratio', 0))
-        if sharpe < 0.5:
+        if sharpe is not None and sharpe < 0.5:
             advices.append(InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT,
                 priority=AdvicePriority.MEDIUM,
@@ -244,7 +244,7 @@ class SmartAdvisor:
 
         # 检查VaR
         var_95 = vm.get('var_95', summary.get('var_95', 0))
-        if var_95 < -3:
+        if var_95 is not None and var_95 < -3:
             advices.append(InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT,
                 priority=AdvicePriority.MEDIUM,
@@ -278,9 +278,9 @@ class SmartAdvisor:
 
             # RSI信号
             rsi = data.get('rsi_value', 50)
-            if rsi > 70:
+            if rsi is not None and rsi > 70:
                 signals.append(f"RSI超买({rsi:.1f})")
-            elif rsi < 30:
+            elif rsi is not None and rsi < 30:
                 signals.append(f"RSI超卖({rsi:.1f})")
 
             # KDJ信号
@@ -340,10 +340,10 @@ class SmartAdvisor:
         concentration = risk_data.get('concentration_risk', {})
         hhi = concentration.get('hhi', summary.get('concentration_hhi', 0))
 
-        if hhi > 0.5:
+        if hhi is not None and hhi > 0.5:
             return InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT,
-                priority=AdvicePriority.HIGH if hhi > 0.6 else AdvicePriority.MEDIUM,
+                priority=AdvicePriority.HIGH if (hhi or 0) > 0.6 else AdvicePriority.MEDIUM,
                 title="持仓过于集中",
                 description=f"赫芬达尔指数(HHI)为 {hhi:.2f}，持仓集中度较高",
                 action_items=[
@@ -370,11 +370,11 @@ class SmartAdvisor:
             ytd_return = pos.get('ytd_return', 0)
 
             # 超跌资产可能有反弹机会
-            if pnl_rate < -10 and ytd_return < -15:
+            if (pnl_rate or 0) < -10 and (ytd_return or 0) < -15:
                 tech = technical_data.get(code, {})
                 rsi = tech.get('rsi_value', 50)
 
-                if rsi < 40:  # 未严重超卖但有反弹潜力
+                if (rsi or 50) < 40:  # 未严重超卖但有反弹潜力
                     advices.append(InvestmentAdvice(
                         type=AdviceType.OPPORTUNITY,
                         priority=AdvicePriority.LOW,

@@ -296,10 +296,19 @@ class PortfolioAnalyzer:
 
     def _calculate_technical_indicators(self, positions: List[Dict[str, Any]]) -> Dict[str, Any]:
         """计算技术指标"""
+        from src.data_sources.base import DataSourceError
+
         results = {}
 
         for pos in positions:
             code = pos['code']
+            # 场内ETF/LOF代码规则: 51/56/58开头为上海，15开头为深圳
+            # 场外基金（519/001/002/003/004/005/007/008/100/166等）无K线，直接跳过
+            is_on_market = (code.startswith('51') or code.startswith('56')
+                           or code.startswith('58') or code.startswith('15'))
+            if not is_on_market:
+                logger.debug(f"跳过非场内标的 {code}({pos.get('name', '')})的技术指标计算")
+                continue
             if code.startswith('51') or code.startswith('56') or code.startswith('58'):
                 ds_code = f'sh{code}'
             else:
@@ -314,6 +323,8 @@ class PortfolioAnalyzer:
                 else:
                     logger.warning(f"{code} K线数据不足")
 
+            except DataSourceError as e:
+                logger.warning(f"获取 {code}({pos.get('name', '')}) K线失败，跳过技术指标计算: {e}")
             except (ValueError, KeyError, TypeError, IndexError) as e:
                 logger.warning(f"计算 {code} 技术指标失败: {e}")
 
@@ -326,7 +337,7 @@ class PortfolioAnalyzer:
         # 使用实时价格计算
         total_value = sum(p.get('realtime_market_value', p['market_value']) for p in positions)
         total_cost = sum(p['cost_price'] * p['quantity'] for p in positions)
-        total_pnl = sum(p.get('realtime_pnl', p['pnl']) for p in positions)
+        total_pnl = sum(p.get('realtime_pnl') or p.get('pnl') or 0 for p in positions)
 
         # 计算日涨跌
         # 优先使用DB中前一交易日的total_value（避免同日交易导致数量变化时prev_value计算错误）
@@ -364,12 +375,12 @@ class PortfolioAnalyzer:
         vs_hs300 = daily_return - hs300_change
 
         # 盈亏统计
-        profit_count = len([p for p in positions if p.get('realtime_pnl', p['pnl']) > 0])
-        loss_count = len([p for p in positions if p.get('realtime_pnl', p['pnl']) < 0])
+        profit_count = len([p for p in positions if (p.get('realtime_pnl') or p.get('pnl') or 0) > 0])
+        loss_count = len([p for p in positions if (p.get('realtime_pnl') or p.get('pnl') or 0) < 0])
 
         # 最大贡献/拖累
         sorted_by_pnl = sorted(positions, 
-                              key=lambda x: x.get('realtime_pnl', x['pnl']), 
+                              key=lambda x: x.get('realtime_pnl') or x.get('pnl') or 0, 
                               reverse=True)
 
         # 风险指标摘要
@@ -399,7 +410,7 @@ class PortfolioAnalyzer:
             'total_value': round(total_value, 2),
             'total_cost': round(total_cost, 2),
             'total_pnl': round(total_pnl, 2),
-            'total_return_pct': round(total_pnl / total_cost * 100, 2) if total_cost > 0 else 0,
+            'total_return_pct': round(total_pnl / total_cost * 100, 2) if total_cost and total_cost > 0 else 0,
             'daily_pnl': round(daily_pnl, 2),
             'daily_return': round(daily_return, 2),
             'vs_hs300': round(vs_hs300, 2),

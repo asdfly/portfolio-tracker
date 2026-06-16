@@ -301,7 +301,7 @@ class RiskAnalyzer:
             position_details = []
 
             for pos in positions:
-                beta = pos.get('beta', 1.0)
+                beta = pos.get('beta') or 1.0
                 market_value = pos.get('market_value', 0)
 
                 # 估算跌幅 = 市场跌幅 * Beta
