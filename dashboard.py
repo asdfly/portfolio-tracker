@@ -619,8 +619,8 @@ def compute_comprehensive_score(positions, summary, volatility, effective_max_dd
         score_return, score_risk, tech_score, score_health,
         total_score, score_color, score_label, tech_signals
     """
-    # 收益评分 (30分)
-    port_daily = summary["total_value"].pct_change().dropna()
+    # 收益评分 (30分) — 使用预存 corrected daily_return，避免 total_value 跳变影响
+    port_daily = summary["daily_return"].dropna() if "daily_return" in summary.columns else summary["total_value"].pct_change().dropna()
     total_ret = (
         (summary["total_value"].iloc[-1] / summary["total_value"].iloc[0] - 1)
         if summary["total_value"].iloc[0] > 0
@@ -736,12 +736,13 @@ def _generate_oneclick_report(positions, summary, technical, selected_date, sele
     total_pnl = positions["pnl"].sum()
     total_return = (total_pnl / total_cost * 100) if total_cost > 0 else 0
 
-    port_daily = summary["total_value"].pct_change().dropna()
+    # 使用 portfolio_summary 预存的 corrected daily_return（已校正持仓变化），避免 total_value 跳变影响
+    port_daily = summary["daily_return"].dropna() if "daily_return" in summary.columns else summary["total_value"].pct_change().dropna()
     ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
     ann_vol = port_daily.std() * math.sqrt(252) * 100 if len(port_daily) > 1 else 0
     sharpe = (port_daily.mean() / port_daily.std() * math.sqrt(252)) if port_daily.std() > 0 else 0
-    cummax = summary["total_value"].cummax()
-    max_dd = ((summary["total_value"] - cummax) / cummax * 100).min()
+    # 使用预存的 max_drawdown（基于 corrected daily_return 累积序列）
+    max_dd = summary["max_drawdown"].min() if "max_drawdown" in summary.columns else ((summary["total_value"] - summary["total_value"].cummax()) / summary["total_value"].cummax() * 100).min()
 
     pc = len(positions[positions["pnl"] > 0])
     lc = len(positions[positions["pnl"] < 0])

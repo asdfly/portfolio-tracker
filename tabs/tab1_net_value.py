@@ -125,7 +125,8 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
             # 使用show_days范围内的数据计算日收益率，与净值走势图对齐
             ret_start_idx = max(0, len(summary) - show_days)
             summary_ret = summary.iloc[ret_start_idx:].copy()
-            daily_rets = (summary_ret["total_value"].pct_change().dropna() * 100).values
+            # 使用预存的 corrected daily_return，避免 total_value 跳变影响
+            daily_rets = (summary_ret["daily_return"].dropna() * 100).values if "daily_return" in summary_ret.columns else (summary_ret["total_value"].pct_change().dropna() * 100).values
             if len(daily_rets) > 0:
                 std_ret = np.std(daily_rets, ddof=1)
                 mean_ret = np.mean(daily_rets)
@@ -318,7 +319,8 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
             port_start_val = summary_for_compare.iloc[0]["total_value"]
             port_end_val = summary_for_compare.iloc[-1]["total_value"]
             port_total_ret = (port_end_val / port_start_val - 1) * 100 if port_start_val > 0 else 0
-            port_daily = summary_for_compare["total_value"].pct_change().dropna()
+            # 使用 portfolio_summary 预存的 daily_return（已校正持仓变化），避免 total_value 跳变影响
+            port_daily = summary_for_compare["daily_return"].dropna()
             port_ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
             port_vol = port_daily.std() * math.sqrt(252) * 100 if len(port_daily) > 1 else 0
             port_sharpe = (
@@ -326,8 +328,8 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
                 if port_daily.std() > 0
                 else 0
             )
-            port_cummax = summary_for_compare["total_value"].cummax()
-            port_drawdown = ((summary_for_compare["total_value"] - port_cummax) / port_cummax * 100).min()
+            # 使用 portfolio_summary 预存的 max_drawdown（基于 corrected daily_return 累积序列）
+            port_drawdown = summary_for_compare["max_drawdown"].min()
             # 基准指标
             bench_start = bench_df_raw.iloc[0]["close"]
             bench_end = bench_df_raw.iloc[-1]["close"]
@@ -343,14 +345,14 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
             bench_cummax = bench_df_raw["close"].cummax()
             bench_drawdown = ((bench_df_raw["close"] - bench_cummax) / bench_cummax * 100).min()
             # 对齐日期计算超额收益
-            merged = summary_for_compare[["date", "total_value"]].merge(bench_df_raw[["date", "close"]], on="date", how="inner")
+            merged = summary_for_compare[["date", "total_value", "daily_return"]].merge(bench_df_raw[["date", "close"]], on="date", how="inner")
             if not merged.empty:
                 excess_ret = (
                     (merged["total_value"].iloc[-1] / merged["total_value"].iloc[0] - 1)
                     - (merged["close"].iloc[-1] / merged["close"].iloc[0] - 1)
                 ) * 100
-                # 日超额收益率序列
-                port_daily_aligned = merged["total_value"].pct_change().dropna()
+                # 日超额收益率序列：组合侧使用预存的 corrected daily_return
+                port_daily_aligned = merged["daily_return"].dropna()
                 bench_daily_aligned = merged["close"].pct_change().dropna()
                 excess_daily = port_daily_aligned - bench_daily_aligned
                 tracking_error = excess_daily.std() * math.sqrt(252) * 100 if len(excess_daily) > 1 else 0
@@ -449,15 +451,16 @@ def _calc_range_metrics(range_data):
     r_start_val = range_data.iloc[0]["total_value"]
     r_end_val = range_data.iloc[-1]["total_value"]
     r_cum_ret = (r_end_val / r_start_val - 1) * 100 if r_start_val > 0 else 0
-    r_daily = range_data["total_value"].pct_change().dropna()
+    # 使用预存的 corrected daily_return（已校正持仓变化），避免 total_value 跳变影响
+    r_daily = range_data["daily_return"].dropna() if "daily_return" in range_data.columns else range_data["total_value"].pct_change().dropna()
     n_days = len(r_daily)
     r_ann_ret = (r_daily.mean() * 252 * 100) if n_days > 0 else 0
     r_vol = (r_daily.std() * _math.sqrt(252) * 100) if n_days > 1 else 0
     r_sharpe = (
         (r_daily.mean() / r_daily.std() * _math.sqrt(252)) if r_daily.std() > 0 else 0
     )
-    r_cummax = range_data["total_value"].cummax()
-    r_dd = ((range_data["total_value"] - r_cummax) / r_cummax * 100).min()
+    # 使用预存的 max_drawdown（基于 corrected daily_return 累积序列）
+    r_dd = range_data["max_drawdown"].min() if "max_drawdown" in range_data.columns else ((range_data["total_value"] - range_data["total_value"].cummax()) / range_data["total_value"].cummax() * 100).min()
     r_best_day = r_daily.max() if len(r_daily) > 0 else 0
     r_worst_day = r_daily.min() if len(r_daily) > 0 else 0
     r_up_days = (r_daily > 0).sum()
