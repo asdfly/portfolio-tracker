@@ -5,6 +5,69 @@
 ---
 
 ## [Unreleased]
+---
+
+## [v2.3] - 2026-06-17
+
+### 新增
+- **Tab15 交易复盘**: 基于 trade_records 的交易统计面板，支持 ETF 交易历史分析、盈亏统计、持仓变化追踪
+- **ETF F10 基本面数据集成**: etf_fundamental.py 采集模块，Tab2 持仓分布新增基金基本面数据和交易历史面板
+- **P3 ERP 股债性价比**: equity_risk_premium.py 多模型 ERP 估算（Fed Model / 历史均值 / DDM）
+- **P3 定投回测对比**: dca_backtest.py 均匀定投 vs 估值定投策略回测
+- **P3 行业景气度指标**: industry_boom.py 4 维评分模型（资金30%+估值25%+技术25%+政策20%）
+- **P3 智能预警推送**: smart_alert.py 5 维检测+4级信号+汇总推送
+- **P2 新闻情绪升级**: 同类 ETF 穿透对比、信号交叉回验
+- **P2 仓位管理+估值补全**: 基于技术信号的仓位建议，估值指标补全
+- **P0 多因子综合决策引擎**: 综合评分决策模块
+- **P0 同类 ETF 横向对比**: 技术信号综合评分，同类基金穿透对比展示
+- **P1 单品风险全景**: 个股级别风险分析、资金流向、交易复盘、行业观点聚合
+- **P1 盘前/盘后分析助手**: 交易日前后自动分析提示
+- **历史对账单补充导入**: 31个PDF(2023-06~2025-12)分5批提取718条交易，trade_records 299→1017行
+- **trade_records 数据增强**: 4项功能集成（交易成本压力测试+F10交易历史+dashboard实际交易统计）
+
+### 修复
+- **portfolio_summary daily_return 持仓变化校正 (95b9e2d)**: rebuild脚本使用共同持仓（前日qty×当日price）vs前日市值计算corrected daily_return，避免新增/移除/加仓导致total_value跳变被误计为收益
+- **run_analysis 写入路径统一 (7ac0d19)**: 3条写入路径（backfill_full_history/portfolio.py/backfill.py）全部使用corrected daily_return共同持仓校正逻辑
+- **全Tab显示层修复 (3a6cae3)**: 9处total_value.pct_change()替换为corrected daily_return/100，涵盖_helpers/tab3/tab7/data_loader(5处)/gold_correlation
+- **tab1+dashboard指标修复 (2e72987)**: sharpe_ratio/volatility/max_drawdown全部使用预存corrected daily_return
+- **场外基金防护 (422b93d)**: advisor/portfolio/risk三文件增加None值和K线缺失防护
+- **递归get_db_connection修复 (642569b)**: 4个文件自引用导致RecursionError，改为显式import
+- **11个预存测试失败修复 (ce0f3ad/99d722d)**: 方法名修正、DataFrame truth value、异常捕获、mock完善
+- **KeyError "note"修复 (2f07f50)**: _helpers.py动态列选择适配trade_records无note列
+- **Streamlit兼容性修复 (4 commits)**: width='stretch'、FutureWarning、horizontal参数、CachedWidget
+- **BAT脚本管理 (2 commits)**: 清理重复脚本，v2.0统一版本
+
+### 重构
+- **P0-P3巨型函数拆分 (f4ea993)**: 9个超300行函数拆分为编排函数+45个子函数
+- **dashboard.py拆分 (dc146e0)**: dashboard.py(2521L)→dashboard.py+data_loader.py(946L)+sidebar.py(199L)
+- **Tab签名统一 (4772be5)**: 14个Tab全部改为无参数render_tabN()
+- **DB连接统一 (63a99cd)**: 72处sqlite3.connect→get_db_connection()
+- **Tab注册自动化 (8237fda)**: TAB_REGISTRY插件式注册，删除14个wrapper函数
+- **Selenium→Playwright (d5760b5/19d1720)**: 截图/PDF集中到src/utils/screenshot.py
+- **UI组件库标准化 (8c25184)**: render_chart(118处)+render_empty_state(22处)+清理死代码
+- **数据加载层抽象 (30dbe7a)**: Repository模式，11个tab重复函数委托到data_loader(-603行)
+- **配置硬编码清理 (116de58)**: cache_ttl/downsample/days_window统一到settings.py
+- **可扩展性提升 (d188b11)**: 5个dataclass模型替代裸dict返回
+- **异常处理三轮细化 (b7ec607/b9ced3e/fac5cc8+5ad3940+97200a7)**: 198→144→80→0处宽泛except Exception
+- **tab3拆分 (134fee1/9b5548b)**: 拆为4个子模块+alert_center编排函数
+- **tab1大函数拆分 (24f3652)**: _render_multi_benchmark_analysis 323L→5子函数
+- **src/代码量精简 (94c4ebe)**: 91个unused imports+13个unused variables+pyflakes 110→0
+
+### 测试
+- **测试总数 655→1307 (+652)**: 纯函数测试大幅扩充
+- **测试覆盖率提升(3轮)**: 50.6%→53%→72%（gold_utils 44%→92%, news_fetcher 17%→66%）
+- **P3模块测试 (fc129a0)**: 55用例覆盖ERP/定投/景气度/预警
+- **Tab15测试 (722bb32)**: 24用例/6类
+- **ETF F10测试 (59b2638)**: 基本面数据集成测试
+- **ETF技术信号测试 (26d30a8)**: 48用例
+
+### 变更
+- **Dashboard Tab**: 14→15个（新增Tab15交易复盘）
+- **数据库表**: 20→26个（新增etf_fundamental/etf_industry_alloc/etf_top_holdings/indicator_backtest_results/trade_records/_migration_version）
+- **数据行数**: 320,000+→350,000+
+- **代码总量**: ~44,000L→48,500L/180文件
+- **浏览器驱动**: Selenium+ChromeDriver→Playwright
+- **测试框架**: pytest 1307用例，全部通过
 
 ---
 

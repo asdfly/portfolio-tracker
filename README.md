@@ -4,7 +4,7 @@
 
 ## 功能概览
 
-### Streamlit Dashboard（14个分析Tab）
+### Streamlit Dashboard（15个分析Tab）
 
 | Tab | 名称 | 核心功能 |
 |-----|------|----------|
@@ -22,6 +22,7 @@
 | 12 | 宏观经济 | 宏观数据面板（汇率/债市/金价基准/利率/融资融券） |
 | 13 | 数据质量 | 数据质量评分环、新鲜度热力图、覆盖度表格、回测摘要 |
 | 14 | 市场事件 | 涨停板/融资融券/股东增减持/机构调研/大宗交易深度分析 |
+| 15 | 交易复盘 | 交易历史统计、盈亏分析、持仓变化追踪（基于1017条trade_records） |
 
 ### 数据采集
 
@@ -38,6 +39,7 @@
 | 黄金持仓 | SPDR/央行 | SPDR Gold Trust持仓、中国黄金储备 |
 | 定价因子 | AKShare | 中美国债收益率利差、中国CPI、Shibor |
 | 宏观情绪 | AKShare | 融资融券余额、股权质押比例 |
+| 交易记录 | 通达信对账单(PDF) + 手动导入 | ETF买卖/分红/拆分记录（1017条） |
 
 ### 智能分析
 
@@ -86,7 +88,7 @@ portfolio_tracker/
 │   ├── backfill/                # 6个回填脚本（history/indicators/macro/news/sector/full）
 │   ├── setup/setup_notification.py
 │   └── run_backfill.py          # 统一backfill入口
-├── tests/                       # 测试套件（655用例）
+├── tests/                       # 测试套件（1307用例）
 ├── data/database/               # SQLite数据库
 ├── Dockerfile                   # Docker容器化部署
 ├── .github/workflows/ci.yml     # GitHub Actions CI
@@ -144,7 +146,7 @@ docker run -p 8501:8501 -v ./data:/app/data portfolio-tracker
 ### 测试
 
 ```bash
-pytest tests/ -v                         # 全部655个用例
+pytest tests/ -v                         # 全部1307个用例
 pytest tests/ -k "d8 or d9 or d10" -v    # 特定阶段测试
 ```
 
@@ -154,7 +156,7 @@ GitHub Actions 在每次 push/PR 到 master 分支时自动运行 pytest。
 
 ## 数据库结构
 
-20张表，核心表如下：
+26张表，核心表如下：
 
 | 表名 | 用途 | 关键列 |
 |------|------|--------|
@@ -169,6 +171,11 @@ GitHub Actions 在每次 push/PR 到 master 分支时自动运行 pytest。
 | execution_logs | 执行日志 | task_name, status, duration_seconds |
 | market_sentiment | 市场情绪 | name, value, date |
 | macro_daily | 宏观数据 | name, value, date |
+| trade_records | 交易记录 | date, code, name, action, quantity, price, amount, fee |
+| etf_fundamental | ETF基本面 | code, name, nav, aum, manager, inception_date |
+| etf_top_holdings | ETF持仓明细 | code, date, stock_code, stock_name, weight |
+| etf_industry_alloc | ETF行业配置 | code, industry, weight |
+| indicator_backtest_results | 指标回测结果 | indicator, params, returns, sharpe, max_dd |
 
 ## 技术栈
 
@@ -184,6 +191,7 @@ GitHub Actions 在每次 push/PR 到 master 分支时自动运行 pytest。
 | 容器化 | Docker (python:3.12-slim) |
 | CI/CD | GitHub Actions (pytest) |
 | 测试 | pytest 9.0.3 |
+| 浏览器自动化 | Playwright（截图/PDF导出） |
 
 ## 开发指南
 
@@ -198,13 +206,15 @@ GitHub Actions 在每次 push/PR 到 master 分支时自动运行 pytest。
 
 | 维度 | 数据 |
 |------|------|
-| 测试用例 | 655 个（全部通过） |
-| Dashboard Tab | 14 个（Tab11含10个子Tab） |
-| 数据库表 | 20 个 |
-| 数据行数 | 320,000+ 行 |
+| 测试用例 | 1,307 个（全部通过） |
+| Dashboard Tab | 15 个（Tab11含10个子Tab） |
+| 数据库表 | 26 个 |
+| 数据行数 | 350,000+ 行 |
+| 交易记录 | 1,017 条（24只ETF，9种action） |
 | 告警规则 | 9 条（含去重） |
 | 回测策略 | 5 种 |
 | Plotly 图表 | 30+ 个 |
+| Python 代码 | 48,500 行 / 180 文件 |
 
 ## License
 
