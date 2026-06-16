@@ -975,8 +975,11 @@ def _render_trade_review_panel(code):
 
     # 交易明细表
     if not trades_df.empty:
-        display = trades_df[["date", "direction", "price", "quantity", "fee", "note"]].copy()
-        display.columns = ["日期", "方向", "价格", "数量", "手续费", "备注"]
+        available = ["date", "direction", "price", "quantity", "fee"]
+        extra = [c for c in ["change_amount", "note"] if c in trades_df.columns][:1]
+        display = trades_df[available + extra].copy()
+        col_names = ["日期", "方向", "价格", "数量", "手续费"] + (["发生额"] if "change_amount" in trades_df.columns else ["备注"])
+        display.columns = col_names
         display["金额"] = display["价格"] * display["数量"]
         display.columns = list(display.columns[:-1]) + ["金额"]
         st.dataframe(display, use_container_width=True, hide_index=True)
