@@ -111,21 +111,39 @@ class HistoricalDataBackfiller:
             profit_count = row[3] or 0
             loss_count = row[4] or 0
 
-            # 计算日收益率（与前一交易日对比）
+            # 计算日收益率（校正版：共同持仓相同数量×当日价格，避免新增/加仓跳变）
             daily_return = 0.0
+            daily_pnl = 0
             prev_value = 0
-            cursor.execute("""
-                SELECT SUM(market_value) as prev_value
-                FROM portfolio_snapshots
-                WHERE date = (SELECT MAX(date) FROM portfolio_snapshots WHERE date < ?)
-            """, (dt,))
-            prev_row = cursor.fetchone()
-            if prev_row and prev_row[0]:
-                prev_value = prev_row[0]
-                if prev_value > 0:
-                    daily_return = (total_value - prev_value) / prev_value * 100
-
-            daily_pnl = total_value - prev_value if prev_value > 0 else 0
+            cursor.execute(
+                "SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1", (dt,))
+            prev_date_row = cursor.fetchone()
+            if prev_date_row and prev_date_row[0]:
+                prev_dt = prev_date_row[0]
+                cursor.execute(
+                    "SELECT code, quantity, market_value FROM portfolio_snapshots WHERE date = ?", (prev_dt,))
+                prev_snaps = {r[0]: (r[1], r[2]) for r in cursor.fetchall()}
+                cursor.execute(
+                    "SELECT code, quantity, market_value, current_price FROM portfolio_snapshots WHERE date = ?", (dt,))
+                curr_snaps = {r[0]: (r[1], r[2], r[3]) for r in cursor.fetchall()}
+                common_codes = set(prev_snaps.keys()) & set(curr_snaps.keys())
+                price_adj_mv = sum(curr_snaps[c][2] * prev_snaps[c][0] for c in common_codes)
+                prev_common_mv = sum(prev_snaps[c][1] for c in common_codes)
+                if prev_common_mv > 0:
+                    daily_pnl = price_adj_mv - prev_common_mv
+                    daily_return = daily_pnl / prev_common_mv * 100
+                cursor.execute("SELECT total_value FROM portfolio_summary WHERE date = ?", (prev_dt,))
+                pv = cursor.fetchone()
+                prev_value = pv[0] if pv and pv[0] else 0
+            else:
+                cursor.execute(
+                    "SELECT SUM(market_value) FROM portfolio_snapshots WHERE date = (SELECT MAX(date) FROM portfolio_snapshots WHERE date < ?)",
+                    (dt,))
+                pr = cursor.fetchone()
+                if pr and pr[0] and pr[0] > 0:
+                    prev_value = pr[0]
+                    daily_pnl = total_value - prev_value
+                    daily_return = daily_pnl / prev_value * 100
 
             cursor.execute("""
                 INSERT OR REPLACE INTO portfolio_summary

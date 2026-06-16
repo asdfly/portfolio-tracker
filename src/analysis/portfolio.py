@@ -339,35 +339,55 @@ class PortfolioAnalyzer:
         total_cost = sum(p['cost_price'] * p['quantity'] for p in positions)
         total_pnl = sum(p.get('realtime_pnl') or p.get('pnl') or 0 for p in positions)
 
-        # 计算日涨跌
-        # 优先使用DB中前一交易日的total_value（避免同日交易导致数量变化时prev_value计算错误）
+        # 计算日涨跌（校正版：用共同持仓相同数量×当日价格 vs 前日市值，避免新增/加仓导致跳变）
+        daily_pnl = 0
+        daily_return = 0
         prev_value = 0
         try:
-            import sqlite3
             conn = get_db_connection(self.db.db_path)
             cur = conn.cursor()
+            # 获取前一交易日
             cur.execute(
-                "SELECT total_value FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1",
+                "SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1",
                 (self.today,)
             )
-            row = cur.fetchone()
+            prev_row = cur.fetchone()
+            if prev_row and prev_row[0]:
+                prev_dt = prev_row[0]
+                cur.execute(
+                    "SELECT total_value FROM portfolio_summary WHERE date = ?",
+                    (prev_dt,)
+                )
+                prev_summary_row = cur.fetchone()
+                prev_value = prev_summary_row[0] if prev_summary_row and prev_summary_row[0] else 0
+                # 获取前日各标的持仓
+                cur.execute(
+                    "SELECT code, quantity, market_value FROM portfolio_snapshots WHERE date = ?",
+                    (prev_dt,)
+                )
+                prev_snapshots = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+                # 当日持仓代码集合
+                curr_codes = {p['code']: p for p in positions}
+                common_codes = set(curr_codes.keys()) & set(prev_snapshots.keys())
+                # 用共同持仓的（前日数量×当日价格）vs（前日市值）计算纯价格收益
+                price_adj_mv = 0
+                prev_common_mv = 0
+                for code in common_codes:
+                    prev_qty, prev_mv = prev_snapshots[code]
+                    curr_pos = curr_codes[code]
+                    price_adj_mv += curr_pos.get('current_price', 0) * prev_qty
+                    prev_common_mv += prev_mv
+                if prev_common_mv > 0:
+                    daily_pnl = price_adj_mv - prev_common_mv
+                    daily_return = daily_pnl / prev_common_mv * 100
             conn.close()
-            if row and row[0] and row[0] > 0:
-                prev_value = row[0]
-        except (sqlite3.OperationalError, KeyError):  # 前日总资产查询失败，使用默认值
+        except (sqlite3.OperationalError, KeyError):
             pass
 
-        # fallback: 用pre_close反推前日市值（仅当DB无历史数据时使用）
-        if prev_value <= 0:
-            prev_value = sum(
-                p.get('pre_close', p['current_price']) * p['quantity']
-                for p in positions if p.get('pre_close', 0) > 0
-            )
-        if prev_value <= 0:
-            prev_value = sum(p['market_value'] / (1 + p['daily_change_pct']/100)
-                            for p in positions if p.get('daily_change_pct', 0) != 0)
-        daily_pnl = total_value - prev_value if prev_value > 0 else 0
-        daily_return = daily_pnl / prev_value * 100 if prev_value > 0 else 0
+        # fallback: 用 total_value 简单对比（仅当无前日快照数据时）
+        if daily_return == 0 and prev_value > 0:
+            daily_pnl = total_value - prev_value
+            daily_return = daily_pnl / prev_value * 100
 
         # 对比沪深300
         hs300_quote = index_quotes.get('sh000300', {})
