@@ -560,14 +560,14 @@ def compute_multi_factor_scores(positions):
         code = str(pos["code"])
         name = pos.get("name", code)
         try:
-            sig_df = load_signal_score(code)
-            sig_val = float(sig_df["total_score"].iloc[0]) if sig_df is not None and not sig_df.empty else 50.0
+            sig_dict = load_signal_score(code)
+            sig_val = float(sig_dict["total_score"]) if sig_dict is not None else 50.0
         except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
             logger.warning(f"Signal score error for {code}: {e}")
             sig_val = 50.0
         try:
-            risk_df = load_etf_risk_scan(code)
-            risk_val = float(risk_df["total_score"].iloc[0]) if risk_df is not None and not risk_df.empty else 50.0
+            risk_dict = load_etf_risk_scan(code)
+            risk_val = float(risk_dict["total_score"]) if risk_dict is not None else 50.0
         except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
             logger.warning(f"Risk scan error for {code}: {e}")
             risk_val = 50.0
