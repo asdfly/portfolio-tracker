@@ -26,6 +26,7 @@ import sqlite3
 from PIL import Image
 
 from config.settings import CACHE_TTL, DATABASE_PATH, DOWNSAMPLE_MAX_POINTS, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
+from src.utils.database import get_db_connection
 from data_loader import (
     _ensure_indexes, get_db_connection,
     load_positions, load_summary, load_index_quotes, load_technical,
@@ -956,11 +957,35 @@ def _render_quick_stats(positions, profit_count, loss_count, technical):
                 for s, v in top_sec
             )
 
+        # 实际交易胜率（从 trade_records）
+        trade_wr_text = ""
+        try:
+            trade_stats = pd.read_sql_query(
+                "SELECT COUNT(*) as total_fee_trades, "
+                "SUM(CASE WHEN action='证券买入' THEN 1 ELSE 0 END) as buy_n, "
+                "SUM(CASE WHEN action='证券卖出' THEN 1 ELSE 0 END) as sell_n, "
+                "SUM(commission + stamp_tax) as total_fee "
+                "FROM trade_records WHERE action IN ('证券买入','证券卖出')",
+                get_db_connection())
+            if not trade_stats.empty and trade_stats.iloc[0]['total_fee_trades'] > 0:
+                bn = int(trade_stats.iloc[0]['buy_n'])
+                sn = int(trade_stats.iloc[0]['sell_n'])
+                tf = trade_stats.iloc[0]['total_fee']
+                trade_wr_text = (
+                    f'<span style="color:#8b949e;">实际交易: <b>{bn}买/{sn}卖</b> '
+                    f'<span style="color:#484f58;font-size:11px;">费用 ¥{tf:,.0f}</span></span>'
+                )
+        except Exception:
+            pass
+
+        trade_span = f" {trade_wr_text}" if trade_wr_text else ""
+
         st.markdown(
             f'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 4px;margin-bottom:4px;font-size:13px;">'
             f'<span style="color:#8b949e;">胜率: <b style="color:{wr_color};">{wr:.1f}%</b> <span style="color:#484f58;font-size:11px;">({pc}盈/{lc}亏)</span></span>'
             f'<span style="color:#8b949e;">最大持仓: <b style="color:{wt_color};">{max_pos["name"]}</b> <span style="color:#484f58;font-size:11px;">{max_wt:.1f}%</span></span>'
             f'<span style="color:#8b949e;">技术信号: <b style="color:{sig_color};">{buy_sig}多 / {sell_sig}空</b></span>'
+            f"{trade_span}"
             f"</div>"
             f'<div style="padding:2px 4px 8px;">{sector_tags}</div>',
             unsafe_allow_html=True,

@@ -438,6 +438,21 @@ def _render_stress_test(positions, summary):
                     sector_impacts[sector] = 0
                 sector_impacts[sector] += wdata["weight"] * adj_shock
             est_loss = total_mv * total_impact
+            # 极端情景下估算交易成本（全部卖出产生的佣金+印花税）
+            trade_cost_impact = 0
+            if market_shock < -0.1:
+                try:
+                    trade_fee_df = pd.read_sql_query(
+                        "SELECT AVG(COALESCE(commission,0)+COALESCE(stamp_tax,0)) as avg_fee "
+                        "FROM trade_records WHERE action IN ('证券买入','证券卖出')",
+                        get_db_connection())
+                    if not trade_fee_df.empty and trade_fee_df.iloc[0]['avg_fee'] > 0:
+                        avg_fee_per_trade = trade_fee_df.iloc[0]['avg_fee']
+                        est_trades = max(1, len(current_weights))
+                        trade_cost_impact = -(avg_fee_per_trade * est_trades)
+                        est_loss += trade_cost_impact
+                except Exception:
+                    pass
             stress_results.append(
                 {
                     "scenario": sname,

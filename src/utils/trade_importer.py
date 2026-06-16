@@ -236,7 +236,7 @@ def import_from_excel(file_path: str, column_map: Optional[Dict] = None,
 
 def load_trades(code: Optional[str] = None, start_date: Optional[str] = None,
                 end_date: Optional[str] = None) -> pd.DataFrame:
-    """加载交易记录。
+    """加载交易记录（从 trade_records 表，招商证券对账单导入数据）。
 
     Parameters
     ----------
@@ -249,11 +249,20 @@ def load_trades(code: Optional[str] = None, start_date: Optional[str] = None,
 
     Returns
     -------
-    pd.DataFrame
+    pd.DataFrame : 统一字段 {date, code, name, direction, price, quantity, fee, market, action, commission, stamp_tax, change_amount}
     """
     conn = get_db_connection()
     try:
-        query = "SELECT * FROM trades WHERE 1=1"
+        # trade_records 字段映射: action→direction, quantity(负=卖出), commission+stamp_tax→fee
+        query = """SELECT date, code, name,
+                    CASE WHEN action = '证券买入' THEN 'BUY'
+                         WHEN action = '证券卖出' THEN 'SELL'
+                         ELSE action END as direction,
+                    price,
+                    CASE WHEN action IN ('证券买入','证券卖出') THEN ABS(quantity) ELSE 0 END as quantity,
+                    (COALESCE(commission, 0) + COALESCE(stamp_tax, 0)) as fee,
+                    market, action, commission, stamp_tax, change_amount
+                    FROM trade_records WHERE 1=1"""
         params = []
         if code:
             query += " AND code = ?"
@@ -266,6 +275,9 @@ def load_trades(code: Optional[str] = None, start_date: Optional[str] = None,
             params.append(end_date)
         query += " ORDER BY date"
         df = pd.read_sql_query(query, conn, params=params)
+        # 仅返回场内买卖（与原 trades 表语义一致）
+        if not df.empty:
+            df = df[df['direction'].isin(['BUY', 'SELL'])].copy()
         return df if not df.empty else pd.DataFrame()
     except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
         logger.warning(f"DB error loading trades: {e}")
@@ -275,7 +287,7 @@ def load_trades(code: Optional[str] = None, start_date: Optional[str] = None,
 
 
 def compute_trade_analysis(code: str) -> Dict:
-    """计算单只 ETF 的交易复盘分析。
+    """计算单只 ETF 的交易复盘分析（FIFO 配对，含费用）。
 
     Parameters
     ----------
@@ -289,7 +301,7 @@ def compute_trade_analysis(code: str) -> Dict:
         total_buy_amount, total_sell_amount,
         avg_buy_price, avg_sell_price,
         realized_pnl, win_rate,
-        trades: DataFrame
+        total_fee, trades: DataFrame
     }
     """
     trades = load_trades(code)
@@ -306,8 +318,7 @@ def compute_trade_analysis(code: str) -> Dict:
     avg_buy = buys["price"].mean() if not buys.empty else 0
     avg_sell = sells["price"].mean() if not sells.empty else 0
 
-    # 简单实现：按买入/卖出配对计算盈亏
-    # FIFO matching
+    # FIFO matching（含费用分摊）
     buy_queue = []
     realized_pnl = 0
     winning_trades = 0
@@ -318,10 +329,12 @@ def compute_trade_analysis(code: str) -> Dict:
             buy_queue.append({"price": trade["price"], "qty": trade["quantity"]})
         elif trade["direction"] == "SELL" and buy_queue:
             remaining = trade["quantity"]
+            sell_fee_rate = trade["fee"] / trade["quantity"] if trade["quantity"] > 0 else 0
             while remaining > 0 and buy_queue:
                 oldest = buy_queue[0]
                 match_qty = min(remaining, oldest["qty"])
-                pnl = (trade["price"] - oldest["price"]) * match_qty
+                fee = sell_fee_rate * match_qty
+                pnl = (trade["price"] - oldest["price"]) * match_qty - fee
                 realized_pnl += pnl
                 if pnl > 0:
                     winning_trades += 1

@@ -598,6 +598,9 @@ def _render_etf_f10_panel(code, name):
     if fund_row is not None:
         _render_f10_index_valuation(fund_row)
 
+    # ===== 第四行：持仓交易历史 =====
+    _render_trade_history_panel(code, name)
+
 
 def _render_f10_metrics(fund_row):
     """渲染 F10 实时行情指标卡片"""
@@ -848,6 +851,56 @@ def _render_f10_index_valuation(fund_row):
                 f'</div>',
                 unsafe_allow_html=True,
             )
+
+
+def _render_trade_history_panel(code, name):
+    """渲染该 ETF 的交易历史面板（来自 trade_records）"""
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql_query(
+            "SELECT date, action, quantity, price, amount, commission, stamp_tax, change_amount "
+            "FROM trade_records WHERE code = ? AND action IN ('证券买入','证券卖出') "
+            "ORDER BY date",
+            conn, params=(code,)
+        )
+    except (sqlite3.OperationalError, pd.errors.DatabaseError):
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+
+    if df.empty:
+        return
+
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
+        f'{name} 交易历史'
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '该ETF在交易记录中的全部买卖明细。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    # 汇总统计
+    buys = df[df['action'] == '证券买入']
+    sells = df[df['action'] == '证券卖出']
+    buy_amt = buys['amount'].sum() if not buys.empty else 0
+    sell_amt = sells['amount'].sum() if not sells.empty else 0
+    total_fee = (df['commission'].sum() + df['stamp_tax'].sum())
+
+    tc1, tc2, tc3 = st.columns(3)
+    tc1.metric("买入", f"¥{buy_amt:,.0f}", delta=f"{len(buys)} 笔")
+    tc2.metric("卖出", f"¥{sell_amt:,.0f}", delta=f"{len(sells)} 笔")
+    tc3.metric("交易费用", f"¥{total_fee:,.2f}")
+
+    display = df.rename(columns={
+        'date': '日期', 'action': '操作', 'quantity': '数量',
+        'price': '价格', 'amount': '金额', 'commission': '佣金',
+        'stamp_tax': '印花税', 'change_amount': '发生额'
+    })
+    st.dataframe(display.reset_index(drop=True), use_container_width=True, hide_index=True)
+
 
 def render_tab2():
     selected_date = st.session_state.get("selected_date", "")
