@@ -320,7 +320,7 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
             port_end_val = summary_for_compare.iloc[-1]["total_value"]
             port_total_ret = (port_end_val / port_start_val - 1) * 100 if port_start_val > 0 else 0
             # 使用 portfolio_summary 预存的 daily_return（已校正持仓变化），避免 total_value 跳变影响
-            port_daily = summary_for_compare["daily_return"].dropna()
+            port_daily = (summary_for_compare["daily_return"] / 100).dropna()
             port_ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
             port_vol = port_daily.std() * math.sqrt(252) * 100 if len(port_daily) > 1 else 0
             port_sharpe = (
@@ -352,7 +352,7 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
                     - (merged["close"].iloc[-1] / merged["close"].iloc[0] - 1)
                 ) * 100
                 # 日超额收益率序列：组合侧使用预存的 corrected daily_return
-                port_daily_aligned = merged["daily_return"].dropna()
+                port_daily_aligned = (merged["daily_return"] / 100).dropna()
                 bench_daily_aligned = merged["close"].pct_change().dropna()
                 excess_daily = port_daily_aligned - bench_daily_aligned
                 tracking_error = excess_daily.std() * math.sqrt(252) * 100 if len(excess_daily) > 1 else 0
@@ -452,7 +452,7 @@ def _calc_range_metrics(range_data):
     r_end_val = range_data.iloc[-1]["total_value"]
     r_cum_ret = (r_end_val / r_start_val - 1) * 100 if r_start_val > 0 else 0
     # 使用预存的 corrected daily_return（已校正持仓变化），避免 total_value 跳变影响
-    r_daily = range_data["daily_return"].dropna() if "daily_return" in range_data.columns else range_data["total_value"].pct_change().dropna()
+    r_daily = (range_data["daily_return"] / 100).dropna() if "daily_return" in range_data.columns else range_data["total_value"].pct_change().dropna()
     n_days = len(r_daily)
     r_ann_ret = (r_daily.mean() * 252 * 100) if n_days > 0 else 0
     r_vol = (r_daily.std() * _math.sqrt(252) * 100) if n_days > 1 else 0
