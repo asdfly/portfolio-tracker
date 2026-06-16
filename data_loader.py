@@ -1688,3 +1688,181 @@ def load_peer_penetration(code, name, sector):
     finally:
         conn.close()
     return compute_peer_penetration(code, name, fund_df, holdings_df)
+
+# ============================================================
+# P3: ERP股债性价比加载
+# ============================================================
+
+def load_erp_analysis(indices=None):
+    """加载股债性价比(ERP)分析结果。
+
+    Parameters
+    ----------
+    indices : list[str], optional - 指数代码列表
+
+    Returns list[ERPResult]
+    """
+    try:
+        from src.analysis.equity_risk_premium import compute_erp_multi
+        return compute_erp_multi(indices)
+    except Exception:
+        return []
+
+
+def load_erp_for_etf(etf_code):
+    """根据ETF代码获取对应指数的ERP。
+
+    Returns ERPResult or None
+    """
+    try:
+        from src.analysis.equity_risk_premium import compute_erp_for_index
+        from src.utils.database import get_db_connection
+        # ETF to index mapping
+        etf_to_index = {
+            "510300": "sh000300", "159919": "sh000300",
+            "510500": "sh000905", "510500": "sh000905",
+            "159901": "sh000905", "510050": "sh000015",
+            "588000": "sh000688", "159915": "sz399006",
+            "510880": "sh000001",
+        }
+        index_code = etf_to_index.get(etf_code)
+        if index_code is None:
+            return None
+        return compute_erp_for_index(index_code)
+    except Exception:
+        return None
+
+
+# ============================================================
+# P3: 定投回测加载
+# ============================================================
+
+def load_dca_backtest(etf_code, period_amount=1000, freq="W"):
+    """加载ETF定投回测结果。
+
+    Parameters
+    ----------
+    etf_code : str
+    period_amount : float - 每期投入
+    freq : str - "W"每周 "2W"每两周 "ME"每月
+
+    Returns DCAResult or None
+    """
+    try:
+        from src.analysis.dca_backtest import backtest_dca_uniform
+        prices = load_etf_price_history(etf_code)
+        if prices is None or prices.empty:
+            return None
+        return backtest_dca_uniform(prices, period_amount, freq)
+    except Exception:
+        return None
+
+
+# ============================================================
+# P3: 行业景气度加载
+# ============================================================
+
+def load_industry_boom(etf_code):
+    """加载持仓ETF的行业景气度分析。
+
+    Returns IndustryBoomResult or None
+    """
+    try:
+        from src.analysis.industry_boom import compute_boom_for_position
+        return compute_boom_for_position(etf_code)
+    except Exception:
+        return None
+
+
+def load_all_industry_booms(etf_codes=None):
+    """批量加载行业景气度。
+
+    Returns list[IndustryBoomResult]
+    """
+    try:
+        from src.analysis.industry_boom import compute_boom_multi
+        return compute_boom_multi(etf_codes)
+    except Exception:
+        return []
+
+
+# ============================================================
+# P3: 智能预警加载
+# ============================================================
+
+def load_smart_alerts(etf_code, etf_name=""):
+    """对单只ETF执行全维度预警扫描。
+
+    Returns list[AlertEvent]
+    """
+    try:
+        from src.analysis.smart_alert import scan_all_alerts
+        from src.utils.database import get_db_connection
+        import pandas as pd
+
+        # 获取最新价格和行情数据
+        conn = get_db_connection()
+        try:
+            price_df = pd.read_sql_query(
+                "SELECT close, date FROM etf_daily WHERE code=? ORDER BY date DESC LIMIT 60",
+                conn, params=[etf_code]
+            )
+        except Exception:
+            price_df = pd.DataFrame()
+        finally:
+            conn.close()
+
+        if price_df.empty or len(price_df) < 20:
+            return []
+
+        current_price = float(price_df.iloc[0]["close"])
+        ma20 = float(price_df.tail(20)["close"].mean())
+        ma60 = float(price_df.tail(60)["close"].mean()) if len(price_df) >= 60 else ma20
+        prev_close = float(price_df.iloc[1]["close"]) if len(price_df) > 1 else current_price
+        drop_pct = round((current_price - prev_close) / prev_close * 100, 2)
+
+        # 资金流向
+        fund_data = load_etf_fund_flow(etf_code)
+        net_today = fund_data.get("net_today", 0) if isinstance(fund_data, dict) else 0
+        net_5d = fund_data.get("net_5d", 0) if isinstance(fund_data, dict) else 0
+
+        # 估值
+        pe_data = load_pe_percentile(etf_code)
+        pe_pct = pe_data.get("pe_percentile", 50) if isinstance(pe_data, dict) else 50
+
+        # 波动率
+        returns = price_df["close"].pct_change().dropna()
+        current_vol = float(returns.tail(20).std() * 100 * np.sqrt(252)) if len(returns) >= 20 else 0
+        avg_vol = float(returns.std() * 100 * np.sqrt(252)) if len(returns) > 0 else 0
+        vol_std = float(returns.rolling(20).std().std() * 100 * np.sqrt(252)) if len(returns) > 20 else 0
+
+        return scan_all_alerts(
+            etf_code=etf_code, etf_name=etf_name,
+            current_price=current_price, ma20=ma20, ma60=ma60,
+            drop_pct=drop_pct,
+            net_inflow_today=net_today, net_inflow_5d=net_5d,
+            current_vol=current_vol, avg_vol=avg_vol, vol_std=vol_std,
+            pe_percentile=pe_pct,
+        )
+    except Exception:
+        return []
+
+
+def load_all_smart_alerts():
+    """对所有持仓ETF执行预警扫描。
+
+    Returns AlertSummary
+    """
+    try:
+        from src.analysis.smart_alert import summarize_alerts
+        positions = load_positions()
+        all_events = []
+        for _, row in positions.iterrows():
+            code = str(row.get("code", ""))
+            name = str(row.get("name", ""))
+            events = load_smart_alerts(code, name)
+            all_events.extend(events)
+        return summarize_alerts(all_events)
+    except Exception:
+        from src.analysis.smart_alert import AlertSummary
+        return AlertSummary()

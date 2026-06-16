@@ -80,7 +80,9 @@ def fetch_sge_hist(symbol="Au99.99"):
                 df["date"] = pd.to_datetime(df["date"], errors="coerce")
             return df
     except Exception as e:
-        logger.warning("[gold_utils] fetch_sge_hist 失败: %s", e)
+        err_msg = str(e)
+        if "Expecting value" not in err_msg:
+            logger.warning("[gold_utils] fetch_sge_hist 失败: %s", e)
     return None
 
 

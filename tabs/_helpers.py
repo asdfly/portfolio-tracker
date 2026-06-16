@@ -1556,3 +1556,170 @@ def _render_signal_cross_validate(code):
             "\u8bf4\u660e": s.detail,
         })
     st.dataframe(pd.DataFrame(sig_rows), use_container_width=True, hide_index=True)
+
+# ============================================================
+# P3: ERP股债性价比面板
+# ============================================================
+
+def _render_erp_panel():
+    """渲染股债性价比(ERP)分析面板。"""
+    import streamlit as st
+    import data_loader as dl
+
+    st.markdown("#### 股债性价比 (ERP)")
+    st.caption("基于指数PE分位数 + 10Y国债收益率，判断股/债相对吸引力")
+
+    results = dl.load_erp_analysis()
+    if not results:
+        st.info("暂无ERP数据，需要指数PE历史数据")
+        return
+
+    rows = []
+    for r in results:
+        signal_color = "🟢" if "偏多" in r.signal else ("🔴" if "偏空" in r.signal else "🟡")
+        rows.append({
+            "指数": r.index_name,
+            "PE": r.current_pe,
+            "盈利收益率%": r.earnings_yield,
+            "无风险利率%": r.risk_free_rate,
+            "ERP%": r.erp,
+            "分位数%": r.erp_percentile,
+            "信号": f"{signal_color} {r.signal}",
+        })
+
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # 详情展开
+    for r in results:
+        with st.expander(f"{r.index_name} - {r.signal}"):
+            st.markdown(r.detail)
+
+
+# ============================================================
+# P3: 定投回测面板
+# ============================================================
+
+def _render_dca_panel(etf_code, etf_name=""):
+    """渲染单只ETF定投回测面板。"""
+    import streamlit as st
+    import data_loader as dl
+
+    st.markdown("#### 定投回测对比")
+    if etf_name:
+        st.caption(f"ETF: {etf_name}({etf_code})")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        period_amount = st.number_input("每期投入(元)", 100, 100000, 1000, 100, key="dca_amount")
+    with col2:
+        freq = st.selectbox("定投频率", ["W", "2W", "ME"], format_func={
+            "W": "每周", "2W": "每两周", "ME": "每月"
+        }.get, key="dca_freq")
+
+    result = dl.load_dca_backtest(etf_code, period_amount, freq)
+    if result is None:
+        st.info("暂无定投回测数据，需要该ETF的价格历史")
+        return
+
+    # 核心指标
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("总投入", f"{result.total_invest:,.0f}")
+    c2.metric("最终市值", f"{result.final_value:,.0f}")
+    c3.metric("总收益率", f"{result.total_return_pct:+.2f}%")
+    c4.metric("最大回撤", f"{result.max_drawdown_pct:.2f}%")
+
+    if result.annual_return_pct != 0:
+        c5, c6 = st.columns(2)
+        c5.metric("年化收益", f"{result.annual_return_pct:+.2f}%")
+        if result.sharpe_ratio != 0:
+            c6.metric("夏普比率", f"{result.sharpe_ratio:.2f}")
+
+
+# ============================================================
+# P3: 行业景气度面板
+# ============================================================
+
+def _render_industry_boom_panel(etf_code):
+    """渲染行业景气度面板。"""
+    import streamlit as st
+    import data_loader as dl
+
+    result = dl.load_industry_boom(etf_code)
+    if result is None:
+        st.info("该ETF暂无行业景气度数据")
+        return
+
+    st.markdown(f"#### 行业景气度: {result.industry}")
+    signal_color = "🟢" if result.boom_score >= 65 else ("🔴" if result.boom_score < 35 else "🟡")
+
+    # 总分
+    c1, c2 = st.columns([1, 3])
+    c1.metric("综合景气度", f"{result.boom_score:.0f}/100")
+    c2.markdown(f"**信号**: {signal_color} {result.signal}")
+
+    # 四维评分
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("资金面", f"{result.fund_score:.0f}")
+    c2.metric("估值面", f"{result.valuation_score:.0f}")
+    c3.metric("技术面", f"{result.trend_score:.0f}")
+    c4.metric("政策面", f"{result.policy_score:.0f}")
+
+    # 看多/看空理由
+    if result.top_reasons:
+        st.markdown("**利好因素:**")
+        for r in result.top_reasons:
+            st.markdown(f"- {r}")
+    if result.risk_reasons:
+        st.markdown("**风险因素:**")
+        for r in result.risk_reasons:
+            st.markdown(f"- {r}")
+
+
+# ============================================================
+# P3: 智能预警面板
+# ============================================================
+
+def _render_smart_alert_panel(etf_code, etf_name=""):
+    """渲染单只ETF智能预警面板。"""
+    import streamlit as st
+    import data_loader as dl
+
+    events = dl.load_smart_alerts(etf_code, etf_name)
+    if not events:
+        st.info(f"当前无活跃预警 ({etf_name or etf_code})")
+        return
+
+    st.markdown(f"#### 智能预警: {etf_name or etf_code}")
+    st.markdown(f"共 **{len(events)}** 条预警")
+
+    level_colors = {"紧急": "red", "重要": "orange", "关注": "blue", "信息": "gray"}
+    for event in events:
+        color = level_colors.get(event.level, "gray")
+        with st.container():
+            cols = st.columns([1, 2, 4, 3])
+            cols[0].markdown(f"**[{event.level}]**")
+            cols[1].markdown(f"**{event.alert_type}**")
+            cols[2].markdown(event.detail)
+            cols[3].markdown(event.action_hint)
+        st.divider()
+
+
+def _render_alert_summary_panel():
+    """渲染所有持仓预警汇总面板。"""
+    import streamlit as st
+    import data_loader as dl
+
+    st.markdown("#### 全持仓预警汇总")
+    summary = dl.load_all_smart_alerts()
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("总预警", summary.total)
+    c2.metric("🔴 紧急", summary.urgent)
+    c3.metric("🟠 重要", summary.important)
+    c4.metric("🔵 关注", summary.watch)
+    c5.metric("⚪ 信息", summary.info)
+
+    if summary.events:
+        from src.analysis.smart_alert import format_alert_text
+        for event in summary.events[:20]:  # 最多显示20条
+            st.markdown(format_alert_text(event))
