@@ -364,6 +364,8 @@ def rebuild_portfolio_summary(db_path):
 
     generated = 0
     prev_value = 0
+    prev_codes = set()
+    prev_dt = None
 
     for dt in dates:
         cur.execute("""
@@ -384,11 +386,39 @@ def rebuild_portfolio_summary(db_path):
         profit_count = int(row[3] or 0)
         loss_count = int(row[4] or 0)
 
+        # 获取当前日期的持仓代码集合
+        cur.execute("SELECT DISTINCT code FROM portfolio_snapshots WHERE date = ?", (dt,))
+        curr_codes = set(r[0] for r in cur.fetchall())
+
         daily_return = 0
         daily_pnl = 0
         if prev_value and prev_value > 0:
             daily_pnl = total_value - prev_value
             daily_return = daily_pnl / prev_value * 100
+
+        # 修正：用共同持仓的相同 quantity × 当日价格 来计算真实 daily_return
+        # 避免新增/移除基金和加仓/减仓导致 total_value 跳增被误计为收益
+        if prev_codes and prev_dt and curr_codes & prev_codes:
+            common = curr_codes & prev_codes
+            common_list = ','.join([f"'{c}'" for c in common])
+            # 前一天共同持仓的市值（作为基准）
+            cur.execute(f"""
+                SELECT SUM(market_value) FROM portfolio_snapshots 
+                WHERE date = ? AND code IN ({common_list})
+            """, (prev_dt,))
+            prev_common_mv = cur.fetchone()[0] or 0
+            if prev_common_mv > 0:
+                # 用当天的价格 × 前一天的 quantity 计算纯价格收益
+                cur.execute(f"""
+                    SELECT SUM(b.current_price * a.quantity)
+                    FROM portfolio_snapshots a
+                    JOIN portfolio_snapshots b ON a.code = b.code
+                    WHERE a.date = ? AND b.date = ? AND a.code IN ({common_list})
+                """, (prev_dt, dt))
+                price_adj_mv = cur.fetchone()[0] or 0
+                if price_adj_mv > 0:
+                    daily_return = (price_adj_mv - prev_common_mv) / prev_common_mv * 100
+                    daily_pnl = price_adj_mv - prev_common_mv
 
         vs_hs300 = 0
         cur.execute("SELECT change_pct FROM index_quotes WHERE code='sh000300' AND date=?", (dt,))
@@ -422,21 +452,19 @@ def rebuild_portfolio_summary(db_path):
             vol = round(std_ret * (252 ** 0.5), 4)
 
         if len(hist_returns) >= 5:
-            # 限制max_dd计算范围：从全部ETF覆盖日期开始，避免早期持仓少导致虚高
-            min_dd_date = '2025-08-01'
-            peak = total_value
+            # 用 daily_return 累积计算回撤，避免 total_value 因持仓变化跳变导致虚高
+            cumret = 1.0
+            peak_cumret = 1.0
             dd = 0
-            cur.execute("""
-                SELECT total_value FROM portfolio_summary
-                WHERE date <= ? AND date >= ? ORDER BY date
-            """, (dt, min_dd_date))
-            for vr in cur.fetchall():
-                if vr[0] and vr[0] > peak:
-                    peak = vr[0]
-                if peak > 0:
-                    drawdown = (peak - vr[0]) / peak * 100
-                    if drawdown > dd:
-                        dd = drawdown
+            for dr in hist_returns:
+                if dr is not None:
+                    cumret *= (1 + dr / 100)
+                    if cumret > peak_cumret:
+                        peak_cumret = cumret
+                    if peak_cumret > 0:
+                        drawdown = (peak_cumret - cumret) / peak_cumret * 100
+                        if drawdown > dd:
+                            dd = drawdown
             max_dd = dd
 
         cur.execute("""
@@ -448,6 +476,8 @@ def rebuild_portfolio_summary(db_path):
               vs_hs300, profit_count, loss_count, sharpe, max_dd, vol))
 
         prev_value = total_value
+        prev_codes = curr_codes
+        prev_dt = dt
         generated += 1
 
     conn.commit()
