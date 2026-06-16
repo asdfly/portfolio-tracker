@@ -119,7 +119,8 @@ def _render_comprehensive_assessment(positions, summary, volatility, max_dd):
     if not summary.empty and not positions.empty:
 
         # 收益评分 (30分)
-        port_daily = summary["total_value"].pct_change().dropna()
+        # 使用预存的 corrected daily_return（百分比/100=小数），避免 total_value 跳变影响
+        port_daily = (summary["daily_return"] / 100).dropna() if "daily_return" in summary.columns else summary["total_value"].pct_change().dropna()
         total_ret = (
             (summary["total_value"].iloc[-1] / summary["total_value"].iloc[0] - 1)
             if summary["total_value"].iloc[0] > 0

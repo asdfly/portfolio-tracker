@@ -1153,7 +1153,8 @@ def _generate_oneclick_report(positions, summary, technical, selected_date, sele
 
 
 
-    port_daily = summary["total_value"].pct_change().dropna()
+    # 使用 portfolio_summary 预存的 corrected daily_return（百分比格式/100=小数），避免 total_value 跳变影响
+    port_daily = (summary["daily_return"] / 100).dropna() if "daily_return" in summary.columns else summary["total_value"].pct_change().dropna()
 
     ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
 
@@ -1161,9 +1162,8 @@ def _generate_oneclick_report(positions, summary, technical, selected_date, sele
 
     sharpe = (port_daily.mean() / port_daily.std() * math.sqrt(252)) if port_daily.std() > 0 else 0
 
-    cummax = summary["total_value"].cummax()
-
-    max_dd = ((summary["total_value"] - cummax) / cummax * 100).min()
+    # 使用预存的 max_drawdown（百分比格式，直接使用）
+    max_dd = summary["max_drawdown"].min() if "max_drawdown" in summary.columns else ((summary["total_value"] - summary["total_value"].cummax()) / summary["total_value"].cummax() * 100).min()
 
 
 

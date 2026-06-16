@@ -141,10 +141,15 @@ def _render_drawdown_chart(summary):
             '<div class="tip-title" style="">回撤曲线<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">展示组合从历史最高点到当前市值的回撤幅度(%)。可识别最大回撤区间及其恢复时间，评估组合的抗风险能力。</span></div>',
             unsafe_allow_html=True,
         )
-        dd_data = summary[["date", "total_value"]].copy()
-        dd_data["drawdown"] = (
-            (dd_data["total_value"] - dd_data["total_value"].cummax()) / dd_data["total_value"].cummax() * 100
-        )
+        # 使用 corrected daily_return 构建累积净值来计算回撤，避免 total_value 跳变影响
+        dd_data = summary[["date", "daily_return"]].copy()
+        if "daily_return" in dd_data.columns:
+            dd_data["cumret"] = (1 + dd_data["daily_return"] / 100).cumprod()
+            dd_data["drawdown"] = (dd_data["cumret"] / dd_data["cumret"].cummax() - 1) * 100
+        else:
+            dd_data["drawdown"] = (
+                (summary["total_value"] - summary["total_value"].cummax()) / summary["total_value"].cummax() * 100
+            )
         dd_chart = downsample(dd_data, max_points=DOWNSAMPLE_MAX_POINTS)
 
         fig_dd = go.Figure()

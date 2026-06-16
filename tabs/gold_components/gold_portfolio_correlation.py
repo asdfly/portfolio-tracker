@@ -33,7 +33,8 @@ def _load_portfolio_returns(n_days=365):
     if df.empty:
         return pd.DataFrame()
     df["date"] = pd.to_datetime(df["date"])
-    df["portfolio_return"] = df["total_value"].pct_change()
+    # daily_return 存储为百分比，转为小数
+    df["portfolio_return"] = df["daily_return"] / 100
     return df[["date", "portfolio_return"]].dropna()
 
 

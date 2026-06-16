@@ -156,8 +156,8 @@ def load_calendar_data():
     if df.empty:
         return df
     df["date"] = pd.to_datetime(df["date"])
-    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
-    df["daily_return"] = df["total_value"].pct_change()
+    # daily_return 在数据库中以百分比形式存储，转为小数（已由 rebuild 校正持仓变化）
+    df["daily_return"] = df["daily_return"] / 100
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
     df["day"] = df["date"].dt.day
@@ -233,8 +233,8 @@ def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
     if len(df) < 10:
         return RiskMetrics.empty()
 
-    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change() 获取正确的小数日收益率
-    returns = df["total_value"].pct_change().dropna()
+    # daily_return 在数据库中以百分比形式存储，转为小数（已由 rebuild 校正持仓变化）
+    returns = (df["daily_return"] / 100).dropna()
     pnls = df["daily_pnl"]
 
     # Sortino Ratio (downside deviation)
@@ -244,27 +244,23 @@ def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
     annual_std = returns.std() * np.sqrt(252)
     sortino = annual_return / downside_std if downside_std and downside_std > 0 else np.nan
 
-    # Max Drawdown Duration (最大回撤持续时间)
+    # Max Drawdown Duration（使用 corrected daily_return 累积净值，避免 total_value 跳变）
     max_dd_duration = 0
     current_dd_duration = 0
-    if "total_value" in df.columns:
-        cummax = df["total_value"].cummax()
-        in_drawdown = df["total_value"] < cummax
-        for is_dd in in_drawdown:
-            if is_dd:
-                current_dd_duration += 1
-                max_dd_duration = max(max_dd_duration, current_dd_duration)
-            else:
-                _current_dd_duration = 0
+    cumret = (1 + returns).cumprod()
+    peak = cumret.cummax()
+    in_drawdown = cumret < peak
+    for is_dd in in_drawdown:
+        if is_dd:
+            current_dd_duration += 1
+            max_dd_duration = max(max_dd_duration, current_dd_duration)
+        else:
+            current_dd_duration = 0
 
-    # Calmar Ratio (annual return / max drawdown)
-    cummax = df["total_value"].cummax() if "total_value" in df.columns else None
-    if cummax is not None:
-        dd = (df["total_value"] - cummax) / cummax * 100
-        max_dd_abs = abs(dd.min())
-        calmar = annual_return / max_dd_abs if max_dd_abs > 0 else np.nan
-    else:
-        calmar = np.nan
+    # Calmar Ratio（使用 corrected daily_return 累积净值计算回撤）
+    dd_series = (cumret / peak - 1)
+    max_dd_abs = abs(dd_series.min()) if len(dd_series) > 0 else np.nan
+    calmar = annual_return / max_dd_abs if max_dd_abs and max_dd_abs > 0 else np.nan
 
     # Win rate
     win_days = len(pnls[pnls > 0])
@@ -318,8 +314,8 @@ def compute_monthly_returns():
     if df.empty:
         return pd.DataFrame()
     df["date"] = pd.to_datetime(df["date"])
-    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
-    df["daily_return"] = df["total_value"].pct_change()
+    # daily_return 在数据库中以百分比形式存储，转为小数（已由 rebuild 校正持仓变化）
+    df["daily_return"] = df["daily_return"] / 100
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
     # 使用月首末日 total_value 计算正确的月度收益率
@@ -359,8 +355,8 @@ def compute_rolling_metrics(window=60, end_date=None):
         df = df[df["date"] <= pd.Timestamp(end_date)]
     if len(df) < window:
         return pd.DataFrame()
-    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
-    ret = df["total_value"].pct_change()
+    # daily_return 在数据库中以百分比形式存储，转为小数（已由 rebuild 校正持仓变化）
+    ret = df["daily_return"] / 100
     rolling_sharpe = ret.rolling(window).mean() / ret.rolling(window).std() * np.sqrt(252)
     rolling_vol = ret.rolling(window).std() * np.sqrt(252)
     result = pd.DataFrame({"date": df["date"], "rolling_sharpe": rolling_sharpe, "rolling_vol": rolling_vol}).dropna()
@@ -648,8 +644,8 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         return None
 
     last_value = float(last_row["total_value"].iloc[0])
-    # daily_return 在数据库中以百分比形式存储，改用 total_value.pct_change()
-    df["daily_return"] = df["total_value"].pct_change()
+    # daily_return 在数据库中以百分比形式存储，转为小数（已由 rebuild 校正持仓变化）
+    df["daily_return"] = df["daily_return"] / 100
     returns = df["daily_return"].dropna()
 
     # ===== 数据清洗（统一使用 _cleanse_daily_returns）=====
