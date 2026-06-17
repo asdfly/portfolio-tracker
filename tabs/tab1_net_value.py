@@ -49,9 +49,13 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
             plot_end = selected_date if selected_date else summary["date"].iloc[-1]
             plot_start_idx = max(0, len(summary) - show_days - 30)  # 多取30天确保日期重叠
             summary_plot = summary.iloc[plot_start_idx:].copy()
-            # 用组合在图表起始日期的值做基准
-            base_value = summary_plot.iloc[0]["total_value"]
-            summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
+            # 使用 corrected daily_return 累积净值法（基准100），避免 total_value 跳变导致净值突增
+            if "daily_return" in summary_plot.columns:
+                nav_returns = (summary_plot["daily_return"] / 100).fillna(0)
+                summary_plot["nav"] = (1 + nav_returns).cumprod() * 100
+            else:
+                base_value = summary_plot.iloc[0]["total_value"]
+                summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
 
             # 降采样用于图表渲染
             chart_data = downsample(summary_plot, max_points=DOWNSAMPLE_MAX_POINTS)
@@ -195,7 +199,7 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
     )
     if not summary.empty and "total_value" in summary.columns and len(summary) > 1:
         bar_data = downsample(summary_ret[["date"]].copy(), max_points=DOWNSAMPLE_MAX_POINTS)
-        bar_data["daily_pnl"] = summary_ret["total_value"].diff().values
+        bar_data["daily_pnl"] = summary_ret["daily_pnl"].values if "daily_pnl" in summary_ret.columns else summary_ret["total_value"].diff().values
         colors = ["#22c55e" if dp >= 0 else "#ef4444" for dp in bar_data["daily_pnl"]]
         fig_bar = go.Figure()
         fig_bar.add_trace(go.Bar(x=bar_data["date"], y=bar_data["daily_pnl"], marker_color=colors, name="日盈亏"))

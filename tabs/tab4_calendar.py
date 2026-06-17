@@ -336,13 +336,19 @@ def _render_annual_trend(all_cal):
     )
     all_cal = load_calendar_data()
     if not all_cal.empty:
-        yearly_cumret = all_cal.groupby("year")[["total_value"]].apply(
-            lambda g: g.iloc[-1, 0] / g.iloc[0, 0] - 1
-        )
-        cumret_by_date = all_cal.groupby("date").agg(
-            first_v=("total_value", "first"), last_v=("total_value", "last")
-        ).reset_index()
-        cumret_by_date["cum_return"] = cumret_by_date["last_v"] / cumret_by_date["first_v"].iloc[0] - 1
+        # 使用 corrected daily_return 累积净值计算收益率，避免 total_value 跳变影响
+        yearly_data = []
+        for year, grp in all_cal.groupby("year"):
+            grp = grp.sort_values("date")
+            nav = (1 + grp["daily_return"].fillna(0)).cumprod()
+            yearly_data.append({"year": year, "cum_return": nav.iloc[-1] - 1})
+        yearly_cumret = pd.DataFrame(yearly_data).set_index("year")["cum_return"]
+        all_sorted = all_cal.sort_values("date").reset_index(drop=True)
+        nav_series = (1 + all_sorted["daily_return"].fillna(0)).cumprod()
+        cumret_by_date = pd.DataFrame({
+            "date": all_sorted["date"],
+            "cum_return": nav_series - 1
+        })
         # Annualized return (CAGR)
         cumret_by_date["years_elapsed"] = (cumret_by_date["date"] - cumret_by_date["date"].iloc[0]).dt.days / 365.25
         cumret_by_date["ann_return"] = (1 + cumret_by_date["cum_return"]) ** (1 / cumret_by_date["years_elapsed"].clip(lower=0.01)) - 1
