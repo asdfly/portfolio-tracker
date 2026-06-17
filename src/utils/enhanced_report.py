@@ -206,8 +206,12 @@ class EnhancedReportBuilder:
         fig.patch.set_facecolor('#ffffff')
         ax.set_facecolor('#ffffff')
         dates = pd.to_datetime(history['date'])
-        base = history.iloc[0]['total_value']
-        nav = history['total_value'] / base * 100
+        # 使用 corrected daily_return 累积净值法，避免 total_value 跳变导致净值突增
+        if 'daily_return' in history.columns:
+            nav = (1 + history['daily_return'] / 100).fillna(0).cumprod() * 100
+        else:
+            base = history.iloc[0]['total_value']
+            nav = history['total_value'] / base * 100
         ax.plot(dates, nav, color='#1a73e8', linewidth=1.8, label='组合净值', zorder=3)
         ax.fill_between(dates, nav, alpha=0.06, color='#1a73e8')
         hs300 = self._load_index_history('sh000300', 60)

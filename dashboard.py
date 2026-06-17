@@ -619,13 +619,9 @@ def compute_comprehensive_score(positions, summary, volatility, effective_max_dd
         score_return, score_risk, tech_score, score_health,
         total_score, score_color, score_label, tech_signals
     """
-    # 收益评分 (30分) — 使用预存 corrected daily_return，避免 total_value 跳变影响
+    # 收益评分 (30分) — 使用 corrected daily_return 累积净值法，避免 total_value 跳变影响
     port_daily = (summary["daily_return"] / 100).dropna() if "daily_return" in summary.columns else summary["total_value"].pct_change().dropna()
-    total_ret = (
-        (summary["total_value"].iloc[-1] / summary["total_value"].iloc[0] - 1)
-        if summary["total_value"].iloc[0] > 0
-        else 0
-    )
+    total_ret = ((1 + port_daily).prod() - 1) if len(port_daily) > 0 else 0
     ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
     if total_ret > 0.1:
         score_return = 30

@@ -266,23 +266,29 @@ class TestComputeComprehensiveScore:
         assert result["total_score"] <= 100
 
     def test_score_return_good(self):
-        np.random.seed(99)
+        # daily_return 存百分比格式(如 0.3 = 0.3%)，cumprod /100后需 > 10% 才得 30 分
+        n = 60
+        # 目标累计收益 20%，对应每日收益率 pct = ((1.20)**(1/n) - 1) * 100
+        daily_ret_pct = ((1.20) ** (1 / n) - 1) * 100 * np.ones(n)
         summary = pd.DataFrame({
-            "date": pd.date_range("2025-01-01", periods=60, freq="D").strftime("%Y-%m-%d"),
-            "total_value": np.linspace(100000, 120000, 60),
-            "total_pnl": np.linspace(0, 20000, 60),
-            "daily_return": np.random.normal(0.003, 0.01, 60),
+            "date": pd.date_range("2025-01-01", periods=n, freq="D").strftime("%Y-%m-%d"),
+            "total_value": np.linspace(100000, 120000, n),
+            "total_pnl": np.linspace(0, 20000, n),
+            "daily_return": daily_ret_pct,
         })
         result = compute_comprehensive_score(_make_positions(), summary, 10, -5, pd.DataFrame())
         assert result["score_return"] == 30
 
     def test_score_return_bad(self):
-        np.random.seed(99)
+        # daily_return 存百分比格式，cumprod /100后需 < -5% 才得 5 分
+        n = 60
+        # 目标累计收益 -10%，对应每日收益率 pct = ((0.90)**(1/n) - 1) * 100
+        daily_ret_pct = ((0.90) ** (1 / n) - 1) * 100 * np.ones(n)
         summary = pd.DataFrame({
-            "date": pd.date_range("2025-01-01", periods=60, freq="D").strftime("%Y-%m-%d"),
-            "total_value": np.linspace(100000, 90000, 60),
-            "total_pnl": np.linspace(0, -10000, 60),
-            "daily_return": np.random.normal(-0.001, 0.01, 60),
+            "date": pd.date_range("2025-01-01", periods=n, freq="D").strftime("%Y-%m-%d"),
+            "total_value": np.linspace(100000, 90000, n),
+            "total_pnl": np.linspace(0, -10000, n),
+            "daily_return": daily_ret_pct,
         })
         result = compute_comprehensive_score(_make_positions(), summary, 15, -10, pd.DataFrame())
         assert result["score_return"] == 5
