@@ -80,7 +80,9 @@ def _render_year_overview(cal_data):
 
     # --- 年度月度概览（月份按钮在表格内） ---
     yr_total_pnl = year_df["daily_pnl"].sum()
-    yr_total_ret = year_df["total_value"].iloc[-1] / year_df["total_value"].iloc[0] - 1
+    # 使用 corrected daily_return 累积净值法计算年度收益率，避免 total_value 跳变影响
+    yr_daily = (year_df["daily_return"] / 100).dropna() if "daily_return" in year_df.columns else year_df["total_value"].pct_change().dropna()
+    yr_total_ret = ((1 + yr_daily).prod() - 1) if len(yr_daily) > 0 else 0
     yr_total_days = len(year_df)
     yr_profit_days = len(year_df[year_df["daily_pnl"] > 0])
     yr_loss_days = len(year_df[year_df["daily_pnl"] < 0])
@@ -164,7 +166,9 @@ def _render_monthly_view(month_df, sel_year, sel_month):
     # --- 月度汇总 ---
     today_str = datetime.now().strftime("%Y-%m-%d")
     m_pnl = month_df["daily_pnl"].sum()
-    m_return = month_df["total_value"].iloc[-1] / month_df["total_value"].iloc[0] - 1 if len(month_df) > 0 else 0
+    # 使用 corrected daily_return 累积净值法计算月度收益率，避免 total_value 跳变影响
+    m_daily = (month_df["daily_return"] / 100).dropna() if "daily_return" in month_df.columns else month_df["total_value"].pct_change().dropna()
+    m_return = ((1 + m_daily).prod() - 1) if len(m_daily) > 0 else 0
     m_trading = len(month_df)
     m_profit = len(month_df[month_df["daily_pnl"] > 0])
     m_loss = len(month_df[month_df["daily_pnl"] < 0])
