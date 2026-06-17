@@ -320,9 +320,9 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
             import math
 
             # 组合指标（使用 show_days 范围内的数据）
-            port_start_val = summary_for_compare.iloc[0]["total_value"]
-            port_end_val = summary_for_compare.iloc[-1]["total_value"]
-            port_total_ret = (port_end_val / port_start_val - 1) * 100 if port_start_val > 0 else 0
+            # 使用 corrected daily_return 累积净值法计算累计收益率，避免 total_value 跳变影响
+            port_daily_all = (summary_for_compare["daily_return"] / 100).dropna()
+            port_total_ret = ((1 + port_daily_all).prod() - 1) * 100 if len(port_daily_all) > 0 else 0
             # 使用 portfolio_summary 预存的 daily_return（已校正持仓变化），避免 total_value 跳变影响
             port_daily = (summary_for_compare["daily_return"] / 100).dropna()
             port_ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
@@ -351,10 +351,17 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
             # 对齐日期计算超额收益
             merged = summary_for_compare[["date", "total_value", "daily_return"]].merge(bench_df_raw[["date", "close"]], on="date", how="inner")
             if not merged.empty:
-                excess_ret = (
-                    (merged["total_value"].iloc[-1] / merged["total_value"].iloc[0] - 1)
-                    - (merged["close"].iloc[-1] / merged["close"].iloc[0] - 1)
-                ) * 100
+                # 组合侧使用 corrected daily_return 累积净值法，避免 total_value 跳变影响
+                port_daily_merged = (merged["daily_return"] / 100).dropna()
+                bench_daily_merged = merged["close"].pct_change().dropna()
+                # 对齐长度后计算累计收益差
+                n_align = min(len(port_daily_merged), len(bench_daily_merged))
+                if n_align > 0:
+                    port_cum = (1 + port_daily_merged.iloc[-n_align:]).prod() - 1
+                    bench_cum = (1 + bench_daily_merged.iloc[-n_align:]).prod() - 1
+                    excess_ret = (port_cum - bench_cum) * 100
+                else:
+                    excess_ret = port_total_ret - bench_total_ret
                 # 日超额收益率序列：组合侧使用预存的 corrected daily_return
                 port_daily_aligned = (merged["daily_return"] / 100).dropna()
                 bench_daily_aligned = merged["close"].pct_change().dropna()
@@ -452,11 +459,10 @@ def _render_benchmark_comparison(summary, selected_benchmark, selected_date, sho
 def _calc_range_metrics(range_data):
     """纯数据函数：计算区间指标（累计/年化收益、波动率、夏普、回撤等）"""
     import math as _math
-    r_start_val = range_data.iloc[0]["total_value"]
-    r_end_val = range_data.iloc[-1]["total_value"]
-    r_cum_ret = (r_end_val / r_start_val - 1) * 100 if r_start_val > 0 else 0
-    # 使用预存的 corrected daily_return（已校正持仓变化），避免 total_value 跳变影响
-    r_daily = (range_data["daily_return"] / 100).dropna() if "daily_return" in range_data.columns else range_data["total_value"].pct_change().dropna()
+    # 使用 corrected daily_return 累积净值法计算累计收益率，避免 total_value 跳变影响
+    r_daily_all = (range_data["daily_return"] / 100).dropna() if "daily_return" in range_data.columns else range_data["total_value"].pct_change().dropna()
+    r_cum_ret = ((1 + r_daily_all).prod() - 1) * 100 if len(r_daily_all) > 0 else 0
+    r_daily = r_daily_all  # 复用上方已计算的序列
     n_days = len(r_daily)
     r_ann_ret = (r_daily.mean() * 252 * 100) if n_days > 0 else 0
     r_vol = (r_daily.std() * _math.sqrt(252) * 100) if n_days > 1 else 0
@@ -506,8 +512,13 @@ def _render_benchmark_comparison_tab1(summary, selected_date, show_days):
         plot_end2 = selected_date if selected_date else summary["date"].iloc[-1]
         ps_idx = max(0, len(summary) - show_days - 30)
         summary_plot = summary.iloc[ps_idx:].copy()
-        base_value = summary_plot.iloc[0]["total_value"]
-        summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
+        # 使用 corrected daily_return 累积净值法（基准100），避免 total_value 跳变导致净值突增
+        if "daily_return" in summary_plot.columns:
+            nav_returns = (summary_plot["daily_return"] / 100).fillna(0)
+            summary_plot["nav"] = (1 + nav_returns).cumprod() * 100
+        else:
+            base_value = summary_plot.iloc[0]["total_value"]
+            summary_plot["nav"] = summary_plot["total_value"] / base_value * 100
         chart_data = downsample(summary_plot, max_points=DOWNSAMPLE_MAX_POINTS)
 
         fig_multi = go.Figure()
@@ -554,8 +565,8 @@ def _render_benchmark_comparison_tab1(summary, selected_date, show_days):
         render_chart(fig_multi)
 
         if bench_stats:
-            port_end = summary_plot.iloc[-1]["total_value"]
-            port_ret = (port_end / base_value - 1) * 100 if base_value > 0 else 0
+            # 使用 corrected daily_return 累积净值法计算组合累计收益，避免 total_value 跳变
+            port_ret = (summary_plot["nav"].iloc[-1] / summary_plot["nav"].iloc[0] - 1) * 100 if summary_plot["nav"].iloc[0] > 0 else 0
             all_items = [{"基准": "投资组合", "累计收益": f"{port_ret:+.2f}%"}] + bench_stats
             all_items.sort(key=lambda x: float(x["累计收益"].replace("%", "").replace("+", "")), reverse=True)
             n_cards = len(all_items)
@@ -740,9 +751,13 @@ def _render_annual_returns(summary):
         summary_annual = summary.copy()
         summary_annual["date"] = pd.to_datetime(summary_annual["date"])
         summary_annual["year"] = summary_annual["date"].dt.year
-        yearly_returns = summary_annual.groupby("year")[["total_value"]].apply(
-            lambda g: g.iloc[-1, 0] / g.iloc[0, 0] - 1
-        ) * 100
+        # 使用 corrected daily_return 累积净值法计算年度收益，避免 total_value 跳变影响
+        def _yearly_cumret(group):
+            daily_ret = (group["daily_return"] / 100).dropna()
+            return ((1 + daily_ret).prod() - 1) * 100 if len(daily_ret) > 0 else 0
+        yearly_returns = summary_annual.groupby("year").apply(_yearly_cumret, include_groups=False) if "daily_return" in summary_annual.columns else (
+            summary_annual.groupby("year")[["total_value"]].apply(lambda g: g.iloc[-1, 0] / g.iloc[0, 0] - 1) * 100
+        )
         if not yearly_returns.empty:
             bar_colors = ["#22c55e" if v >= 0 else "#ef4444" for v in yearly_returns.values]
             fig_annual = go.Figure()
