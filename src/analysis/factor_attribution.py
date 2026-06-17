@@ -29,7 +29,8 @@ FACTOR_INDEX_CODES = {
 
 def get_db_connection() -> sqlite3.Connection:
     """获取数据库连接"""
-    conn = get_db_connection()
+    from src.utils.database import get_db_connection as _gdc
+    conn = _gdc()
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -421,7 +422,7 @@ def run_full_attribution(conn: sqlite3.Connection,
         result['factor_attribution'] = {'error': '组合历史数据不足'}
     else:
         summary = summary.sort_values('date').reset_index(drop=True)
-        port_returns = summary.set_index('date')['daily_return'].dropna()
+        port_returns = summary.set_index('date')['daily_return'].dropna() / 100  # 百分比转小数，与因子收益率量纲一致
         
         # 构造因子
         start_date = summary['date'].iloc[0]
