@@ -177,7 +177,7 @@ def compute_factor_attribution(portfolio_returns: pd.Series,
     # 拟合值和残差
     y_fitted = X_with_intercept @ beta
     residuals_arr = y - y_fitted
-    residual_std = np.std(residuals_arr)
+    residual_std = np.std(residuals_arr, ddof=1)
     
     # R-squared
     ss_res = np.sum(residuals_arr ** 2)

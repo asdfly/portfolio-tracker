@@ -418,8 +418,9 @@ class StrategyBacktester:
         total_return = (portfolio_values.iloc[-1] / initial_value - 1) * 100
         days = len(portfolio_values)
         annualized_return = ((1 + total_return/100) ** (252/days) - 1) * 100 if days > 0 else 0
-        volatility = returns.mean(axis=1).std() * np.sqrt(252) * 100
-        sharpe = annualized_return / volatility if volatility > 0 else 0
+        volatility = returns.mean(axis=1).std(ddof=1) * np.sqrt(252) * 100
+        risk_free_annual = 2.5  # 默认无风险利率（年化%）
+        sharpe = (annualized_return - risk_free_annual) / volatility if volatility > 0 else 0
         cummax = portfolio_values.cummax()
         drawdown = (portfolio_values - cummax) / cummax
         max_drawdown = drawdown.min() * 100

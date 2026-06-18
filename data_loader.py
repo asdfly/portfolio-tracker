@@ -242,7 +242,7 @@ def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
     downside_std = neg_returns.std() * np.sqrt(252) if len(neg_returns) > 1 else np.nan
     annual_return = returns.mean() * 252
     annual_std = returns.std() * np.sqrt(252)
-    sortino = annual_return / downside_std if downside_std and downside_std > 0 else np.nan
+    sortino = (annual_return - 0.025) / downside_std if downside_std and downside_std > 0 else np.nan
 
     # Max Drawdown Duration（使用 corrected daily_return 累积净值，避免 total_value 跳变）
     max_dd_duration = 0
