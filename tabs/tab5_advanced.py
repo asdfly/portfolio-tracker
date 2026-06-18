@@ -685,7 +685,7 @@ def _render_rebalance_advice():
                 recent_ret = pd.DataFrame()
 
             if not recent_ret.empty and len(recent_ret) >= 60:
-                ret_arr = recent_ret["daily_return"].dropna().values
+                ret_arr = recent_ret["daily_return"].dropna().values / 100
                 np.random.seed(42)
                 n_sim_days = min(60, len(ret_arr))
                 sim_curr = [1.0]

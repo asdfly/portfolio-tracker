@@ -681,7 +681,7 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
         # 加权 Bootstrap 采样
         indices = np.random.choice(n_hist, size=n_simulations, replace=True, p=weights)
         samples = hist_returns[indices]
-        paths[:, t] = paths[:, t - 1] * (1 + samples / 100)
+        paths[:, t] = paths[:, t - 1] * (1 + samples)
 
     # 计算百分位
     percentiles_data = {"day": list(range(days + 1))}
