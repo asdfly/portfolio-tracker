@@ -116,8 +116,6 @@ def test_tab_render_functions_callable():
 
 _HELPERS_PUBLIC = [
     "_render_etf_detail_panel",
-    "load_etf_detail",
-    "load_etf_price_history",
     "_generate_oneclick_report",
     "_load_latest_news",
     "_load_tech_signals",

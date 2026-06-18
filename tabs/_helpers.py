@@ -24,46 +24,7 @@ import sqlite3
 # ===== Stub 函数（替代 dashboard.py 中的外部数据加载函数）=====
 # 这些函数在数据库无数据时返回空结果，避免 NameError
 
-@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
-def load_etf_detail(code, days=CHART_DAYS["short"], end_date=None):
-    """加载ETF详情数据（从portfolio_snapshots获取历史持仓快照）"""
-    conn = get_db_connection()
-    try:
-        if end_date:
-            query = """SELECT date, code, name, quantity, cost_price, current_price,
-                              market_value, pnl, pnl_rate, beta
-                       FROM portfolio_snapshots WHERE code = ? AND date <= ?
-                       ORDER BY date DESC LIMIT ?"""
-            df = pd.read_sql_query(query, conn, params=(code, str(end_date), days))
-        else:
-            query = """SELECT date, code, name, quantity, cost_price, current_price,
-                              market_value, pnl, pnl_rate, beta
-                       FROM portfolio_snapshots WHERE code = ?
-                       ORDER BY date DESC LIMIT ?"""
-            df = pd.read_sql_query(query, conn, params=(code, days))
-        return df.sort_values("date"), code
-    except sqlite3.OperationalError:
-        return pd.DataFrame(), ""
-@st.cache_data(ttl=CACHE_TTL['short'], show_spinner=False)
-def load_etf_price_history(code, days=CHART_DAYS["default"], end_date=None):
-    """加载ETF价格历史（从portfolio_snapshots获取收盘价）"""
-    conn = get_db_connection()
-    try:
-        if end_date:
-            query = """SELECT date, current_price as close, quantity
-                       FROM portfolio_snapshots WHERE code = ? AND date <= ?
-                       ORDER BY date DESC LIMIT ?"""
-            df = pd.read_sql_query(query, conn, params=(code, str(end_date), days))
-        else:
-            query = """SELECT date, current_price as close, quantity
-                       FROM portfolio_snapshots WHERE code = ?
-                       ORDER BY date DESC LIMIT ?"""
-            df = pd.read_sql_query(query, conn, params=(code, days))
-        # 去掉quantity列，只保留date/close（volume不可用，用None占位）
-        df = df[["date", "close"]].copy()
-        return df.sort_values("date")
-    except sqlite3.OperationalError:
-        return pd.DataFrame()
+
 
 
 
@@ -500,6 +461,7 @@ def _render_etf_stats(detail_df, mv, total_value):
 
 def _render_etf_detail_panel(row, selected_date, total_value=0):
     """渲染ETF增强版详情面板：核心指标 + 价格走势 + 同类对比 + 技术评分"""
+    from data_loader import load_etf_detail, load_etf_price_history
     code = row["code"]
     name = row["name"]
     detail_df, etf_name = load_etf_detail(code, days=120, end_date=selected_date)
