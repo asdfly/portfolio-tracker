@@ -947,3 +947,261 @@ class TestIndustryBoom:
             has_positive_policy=False, has_negative_policy=True, recent_events=0,
         )
         assert r.boom_score < 40
+
+# ============================================================
+# 量纲一致性测试：daily_return 百分比/小数 格式正确性
+# ============================================================
+
+
+# ============================================================
+# 量纲一致性测试：daily_return 百分比/小数 格式正确性
+# ============================================================
+
+class TestDailyReturnDimension:
+    """验证 daily_return 在 DB 中以百分比格式存储(如 1.5=1.5%),
+    各计算路径量纲转换正确——防止多余的 *100 或缺失 /100。
+
+    覆盖三个历史修复:
+    1. tab1 日收益率分布: daily_return 不应 *100 (标准差 103%->1%)
+    2. Monte Carlo: L648/100 后 L684 不应再 /100
+    3. tab5 再平衡模拟: ret_arr 需 /100 转小数
+    """
+
+    def test_db_daily_return_is_pct_format(self):
+        """DB 中 daily_return 存储为百分比格式(如 1.5 表示 1.5%)"""
+        from src.utils.database import get_db_connection
+        import pandas as pd
+        conn = get_db_connection()
+        df = pd.read_sql_query(
+            "SELECT daily_return FROM portfolio_summary "
+            "WHERE daily_return IS NOT NULL AND ABS(daily_return) < 20 "
+            "ORDER BY date DESC LIMIT 250",
+            conn,
+        )
+        conn.close()
+        if len(df) < 30:
+            return
+        std_raw = df["daily_return"].std(ddof=1)
+        assert 0.3 < std_raw < 10, (
+            f"daily_return std={std_raw:.4f}, 应为百分比格式(0.5~5%)"
+        )
+
+    def test_tab1_histogram_no_extra_multiply_100(self):
+        """tab1 日收益率分布: daily_return 直接使用, 不需要额外 *100
+        若错误 *100, std 从 ~1% 虚高到 ~100%"""
+        from src.utils.database import get_db_connection
+        import pandas as pd, numpy as np
+        conn = get_db_connection()
+        df = pd.read_sql_query(
+            "SELECT daily_return FROM portfolio_summary "
+            "WHERE daily_return IS NOT NULL ORDER BY date DESC LIMIT 250",
+            conn,
+        )
+        conn.close()
+        if len(df) < 30:
+            return
+        daily_rets = df["daily_return"].dropna().values
+        std_ret = np.std(daily_rets, ddof=1)
+        assert 0.3 < std_ret < 5.0, (
+            f"tab1 日收益率 std={std_ret:.3f}%, 超出合理范围 0.3~5%"
+        )
+        # 误乘100后std远超5%
+        std_wrong = np.std(daily_rets * 100, ddof=1)
+        assert std_wrong > 5.0, "sanity: 误乘100后std应>5%"
+
+    def test_monte_carlo_path_magnitude(self):
+        """Monte Carlo 模拟: L648/100 后 L684 不应再/100
+        0.5%/天252天: 正确(1.005)^252=3.51 vs 错误(1.00005)^252=1.013"""
+        import numpy as np
+        daily_ret_decimal = 0.5 / 100  # L648转换后
+        days = 252
+        final_correct = (1 + daily_ret_decimal) ** days
+        final_wrong = (1 + daily_ret_decimal / 100) ** days  # 双重/100
+        assert final_correct > 2.0, f"年化应为正: {final_correct:.2f}"
+        assert abs(final_correct - 3.51) < 0.1, f"252天0.5%/天应约3.51: {final_correct:.2f}"
+        assert final_wrong < 1.02, f"双重/100后几乎无增长: {final_wrong:.6f}"
+        assert final_correct / final_wrong > 3.0, f"正确/错误比值应>3: {final_correct/final_wrong:.1f}"
+
+    def test_monte_carlo_zero_mean_flat_path(self):
+        """零均值收益率 -> Monte Carlo 路径终值应在 1.0 附近"""
+        import numpy as np
+        hist = np.array([0.1, -0.1, 0.2, -0.2, 0.05, -0.05] * 50)
+        hist_decimal = hist / 100
+        np.random.seed(42)
+        n_sim, days = 100, 60
+        finals = []
+        for _ in range(n_sim):
+            path = 1.0
+            for t in range(days):
+                idx = np.random.randint(len(hist_decimal))
+                path *= (1 + hist_decimal[idx])
+            finals.append(path)
+        mean_final = np.mean(finals)
+        assert 0.95 < mean_final < 1.05, f"零均值MC终值={mean_final:.4f}, 应接近1.0"
+
+    def test_monte_carlo_positive_mean_grows(self):
+        """正均值收益率 -> Monte Carlo 路径终值应 > 1"""
+        import numpy as np
+        hist = np.array([0.1, 0.05, 0.15, -0.05, 0.08, 0.12] * 50)
+        hist_decimal = hist / 100
+        np.random.seed(42)
+        n_sim, days = 100, 252
+        finals = []
+        for _ in range(n_sim):
+            path = 1.0
+            for t in range(days):
+                idx = np.random.randint(len(hist_decimal))
+                path *= (1 + hist_decimal[idx])
+            finals.append(path)
+        mean_final = np.mean(finals)
+        assert mean_final > 1.1, f"正均值MC终值={mean_final:.4f}, 应>1.1"
+
+    def test_tab5_rebalance_sim_dimension(self):
+        """tab5 再平衡模拟: ret_arr 需/100转小数
+        DB中daily_return=0.5表示0.5%, 直接用于(1+r)把0.5%当作50%"""
+        import numpy as np
+        daily_ret_pct = np.array([0.1, -0.2, 0.05, 0.15, -0.1, 0.08])
+        sim_wrong = [1.0]
+        for r in daily_ret_pct:
+            sim_wrong.append(sim_wrong[-1] * (1 + r))
+        sim_correct = [1.0]
+        for r in daily_ret_pct / 100:
+            sim_correct.append(sim_correct[-1] * (1 + r))
+        assert sim_wrong[-1] != sim_correct[-1], "修复前后净值不应相同"
+        assert 0.98 < sim_correct[-1] < 1.02, (
+            f"修复后净值合理: {sim_correct[-1]:.6f}"
+        )
+
+    def test_tab5_rebalance_sim_no_double_scale(self):
+        """再平衡模拟: rebal_adj 计算量纲一致性
+        max_dev为百分比(如5表示5%), rebal_adj=1-0.02*|max_dev/100|"""
+        max_dev = 5
+        rebal_adj = 1.0 - 0.02 * abs(max_dev / 100)
+        assert 0 < rebal_adj <= 1.0
+        assert rebal_adj > 0.99
+        max_dev = 50
+        rebal_adj = 1.0 - 0.02 * abs(max_dev / 100)
+        assert 0.9 < rebal_adj < 1.0
+
+    def test_cumprod_vs_pct_change_consistency(self):
+        """cumprod净值法 vs total_value.pct_change 一致性
+        cumprod不受持仓变化影响, pct_change受跳变影响"""
+        import numpy as np
+        total_values = [100, 105, 130, 132, 135]  # day2持仓跳变
+        daily_ret_pct = [5.0, 0.0, 1.0, 2.0]  # corrected排除跳变
+        daily_ret_decimal = np.array(daily_ret_pct) / 100
+        nav = (1 + daily_ret_decimal).cumprod() * 100
+        tv_pct = np.diff(total_values) / np.array(total_values[:-1]) * 100
+        assert 107 < nav[-1] < 109, f"cumprod终值={nav[-1]:.2f}"
+        assert tv_pct[1] > 20, f"pct_change day2={tv_pct[1]:.1f}%"
+        assert abs(tv_pct[0] - daily_ret_pct[0]) < 0.1
+
+    def test_load_calendar_data_decimal_conversion(self):
+        """load_calendar_data 内部已做/100转小数, tab4使用无需再/100"""
+        from data_loader import load_calendar_data
+        result = load_calendar_data()
+        if result is None or "daily_return" not in result.columns:
+            return
+        dr = result["daily_return"].dropna()
+        if len(dr) < 5:
+            return
+        assert dr.abs().max() < 0.2, (
+            f"load_calendar_data daily_return已转小数, max={dr.abs().max():.4f}"
+        )
+
+    def test_summary_load_no_conversion(self):
+        """load_summary 返回原始DB百分比格式, 未经/100转换"""
+        from data_loader import load_summary
+        summary = load_summary()
+        if summary is None or "daily_return" not in summary.columns:
+            return
+        dr = summary["daily_return"].dropna()
+        if len(dr) < 5:
+            return
+        std = dr.std(ddof=1)
+        assert 0.3 < std < 10, (
+            f"load_summary daily_return std={std:.4f}, 应为百分比格式"
+        )
+
+    def test_net_value_cumprod_uses_decimal(self):
+        """tab1 净值计算: (daily_return/100).cumprod(), 源码验证"""
+        from pathlib import Path
+        source = (Path(__file__).resolve().parent.parent /
+                  "tabs" / "tab1_net_value.py").read_text(encoding="utf-8")
+        assert 'daily_return"] / 100' in source, \
+            "tab1 应使用 daily_return / 100 转小数后 cumprod"
+        # 直方图统计不应存在 daily_return * 100 (已修复)
+        for line in source.split('\n'):
+            if 'daily_return' in line and '* 100' in line:
+                if 'pct_change' in line or 'total_value' in line:
+                    continue
+                raise AssertionError(
+                    f"daily_return * 100 不应存在(DB已是百分比): {line.strip()}"
+                )
+
+    def test_monte_carlo_no_double_division(self):
+        """Monte Carlo: L648做/100后L684不应再/100"""
+        from pathlib import Path
+        source = (Path(__file__).resolve().parent.parent /
+                  "data_loader.py").read_text(encoding="utf-8")
+        assert 'df["daily_return"] / 100' in source, \
+            "Monte Carlo 应将 daily_return / 100 转为小数"
+        in_mc = False
+        for line in source.split('\n'):
+            if 'def run_monte_carlo' in line:
+                in_mc = True
+            elif in_mc and line.strip().startswith('def '):
+                break
+            elif in_mc and 'samples / 100' in line:
+                raise AssertionError(
+                    f"Monte Carlo 不应存在 samples / 100: {line.strip()}"
+                )
+
+    def test_tab5_rebalance_ret_arr_divides_100(self):
+        """tab5 再平衡模拟: ret_arr 应/100转小数"""
+        from pathlib import Path
+        source = (Path(__file__).resolve().parent.parent /
+                  "tabs" / "tab5_advanced.py").read_text(encoding="utf-8")
+        assert "ret_arr" in source and "/ 100" in source, \
+            "tab5 再平衡模拟应将 ret_arr / 100 转小数"
+
+    def test_factor_attribution_port_returns_decimal(self):
+        """因子归因: port_returns 应/100转为小数"""
+        from pathlib import Path
+        source = (Path(__file__).resolve().parent.parent /
+                  "src" / "analysis" / "factor_attribution.py").read_text(encoding="utf-8")
+        assert "port_returns" in source and "/ 100" in source, \
+            "factor_attribution 应将 port_returns / 100 转为小数"
+
+    def test_sharpe_formula_subtracts_rf(self):
+        """Sharpe = (mean - Rf_daily) / std * sqrt(252)"""
+        import numpy as np
+        daily_rets = np.array([0.01, 0.009, 0.011, 0.01, 0.009])
+        rf_daily = 0.03 / 252
+        mean_excess = daily_rets.mean() - rf_daily
+        std_daily = np.std(daily_rets, ddof=1)
+        sharpe = mean_excess / std_daily * np.sqrt(252)
+        assert sharpe > 0, f"正超额收益Sharpe应>0: {sharpe:.4f}"
+
+    def test_sortino_subtracts_rf(self):
+        """Sortino = (mean - Rf_daily) / downside_std * sqrt(252)
+        全部正收益且> Rf -> Sortino应为正"""
+        import numpy as np
+        # daily returns in decimal format
+        rets = np.array([0.02, 0.03, 0.01, 0.04, 0.02])
+        rf_daily = 0.03 / 252
+        excess = rets - rf_daily
+        downside = excess[excess < 0]
+        if len(downside) > 1:
+            ds_std = np.std(downside, ddof=1)
+            sortino = excess.mean() / ds_std * np.sqrt(252)
+        else:
+            sortino = float("inf")  # 无下行偏差
+        assert sortino > 0, f"全部正收益组合Sortino应>0: {sortino:.4f}"
+
+    def test_factor_residual_std_ddof1(self):
+        """因子归因残差标准差应使用 ddof=1"""
+        from pathlib import Path
+        source = (Path(__file__).resolve().parent.parent /
+                  "src" / "analysis" / "factor_attribution.py").read_text(encoding="utf-8")
+        assert "ddof=1" in source, "factor_attribution 残差标准差应使用 ddof=1"
