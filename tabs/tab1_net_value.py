@@ -130,7 +130,8 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
             ret_start_idx = max(0, len(summary) - show_days)
             summary_ret = summary.iloc[ret_start_idx:].copy()
             # 使用预存的 corrected daily_return，避免 total_value 跳变影响
-            daily_rets = (summary_ret["daily_return"].dropna() * 100).values if "daily_return" in summary_ret.columns else (summary_ret["total_value"].pct_change().dropna() * 100).values
+            # daily_return 在 DB 中以百分比格式存储（如 1.5 表示 1.5%），直接使用即可
+            daily_rets = summary_ret["daily_return"].dropna().values if "daily_return" in summary_ret.columns else (summary_ret["total_value"].pct_change().dropna() * 100).values
             if len(daily_rets) > 0:
                 std_ret = np.std(daily_rets, ddof=1)
                 mean_ret = np.mean(daily_rets)
