@@ -276,10 +276,13 @@ class PortfolioAnalyzer:
                 pos['realtime_market_value'] = pos['realtime_price'] * pos['quantity']
                 pos['realtime_pnl'] = (pos['realtime_price'] - pos['cost_price']) * pos['quantity']
             else:
-                # 无实时行情时，使用通达信静态数据
-                pos['realtime_price'] = pos.get('current_price', 0)
-                pos['realtime_market_value'] = pos.get('market_value', 0)
-                pos['realtime_pnl'] = pos.get('pnl', 0)
+                # 无实时行情时，使用已有价格计算盈亏（覆盖场外基金等无行情品种）
+                cur_p = pos.get('current_price', 0) or 0
+                cost_p = pos.get('cost_price', 0) or 0
+                qty = pos.get('quantity', 0) or 0
+                pos['realtime_price'] = cur_p
+                pos['realtime_market_value'] = cur_p * qty
+                pos['realtime_pnl'] = (cur_p - cost_p) * qty
                 pos['realtime_change_pct'] = 0
                 pos['pre_close'] = 0
 
