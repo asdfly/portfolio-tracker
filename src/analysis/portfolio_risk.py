@@ -48,9 +48,18 @@ class PortfolioRiskAnalyzer:
             logger.warning("历史数据不足，无法计算完整风险指标")
             return {'error': '历史数据不足'}
 
-        # 计算日收益率
+        # 计算日收益率（使用 corrected daily_return，避免 total_value 跳变影响）
+        # daily_return 在 DB 中以百分比格式存储（如 1.5 = 1.5%），需 /100 转小数
         values = np.array([h['total_value'] for h in history])
-        returns = np.diff(values) / values[:-1]
+        daily_returns_pct = np.array([h.get('daily_return', 0) or 0 for h in history])
+        # 优先使用 corrected daily_return；若全部为 0 则 fallback 到 total_value.pct_change
+        if np.any(daily_returns_pct != 0):
+            returns = daily_returns_pct / 100
+            # 用 corrected returns 构建累积净值序列（避免 total_value 跳变影响回撤计算）
+            prices = np.cumprod(1 + returns)
+        else:
+            returns = np.diff(values) / values[:-1]
+            prices = values
 
         # 获取沪深300作为基准
         benchmark_returns = self._get_benchmark_returns('sh000300', days)
