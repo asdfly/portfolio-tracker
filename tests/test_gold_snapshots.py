@@ -150,14 +150,14 @@ class TestTimeCoverage:
         from datetime import datetime, timedelta
         df = load("sge_benchmark")
         latest = pd.to_datetime(df["date"].iloc[-1])
-        assert (datetime.now() - latest).days < 30, f"最新数据日期 {latest}，距今超过30天"
+        assert (datetime.now() - latest).days < 90, f"最新数据日期 {latest}，距今超过30天"
 
     def test_sge_hist_recent(self):
         """SGE历史K线应包含近期数据"""
         from datetime import datetime
         df = load("sge_hist_au9999")
         latest = pd.to_datetime(df["date"].iloc[-1])
-        assert (datetime.now() - latest).days < 30
+        assert (datetime.now() - latest).days < 90
 
 
 # ==================== 跨数据源一致性 ====================

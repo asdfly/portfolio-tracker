@@ -11,7 +11,7 @@ class TestDbSchema:
         assert isinstance(TABLE_DEFS, list)
         assert isinstance(QUALITY_CHECK_TABLES, dict)
 
-    def test_all_17_tables_defined(self):
+    def test_all_18_tables_defined(self):
         from src.utils.db_schema import get_all_table_names
         tables = get_all_table_names()
         expected = {
@@ -21,9 +21,10 @@ class TestDbSchema:
             "indicator_backtest_results",
             "stock_lhb", "stock_margin", "stock_holder_change",
             "stock_institution_research", "stock_block_trade",
+            "trade_records",
         }
         assert set(tables) == expected
-        assert len(tables) == 17
+        assert len(tables) == 18
 
     def test_ddl_syntax_valid(self):
         """Each DDL should be executable SQL."""
@@ -66,7 +67,7 @@ class TestDbSchema:
         cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         tables = {r[0] for r in cur.fetchall()}
         tables.discard("sqlite_sequence")
-        assert len(tables) == 17
+        assert len(tables) == 18
 
     def test_market_event_tables_unique_constraints(self):
         """New market event tables should have UNIQUE constraints."""

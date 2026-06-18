@@ -42,7 +42,7 @@ class TestChangelog:
 
     def test_changelog_v22_has_test_count(self):
         content = self.changelog_path.read_text(encoding="utf-8")
-        assert "655" in content
+        assert "1307" in content
 
     def test_changelog_keeps_v21_content(self):
         content = self.changelog_path.read_text(encoding="utf-8")
@@ -89,7 +89,7 @@ class TestReadme:
 
     def test_readme_has_655_tests(self):
         content = self.readme_path.read_text(encoding="utf-8")
-        assert "655" in content
+        assert "1307" in content
 
     def test_readme_has_docker(self):
         content = self.readme_path.read_text(encoding="utf-8")

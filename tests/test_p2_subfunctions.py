@@ -62,10 +62,10 @@ class TestTab2Refactor:
 class TestTab4Refactor:
     """Verify tab4_calendar.py refactor."""
     EXPECTED_SUBFUNCS = {
-        "_render_year_overview": 126,
+        "_render_year_overview": 131,
         "_render_monthly_view": 121,
         "_render_heatmap": 41,
-        "_render_annual_trend": 47,
+        "_render_annual_trend": 52,
         "_render_boxplot": 33,
         "_render_event_calendar": 146,
     }
