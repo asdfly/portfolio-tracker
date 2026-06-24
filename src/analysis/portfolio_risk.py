@@ -64,8 +64,8 @@ class PortfolioRiskAnalyzer:
         # 获取沪深300作为基准
         benchmark_returns = self._get_benchmark_returns('sh000300', days)
 
-        # 计算风险指标
-        metrics = self.risk_analyzer.calculate_all(returns, values, benchmark_returns)
+        # 计算风险指标（使用 corrected 累积净值 prices 而非 raw total_value，避免场外基金跳变导致回撤虚高）
+        metrics = self.risk_analyzer.calculate_all(returns, prices, benchmark_returns)
 
         # 添加组合特定信息
         metrics['data_period'] = len(history)

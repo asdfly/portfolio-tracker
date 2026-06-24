@@ -773,6 +773,7 @@ def main():
         # === 阶段三.七b: ETF基本面数据采集（持仓F10数据）===
         try:
             from src.data_sources.etf_fundamental import run_etf_fundamental_collection
+            from config.settings import ETF_CATEGORIES
             etf_codes = list(ETF_CATEGORIES.keys())
             f10_stats = run_etf_fundamental_collection(etf_codes, ETF_CATEGORIES)
             f10_total = sum(v for k, v in f10_stats.items() if k != 'errors')
