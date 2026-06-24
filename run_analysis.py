@@ -747,11 +747,17 @@ def main():
         alerts = run_stage3_monitor(summary, risk_data)
 
         # === 阶段3.2: 资金流数据采集 ===
-        fund_flow_stats = run_stage_fund_flow()
+        try:
+            fund_flow_stats = run_stage_fund_flow()
+        except Exception as e:
+            logger.warning(f"资金流数据采集失败(不影响主流程): {e}")
 
         # === 阶段三.五: 行业资讯与新闻分析 ===
-        positions = results.get('positions', [])
-        news_result = run_stage_news(positions, summary, results.get('indices', {}))
+        try:
+            positions = results.get('positions', [])
+            news_result = run_stage_news(positions, summary, results.get('indices', {}))
+        except Exception as e:
+            logger.warning(f"新闻分析失败(不影响主流程): {e}")
 
 
         # === 阶段三.六: 宏观数据采集 ===
