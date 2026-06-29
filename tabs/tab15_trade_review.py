@@ -117,6 +117,16 @@ def calc_dca_tracking(df_trades, df_snapshots):
 
         profit = mv - invested
         rate = (profit / invested * 100) if invested > 0 else 0
+        # 赎回记录
+        redeems = df_trades[df_trades['action'] == '产品赎回确认']
+        r = redeems[redeems['code'] == code]
+        redeem_net = (r['change_amount'].sum() - r['commission'].sum()) if not r.empty else 0
+
+        # 全生命周期收益 = 赎回到账 + 红利 + 当前市值 - 全部流出(定投+申购)
+        total_flow_out = dca_amount + manual_amount
+        lifecycle_pnl = redeem_net + div_income + mv - total_flow_out
+        lifecycle_rate = (lifecycle_pnl / total_flow_out * 100) if total_flow_out > 0 else 0
+
         results.append({
             'code': code, 'name': cd['name'].iloc[0],
             'dca_count': len(cd), 'first_date': cd['date'].iloc[0],
@@ -124,11 +134,14 @@ def calc_dca_tracking(df_trades, df_snapshots):
             'dca_amount': round(dca_amount, 2),
             'manual_amount': round(manual_amount, 2),
             'div_income': round(div_income, 2),
+            'redeem_net': round(redeem_net, 2),
             'total_invested': round(invested, 2),
             'implied_cost': round(implied_cost, 2),
             'current_mv': round(mv, 2),
             'profit': round(profit, 2),
             'profit_rate': round(rate, 2),
+            'lifecycle_pnl': round(lifecycle_pnl, 2),
+            'lifecycle_rate': round(lifecycle_rate, 2),
             'current_qty': round(qty, 2),
         })
     return pd.DataFrame(results).sort_values('total_invested', ascending=False).reset_index(drop=True)
@@ -247,28 +260,46 @@ def _render_dca_section(df_trades, df_snapshots):
     c3.metric("当前市值", f"¥{total_mv:,.0f}")
     c4.metric("总收益", f"¥{total_p:,.0f}", delta=f"{ovr:.1f}%")
 
-    st.caption("投入成本 = 持仓量 × 成本价（隐含总成本），包含定投和手动申购两部分")
+    total_lc = dca_df['lifecycle_pnl'].sum()
+    total_lc_inv = (dca_df['dca_amount'] + dca_df['manual_amount']).sum()
+    total_lc_rate = (total_lc / total_lc_inv * 100) if total_lc_inv > 0 else 0
+    total_redeem = dca_df['redeem_net'].sum()
+    total_div = dca_df['div_income'].sum()
+
+    st.caption("投入成本 = 持仓量 × 成本价（隐含总成本）；全生命周期 = 含赎回+红利，基于交易记录净流入")
 
     display = dca_df[['code', 'name', 'dca_count', 'dca_amount', 'manual_amount',
-                       'total_invested', 'current_mv', 'profit', 'profit_rate']].copy()
-    display.columns = ['代码', '名称', '定投次数', '定投金额(¥)', '手动申购(¥)',
-                        '总投入(¥)', '当前市值(¥)', '收益(¥)', '收益率(%)']
-    display['定投金额(¥)'] = display['定投金额(¥)'].round(0)
-    display['手动申购(¥)'] = display['手动申购(¥)'].round(0)
-    display['总投入(¥)'] = display['总投入(¥)'].round(0)
-    display['当前市值(¥)'] = display['当前市值(¥)'].round(0)
-    display['收益(¥)'] = display['收益(¥)'].round(0)
+                       'total_invested', 'current_mv', 'profit', 'profit_rate',
+                       'redeem_net', 'div_income', 'lifecycle_pnl', 'lifecycle_rate']].copy()
+    display.columns = ['代码', '名称', '定投次数', '定投金额', '手动申购',
+                        '持仓投入(隐含)', '当前市值', '持仓收益', '持仓收益率%',
+                        '赎回到账', '红利', '全周期收益', '全周期收益率%']
+    for col in ['定投金额', '手动申购', '持仓投入(隐含)', '当前市值', '持仓收益', '赎回到账', '红利', '全周期收益']:
+        display[col] = display[col].round(0)
+    for col in ['持仓收益率%', '全周期收益率%']:
+        display[col] = display[col].round(1)
     st.dataframe(display.reset_index(drop=True), use_container_width=True, hide_index=True)
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(name='总投入(隐含成本)', x=dca_df['name'], y=dca_df['total_invested'],
+    fig.add_trace(go.Bar(name='持仓投入(隐含成本)', x=dca_df['name'], y=dca_df['total_invested'],
                          marker_color='#4a90d9'))
     fig.add_trace(go.Bar(name='当前市值', x=dca_df['name'], y=dca_df['current_mv'],
                          marker_color='#28a745'))
-    fig.update_layout(barmode='group', title="定投基金投入 vs 当前市值",
+    fig.add_trace(go.Bar(name='全周期收益', x=dca_df['name'], y=dca_df['lifecycle_pnl'],
+                         marker_color='#ffc107'))
+    fig.update_layout(barmode='group', title="定投基金：持仓投入 vs 市值 vs 全周期收益",
                       height=400, xaxis_title="", yaxis_title="金额(¥)",
                       margin=dict(l=40, r=20, t=40, b=100))
     render_chart(fig)
+
+    # 全周期汇总卡片
+    if total_redeem > 0 or total_div > 0:
+        st.markdown("---")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("全周期总投入(交易流出)", f"¥{total_lc_inv:,.0f}")
+        c2.metric("已收回(赎回+红利)", f"¥{total_redeem + total_div:,.0f}",
+                  delta=f"赎回{total_redeem:,.0f}+红利{total_div:,.0f}")
+        c3.metric("全周期净收益", f"¥{total_lc:,.0f}", delta=f"{total_lc_rate:.1f}%")
 
 
 def _render_cost_section(df_trades):

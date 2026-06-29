@@ -234,9 +234,10 @@ class TestCalcDcaTracking:
         from tabs.tab15_trade_review import calc_dca_tracking
         result = calc_dca_tracking(trades_dca, snapshots_basic)
         expected = {'code', 'name', 'dca_count', 'first_date', 'last_date',
-                    'dca_amount', 'manual_amount', 'div_income',
+                    'dca_amount', 'manual_amount', 'div_income', 'redeem_net',
                     'total_invested', 'implied_cost',
-                    'current_mv', 'profit', 'profit_rate', 'current_qty'}
+                    'current_mv', 'profit', 'profit_rate',
+                    'lifecycle_pnl', 'lifecycle_rate', 'current_qty'}
         assert set(result.columns) == expected
 
     def test_dca_dates(self, trades_dca, snapshots_basic):
