@@ -205,15 +205,17 @@ class TestCalcDcaTracking:
     """测试定投基金追踪"""
 
     def test_basic_dca(self, trades_dca, snapshots_basic):
-        """基本定投：007994 定投2次(400)，100032 定投1次(200)"""
+        """基本定投：007994 定投2次(400)，隐含成本=380*1.55=589"""
         from tabs.tab15_trade_review import calc_dca_tracking
         result = calc_dca_tracking(trades_dca, snapshots_basic)
         assert len(result) == 2
         row_994 = result[result['code'] == '007994'].iloc[0]
         assert row_994['dca_count'] == 2
-        assert row_994['total_invested'] == 400.0
+        # 隐含成本 = quantity * cost_price = 380 * 1.55 = 589.0
+        assert abs(row_994['total_invested'] - 589.0) < 0.01
         assert row_994['current_mv'] == 760.0
-        assert abs(row_994['profit'] - 360.0) < 0.01
+        # profit = 760 - 589 = 171.0
+        assert abs(row_994['profit'] - 171.0) < 0.01
 
     def test_dca_no_trades(self, trades_buy_sell, snapshots_basic):
         """无定投记录，返回空"""
@@ -232,7 +234,9 @@ class TestCalcDcaTracking:
         from tabs.tab15_trade_review import calc_dca_tracking
         result = calc_dca_tracking(trades_dca, snapshots_basic)
         expected = {'code', 'name', 'dca_count', 'first_date', 'last_date',
-                    'total_invested', 'current_mv', 'profit', 'profit_rate', 'current_qty'}
+                    'dca_amount', 'manual_amount', 'div_income',
+                    'total_invested', 'implied_cost',
+                    'current_mv', 'profit', 'profit_rate', 'current_qty'}
         assert set(result.columns) == expected
 
     def test_dca_dates(self, trades_dca, snapshots_basic):

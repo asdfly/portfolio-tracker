@@ -77,26 +77,55 @@ def calc_etf_trade_pnl(df_trades):
 
 
 def calc_dca_tracking(df_trades, df_snapshots):
-    """定投基金追踪：累计投入、当前市值、收益率"""
+    """定投基金追踪：累计投入、当前市值、收益率
+
+    投入成本使用隐含总成本(持仓量 × 成本价)而非仅定投金额，
+    因为当前市值包含定投+手动申购两部分资金。"""
     dca = df_trades[df_trades['action'] == '产品定时定额投资确认'].copy()
     if dca.empty:
         return pd.DataFrame()
+    # 手动申购记录（产品申购确认）
+    manual = df_trades[df_trades['action'] == '产品申购确认'].copy()
+    # 红利记录
+    dividends = df_trades[df_trades['action'] == '产品红利发放'].copy()
+
     latest_date = df_snapshots['date'].max()
     latest_snap = df_snapshots[df_snapshots['date'] == latest_date]
     results = []
     for code in dca['code'].unique():
         cd = dca[dca['code'] == code].sort_values('date')
-        invested = cd['amount'].sum()
+        dca_amount = abs(cd['amount'].sum())
+        # 手动申购金额
+        m = manual[manual['code'] == code]
+        manual_amount = abs(m['amount'].sum()) if not m.empty else 0
+        # 红利收入
+        div = dividends[dividends['code'] == code]
+        div_income = div['change_amount'].sum() if not div.empty else 0
+        # 交易记录净投入（所有流出金额之和）
+        code_trades = df_trades[df_trades['code'] == code]
+        trade_net_invest = abs(code_trades[code_trades['change_amount'] < 0]['change_amount'].sum())
+
         snap = latest_snap[latest_snap['code'] == code]
         mv = snap['market_value'].values[0] if not snap.empty else 0
         qty = snap['quantity'].values[0] if not snap.empty else 0
-        profit = mv - abs(invested)
-        rate = (profit / abs(invested) * 100) if abs(invested) > 0 else 0
+        cost_price = snap['cost_price'].values[0] if not snap.empty else 0
+        # 隐含总成本 = 持仓量 × 成本价
+        implied_cost = qty * cost_price if qty > 0 else 0
+        # 使用隐含总成本作为投入基准（比交易记录更准确，尤其对记录缺失的基金）
+        # 直接使用隐含总成本作为投入基准（当前持仓的真实成本，不受赎回/记录缺失影响）
+        invested = implied_cost if implied_cost > 0 else trade_net_invest
+
+        profit = mv - invested
+        rate = (profit / invested * 100) if invested > 0 else 0
         results.append({
             'code': code, 'name': cd['name'].iloc[0],
             'dca_count': len(cd), 'first_date': cd['date'].iloc[0],
             'last_date': cd['date'].iloc[-1],
-            'total_invested': round(abs(invested), 2),
+            'dca_amount': round(dca_amount, 2),
+            'manual_amount': round(manual_amount, 2),
+            'div_income': round(div_income, 2),
+            'total_invested': round(invested, 2),
+            'implied_cost': round(implied_cost, 2),
             'current_mv': round(mv, 2),
             'profit': round(profit, 2),
             'profit_rate': round(rate, 2),
@@ -208,27 +237,35 @@ def _render_dca_section(df_trades, df_snapshots):
     total_inv = dca_df['total_invested'].sum()
     total_mv = dca_df['current_mv'].sum()
     total_p = dca_df['profit'].sum()
+    total_dca = dca_df['dca_amount'].sum()
+    total_manual = dca_df['manual_amount'].sum()
     ovr = (total_p / total_inv * 100) if total_inv > 0 else 0
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("定投基金", f"{len(dca_df)} 只")
-    c2.metric("累计投入", f"¥{total_inv:,.0f}")
+    c2.metric("总投入", f"¥{total_inv:,.0f}", delta=f"定投{total_dca:,.0f}+手动{total_manual:,.0f}")
     c3.metric("当前市值", f"¥{total_mv:,.0f}")
     c4.metric("总收益", f"¥{total_p:,.0f}", delta=f"{ovr:.1f}%")
 
-    display = dca_df[['code', 'name', 'dca_count', 'total_invested',
-                       'current_mv', 'profit', 'profit_rate']].copy()
-    display.columns = ['代码', '名称', '定投次数', '累计投入(¥)',
-                        '当前市值(¥)', '收益(¥)', '收益率(%)']
+    st.caption("投入成本 = 持仓量 × 成本价（隐含总成本），包含定投和手动申购两部分")
+
+    display = dca_df[['code', 'name', 'dca_count', 'dca_amount', 'manual_amount',
+                       'total_invested', 'current_mv', 'profit', 'profit_rate']].copy()
+    display.columns = ['代码', '名称', '定投次数', '定投金额(¥)', '手动申购(¥)',
+                        '总投入(¥)', '当前市值(¥)', '收益(¥)', '收益率(%)']
+    display['定投金额(¥)'] = display['定投金额(¥)'].round(0)
+    display['手动申购(¥)'] = display['手动申购(¥)'].round(0)
+    display['总投入(¥)'] = display['总投入(¥)'].round(0)
+    display['当前市值(¥)'] = display['当前市值(¥)'].round(0)
     display['收益(¥)'] = display['收益(¥)'].round(0)
     st.dataframe(display.reset_index(drop=True), use_container_width=True, hide_index=True)
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(name='累计投入', x=dca_df['name'], y=dca_df['total_invested'],
+    fig.add_trace(go.Bar(name='总投入(隐含成本)', x=dca_df['name'], y=dca_df['total_invested'],
                          marker_color='#4a90d9'))
     fig.add_trace(go.Bar(name='当前市值', x=dca_df['name'], y=dca_df['current_mv'],
                          marker_color='#28a745'))
-    fig.update_layout(barmode='group', title="定投投入 vs 当前市值",
+    fig.update_layout(barmode='group', title="定投基金投入 vs 当前市值",
                       height=400, xaxis_title="", yaxis_title="金额(¥)",
                       margin=dict(l=40, r=20, t=40, b=100))
     render_chart(fig)
