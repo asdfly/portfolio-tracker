@@ -14,6 +14,7 @@ from config.settings import ETF_CATEGORIES, SECTOR_COLORS, PROJECT_ROOT
 from tabs._helpers import _generate_oneclick_report
 from src.utils.database import get_db_connection
 from src.utils.chart_utils import _cleanse_daily_returns
+import sqlite3
 from data_loader import load_positions, load_summary
 
 
