@@ -28,6 +28,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                     SELECT date, name, code, net_inflow
                     FROM fund_flows
                     WHERE category = 'sector'
+                      AND date >= date('now', '-60 days')
                     ORDER BY date DESC, net_inflow DESC
                 """,
                     conn_ff,
@@ -176,9 +177,7 @@ def _render_industry_fund_flow(tab_obj, positions):
                     unsafe_allow_html=True,
                 )
                 try:
-                    conn_dv = get_db_connection()
-                    try:
-                        # 获取近5日板块资金流合计
+                    # 背离信号分析基于已加载的 sector_df，无需额外DB查询
                         dates_5 = sorted(sector_df["date"].unique(), reverse=True)[:5]
                         dv_df = sector_df[sector_df["date"].isin(dates_5)].copy()
                         dv_5d = dv_df.groupby("name")["net_inflow"].sum().sort_values(ascending=False)
@@ -237,8 +236,6 @@ def _render_industry_fund_flow(tab_obj, positions):
                                     st.caption("暂无流出减缓信号")
                         else:
                             st.caption("当前无显著背离信号")
-                    finally:
-                        conn_dv.close()
                 except (KeyError, ValueError, IndexError, TypeError):  # UI渲染降级：资金流背离信号
                     pass
 
@@ -347,6 +344,7 @@ def _render_etf_fund_flow(tab_obj, positions):
                     LEFT JOIN portfolio_snapshots ps
                         ON f.code = ps.code AND f.date = ps.date
                     WHERE f.category = 'etf'
+                      AND f.date >= date('now', '-90 days')
                     ORDER BY f.date DESC, f.code
                 """,
                     conn_ef,

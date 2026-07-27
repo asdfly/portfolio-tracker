@@ -212,6 +212,8 @@ def get_db_connection(db_path=None):
             "CREATE INDEX IF NOT EXISTS idx_idx_quote_code_date ON index_quotes(code, date)",
             "CREATE INDEX IF NOT EXISTS idx_tech_date ON etf_technical(date)",
             "CREATE INDEX IF NOT EXISTS idx_tech_code_date ON etf_technical(code, date)",
+            "CREATE INDEX IF NOT EXISTS idx_fund_flows_cat_date ON fund_flows(category, date)",
+            "CREATE INDEX IF NOT EXISTS idx_fund_flows_code_date ON fund_flows(code, date)",
         ]
         for sql in indexes:
             try:

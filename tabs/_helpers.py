@@ -1434,7 +1434,10 @@ def _render_peer_penetration_panel(code, sector):
             if top_o.common_stocks:
                 st.markdown(f'*Top \u91cd\u53e0: {ETF_CATEGORIES.get(top_o.code_b, {}).get("name", top_o.code_b)}*')
                 for cs in top_o.common_stocks[:5]:
-                    st.markdown(f"  - {cs["stock_name"]}: \u6301\u4ed3A {cs["weight_a"]:.1%} / \u6301\u4ed3B {cs["weight_b"]:.1%}")
+                    sn = cs["stock_name"]
+                    wa = cs["weight_a"]
+                    wb = cs["weight_b"]
+                    st.markdown(f"  - {sn}: \u6301\u4ed3A {wa:.1%} / \u6301\u4ed3B {wb:.1%}")
     else:
         st.info('\u6682\u65e0\u91cd\u4ed3\u80a1\u6570\u636e\u7528\u4e8e\u91cd\u53e0\u5ea6\u8ba1\u7b97')
 
