@@ -190,17 +190,55 @@ def _render_suggestions_compute_v2(positions, summary):
     except (ImportError, ValueError, TypeError, KeyError) as e:
         logger.warning(f"Multi-factor load error: {e}")
         return [], action_colors
+
+    # 从 positions 构建 pnl_rate 查找表
+    pnl_map = {}
+    if positions is not None and not positions.empty:
+        for _, pos in positions.iterrows():
+            code = str(pos["code"])
+            pnl_rate = pos.get("pnl_rate", 0)
+            try:
+                pnl_rate = float(pnl_rate) if not pd.isna(pnl_rate) else 0.0
+            except (ValueError, TypeError):
+                pnl_rate = 0.0
+            pnl_map[code] = pnl_rate
+
+    # 从 etf_technical 读取 RSI 值
+    rsi_map = {}
+    tech_codes = [str(mf.code) for mf in mf_scores]
+    if tech_codes:
+        try:
+            conn_tech = get_db_connection()
+            ph = ",".join(["?" for _ in tech_codes])
+            tech_df = pd.read_sql_query(
+                f"SELECT code, rsi_value, trend FROM etf_technical "
+                f"WHERE code IN ({ph}) ORDER BY date DESC",
+                conn_tech, params=tech_codes)
+            conn_tech.close()
+            latest_tech = tech_df.drop_duplicates("code", keep="first")
+            for _, tr in latest_tech.iterrows():
+                rsi_map[str(tr["code"])] = float(tr["rsi_value"]) if not pd.isna(tr["rsi_value"]) else 50.0
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
+            pass
+
+    # ETF_CATEGORIES sector 查找
+    from config.settings import ETF_CATEGORIES
+
     suggestions = []
     for mf in mf_scores:
+        code = str(mf.code)
+        cat_info = ETF_CATEGORIES.get(code, {})
         suggestions.append({
-            "name": mf.name, "code": mf.code, "sector": "",
+            "name": mf.name, "code": code, "sector": cat_info.get("sector", "未知"),
             "action": mf.action, "urgency": mf.urgency,
             "reasons": mf.reasons,
             "buy_score": mf.technical.score,
             "sell_score": 100.0 - mf.technical.score,
             "net_signal": mf.total_score,
-            "pnl_rate": 0, "market_value": 0,
-            "trend": mf.technical.level, "rsi": 50,
+            "pnl_rate": pnl_map.get(code, 0.0),
+            "market_value": 0,
+            "trend": mf.technical.level,
+            "rsi": rsi_map.get(code, 50.0),
             "mf_total": mf.total_score,
             "mf_tech": mf.technical.score,
             "mf_risk": 100.0 - mf.risk.score,
