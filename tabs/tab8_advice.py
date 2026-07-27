@@ -106,13 +106,17 @@ def _render_suggestions_compute(positions, summary):
                 reasons.append("KDJ死叉")
 
             # 布林带
-            boll_pos = tr.get("bollinger_position", "")
-            if "下轨" in str(boll_pos):
+            boll_pos = tr.get("bollinger_position", 50)
+            try:
+                boll_pct = float(boll_pos) if not pd.isna(boll_pos) else 50.0
+            except (ValueError, TypeError):
+                boll_pct = 50.0
+            if boll_pct <= 20:
                 buy_signals += 0.5
-                reasons.append("触及布林下轨")
-            elif "上轨" in str(boll_pos):
+                reasons.append(f"布林带低位({boll_pct:.0f}%)")
+            elif boll_pct >= 80:
                 sell_signals += 0.5
-                reasons.append("触及布林上轨")
+                reasons.append(f"布林带高位({boll_pct:.0f}%)")
 
             # 趋势
             trend = str(tr.get("trend", ""))
