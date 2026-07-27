@@ -483,6 +483,10 @@ def _render_news_sentiment(positions, summary):
                 "FROM daily_news WHERE date >= date('now', '-7 days') "
                 "AND sentiment_score IS NOT NULL ORDER BY date DESC",
                 conn_sent)
+        except (pd.errors.DatabaseError, sqlite3.OperationalError) as qe:
+            sent_df = pd.DataFrame()
+            import logging
+            logging.getLogger(__name__).warning(f"新闻情感查询失败: {qe}")
         finally:
             conn_sent.close()
 
@@ -572,8 +576,10 @@ def _render_news_sentiment(positions, summary):
                             unsafe_allow_html=True)
         else:
             st.info("近7天无新闻情感数据")
-    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
-        st.info("新闻情感分析暂不可用")
+    except Exception as e:
+        st.warning(f"新闻情感分析加载失败: {type(e).__name__}: {e}")
+        import logging
+        logging.getLogger(__name__).warning(f"新闻情感分析异常: {e}", exc_info=True)
 
 
 def render_tab7():
