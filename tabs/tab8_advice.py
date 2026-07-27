@@ -457,7 +457,7 @@ def _render_suggestion_details(suggestions, action_colors):
             f'<span>多空信号: <b style="color:#22c55e;">{s["buy_score"]:.1f}</b> / <b style="color:#ef4444;">{s["sell_score"]:.1f}</b></span>'
             f'<span>净信号: <b style="color:{action_color};">{s["net_signal"]:+.1f}</b></span>'
             f'<span>收益率: <b style="color:{"#22c55e" if s["pnl_rate"] >= 0 else "#ef4444"};">{s["pnl_rate"]:+.2f}%</b></span>'
-            f'<span>RSI: {s["rsi"]:.0f}</span>'
+            f'<span>RSI: <b style="color:{"#ef4444" if s["rsi"] >= 70 else "#22c55e" if s["rsi"] <= 30 else "#8b949e"};">{s["rsi"]:.0f}</b></span>'
             f"</div></div>",
             unsafe_allow_html=True,
         )
