@@ -70,13 +70,14 @@ class SmartReportGenerator:
                     description TEXT,
                     confidence REAL,
                     related_codes TEXT,
-                    source TEXT DEFAULT 'auto'
+                    source TEXT DEFAULT 'auto',
+                    status TEXT DEFAULT 'pending'
                 )
             """)
             _conn_fb.commit()
             for advice in advices:
                 _conn_fb.execute(
-                    "INSERT INTO advice_history (created_at, advice_type, priority, title, description, confidence, related_codes, source, status) VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT INTO advice_history (created_at, advice_type, priority, title, description, confidence, related_codes, source, status) VALUES (?,?,?,?,?,?,?,?,?)",
                     (advice.created_at.strftime('%Y-%m-%d %H:%M:%S'),
                      advice.type.value, advice.priority.value,
                      advice.title, advice.description,
@@ -88,8 +89,8 @@ class SmartReportGenerator:
             _conn_fb.commit()
             logger.info(f'建议历史已记录: {len(advices)}条')
             _conn_fb.close()
-        except sqlite3.OperationalError as e:
-            logger.debug(f'建议历史记录跳过: {e}')
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
+            logger.warning(f'建议历史记录失败: {e}')
 
         return report
 

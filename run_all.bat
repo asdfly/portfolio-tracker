@@ -3,7 +3,7 @@ chcp 65001 >nul
 title 投资组合智能分析系统 v2.0
 
 set PROJECT_DIR=%~dp0
-set "PYTHON_ENV=C:\Users\HUAWEI\AppData\Roaming\WPS 灵犀\python-env\python.exe"
+set "PYTHON_ENV=C:\Program Files\Python310\python.exe"
 set "VENV_ACTIVATE=%PROJECT_DIR%venv\Scripts\activate.bat"
 set "PYTHON=%PYTHON_ENV%"
 
