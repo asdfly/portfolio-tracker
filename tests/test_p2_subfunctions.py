@@ -135,13 +135,15 @@ class TestTab7Refactor:
 class TestTab8Refactor:
     """Verify tab8_advice.py refactor."""
     EXPECTED_SUBFUNCS = {
-        "_render_suggestions_compute": 150,
+        "_render_suggestions_compute": 155,
         "_render_suggestion_cards": 24,
-        "_render_suggestion_pie": 64,
-        "_render_suggestion_details": 44,
+        "_render_suggestion_pie": 120,
+        "_render_suggestion_details": 79,
+        "_render_signal_confidence": 136,
+        "_render_backtest_heatmap": 122,
         "_render_market_events": 62,
-        "_render_data_export": 49,
-        "_render_feedback_tracking": 139,
+        "_render_data_export": 48,
+        "_render_feedback_tracking": 176,
     }
 
     def test_subfunc_exist(self):

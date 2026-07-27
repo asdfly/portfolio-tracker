@@ -426,6 +426,29 @@ def _render_suggestion_details(suggestions, action_colors):
         unsafe_allow_html=True,
     )
 
+    # 加载信号置信度数据用于在卡片中展示
+    conf_lookup = {}
+    try:
+        _conf_conn = get_db_connection()
+        _conf_rows = pd.read_sql_query(
+            "SELECT code, composite_confidence, composite_grade, signal_value, indicator "
+            "FROM signal_confidence_current WHERE composite_confidence IS NOT NULL",
+            _conf_conn)
+        _conf_conn.close()
+        for _, row in _conf_rows.iterrows():
+            key = row["code"]
+            if key not in conf_lookup or row["composite_confidence"] > conf_lookup[key]["score"]:
+                conf_lookup[key] = {
+                    "score": row["composite_confidence"],
+                    "grade": row["composite_grade"],
+                    "signal": row["signal_value"],
+                    "indicator": row["indicator"],
+                }
+    except Exception:
+        pass
+
+    grade_colors = {"A": "#22c55e", "B": "#84cc16", "C": "#f59e0b", "D": "#6b7280"}
+
     for s in suggestions:
         action_color = action_colors.get(s["action"], "#8b949e")
         sector_color = SECTOR_COLORS.get(s["sector"], "#8b949e")
@@ -440,6 +463,16 @@ def _render_suggestion_details(suggestions, action_colors):
             trend_icon = "⚪"
         reasons_str = " | ".join(s["reasons"][:5]) if s["reasons"] else "暂无明显信号"
 
+        # 信号置信度徽章
+        conf_info = conf_lookup.get(s["code"])
+        if conf_info:
+            gc = grade_colors.get(conf_info["grade"], "#6b7280")
+            conf_badge = (f'<span style="font-size:10px;color:{gc};background:{gc}15;'
+                          f'padding:2px 6px;border-radius:3px;margin-left:6px;">'
+                          f'回测置信 {conf_info["score"]:.0f} [{conf_info["grade"]}]</span>')
+        else:
+            conf_badge = ""
+
         st.markdown(
             f'<div style="background:#161b22;border-radius:6px;padding:12px 14px;margin-bottom:6px;border-left:3px solid {action_color};">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;">'
@@ -447,6 +480,7 @@ def _render_suggestion_details(suggestions, action_colors):
             f'<span style="font-size:14px;font-weight:bold;color:#e6edf3;">{s["name"]}</span>'
             f'<span style="font-size:11px;color:#484f58;margin-left:8px;">{s["code"]}</span>'
             f'<span style="font-size:11px;color:{sector_color};background:{sector_color}15;padding:1px 6px;border-radius:3px;margin-left:6px;">{s["sector"]}</span>'
+            f"{conf_badge}"
             f"</div>"
             f'<div style="display:flex;align-items:center;gap:6px;">'
             f"{trend_icon}"
@@ -464,6 +498,268 @@ def _render_suggestion_details(suggestions, action_colors):
 
     if not suggestions:
         st.info("暂无足够技术数据生成操作建议")
+
+def _render_signal_confidence(positions):
+    """渲染当前持仓ETF的信号置信度面板。
+
+    展示每只ETF当前技术信号的回测置信度：
+    - 指标 × 前瞻窗口的热力表格
+    - 综合置信度评分与等级
+    - 命中率趋势图
+    """
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '信号置信度分析<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '基于历史回测，量化各技术信号对未来5/10/20/30/60日收益方向的预测准确率与置信度。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        conn = get_db_connection()
+
+        conf_df = pd.read_sql_query("""
+            SELECT code, name, indicator, signal_value, signal_direction,
+                   conf_5d, conf_10d, conf_20d, conf_30d, conf_60d,
+                   composite_confidence, composite_grade,
+                   hit_rate_5d, hit_rate_10d, hit_rate_20d, hit_rate_30d, hit_rate_60d
+            FROM signal_confidence_current
+            WHERE composite_confidence IS NOT NULL
+            ORDER BY composite_confidence DESC
+        """, conn)
+
+        if conf_df.empty:
+            st.info("暂无信号置信度数据，请先运行回测引擎（run_analysis 阶段六b）。")
+            conn.close()
+            return
+
+        ind_map = {
+            "ma_signal": "均线信号", "macd_signal": "MACD信号",
+            "rsi_status": "RSI状态", "kdj_signal": "KDJ信号",
+            "bollinger": "布林带位置", "trend": "趋势信号",
+        }
+
+        total_signals = len(conf_df)
+        grade_a = len(conf_df[conf_df["composite_grade"] == "A"])
+        grade_b = len(conf_df[conf_df["composite_grade"] == "B"])
+        avg_conf = conf_df["composite_confidence"].mean()
+
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        cc1.metric("有效信号数", total_signals)
+        cc2.metric("A级(高置信)", grade_a)
+        cc3.metric("B级(中置信)", grade_b)
+        cc4.metric("平均置信度", f"{avg_conf:.1f}")
+
+        etf_options = conf_df[["code", "name"]].drop_duplicates().sort_values("name")
+        etf_options["label"] = etf_options["name"] + " (" + etf_options["code"] + ")"
+
+        sel_col1, sel_col2 = st.columns([3, 1])
+        with sel_col1:
+            sel_etf = st.selectbox(
+                "选择ETF查看信号置信度",
+                options=etf_options["code"].tolist(),
+                format_func=lambda c: etf_options[etf_options["code"] == c]["label"].iloc[0],
+                key="sig_conf_etf",
+            )
+        with sel_col2:
+            show_all = st.checkbox("显示全部ETF", value=False, key="sig_conf_all")
+
+        if show_all:
+            display_df = conf_df.copy()
+        else:
+            display_df = conf_df[conf_df["code"] == sel_etf].copy()
+
+        if display_df.empty:
+            st.info("该ETF暂无有效信号置信度数据")
+            conn.close()
+            return
+
+        st.markdown("**信号置信度矩阵（分数/等级）**")
+        display_df = display_df.copy()
+        display_df["指标"] = display_df["indicator"].map(lambda x: ind_map.get(x, x))
+        display_df["当前信号"] = display_df["signal_value"]
+        display_df["方向"] = display_df["signal_direction"].map(lambda d: "看多" if d > 0 else ("看空" if d < 0 else "中性"))
+        display_df["综合"] = display_df.apply(
+            lambda r: f"{r['composite_confidence']:.1f} [{r['composite_grade']}]", axis=1
+        )
+
+        for n, label in [(5, "5日"), (10, "10日"), (20, "20日"), (30, "30日"), (60, "60日")]:
+            col = f"conf_{n}d"
+            display_df[label] = display_df.apply(
+                lambda r: f"{r[col]:.1f}" if pd.notna(r[col]) else "-", axis=1
+            )
+
+        table_cols = ["name", "指标", "当前信号", "方向", "5日", "10日", "20日", "30日", "60日", "综合"]
+        st.dataframe(
+            display_df[table_cols].rename(columns={"name": "ETF"}),
+            use_container_width=True,
+            hide_index=True,
+            height=min(200 + len(display_df) * 35, 500),
+        )
+
+        st.markdown("**各信号命中率（偏离50%越大越有效）**")
+        if not show_all:
+            etf_conf = conf_df[conf_df["code"] == sel_etf].copy()
+        else:
+            etf_conf = conf_df.copy()
+
+        etf_conf = etf_conf[etf_conf["signal_direction"] != 0]
+        if not etf_conf.empty:
+            windows = [5, 10, 20, 30, 60]
+            hr_cols = [f"hit_rate_{n}d" for n in windows]
+            hr_labels = [f"{n}日" for n in windows]
+
+            fig = go.Figure()
+            for _, row in etf_conf.iterrows():
+                ind_label = ind_map.get(row["indicator"], row["indicator"])
+                sig_label = f"{row['name']} - {ind_label}({row['signal_value']})"
+                values = [row[c] if pd.notna(row[c]) else None for c in hr_cols]
+                fig.add_trace(go.Scatter(
+                    x=hr_labels, y=values, mode="lines+markers",
+                    name=sig_label, hovertemplate="%{y:.1%}<extra></extra>",
+                ))
+            fig.add_hline(y=0.5, line_dash="dash", line_color="gray",
+                          annotation_text="随机基准(50%)")
+            fig.update_layout(
+                yaxis_title="命中率", xaxis_title="前瞻窗口",
+                height=350, margin=dict(l=40, r=20, t=20, b=40),
+                legend=dict(font_size=10, orientation="h", yanchor="bottom", y=-0.3),
+            )
+            render_chart(fig)
+        else:
+            st.info("该ETF当前无方向性信号")
+
+        conn.close()
+
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
+        st.warning(f"信号置信度数据加载失败: {e}")
+
+
+def _render_backtest_heatmap():
+    """渲染全市场信号回测热力图与排名。
+
+    展示所有信号的回测统计结果：
+    - 热力图：指标信号 × 前瞻窗口，颜色编码置信度分数
+    - 排名表：按置信度排序的Top/Bottom信号
+    - 指标汇总：各指标平均置信度与命中率
+    """
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '信号回测统计<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '全市场历史回测：6类指标x15种信号x5个前瞻窗口，共108组统计。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        conn = get_db_connection()
+
+        stats_df = pd.read_sql_query("""
+            SELECT indicator, signal_value, signal_direction, forward_window,
+                   sample_count, hit_count, hit_rate, avg_return,
+                   std_return, t_statistic, p_value,
+                   confidence_score, confidence_grade
+            FROM signal_backtest_stats
+            ORDER BY confidence_score DESC
+        """, conn)
+        conn.close()
+
+        if stats_df.empty:
+            st.info("暂无回测统计数据，请先运行回测引擎。")
+            return
+
+        ind_map = {
+            "ma_signal": "均线", "macd_signal": "MACD",
+            "rsi_status": "RSI", "kdj_signal": "KDJ",
+            "bollinger": "布林带", "trend": "趋势",
+        }
+
+        st.markdown("**置信度热力图（信号 x 前瞻窗口）**")
+        pivot_conf = stats_df.pivot_table(
+            index=["indicator", "signal_value"],
+            columns="forward_window",
+            values="confidence_score",
+            aggfunc="first",
+        )
+        pivot_conf = pivot_conf.reindex(
+            sorted(pivot_conf.index, key=lambda x: (x[0], x[1]))
+        )
+        y_labels = [f"{ind_map.get(ind, ind)} - {sig}" for ind, sig in pivot_conf.index]
+
+        fig_heat = go.Figure(data=go.Heatmap(
+            z=pivot_conf.values,
+            x=[f"{c}日" for c in pivot_conf.columns],
+            y=y_labels,
+            colorscale=[[0, "#1a1a2e"], [0.3, "#16213e"], [0.5, "#0f3460"],
+                        [0.7, "#533483"], [0.85, "#e94560"], [1, "#22c55e"]],
+            text=[[f"{v:.1f}" if pd.notna(v) else "" for v in row]
+                  for row in pivot_conf.values],
+            texttemplate="%{text}",
+            hovertemplate="信号: %{y}<br>窗口: %{x}<br>置信度: %{z:.1f}<extra></extra>",
+            colorbar=dict(title="置信度", x=1.02),
+        ))
+        fig_heat.update_layout(
+            height=max(400, len(y_labels) * 28),
+            margin=dict(l=10, r=60, t=10, b=20),
+            yaxis=dict(autorange="reversed"),
+        )
+        render_chart(fig_heat)
+
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            st.markdown("**Top 10 高置信度信号**")
+            top_df = stats_df.head(10).copy()
+            top_df["指标"] = top_df["indicator"].map(lambda x: ind_map.get(x, x))
+            top_df["信号"] = top_df["signal_value"]
+            top_df["窗口"] = top_df["forward_window"].map(lambda x: f"{x}日")
+            top_df["样本"] = top_df["sample_count"]
+            top_df["命中率"] = top_df["hit_rate"].map(lambda x: f"{x:.1%}")
+            top_df["均收益"] = top_df["avg_return"].map(lambda x: f"{x:+.2%}")
+            top_df["p值"] = top_df["p_value"].map(lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
+            top_df["置信度"] = top_df.apply(
+                lambda r: f"{r['confidence_score']:.1f} [{r['confidence_grade']}]", axis=1
+            )
+            st.dataframe(
+                top_df[["指标", "信号", "窗口", "样本", "命中率", "均收益", "p值", "置信度"]],
+                use_container_width=True, hide_index=True, height=300,
+            )
+
+        with tc2:
+            st.markdown("**Bottom 10 低置信度信号**")
+            bot_df = stats_df.tail(10).copy()
+            bot_df["指标"] = bot_df["indicator"].map(lambda x: ind_map.get(x, x))
+            bot_df["信号"] = bot_df["signal_value"]
+            bot_df["窗口"] = bot_df["forward_window"].map(lambda x: f"{x}日")
+            bot_df["样本"] = bot_df["sample_count"]
+            bot_df["命中率"] = bot_df["hit_rate"].map(lambda x: f"{x:.1%}")
+            bot_df["均收益"] = bot_df["avg_return"].map(lambda x: f"{x:+.2%}")
+            bot_df["p值"] = bot_df["p_value"].map(lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
+            bot_df["置信度"] = bot_df.apply(
+                lambda r: f"{r['confidence_score']:.1f} [{r['confidence_grade']}|-]", axis=1
+            )
+            st.dataframe(
+                bot_df[["指标", "信号", "窗口", "样本", "命中率", "均收益", "p值", "置信度"]],
+                use_container_width=True, hide_index=True, height=300,
+            )
+
+        st.markdown("**各指标回测汇总**")
+        summary_df = stats_df.groupby("indicator").agg(
+            统计组数=("confidence_score", "count"),
+            平均置信度=("confidence_score", "mean"),
+            最高置信度=("confidence_score", "max"),
+            平均命中率=("hit_rate", "mean"),
+            平均收益=("avg_return", "mean"),
+        ).round(2).sort_values("平均置信度", ascending=False)
+        summary_df.index = [ind_map.get(x, x) for x in summary_df.index]
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
+        st.warning(f"回测统计数据加载失败: {e}")
+
 
 def _render_market_events(positions, summary):
     # ========== 市场事件驱动信号 ==========
@@ -776,6 +1072,7 @@ def render_tab8():
         _render_suggestion_pie(suggestions, action_colors)
         _render_multi_factor_radar(suggestions)
         _render_suggestion_details(suggestions, action_colors)
+        _render_signal_confidence(positions)
         _render_position_advice_panel(positions)
     else:
         st.info("暂无持仓数据")
@@ -783,6 +1080,9 @@ def render_tab8():
     _render_market_events(positions, summary)
     _render_data_export(positions, summary, selected_benchmark, selected_date)
     _render_feedback_tracking(positions, summary)
+
+    # 信号回测统计
+    _render_backtest_heatmap()
 
     # P2-F: 盘前/盘后分析助手
     _render_pre_market_panel()
