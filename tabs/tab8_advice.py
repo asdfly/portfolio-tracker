@@ -639,7 +639,16 @@ def _render_feedback_tracking(positions, summary):
             }
             priority_colors = {'high': '#ef4444', 'medium': '#f59e0b', 'low': '#22c55e'}
 
-            for _, row in fb_df.iterrows():
+            # 分页: 每页10条, 避免 widget 过多导致 Streamlit setIn 索引越界
+            PAGE_SIZE = 10
+            total_pages = (len(fb_df) + PAGE_SIZE - 1) // PAGE_SIZE
+            page = st.session_state.get("fb_page", 0)
+            page = min(page, total_pages - 1) if total_pages > 0 else 0
+            start_idx = page * PAGE_SIZE
+            end_idx = min(start_idx + PAGE_SIZE, len(fb_df))
+            page_df = fb_df.iloc[start_idx:end_idx]
+
+            for _, row in page_df.iterrows():
                 p_color = priority_colors.get(row['priority'], '#8b949e')
                 status_label = status_labels.get(row['status'], row['status'])
                 title_display = row['title'][:60] + ('...' if len(str(row['title'])) > 60 else '')
@@ -678,6 +687,23 @@ def _render_feedback_tracking(positions, summary):
                             st.rerun()
                         except (pd.errors.DatabaseError, sqlite3.OperationalError, sqlite3.ProgrammingError, KeyError, ValueError) as upd_e:
                             st.warning(f"状态更新失败: {upd_e}")
+
+            # 分页控件
+            if total_pages > 1:
+                nav_cols = st.columns([1, 2, 1])
+                with nav_cols[0]:
+                    if st.button("← 上一页", disabled=(page <= 0), key="fb_prev"):
+                        st.session_state["fb_page"] = page - 1
+                        st.rerun()
+                with nav_cols[1]:
+                    st.markdown(f"<div style='text-align:center;padding-top:8px;color:#8b949e;font-size:13px;'>"
+                                f"第 {page + 1} / {total_pages} 页 "
+                                f"({start_idx + 1}-{end_idx} / 共 {len(fb_df)} 条)</div>",
+                                unsafe_allow_html=True)
+                with nav_cols[2]:
+                    if st.button("下一页 →", disabled=(page >= total_pages - 1), key="fb_next"):
+                        st.session_state["fb_page"] = page + 1
+                        st.rerun()
         else:
             st.info("暂无建议历史记录。建议会在每日分析时自动记录。")
     except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
