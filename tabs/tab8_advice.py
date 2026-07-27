@@ -637,53 +637,63 @@ def _render_feedback_tracking(positions, summary):
                 'pending': '⏳ 待处理', 'executed': '✅ 已执行', 'ignored': '⏭️ 已忽略',
                 'effective': '🎯 有效', 'ineffective': '❌ 无效',
             }
-            priority_colors = {'high': '#ef4444', 'medium': '#f59e0b', 'low': '#22c55e'}
 
-            # 分页: 每页10条, 避免 widget 过多导致 Streamlit setIn 索引越界
-            PAGE_SIZE = 10
+            # 分页: 每页15条
+            PAGE_SIZE = 15
             total_pages = (len(fb_df) + PAGE_SIZE - 1) // PAGE_SIZE
             page = st.session_state.get("fb_page", 0)
             page = min(page, total_pages - 1) if total_pages > 0 else 0
             start_idx = page * PAGE_SIZE
             end_idx = min(start_idx + PAGE_SIZE, len(fb_df))
-            page_df = fb_df.iloc[start_idx:end_idx]
+            page_df = fb_df.iloc[start_idx:end_idx].copy()
 
-            for _, row in page_df.iterrows():
-                p_color = priority_colors.get(row['priority'], '#8b949e')
-                status_label = status_labels.get(row['status'], row['status'])
-                title_display = row['title'][:60] + ('...' if len(str(row['title'])) > 60 else '')
-                codes_display = row['related_codes'][:40] if row['related_codes'] else '-'
-                conf_pct = f"{row['confidence']:.0%}" if row['confidence'] else '-'
+            # 格式化列
+            page_df['优先级'] = page_df['priority'].str.upper()
+            page_df['类型'] = page_df['advice_type'].map(lambda t: type_map.get(t, t))
+            page_df['标题'] = page_df['title'].str[:60]
+            page_df['状态'] = page_df['status'].map(lambda s: status_labels.get(s, s))
+            page_df['置信度'] = page_df['confidence'].map(lambda c: f"{c:.0%}" if c else '-')
+            page_df['相关标的'] = page_df['related_codes'].str[:30].fillna('-')
+            page_df['时间'] = page_df['created_at']
 
-                cols_row = st.columns([1, 3, 1.5, 1, 1])
-                with cols_row[0]:
-                    st.markdown(f"<span style='color:{p_color};font-size:12px;font-weight:bold;'>"
-                                f"{row['priority'].upper()}</span>", unsafe_allow_html=True)
-                with cols_row[1]:
-                    st.markdown(f"**{title_display}**<br><span style='font-size:11px;color:#6e7681;'>"
-                                f"{row['created_at']} | {type_map.get(row['advice_type'], row['advice_type'])} | {codes_display}</span>",
-                                unsafe_allow_html=True)
-                with cols_row[2]:
-                    st.markdown(f"<span style='font-size:12px;'>{status_label}</span>", unsafe_allow_html=True)
-                with cols_row[3]:
-                    st.markdown(f"<span style='font-size:12px;'>{conf_pct}</span>", unsafe_allow_html=True)
-                with cols_row[4]:
-                    new_status = st.selectbox(
-                        "状态", status_options,
-                        index=status_options.index(row['status']) if row['status'] in status_options else 0,
-                        key=f"status_{row['id']}", label_visibility="collapsed"
+            display_cols = ['时间', '优先级', '类型', '标题', '状态', '置信度', '相关标的']
+            st.dataframe(
+                page_df[display_cols],
+                use_container_width=True,
+                hide_index=True,
+                height=min(400, 35 * len(page_df) + 40),
+            )
+
+            # 状态更新: 固定widget, 不在循环内创建
+            with st.expander("更新建议状态", expanded=False):
+                upd_cols = st.columns([2, 2, 1])
+                with upd_cols[0]:
+                    upd_id = st.selectbox(
+                        "选择建议",
+                        options=page_df['id'].tolist(),
+                        format_func=lambda i: f"#{i} - {page_df[page_df['id']==i]['标题'].iloc[0][:40]}",
+                        key="upd_advice_id",
                     )
-                    if new_status != row['status']:
+                with upd_cols[1]:
+                    upd_status = st.selectbox(
+                        "新状态",
+                        options=status_options,
+                        format_func=lambda s: status_labels.get(s, s),
+                        key="upd_advice_status",
+                    )
+                with upd_cols[2]:
+                    st.write("")
+                    if st.button("确认更新", key="upd_advice_btn", type="primary"):
                         try:
                             upd_conn = get_db_connection()
                             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             upd_conn.execute(
                                 "UPDATE advice_history SET status=?, resolved_at=? WHERE id=?",
-                                (new_status, now_str, row['id'])
+                                (upd_status, now_str, upd_id)
                             )
                             upd_conn.commit()
                             upd_conn.close()
-                            st.toast(f"建议 #{row['id']} 状态更新为: {status_labels.get(new_status, new_status)}")
+                            st.toast(f"建议 #{upd_id} 状态更新为: {status_labels.get(upd_status, upd_status)}")
                             st.rerun()
                         except (pd.errors.DatabaseError, sqlite3.OperationalError, sqlite3.ProgrammingError, KeyError, ValueError) as upd_e:
                             st.warning(f"状态更新失败: {upd_e}")
