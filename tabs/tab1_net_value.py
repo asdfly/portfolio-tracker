@@ -199,8 +199,13 @@ def _render_basic_metrics(positions, summary, index_quotes, selected_date, selec
         unsafe_allow_html=True,
     )
     if not summary.empty and "total_value" in summary.columns and len(summary) > 1:
-        bar_data = downsample(summary_ret[["date"]].copy(), max_points=DOWNSAMPLE_MAX_POINTS)
-        bar_data["daily_pnl"] = summary_ret["daily_pnl"].values if "daily_pnl" in summary_ret.columns else summary_ret["total_value"].diff().values
+        _pnl_col = "daily_pnl" if "daily_pnl" in summary_ret.columns else None
+        _bar_cols = ["date"] + ([_pnl_col] if _pnl_col else [])
+        bar_data = downsample(summary_ret[_bar_cols].copy(), max_points=DOWNSAMPLE_MAX_POINTS)
+        if _pnl_col is None:
+            bar_data["daily_pnl"] = bar_data["total_value"].diff() if "total_value" in bar_data.columns else 0
+        else:
+            bar_data = bar_data.rename(columns={_pnl_col: "daily_pnl"})
         colors = ["#22c55e" if dp >= 0 else "#ef4444" for dp in bar_data["daily_pnl"]]
         fig_bar = go.Figure()
         fig_bar.add_trace(go.Bar(x=bar_data["date"], y=bar_data["daily_pnl"], marker_color=colors, name="日盈亏"))
