@@ -511,7 +511,7 @@ def _render_news_sentiment(positions, summary):
             ))
             fig_sent.update_layout(height=max(200, len(cat_sent)*30),
                                    margin=dict(l=110, r=20, t=5, b=10),
-                                   xaxis_title="情绪得分(0负面~0.5中性~1正面)", range=[0, 1],
+                                   xaxis=dict(title="情绪得分(0负面~0.5中性~1正面)", range=[0, 1]),
                                    yaxis=dict(autorange="reversed"))
             render_chart(fig_sent)
 
