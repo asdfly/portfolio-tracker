@@ -860,6 +860,15 @@ def main():
         except Exception as e:
             logger.warning(f"数据质量巡检失败(不影响主流程): {e}")
 
+
+        # === 阶段六b: 信号回测 ===
+        try:
+            from src.analysis.signal_backtest import run_full_backtest_pipeline
+            bt_result = run_full_backtest_pipeline()
+            logger.info(f"[阶段六b/6b] 信号回测完成: {bt_result['backtest_rows']} 统计行, {bt_result['confidence_rows']} 置信度行")
+        except Exception as e:
+            logger.warning(f"信号回测失败(不影响主流程): {e}")
+
         # === 打印摘要 ===
         print_summary(results, alerts, advice_summary)
 

@@ -328,6 +328,53 @@ TABLE_DEFS = [
         "CREATE INDEX IF NOT EXISTS idx_trade_code ON trade_records(code)",
     ]),
 
+    ("signal_backtest_stats", """
+        CREATE TABLE IF NOT EXISTS signal_backtest_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            indicator TEXT NOT NULL,
+            signal_value TEXT NOT NULL,
+            signal_direction INTEGER NOT NULL,
+            forward_window INTEGER NOT NULL,
+            sample_count INTEGER NOT NULL,
+            hit_count INTEGER NOT NULL,
+            hit_rate REAL NOT NULL,
+            avg_return REAL NOT NULL,
+            std_return REAL,
+            t_statistic REAL,
+            p_value REAL,
+            confidence_score REAL NOT NULL,
+            confidence_grade TEXT,
+            backtest_date TEXT NOT NULL,
+            UNIQUE(indicator, signal_value, forward_window)
+        )
+    """, []),
+
+    ("signal_confidence_current", """
+        CREATE TABLE IF NOT EXISTS signal_confidence_current (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL,
+            date TEXT NOT NULL,
+            indicator TEXT NOT NULL,
+            signal_value TEXT NOT NULL,
+            signal_direction INTEGER NOT NULL,
+            conf_5d REAL,
+            conf_10d REAL,
+            conf_20d REAL,
+            conf_30d REAL,
+            conf_60d REAL,
+            composite_confidence REAL,
+            composite_grade TEXT,
+            hit_rate_5d REAL,
+            hit_rate_10d REAL,
+            hit_rate_20d REAL,
+            hit_rate_30d REAL,
+            hit_rate_60d REAL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(code, indicator, date)
+        )
+    """, []),
+
     ("stock_block_trade", """
         CREATE TABLE IF NOT EXISTS stock_block_trade (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
