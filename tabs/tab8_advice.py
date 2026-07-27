@@ -285,32 +285,88 @@ def _render_suggestion_pie(suggestions, action_colors):
 
         with viz_col2:
             # 信号强度热力图 (ETF x 指标维度)
+            # 直接从etf_technical表读取原始指标信号，不依赖reasons关键词
+            _heat_codes = [s.get("code", "") for s in suggestions]
+            _heat_data = {}
+            if _heat_codes:
+                try:
+                    _conn = get_db_connection()
+                    _ph = ",".join(["?" for _ in _heat_codes])
+                    _tech = pd.read_sql_query(
+                        f"SELECT code, ma_signal, macd_signal, rsi_value, rsi_status, "
+                        f"kdj_signal, bollinger_position, trend "
+                        f"FROM etf_technical WHERE code IN ({_ph}) "
+                        f"ORDER BY date DESC", _conn, params=_heat_codes)
+                    _conn.close()
+                    _latest = _tech.drop_duplicates("code", keep="first")
+                    for _, _r in _latest.iterrows():
+                        _heat_data[_r["code"]] = _r
+                except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError):
+                    pass
+
+            def _signal_val(code, indicator):
+                """返回1(多), -1(空), 0(中性)"""
+                tr = _heat_data.get(code)
+                if tr is None:
+                    return 0
+                if indicator == "MA":
+                    ma = str(tr.get("ma_signal", ""))
+                    if ma == "多头排列" or ma == "金叉": return 1
+                    if ma == "空头排列" or ma == "死叉": return -1
+                elif indicator == "MACD":
+                    m = str(tr.get("macd_signal", ""))
+                    if m in ("金叉", "多头", "看多"): return 1
+                    if m in ("死叉", "空头"): return -1
+                elif indicator == "RSI":
+                    s = str(tr.get("rsi_status", ""))
+                    if s in ("超卖", "严重超卖"): return 1
+                    if s in ("超买", "严重超买"): return -1
+                elif indicator == "KDJ":
+                    k = str(tr.get("kdj_signal", ""))
+                    if "金叉" in k: return 1
+                    if "死叉" in k: return -1
+                elif indicator == "布林带":
+                    b = tr.get("bollinger_position", 50)
+                    try:
+                        b = float(b) if not pd.isna(b) else 50.0
+                    except (ValueError, TypeError):
+                        b = 50.0
+                    if b <= 20: return 1
+                    if b >= 80: return -1
+                elif indicator == "趋势":
+                    t = str(tr.get("trend", ""))
+                    if "上涨" in t: return 1
+                    if "下跌" in t: return -1
+                return 0
+
             indicators = ["MA", "MACD", "RSI", "KDJ", "布林带", "趋势", "盈亏"]
+            _z = []
+            _text = []
+            for s in suggestions:
+                row_z = []
+                row_text = []
+                for ind in indicators:
+                    if ind == "盈亏":
+                        pnl = s.get("pnl_rate", 0)
+                        try:
+                            pnl = float(pnl)
+                        except (ValueError, TypeError):
+                            pnl = 0
+                        v = 1 if pnl > 0 else (-1 if pnl < 0 else 0)
+                    else:
+                        v = _signal_val(s.get("code", ""), ind)
+                    row_z.append(v)
+                    row_text.append("+" if v > 0 else ("-" if v < 0 else "·"))
+                _z.append(row_z)
+                _text.append(row_text)
+
             fig_heat = go.Figure(go.Heatmap(
-                z=[[1 if r else -1 for r in [
-                    "均线" in str(s.get("reasons",[])),
-                    "MACD" in str(s.get("reasons",[])),
-                    "RSI" in str(s.get("reasons",[])),
-                    "KDJ" in str(s.get("reasons",[])),
-                    "布林" in str(s.get("reasons",[])),
-                    "趋势" in str(s.get("reasons",[])),
-                    "亏损" in str(s.get("reasons",[])) or "盈利" in str(s.get("reasons",[])),
-                ]] for s in suggestions],
+                z=_z,
                 x=indicators,
                 y=[s["name"] for s in suggestions],
-                colorscale=[[0, "#ef4444"], [0.5, "#0d1117"], [1, "#22c55e"]],
+                colorscale=[[0, "#ef4444"], [0.5, "#1c2128"], [1, "#22c55e"]],
                 zmid=0,
-                text=[["+" if v > 0 else "-" for v in row] for row in [
-                    [1 if r else -1 for r in [
-                        "均线" in str(s.get("reasons",[])),
-                        "MACD" in str(s.get("reasons",[])),
-                        "RSI" in str(s.get("reasons",[])),
-                        "KDJ" in str(s.get("reasons",[])),
-                        "布林" in str(s.get("reasons",[])),
-                        "趋势" in str(s.get("reasons",[])),
-                        "亏损" in str(s.get("reasons",[])) or "盈利" in str(s.get("reasons",[])),
-                    ]] for s in suggestions
-                ]],
+                text=_text,
                 texttemplate="%{text}",
                 textfont=dict(size=12, color="#c9d1d9"),
                 hovertemplate="%{y} - %{x}<extra></extra>",
