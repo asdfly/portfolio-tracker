@@ -10,6 +10,10 @@ P1 优化 (v3):
   4. Per-ETF 独立回测 — 数据充足的ETF单独统计，消除品种混合偏差
   5. 多信号组合确认 — 组合信号回测，过滤假信号提升置信度
 
+P2 优化 (v4):
+  6. 滚动窗口回测 — 3年训练+步长6月, 计算置信度稳定性指标
+  7. 信号强度分级 — RSI/布林带按强度(mild/moderate/extreme)分档回测
+
 对 etf_technical 表中 6 类技术指标信号进行历史回测，
 量化各信号在不同前瞻时间窗口（5/10/20/30/60 交易日）下
 对收益方向的预测准确率，并计算置信度评分。
@@ -60,6 +64,44 @@ SIGNAL_DIRECTIONS: Dict[str, Dict[str, int]] = {
 # 布林带: 数值型，特殊处理
 BOLLINGER_BUY_THRESHOLD = 20
 BOLLINGER_SELL_THRESHOLD = 80
+
+# 信号强度分级
+STRENGTH_ALL = "all"
+STRENGTH_MILD = "mild"          # 轻度
+STRENGTH_MODERATE = "moderate"  # 中度
+STRENGTH_EXTREME = "extreme"    # 极端
+ALL_STRENGTHS = [STRENGTH_ALL, STRENGTH_MILD, STRENGTH_MODERATE, STRENGTH_EXTREME]
+
+# RSI 强度分档 (买入方向: 超卖区间)
+RSI_STRENGTH_BUY = [
+    (STRENGTH_MILD, 25, 30.01),      # 轻度超卖: 25-30
+    (STRENGTH_MODERATE, 20, 25.01),   # 中度超卖: 20-25
+    (STRENGTH_EXTREME, 0, 20.01),     # 极端超卖: <20
+]
+# RSI 强度分档 (卖出方向: 超买区间)
+RSI_STRENGTH_SELL = [
+    (STRENGTH_MILD, 70, 75.01),       # 轻度超买: 70-75
+    (STRENGTH_MODERATE, 75, 80.01),   # 中度超买: 75-80
+    (STRENGTH_EXTREME, 80, 101),      # 极端超买: >80
+]
+
+# 布林带强度分档 (买入方向: 低位)
+BOLL_STRENGTH_BUY = [
+    (STRENGTH_MILD, 15, 20.01),
+    (STRENGTH_MODERATE, 10, 15.01),
+    (STRENGTH_EXTREME, 0, 10.01),
+]
+# 布林带强度分档 (卖出方向: 高位)
+BOLL_STRENGTH_SELL = [
+    (STRENGTH_MILD, 80, 85.01),
+    (STRENGTH_MODERATE, 85, 90.01),
+    (STRENGTH_EXTREME, 90, 101),
+]
+
+# 滚动窗口回测参数
+ROLLING_WINDOW_DAYS = 730   # 每个窗口约3年交易日
+ROLLING_STEP_DAYS = 125     # 步长约6个月
+ROLLING_MIN_WINDOWS = 2     # 最少需要2个窗口才计算稳定性
 
 MIN_SAMPLE_SIZE = 10  # 最小样本量
 PER_ETF_MIN_ROWS = 1000  # Per-ETF 独立回测的最低数据量
@@ -234,6 +276,104 @@ def _compute_consistency_bonus(hit_rates: List[float]) -> float:
     return -5.0
 
 
+
+# ============================================================
+# 信号强度分级
+# ============================================================
+
+def _classify_rsi_strength(rsi_value, direction: int) -> str:
+    """对RSI信号进行强度分级。"""
+    if pd.isna(rsi_value):
+        return STRENGTH_ALL
+    v = float(rsi_value)
+    tiers = RSI_STRENGTH_BUY if direction > 0 else RSI_STRENGTH_SELL
+    for strength, lo, hi in tiers:
+        if lo <= v < hi:
+            return strength
+    return STRENGTH_ALL
+
+def _classify_bollinger_strength(boll_pos, direction: int) -> str:
+    """对布林带信号进行强度分级。"""
+    if pd.isna(boll_pos):
+        return STRENGTH_ALL
+    v = float(boll_pos)
+    tiers = BOLL_STRENGTH_BUY if direction > 0 else BOLL_STRENGTH_SELL
+    for strength, lo, hi in tiers:
+        if lo <= v < hi:
+            return strength
+    return STRENGTH_ALL
+
+# ============================================================
+# 滚动窗口稳定性
+# ============================================================
+
+def _compute_rolling_window_stability(df: pd.DataFrame, indicator: str,
+                                       signal_val: str, direction: int,
+                                       n: int) -> Optional[float]:
+    """计算滚动窗口置信度稳定性指标 (0-1, 越高越稳定)。
+
+    将历史数据按 ROLLING_WINDOW_DAYS 分为滚动时间窗口，
+    分别计算各窗口置信度，返回变异系数的逆变换。
+    """
+    ret_col = f"fwd_ret_{n}"
+    if ret_col not in df.columns:
+        return None
+
+    # 过滤信号匹配的数据
+    if indicator == "bollinger":
+        if "低位" in signal_val:
+            mask = df["bollinger_position"] <= BOLLINGER_BUY_THRESHOLD
+        elif "高位" in signal_val:
+            mask = df["bollinger_position"] >= BOLLINGER_SELL_THRESHOLD
+        else:
+            return None
+    elif indicator == "combo":
+        return None  # 组合信号不参与滚动窗口稳定性
+    else:
+        mask = df[indicator] == signal_val
+
+    subset = df[mask & df[ret_col].notna()].sort_values("date")
+    if len(subset) < MIN_SAMPLE_SIZE * ROLLING_MIN_WINDOWS:
+        return None
+
+    returns = subset[ret_col].values
+    total_len = len(subset)
+
+    window_confs = []
+    start = 0
+    while start + MIN_SAMPLE_SIZE <= total_len:
+        end = min(start + ROLLING_WINDOW_DAYS, total_len)
+        window_returns = returns[start:end]
+        if len(window_returns) < MIN_SAMPLE_SIZE:
+            break
+
+        hits = int(((direction > 0) & (window_returns > 0)).sum() +
+                   ((direction < 0) & (window_returns < 0)).sum())
+        hr = hits / len(window_returns)
+        whr = _compute_weighted_hit_rate(pd.Series(window_returns), direction)
+        avg_ret = float(np.mean(window_returns))
+        std_ret = float(np.std(window_returns)) if len(window_returns) > 1 else 0.0
+
+        se = 0.5 / (len(window_returns) ** 0.5)
+        t_stat = (hr - 0.5) / se if se > 0 else 0.0
+        p_value = 2 * (1 - stats.norm.cdf(abs(t_stat)))
+
+        conf, _ = compute_confidence(
+            len(window_returns), hr, p_value, avg_ret, std_ret, whr)
+        window_confs.append(conf)
+
+        start += ROLLING_STEP_DAYS
+
+    if len(window_confs) < ROLLING_MIN_WINDOWS:
+        return None
+
+    # 稳定性: 1 / (1 + cv), cv = std/mean
+    mean_conf = float(np.mean(window_confs))
+    std_conf = float(np.std(window_confs))
+    cv = std_conf / mean_conf if mean_conf > 1e-6 else 1.0
+    stability = 1.0 / (1.0 + cv)
+    return round(stability, 4)
+
 # ============================================================
 # 市场状态分类
 # ============================================================
@@ -296,7 +436,9 @@ def _compute_forward_returns(df: pd.DataFrame,
 def _backtest_single(subset: pd.DataFrame, indicator: str,
                      signal_val: str, direction: int,
                      n: int, regime: str,
-                     code: str = None, scope: str = SCOPE_ALL) -> Optional[dict]:
+                     code: str = None, scope: str = SCOPE_ALL,
+                     signal_strength: str = STRENGTH_ALL,
+                     stability_score: Optional[float] = None) -> Optional[dict]:
     """对单个 信号×窗口×市场状态 组合进行回测统计。"""
     ret_col = f"fwd_ret_{n}"
     valid = subset[ret_col].dropna()
@@ -320,6 +462,16 @@ def _backtest_single(subset: pd.DataFrame, indicator: str,
     conf, grade = compute_confidence(
         n_samples, hit_rate, p_value, avg_ret, std_ret, whr)
 
+    # 稳定性调整: 高稳定性维持置信度, 低稳定性降权
+    if stability_score is not None and not math.isnan(stability_score):
+        adjusted_conf = round(conf * (0.7 + 0.3 * stability_score), 1)
+        adjusted_grade = ("A" if adjusted_conf >= 70 else
+                          "B" if adjusted_conf >= 50 else
+                          "C" if adjusted_conf >= 30 else "D")
+    else:
+        adjusted_conf = conf
+        adjusted_grade = grade
+
     return {
         "indicator": indicator,
         "signal_value": signal_val,
@@ -328,6 +480,8 @@ def _backtest_single(subset: pd.DataFrame, indicator: str,
         "market_regime": regime,
         "scope": scope,
         "code": code,
+        "signal_strength": signal_strength,
+        "stability_score": stability_score,
         "sample_count": n_samples,
         "hit_count": hits,
         "hit_rate": round(hit_rate, 4),
@@ -336,8 +490,8 @@ def _backtest_single(subset: pd.DataFrame, indicator: str,
         "std_return": round(std_ret, 6),
         "t_statistic": round(t_stat, 4),
         "p_value": round(p_value, 6),
-        "confidence_score": conf,
-        "confidence_grade": grade,
+        "confidence_score": adjusted_conf,
+        "confidence_grade": adjusted_grade,
     }
 
 
@@ -346,13 +500,21 @@ def _backtest_categorical(df: pd.DataFrame, indicator: str,
                           windows: List[int],
                           code: str = None,
                           scope: str = SCOPE_ALL) -> List[dict]:
-    """对分类信号进行回测 (含市场状态分层)。"""
+    """对分类信号进行回测 (含市场状态分层 + RSI强度分级)。"""
     results = []
     for signal_val, direction in direction_map.items():
         if direction == 0:
             continue
         mask = df[indicator] == signal_val
         subset_all = df[mask]
+
+        # 计算滚动窗口稳定性 (仅全市场+all状态)
+        stability_map = {}
+        if scope == SCOPE_ALL:
+            for n in windows:
+                stab = _compute_rolling_window_stability(
+                    df, indicator, signal_val, direction, n)
+                stability_map[n] = stab
 
         for regime in ALL_REGIMES:
             if regime == REGIME_ALL:
@@ -362,16 +524,54 @@ def _backtest_categorical(df: pd.DataFrame, indicator: str,
 
             for n in windows:
                 r = _backtest_single(subset, indicator, signal_val,
-                                     direction, n, regime, code, scope)
+                                     direction, n, regime, code, scope,
+                                     STRENGTH_ALL, stability_map.get(n))
                 if r:
                     results.append(r)
+
+        # RSI 强度分级回测 (仅在 rsi_value 列可用时)
+        if indicator == "rsi_status" and "rsi_value" in df.columns:
+            for strength_tier in [STRENGTH_MILD, STRENGTH_MODERATE, STRENGTH_EXTREME]:
+                # 根据方向选择分档区间
+                tiers = RSI_STRENGTH_BUY if direction > 0 else RSI_STRENGTH_SELL
+                tier_def = next((t for t in tiers if t[0] == strength_tier), None)
+                if tier_def is None:
+                    continue
+                _, lo, hi = tier_def
+
+                strength_mask = mask & (df["rsi_value"] >= lo) & (df["rsi_value"] < hi)
+                strength_subset_all = df[strength_mask]
+
+                # 强度分级的稳定性 (仅全市场)
+                strength_stab_map = {}
+                if scope == SCOPE_ALL:
+                    for n in windows:
+                        # 用强度过滤后的数据计算稳定性
+                        strength_df = df[strength_mask].copy()
+                        stab = _compute_rolling_window_stability(
+                            strength_df, indicator, signal_val, direction, n)
+                        strength_stab_map[n] = stab
+
+                for regime in ALL_REGIMES:
+                    if regime == REGIME_ALL:
+                        subset = strength_subset_all
+                    else:
+                        subset = strength_subset_all[strength_subset_all["market_regime"] == regime]
+
+                    for n in windows:
+                        r = _backtest_single(subset, indicator, signal_val,
+                                             direction, n, regime, code, scope,
+                                             strength_tier, strength_stab_map.get(n))
+                        if r:
+                            results.append(r)
+
     return results
 
 
 def _backtest_bollinger(df: pd.DataFrame, windows: List[int],
                         code: str = None,
                         scope: str = SCOPE_ALL) -> List[dict]:
-    """对布林带数值型信号进行回测 (含市场状态分层)。"""
+    """对布林带数值型信号进行回测 (含市场状态分层 + 强度分级)。"""
     results = []
     boll = df["bollinger_position"].dropna()
     if boll.empty:
@@ -384,6 +584,15 @@ def _backtest_bollinger(df: pd.DataFrame, windows: List[int],
         mask = (df["bollinger_position"] >= lo) & (df["bollinger_position"] < hi + 1)
         subset_all = df[mask]
 
+        # 滚动窗口稳定性 (仅全市场)
+        stability_map = {}
+        if scope == SCOPE_ALL:
+            for n in windows:
+                stab = _compute_rolling_window_stability(
+                    df, "bollinger", label, direction, n)
+                stability_map[n] = stab
+
+        # 全强度回测 (strength=all)
         for regime in ALL_REGIMES:
             if regime == REGIME_ALL:
                 subset = subset_all
@@ -392,9 +601,39 @@ def _backtest_bollinger(df: pd.DataFrame, windows: List[int],
 
             for n in windows:
                 r = _backtest_single(subset, "bollinger", label,
-                                     direction, n, regime, code, scope)
+                                     direction, n, regime, code, scope,
+                                     STRENGTH_ALL, stability_map.get(n))
                 if r:
                     results.append(r)
+
+        # 强度分档回测
+        strength_tiers = BOLL_STRENGTH_BUY if direction > 0 else BOLL_STRENGTH_SELL
+        for strength_tier, s_lo, s_hi in strength_tiers:
+            s_mask = mask & (df["bollinger_position"] >= s_lo) & (df["bollinger_position"] < s_hi)
+            s_subset_all = df[s_mask]
+
+            # 强度分档稳定性
+            s_stab_map = {}
+            if scope == SCOPE_ALL:
+                for n in windows:
+                    s_df = df[s_mask].copy()
+                    stab = _compute_rolling_window_stability(
+                        s_df, "bollinger", label, direction, n)
+                    s_stab_map[n] = stab
+
+            for regime in ALL_REGIMES:
+                if regime == REGIME_ALL:
+                    subset = s_subset_all
+                else:
+                    subset = s_subset_all[s_subset_all["market_regime"] == regime]
+
+                for n in windows:
+                    r = _backtest_single(subset, "bollinger", label,
+                                         direction, n, regime, code, scope,
+                                         strength_tier, s_stab_map.get(n))
+                    if r:
+                        results.append(r)
+
     return results
 
 
@@ -455,7 +694,8 @@ def _backtest_combos(df: pd.DataFrame, windows: List[int],
             for n in windows:
                 r = _backtest_single(
                     subset, "combo", combo_name,
-                    combo_dir, n, regime, code, scope
+                    combo_dir, n, regime, code, scope,
+                    STRENGTH_ALL, None
                 )
                 if r:
                     results.append(r)
@@ -470,10 +710,10 @@ def _backtest_combos(df: pd.DataFrame, windows: List[int],
 def run_backtest(conn=None) -> pd.DataFrame:
     """执行完整回测，返回统计结果 DataFrame。
 
-    v3 改进:
-      - Per-ETF 独立回测: 数据>=1000行的ETF单独统计
-      - 多信号组合回测: 9种组合信号的独立统计
-      - 保留 v2: 市场状态分层 + 收益加权命中率 + 评分公式 v2
+    v4 改进:
+      - 信号强度分级: RSI/布林带按 mild/moderate/extreme 分档统计
+      - 滚动窗口稳定性: 3年窗口+6月步长, 计算置信度稳定性指标
+      - 保留 v3: Per-ETF 独立回测 + 多信号组合 + 市场状态分层
     """
     close_conn = False
     if conn is None:
@@ -523,8 +763,11 @@ def run_backtest(conn=None) -> pd.DataFrame:
         n_all = len(result_df[result_df["scope"] == SCOPE_ALL])
         n_etf = len(result_df[result_df["scope"] == SCOPE_ETF])
         n_combo = len(result_df[result_df["indicator"] == "combo"])
-        logger.info(f"回测完成: {len(result_df)} 组统计 "
-                    f"(全市场={n_all}, Per-ETF={n_etf}, 组合信号={n_combo})")
+        n_strength = len(result_df[result_df["signal_strength"] != STRENGTH_ALL]) if "signal_strength" in result_df.columns else 0
+        n_stable = result_df["stability_score"].notna().sum() if "stability_score" in result_df.columns else 0
+        logger.info(f"回测完成 (v4): {len(result_df)} 组统计 "
+                    f"(全市场={n_all}, Per-ETF={n_etf}, 组合={n_combo}, "
+                    f"强度分级={n_strength}, 稳定性={n_stable})")
         return result_df
     finally:
         if close_conn:
@@ -544,8 +787,9 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
         close_conn = True
 
     try:
+        conn.execute("DROP TABLE IF EXISTS signal_backtest_stats")
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS signal_backtest_stats (
+            CREATE TABLE signal_backtest_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 indicator TEXT NOT NULL,
                 signal_value TEXT NOT NULL,
@@ -554,6 +798,8 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
                 market_regime TEXT NOT NULL DEFAULT 'all',
                 scope TEXT NOT NULL DEFAULT 'all',
                 code TEXT,
+                signal_strength TEXT NOT NULL DEFAULT 'all',
+                stability_score REAL,
                 sample_count INTEGER NOT NULL,
                 hit_count INTEGER NOT NULL,
                 hit_rate REAL NOT NULL,
@@ -565,12 +811,9 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
                 confidence_score REAL NOT NULL,
                 confidence_grade TEXT,
                 backtest_date TEXT NOT NULL,
-                UNIQUE(indicator, signal_value, forward_window, market_regime, scope, code)
+                UNIQUE(indicator, signal_value, forward_window, market_regime, scope, code, signal_strength)
             )
         """)
-        conn.execute("DELETE FROM signal_backtest_stats")
-        conn.commit()
-
         today = datetime.now().strftime("%Y-%m-%d")
         rows = result_df.copy()
         rows["backtest_date"] = today
@@ -648,6 +891,10 @@ def _get_current_combo_signals(row: pd.Series) -> List[Tuple[str, int]]:
 def get_current_confidence(conn=None) -> pd.DataFrame:
     """获取当前各ETF最新信号及其置信度 (v3)。
 
+    v4 改进:
+      - 信号强度匹配: 根据当前RSI/布林带数值匹配强度档位统计
+      - 稳定性加权: 置信度已含稳定性调整 (v4 回测时计算)
+
     v3 改进:
       - Per-ETF 优先: 优先使用该ETF的独立回测结果 (scope=etf),
         回退到全市场 (scope=all)
@@ -689,31 +936,43 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
             "SELECT * FROM signal_backtest_stats", conn)
 
         # 构建查找索引
-        # (indicator, signal_value, forward_window, market_regime, scope, code) → row
+        # (indicator, signal_value, forward_window, market_regime, scope, code, signal_strength) → row
         stats_lookup = {}
         for _, r in stats_df.iterrows():
+            strength = r.get("signal_strength", STRENGTH_ALL) if pd.notna(r.get("signal_strength")) else STRENGTH_ALL
             key = (r["indicator"], r["signal_value"], int(r["forward_window"]),
-                   r["market_regime"], r["scope"], r["code"] if pd.notna(r["code"]) else None)
+                   r["market_regime"], r["scope"],
+                   r["code"] if pd.notna(r["code"]) else None,
+                   strength)
             stats_lookup[key] = r
 
-        def _lookup(ind, sig_val, n, regime, code=None):
-            """查找回测统计: Per-ETF → 全市场, 指定状态 → all"""
-            # 1. 尝试 Per-ETF + 指定状态
+        def _lookup(ind, sig_val, n, regime, code=None, strength=STRENGTH_ALL):
+            """查找回测统计: 强度匹配 → all强度, Per-ETF → 全市场, 指定状态 → all"""
+            # 1. 尝试指定强度: Per-ETF + 指定状态
             if code:
-                key = (ind, sig_val, n, regime, SCOPE_ETF, code)
+                key = (ind, sig_val, n, regime, SCOPE_ETF, code, strength)
                 if key in stats_lookup:
                     return stats_lookup[key]
-            # 2. 尝试 全市场 + 指定状态
-            key = (ind, sig_val, n, regime, SCOPE_ALL, None)
+            # 2. 指定强度: 全市场 + 指定状态
+            key = (ind, sig_val, n, regime, SCOPE_ALL, None, strength)
             if key in stats_lookup:
                 return stats_lookup[key]
-            # 3. 尝试 Per-ETF + all
+            # 3. 回退到 all 强度: Per-ETF + 指定状态
             if code:
-                key = (ind, sig_val, n, REGIME_ALL, SCOPE_ETF, code)
+                key = (ind, sig_val, n, regime, SCOPE_ETF, code, STRENGTH_ALL)
                 if key in stats_lookup:
                     return stats_lookup[key]
-            # 4. 回退: 全市场 + all
-            key = (ind, sig_val, n, REGIME_ALL, SCOPE_ALL, None)
+            # 4. all 强度: 全市场 + 指定状态
+            key = (ind, sig_val, n, regime, SCOPE_ALL, None, STRENGTH_ALL)
+            if key in stats_lookup:
+                return stats_lookup[key]
+            # 5. all 强度: Per-ETF + all 状态
+            if code:
+                key = (ind, sig_val, n, REGIME_ALL, SCOPE_ETF, code, STRENGTH_ALL)
+                if key in stats_lookup:
+                    return stats_lookup[key]
+            # 6. 回退: 全市场 + all 状态 + all 强度
+            key = (ind, sig_val, n, REGIME_ALL, SCOPE_ALL, None, STRENGTH_ALL)
             return stats_lookup.get(key)
 
         results = []
@@ -728,7 +987,8 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                 "macd_signal": (str(etf["macd_signal"]),
                                 SIGNAL_DIRECTIONS["macd_signal"].get(str(etf["macd_signal"]), 0)),
                 "rsi_status": (str(etf["rsi_status"]),
-                               SIGNAL_DIRECTIONS["rsi_status"].get(str(etf["rsi_status"]), 0)),
+                               SIGNAL_DIRECTIONS["rsi_status"].get(str(etf["rsi_status"]), 0),
+                               float(etf["rsi_value"]) if pd.notna(etf["rsi_value"]) else None),
                 "kdj_signal": (str(etf["kdj_signal"]),
                                SIGNAL_DIRECTIONS["kdj_signal"].get(str(etf["kdj_signal"]), 0)),
                 "trend": (str(etf["trend"]),
@@ -745,14 +1005,28 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
             current_signals["bollinger"] = (boll_label, boll_dir, boll_lookup_val)
 
             for ind, sig_info in current_signals.items():
+                rsi_val = None
                 if ind == "bollinger":
                     sig_val_display = sig_info[0]
                     direction = sig_info[1]
                     lookup_val = sig_info[2]
+                elif ind == "rsi_status":
+                    sig_val_display = sig_info[0]
+                    direction = sig_info[1]
+                    rsi_val = sig_info[2] if len(sig_info) > 2 else None
+                    lookup_val = sig_val_display if direction != 0 else None
                 else:
                     sig_val_display = sig_info[0]
                     direction = sig_info[1]
                     lookup_val = sig_val_display if direction != 0 else None
+
+                # 计算当前信号强度
+                current_strength = STRENGTH_ALL
+                if ind == "rsi_status" and rsi_val is not None and direction != 0:
+                    current_strength = _classify_rsi_strength(rsi_val, direction)
+                elif ind == "bollinger" and direction != 0:
+                    current_strength = _classify_bollinger_strength(
+                        etf["bollinger_position"], direction)
 
                 row = {
                     "code": code, "name": name, "date": date,
@@ -761,6 +1035,7 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                     "signal_direction": direction,
                     "market_regime": current_regime if direction != 0 else None,
                     "scope": SCOPE_ETF if direction != 0 else None,
+                    "signal_strength": current_strength if direction != 0 else None,
                 }
 
                 confs = []
@@ -769,7 +1044,7 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                     col_conf = f"conf_{n}d"
                     col_hr = f"hit_rate_{n}d"
                     if lookup_val is not None:
-                        s = _lookup(ind, lookup_val, n, current_regime, code)
+                        s = _lookup(ind, lookup_val, n, current_regime, code, current_strength)
                         if s is not None:
                             row[col_conf] = float(s["confidence_score"])
                             row[col_hr] = float(s["hit_rate"])
@@ -816,6 +1091,7 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                     "signal_direction": combo_dir,
                     "market_regime": current_regime,
                     "scope": SCOPE_ETF,
+                    "signal_strength": STRENGTH_ALL,
                 }
 
                 confs = []
@@ -823,7 +1099,7 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                 for n in FORWARD_WINDOWS:
                     col_conf = f"conf_{n}d"
                     col_hr = f"hit_rate_{n}d"
-                    s = _lookup("combo", combo_name, n, current_regime, code)
+                    s = _lookup("combo", combo_name, n, current_regime, code, STRENGTH_ALL)
                     if s is not None:
                         row[col_conf] = float(s["confidence_score"])
                         row[col_hr] = float(s["hit_rate"])
@@ -872,8 +1148,9 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
         close_conn = True
 
     try:
+        conn.execute("DROP TABLE IF EXISTS signal_confidence_current")
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS signal_confidence_current (
+            CREATE TABLE signal_confidence_current (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code TEXT NOT NULL,
                 name TEXT NOT NULL,
@@ -883,6 +1160,7 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
                 signal_direction INTEGER NOT NULL,
                 market_regime TEXT,
                 scope TEXT,
+                signal_strength TEXT,
                 conf_5d REAL,
                 conf_10d REAL,
                 conf_20d REAL,
@@ -895,13 +1173,11 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
                 hit_rate_20d REAL,
                 hit_rate_30d REAL,
                 hit_rate_60d REAL,
+                stability_score REAL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(code, indicator, signal_value, date)
             )
         """)
-        conn.execute("DELETE FROM signal_confidence_current")
-        conn.commit()
-
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         rows = conf_df.copy()
         rows["updated_at"] = now
@@ -941,7 +1217,7 @@ def run_full_backtest_pipeline() -> dict:
             conf_n = save_current_confidence(conf_df, conn)
         else:
             conf_n = 0
-        logger.info(f"回测流程完成 (v3): {bt_n} 统计行, {conf_n} 置信度行")
+        logger.info(f"回测流程完成 (v4): {bt_n} 统计行, {conf_n} 置信度行")
         return {"backtest_rows": bt_n, "confidence_rows": conf_n}
     finally:
         conn.close()
