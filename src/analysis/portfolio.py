@@ -378,7 +378,9 @@ class PortfolioAnalyzer:
                 for code in common_codes:
                     prev_qty, prev_mv = prev_snapshots[code]
                     curr_pos = curr_codes[code]
-                    price_adj_mv += curr_pos.get('current_price', 0) * prev_qty
+                    # FIX: 优先使用 realtime_price（_update_realtime_quotes 更新后的最新价格）
+                    curr_price = curr_pos.get('realtime_price', curr_pos.get('current_price', 0))
+                    price_adj_mv += curr_price * prev_qty
                     prev_common_mv += prev_mv
                 if prev_common_mv > 0:
                     daily_pnl = price_adj_mv - prev_common_mv

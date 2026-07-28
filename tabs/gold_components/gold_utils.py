@@ -8,8 +8,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import sqlite3
 
 logger = logging.getLogger(__name__)
+
+def _gold_db():
+    """获取数据库连接"""
+    try:
+        from data_loader import get_db_connection
+        return get_db_connection()
+    except Exception:
+        return None
 
 
 # ---------- 统一图表样式 ----------
@@ -67,7 +76,21 @@ def fetch_sge_benchmark():
 
 
 def fetch_sge_hist(symbol="Au99.99"):
-    """获取SGE历史K线"""
+    """获取SGE历史K线 - 优先从DB读取,回退akshare"""
+    # 1. 尝试从DB读取
+    conn = _gold_db()
+    if conn is not None:
+        try:
+            df = pd.read_sql_query(
+                "SELECT date, open, high, low, close, volume FROM gold_sge_hist WHERE symbol=? ORDER BY date",
+                conn, params=(symbol,))
+            conn.close()
+            if df is not None and not df.empty:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                return df
+        except Exception as e:
+            logger.debug("[gold_utils] DB读取SGE K线失败: %s", e)
+    # 2. 回退到akshare
     try:
         import akshare as ak
         df = ak.spot_hist_sge(symbol=symbol)
@@ -288,11 +311,25 @@ def fetch_china_reserve_data():
 
 @st.cache_data(ttl=CACHE_TTL['long'], show_spinner=False)
 def fetch_global_etf_holdings(years=2):
-    """获取全球黄金ETF持仓数据（macro_cons_gold）
-    默认只取近2年数据，足够支撑月度趋势和央行对比图表。
-    首次调用仍需 ~20s 下载数据，但过滤后返回量从 ~2800 rows 降至 ~375 rows。
+    """获取全球黄金ETF持仓数据 - 优先从DB读取,回退akshare
     Returns: DataFrame with columns [date, total_holdings, change, total_value]
     """
+    # 1. 尝试从DB读取
+    conn = _gold_db()
+    if conn is not None:
+        try:
+            df = pd.read_sql_query(
+                "SELECT date, total_holdings, change, total_value FROM gold_etf_holdings ORDER BY date",
+                conn)
+            conn.close()
+            if df is not None and not df.empty:
+                df["date"] = pd.to_datetime(df["date"])
+                cutoff = df["date"].max() - pd.DateOffset(years=years)
+                df = df[df["date"] >= cutoff].reset_index(drop=True)
+                return df
+        except Exception as e:
+            logger.debug("[gold_utils] DB读取ETF持仓失败: %s", e)
+    # 2. 回退到akshare
     try:
         import akshare as ak
         df = ak.macro_cons_gold()

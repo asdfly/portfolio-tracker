@@ -388,6 +388,170 @@ def save_market_sentiment(conn: sqlite3.Connection, records: list) -> int:
 
 # ==================== 主采集函数 ====================
 
+
+
+def fetch_sge_hist_data(symbol: str = "Au99.99", days: int = 365) -> "pd.DataFrame":
+    """采集SGE黄金K线历史数据
+
+    Args:
+        symbol: SGE品种代码, 如 Au99.99
+        days: 采集最近N天数据
+
+    Returns:
+        DataFrame[date, symbol, open, high, low, close, volume]
+    """
+    import akshare as ak
+    try:
+        df = ak.spot_hist_sge(symbol=symbol)
+        if df is None or df.empty:
+            logger.warning("SGE K线数据为空: symbol=%s", symbol)
+            return pd.DataFrame()
+        df.columns = [c.strip() for c in df.columns]
+        # 统一列名
+        col_map = {}
+        for c in df.columns:
+            cl = c.lower()
+            if "日期" in c or "date" in cl:
+                col_map[c] = "date"
+            elif "开" in c or "open" in cl:
+                col_map[c] = "open"
+            elif "高" in c or "high" in cl:
+                col_map[c] = "high"
+            elif "低" in c or "low" in cl:
+                col_map[c] = "low"
+            elif "收" in c or "close" in cl:
+                col_map[c] = "close"
+            elif "量" in c or "volume" in cl or "vol" in cl:
+                col_map[c] = "volume"
+        df = df.rename(columns=col_map)
+        if "date" not in df.columns:
+            logger.warning("SGE K线缺少date列: %s", list(df.columns))
+            return pd.DataFrame()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        df = df.dropna(subset=["date"])
+        df["symbol"] = symbol
+        # 只保留需要的列
+        keep = ["date", "symbol", "open", "high", "low", "close", "volume"]
+        for c in keep:
+            if c not in df.columns:
+                df[c] = None
+        df = df[keep]
+        # 取最近N天
+        df = df.sort_values("date").tail(days).reset_index(drop=True)
+        logger.info("SGE K线采集: %d条 (symbol=%s)", len(df), symbol)
+        return df
+    except (ValueError, ConnectionError, OSError) as e:
+        logger.warning("SGE K线采集失败: %s", e)
+        return pd.DataFrame()
+
+
+def fetch_global_etf_holdings_data(days: int = 365) -> "pd.DataFrame":
+    """采集全球黄金ETF持仓数据
+
+    Args:
+        days: 采集最近N天数据
+
+    Returns:
+        DataFrame[date, total_holdings, change, total_value]
+    """
+    import akshare as ak
+    try:
+        df = ak.macro_cons_gold()
+        if df is None or df.empty or "商品" not in df.columns:
+            logger.warning("全球ETF持仓数据为空")
+            return pd.DataFrame()
+        df = df[df["商品"] == "黄金"].copy()
+        col_map = {
+            "日期": "date",
+            "总库存": "total_holdings",
+            "增持/减持": "change",
+            "总价值": "total_value",
+        }
+        df = df.rename(columns=col_map)
+        df = df.drop(columns=["商品"], errors="ignore")
+        if "date" not in df.columns:
+            logger.warning("ETF持仓缺少date列: %s", list(df.columns))
+            return pd.DataFrame()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        df = df.dropna(subset=["date"])
+        # total_value 原始单位为美元, 转为亿美元
+        if "total_value" in df.columns:
+            df["total_value"] = pd.to_numeric(df["total_value"], errors="coerce") / 1e8
+        for c in ["total_holdings", "change"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        keep = ["date", "total_holdings", "change", "total_value"]
+        for c in keep:
+            if c not in df.columns:
+                df[c] = None
+        df = df[keep]
+        df = df.sort_values("date").tail(days).reset_index(drop=True)
+        logger.info("全球ETF持仓采集: %d条", len(df))
+        return df
+    except (ValueError, ConnectionError, OSError) as e:
+        logger.warning("全球ETF持仓采集失败: %s", e)
+        return pd.DataFrame()
+
+
+def save_gold_sge_hist(conn, df) -> int:
+    """将SGE K线数据写入gold_sge_hist表
+
+    Args:
+        conn: sqlite3连接
+        df: DataFrame[date, symbol, open, high, low, close, volume]
+
+    Returns:
+        写入行数
+    """
+    if df is None or df.empty:
+        return 0
+    count = 0
+    for _, row in df.iterrows():
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO gold_sge_hist
+                   (date, symbol, open, high, low, close, volume)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (row["date"], row["symbol"], row.get("open"),
+                 row.get("high"), row.get("low"), row.get("close"),
+                 row.get("volume")),
+            )
+            count += 1
+        except sqlite3.IntegrityError:
+            pass
+    conn.commit()
+    return count
+
+
+def save_gold_etf_holdings(conn, df) -> int:
+    """将全球ETF持仓数据写入gold_etf_holdings表
+
+    Args:
+        conn: sqlite3连接
+        df: DataFrame[date, total_holdings, change, total_value]
+
+    Returns:
+        写入行数
+    """
+    if df is None or df.empty:
+        return 0
+    count = 0
+    for _, row in df.iterrows():
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO gold_etf_holdings
+                   (date, total_holdings, change, total_value)
+                   VALUES (?, ?, ?, ?)""",
+                (row["date"], row.get("total_holdings"),
+                 row.get("change"), row.get("total_value")),
+            )
+            count += 1
+        except sqlite3.IntegrityError:
+            pass
+    conn.commit()
+    return count
+
+
 def fetch_all_macro_daily() -> dict:
     """采集全部宏观数据并保存"""
     conn = get_db_connection()
@@ -428,6 +592,24 @@ def fetch_all_macro_daily() -> dict:
         except Exception as e:
             logger.warning(f"情绪[{name}] 采集失败: {e}")
             stats[name] = 0
-    
+
+    # 黄金扩展数据 (gold_sge_hist + gold_etf_holdings)
+    gold_fetchers = [
+        ("SGE_HIST", fetch_sge_hist_data, {"days": 5}),
+        ("GOLD_ETF", fetch_global_etf_holdings_data, {"days": 5}),
+    ]
+    for name, func, kwargs in gold_fetchers:
+        try:
+            records = func(**kwargs)
+            if name == "SGE_HIST":
+                count = save_gold_sge_hist(conn, records)
+            else:
+                count = save_gold_etf_holdings(conn, records)
+            stats[name] = count
+            logger.info(f"黄金[{name}]: {count}条")
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
+            logger.warning(f"黄金[{name}] 采集失败: {e}")
+            stats[name] = 0
+
     conn.close()
     return stats

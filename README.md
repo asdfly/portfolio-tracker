@@ -146,7 +146,7 @@ docker run -p 8501:8501 -v ./data:/app/data portfolio-tracker
 ### 测试
 
 ```bash
-pytest tests/ -v                         # 全部1307个用例
+pytest tests/ -v                         # 全部1435个用例
 pytest tests/ -k "d8 or d9 or d10" -v    # 特定阶段测试
 ```
 
@@ -206,7 +206,7 @@ GitHub Actions 在每次 push/PR 到 master 分支时自动运行 pytest。
 
 | 维度 | 数据 |
 |------|------|
-| 测试用例 | 1,307 个（全部通过） |
+| 测试用例 | 1,435 个（全部通过） |
 | Dashboard Tab | 15 个（Tab11含10个子Tab） |
 | 数据库表 | 26 个 |
 | 数据行数 | 350,000+ 行 |
@@ -214,7 +214,7 @@ GitHub Actions 在每次 push/PR 到 master 分支时自动运行 pytest。
 | 告警规则 | 9 条（含去重） |
 | 回测策略 | 5 种 |
 | Plotly 图表 | 30+ 个 |
-| Python 代码 | 48,500 行 / 180 文件 |
+| Python 代码 | 48,800 行 / 181 文件 |
 
 ## License
 

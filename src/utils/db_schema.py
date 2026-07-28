@@ -406,8 +406,36 @@ TABLE_DEFS = [
     """, [
         "CREATE INDEX IF NOT EXISTS idx_block_date ON stock_block_trade(date)",
         "CREATE INDEX IF NOT EXISTS idx_block_code ON stock_block_trade(code)",
+    ]),
+    # gold_sge_hist: SGE黄金K线数据
+    ("gold_sge_hist", """
+        CREATE TABLE IF NOT EXISTS gold_sge_hist (
+            date TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume REAL,
+            UNIQUE(date, symbol)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_gold_sge_date ON gold_sge_hist(date)",
+        "CREATE INDEX IF NOT EXISTS idx_gold_sge_symbol ON gold_sge_hist(symbol)",
     ]),
-]
+    # gold_etf_holdings: 全球黄金ETF持仓量
+    ("gold_etf_holdings", """
+        CREATE TABLE IF NOT EXISTS gold_etf_holdings (
+            date TEXT NOT NULL,
+            total_holdings REAL,
+            change REAL,
+            total_value REAL,
+            UNIQUE(date)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_gold_etf_date ON gold_etf_holdings(date)",
+    ]),
+]
 
 # ============================================================
 #  DataQualityChecker 使用的表注册信息
@@ -434,6 +462,8 @@ QUALITY_CHECK_TABLES = {
     # 使用虚拟表名, DataQualityChecker 中特殊处理
     "_gold_comex": {"date_col": "date", "code_col": None, "label": "COMEX黄金", "source_table": "macro_daily", "indicator_code": "COMEX_GOLD"},
     "_gold_sge": {"date_col": "date", "code_col": None, "label": "上海金基准", "source_table": "macro_daily", "indicator_code": "SGE_GOLD"},
+    "gold_sge_hist": {"date_col": "date", "code_col": "symbol", "label": "SGE K线"},
+    "gold_etf_holdings": {"date_col": "date", "code_col": None, "label": "全球ETF持仓"},
 }
 
 # ============================================================

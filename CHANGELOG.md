@@ -3,8 +3,66 @@
 所有重大变更均记录在此文件中。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
 ---
+## v2.5 (2026-06-24)
+
+### Bug 修复
+- **max_drawdown corrected 净值修复**: `portfolio_risk.py:68` calculate_all 第二参数从 `values`(raw total_value) 改为 `prices`(corrected 累积净值)，消除场外基金月度入账导致的回撤虚高（31.77% → 9.83%）(commit 1567d5a)
+- **ETF 基本面采集 import 修复**: `run_analysis.py` 阶段三.七b 添加缺失的 `from config.settings import ETF_CATEGORIES`，修复每日 15:12 采集静默失败（NameError），etf_fundamental 数据恢复至 100+ 天覆盖 (commit 1567d5a)
+
+### 数据采集验证
+- 12 个主要数据表运行正常，最新数据至 2026-06-24
+- daily_return 分布合理（均值 0.038%，标准差 1.507%，n=3,421）
+- ETF 基本面数据恢复：spot 20 条/日 + industry 158 条 + holdings 200 条 + valuation 17 条
+
 
 ## [Unreleased]
+---
+
+## [v2.5] - 2026-06-24
+
+### 修复
+- **max_drawdown 计算参数错误 (1567d5a)**: portfolio_risk.py:68 calculate_all 第二参数从 values (raw total_value) 改为 prices (corrected 累积净值)，消除场外基金入账导致的回撤虚高（31.77% 修正为 9.83%）
+- **max_drawdown 历史数据回填**: 213 天 (2025-08-08~2026-06-23) max_drawdown 修正，使用 corrected daily_return 累积回撤算法（60 日窗口），修正后均值 7.59%，最大 12.68%，无 >20% 异常
+- **ETF 基本面采集静默失败 (1567d5a)**: run_analysis.py 阶段三.七b 添加缺失的 `from config.settings import ETF_CATEGORIES`，修复每日采集 NameError
+
+### 测试
+- **数据一致性验证**: 3417 天全面扫描 daily_return 分布 (mean=0.038%, std=1.51%)，corrected=0 的 2 天均为非交易日，|dr|>5% 的 43 天集中于 2015 极端行情，均为真实市场波动
+- **max_drawdown 回填验证**: 213 天修正后与 corrected daily_return 逻辑一致，06-18~06-23 从 31.77% 修正为 9.83%
+- **ETF 基本面采集验证**: 06-24 采集 395 条 (spot:20, industry:158, holdings:200, valuation:17, errors:0)
+
+---
+
+## [v2.4] - 2026-06-20
+
+### 修复
+- **Monte Carlo /100 量纲 (8ade3af)**: data_loader.py L684 双重 /100，0.5% 日收益 252 天模拟结果从 1.3% 修正为 251%
+- **tab5 再平衡 /100 (8ade3af)**: tab5_advanced.py L688 ret_arr 缺少 /100，场外基金净值模拟修正
+- **tab1 日收益率 *100 多余 (979658d)**: tab1_net_value.py L133 多余 *100，标准差 103.291% 修正为 1.033%
+- **portfolio_risk corrected returns (942a527)**: 用 corrected daily_return 替代 total_value.pct_change，波动率 262% 修正为 17%，夏普 8.86 修正为 -0.58
+- **total_value 跳变统计修复 (c49da0e 等 4 commits)**: tab1/tab4/tab7/dashboard/factor_attribution 共 11 处改用 cumprod 累积净值法
+- **backtest Sharpe (ef0f106)**: 添加无风险利率扣除 (Rf=2.5%) + ddof=1 样本标准差
+- **factor_attribution 残差 (ef0f106)**: residual_std 使用 ddof=1
+- **场外基金 pnl None (68a8463)**: _update_realtime_quotes else 分支改用 (current_price - cost_price) * quantity 计算，回填 11 只基金 63 条历史记录
+- **compute_extended Sortino (979658d)**: 减去无风险利率 Rf=2.5%
+- **tab2 ETF 技术指标展示 (16db702)**: _helpers.py 过时 stub 改用 data_loader 加载 etf_technical
+- **dashboard trend_map 英文 key (16db702)**: 映射为中文行业名称
+
+### 测试
+- **第4轮 bugfix 回归测试 (98f30a9)**: test_bugfix_round4.py 38 用例覆盖 6 大修复点
+  - TestMonteCarloDimension (5): 量纲对比、确定性路径、seed 可复现、零标准差保护
+  - TestCleanseDailyReturns (8): 极端值过滤、尾截断、组合过滤、stats 完整性
+  - TestComputeMonthlyReturns (4): 月度/年度收益率、几何平均、空数据防护
+  - TestOffMarketFundPnl (8): 盈亏计算、None 值防护、dict.get 行为验证
+  - TestCorrectedReturns (5): pct_change 虚假跳变、corrected 无虚假、波动率/夏普对比
+  - TestBacktestSharpe (5): 无风险利率扣除、ddof=1、零波动防护、Calmar 公式
+  - TestFactorAttribution (4): OLS 回归量纲、残差 ddof=1、R-squared 范围、贡献百分比
+- **全量测试 1,220 → 1,435 (+215)**: 0 失败
+
+### 变更
+- **测试用例**: 1,307 → 1,435 (+128)
+- **测试文件**: 74 → 75 (+1 test_bugfix_round4.py)
+- **架构报告**: architecture_report_v5.docx（综合评分 87.8 → 88.5）
+
 ---
 
 ## [v2.3] - 2026-06-17
@@ -67,7 +125,7 @@
 - **数据行数**: 320,000+→350,000+
 - **代码总量**: ~44,000L→48,500L/180文件
 - **浏览器驱动**: Selenium+ChromeDriver→Playwright
-- **测试框架**: pytest 1307用例，全部通过
+- **测试框架**: pytest 1435用例，全部通过
 
 ---
 

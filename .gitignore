@@ -82,3 +82,4 @@ NUL
 .coverage
 coverage.json
 htmlcov/
+*.db

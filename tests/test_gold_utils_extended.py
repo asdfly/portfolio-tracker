@@ -43,15 +43,19 @@ class TestFetchSgeBenchmark:
 
 
 class TestFetchSgeHist:
+    @patch("tabs.gold_components.gold_utils._gold_db")
     @patch("akshare.spot_hist_sge")
-    def test_normal(self, m):
-        m.return_value = pd.DataFrame({"日期": ["2024-01-01"], "收盘": [480.0]})
+    def test_normal(self, m_ak, m_db):
+        m_db.return_value = None  # DB unavailable, fall through to akshare
+        m_ak.return_value = pd.DataFrame({"日期": ["2024-01-01"], "收盘": [480.0]})
         from tabs.gold_components.gold_utils import fetch_sge_hist
         assert fetch_sge_hist() is not None
 
+    @patch("tabs.gold_components.gold_utils._gold_db")
     @patch("akshare.spot_hist_sge")
-    def test_none(self, m):
-        m.return_value = None
+    def test_none(self, m_ak, m_db):
+        m_db.return_value = None  # DB unavailable, fall through to akshare
+        m_ak.return_value = None
         from tabs.gold_components.gold_utils import fetch_sge_hist
         assert fetch_sge_hist() is None
 
