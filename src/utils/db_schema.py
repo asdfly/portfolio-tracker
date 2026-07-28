@@ -335,9 +335,11 @@ TABLE_DEFS = [
             signal_value TEXT NOT NULL,
             signal_direction INTEGER NOT NULL,
             forward_window INTEGER NOT NULL,
+            market_regime TEXT NOT NULL DEFAULT 'all',
             sample_count INTEGER NOT NULL,
             hit_count INTEGER NOT NULL,
             hit_rate REAL NOT NULL,
+            weighted_hit_rate REAL,
             avg_return REAL NOT NULL,
             std_return REAL,
             t_statistic REAL,
@@ -345,7 +347,7 @@ TABLE_DEFS = [
             confidence_score REAL NOT NULL,
             confidence_grade TEXT,
             backtest_date TEXT NOT NULL,
-            UNIQUE(indicator, signal_value, forward_window)
+            UNIQUE(indicator, signal_value, forward_window, market_regime)
         )
     """, []),
 
@@ -358,6 +360,7 @@ TABLE_DEFS = [
             indicator TEXT NOT NULL,
             signal_value TEXT NOT NULL,
             signal_direction INTEGER NOT NULL,
+            market_regime TEXT,
             conf_5d REAL,
             conf_10d REAL,
             conf_20d REAL,

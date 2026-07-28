@@ -1,11 +1,17 @@
 """
-ETF 趋势信号回测引擎
+ETF 趋势信号回测引擎 (v2)
+
+P0 优化:
+  1. 评分公式优化 — 对数样本标度+效果量门槛+Sharpe收益+一致性分量
+  2. 收益加权命中率 — 连续评分替代二值命中率
+  3. 市场状态分层 — 牛/熊/震荡分别回测
 
 对 etf_technical 表中 6 类技术指标信号进行历史回测，
 量化各信号在不同前瞻时间窗口（5/10/20/30/60 交易日）下
 对收益方向的预测准确率，并计算置信度评分。
 """
 import logging
+import math
 import sqlite3
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
@@ -53,38 +59,157 @@ BOLLINGER_SELL_THRESHOLD = 80
 
 MIN_SAMPLE_SIZE = 10  # 最小样本量
 
+# 市场状态
+REGIME_BULL = "bull"
+REGIME_BEAR = "bear"
+REGIME_SIDEWAYS = "sideways"
+REGIME_ALL = "all"
+ALL_REGIMES = [REGIME_ALL, REGIME_BULL, REGIME_BEAR, REGIME_SIDEWAYS]
+
+# 市场状态分类参数
+REGIME_MA_PERIOD = 20  # 20日均线
+REGIME_SLOPE_PERIOD = 5  # 均线斜率判断周期
+MARKET_PROXY_CODE = "510300"  # 沪深300作为市场代理
+
+# 窗口权重 (用于综合置信度加权)
+WINDOW_WEIGHTS = {5: 0.10, 10: 0.15, 20: 0.25, 30: 0.25, 60: 0.25}
+
+# 效果量门槛
+EFFECT_SIZE_THRESHOLD = 0.05  # |hit_rate - 0.5| > 5% 才算有效果
+
 
 # ============================================================
-# 置信度评分
+# 置信度评分 v2
 # ============================================================
 
 def compute_confidence(n: int, hit_rate: float, p_value: float,
-                       avg_return: float) -> Tuple[float, str]:
-    """计算置信度评分 (0-100) 和等级 (A/B/C/D)。
+                       avg_return: float, std_return: float = 0.0,
+                       weighted_hit_rate: Optional[float] = None) -> Tuple[float, str]:
+    """计算置信度评分 v2 (0-100) 和等级 (A/B/C/D)。
 
-    权重:
-      命中率偏离 50% 的程度  40 分
-      样本量 (100+ 满分)     20 分
-      统计显著性 (p值梯度)   25 分
-      平均收益 (5%+ 满分)     15 分
+    v2 改进:
+      1. 预测力 (40分): 优先使用收益加权命中率, 回退到二值命中率
+      2. 样本量 (15分): 对数标度, 500样本满分 (替代旧的 n/100 线性标度)
+      3. 统计显著性 (25分): p值 + 效果量双重门槛 (防止大样本微效应虚高)
+      4. 风险调整收益 (20分): Sharpe比率形式, 纳入波动率 (替代旧的 abs(avg_return)/0.05)
+
+    Args:
+        n: 样本量
+        hit_rate: 二值命中率 (0-1)
+        p_value: 统计检验 p 值
+        avg_return: 平均收益
+        std_return: 收益标准差
+        weighted_hit_rate: 收益加权命中率 (-1 到 1), None 则回退到二值
+
+    Returns:
+        (score, grade)
     """
-    hit_component = min(abs(hit_rate - 0.5) * 80, 40)
-    sample_component = min(n / 100, 1.0) * 20
+    # 1. 预测力 (40分)
+    if weighted_hit_rate is not None and not math.isnan(weighted_hit_rate):
+        # 收益加权命中率: [-1, 1], 0 = 无预测力
+        predictive = min(abs(weighted_hit_rate) * 200, 40)
+    else:
+        # 回退: 二值命中率偏离 50%
+        predictive = min(abs(hit_rate - 0.5) * 80, 40)
+
+    # 2. 样本量 (15分) — 对数标度
+    # log10(10)≈1 → 5.4分, log10(50)≈1.7 → 9.2分, log10(500)≈2.7 → 15分
+    sample_component = min(math.log10(max(n, 1)) / math.log10(500), 1.0) * 15
+
+    # 3. 统计显著性 (25分) — p值 + 效果量双重门槛
+    effect_size = abs(hit_rate - 0.5)
+    has_effect = effect_size > EFFECT_SIZE_THRESHOLD
 
     if p_value < 0.01:
-        sig_component = 25
+        sig_component = 25 if has_effect else 15
     elif p_value < 0.05:
-        sig_component = 20
+        sig_component = 20 if has_effect else 10
     elif p_value < 0.10:
-        sig_component = 10
+        sig_component = 8
     else:
         sig_component = 0
 
-    return_component = min(abs(avg_return) / 0.05, 1.0) * 15
+    # 4. 风险调整收益 (20分) — Sharpe 比率形式
+    if std_return > 1e-8:
+        annualized_std = std_return * math.sqrt(252)
+        sharpe = abs(avg_return) / annualized_std
+        return_component = min(sharpe / 2.0, 1.0) * 20
+    else:
+        return_component = min(abs(avg_return) / 0.05, 1.0) * 20
 
-    score = round(hit_component + sample_component + sig_component + return_component, 1)
+    score = round(predictive + sample_component + sig_component + return_component, 1)
     grade = "A" if score >= 70 else "B" if score >= 50 else "C" if score >= 30 else "D"
     return score, grade
+
+
+def _compute_weighted_hit_rate(returns: pd.Series, direction: int) -> float:
+    """计算收益加权命中率。
+
+    weighted_hit_rate = Σ(sign(direction) × return) / Σ(|return|)
+    范围 [-1, 1]:
+      1 = 完美正向预测 (所有收益按方向正确且幅度大)
+      0 = 无预测力
+     -1 = 完美反向预测
+
+    相比二值命中率的优点: 考虑收益幅度, 0.01% 和 5% 不再等价
+    """
+    if len(returns) == 0:
+        return 0.0
+    signed_returns = returns * (1 if direction > 0 else -1)
+    total_abs = returns.abs().sum()
+    if total_abs < 1e-10:
+        return 0.0
+    return float(signed_returns.sum() / total_abs)
+
+
+def _compute_consistency_bonus(hit_rates: List[float]) -> float:
+    """计算窗口间一致性加成 (-5 到 +5).
+
+    所有窗口命中率在同侧 (都>0.5 或都<0.5) → +5
+    混合 → -5
+    """
+    if len(hit_rates) < 2:
+        return 0.0
+    above = sum(1 for hr in hit_rates if hr > 0.5)
+    below = sum(1 for hr in hit_rates if hr < 0.5)
+    if above == 0 or below == 0:
+        return 5.0  # 全部同侧
+    return -5.0  # 混合
+
+
+# ============================================================
+# 市场状态分类
+# ============================================================
+
+def _classify_market_regime(df: pd.DataFrame) -> pd.Series:
+    """为每行数据打上市场状态标签。
+
+    使用市场代理 (沪深300) 的20日均线和均线斜率分类:
+      - bull:  价格 > MA20 且 MA20 上升
+      - bear:  价格 < MA20 且 MA20 下降
+      - sideways: 其他
+
+    Returns:
+        与 df 等长的 Series, 值为 'bull'/'bear'/'sideways'
+    """
+    proxy = df[df["code"] == MARKET_PROXY_CODE].copy()
+    if proxy.empty:
+        # 回退: 用第一只ETF作为代理
+        first_code = df["code"].iloc[0]
+        proxy = df[df["code"] == first_code].copy()
+
+    proxy = proxy.sort_values("date").reset_index(drop=True)
+    proxy["ma"] = proxy["close"].rolling(REGIME_MA_PERIOD, min_periods=1).mean()
+    proxy["ma_slope"] = proxy["ma"].diff(REGIME_SLOPE_PERIOD)
+    proxy["regime"] = REGIME_SIDEWAYS
+    above_ma = proxy["close"] > proxy["ma"]
+    ma_rising = proxy["ma_slope"] > 0
+    proxy.loc[above_ma & ma_rising, "regime"] = REGIME_BULL
+    proxy.loc[~above_ma & ~ma_rising, "regime"] = REGIME_BEAR
+
+    # 建立日期→状态映射
+    date_regime = dict(zip(proxy["date"], proxy["regime"]))
+    return df["date"].map(date_regime).fillna(REGIME_SIDEWAYS)
 
 
 # ============================================================
@@ -122,56 +247,81 @@ def _compute_forward_returns(df: pd.DataFrame,
     return df
 
 
+def _backtest_single(subset: pd.DataFrame, indicator: str,
+                     signal_val: str, direction: int,
+                     n: int, regime: str) -> Optional[dict]:
+    """对单个 信号×窗口×市场状态 组合进行回测统计。"""
+    ret_col = f"fwd_ret_{n}"
+    valid = subset[ret_col].dropna()
+    n_samples = len(valid)
+    if n_samples < MIN_SAMPLE_SIZE:
+        return None
+
+    # 二值命中率
+    hits = int(((direction > 0) & (valid > 0)).sum() +
+               ((direction < 0) & (valid < 0)).sum())
+    hit_rate = hits / n_samples
+
+    # 收益加权命中率
+    whr = _compute_weighted_hit_rate(valid, direction)
+
+    avg_ret = float(valid.mean())
+    std_ret = float(valid.std()) if n_samples > 1 else 0.0
+
+    # 二项检验 (正态近似)
+    se = 0.5 / (n_samples ** 0.5)
+    t_stat = (hit_rate - 0.5) / se if se > 0 else 0.0
+    p_value = 2 * (1 - stats.norm.cdf(abs(t_stat)))
+
+    conf, grade = compute_confidence(
+        n_samples, hit_rate, p_value, avg_ret, std_ret, whr)
+
+    return {
+        "indicator": indicator,
+        "signal_value": signal_val,
+        "signal_direction": direction,
+        "forward_window": n,
+        "market_regime": regime,
+        "sample_count": n_samples,
+        "hit_count": hits,
+        "hit_rate": round(hit_rate, 4),
+        "weighted_hit_rate": round(whr, 4),
+        "avg_return": round(avg_ret, 6),
+        "std_return": round(std_ret, 6),
+        "t_statistic": round(t_stat, 4),
+        "p_value": round(p_value, 6),
+        "confidence_score": conf,
+        "confidence_grade": grade,
+    }
+
+
 def _backtest_categorical(df: pd.DataFrame, indicator: str,
                           direction_map: Dict[str, int],
                           windows: List[int]) -> List[dict]:
-    """对分类信号（如 ma_signal='多头排列'）进行回测"""
+    """对分类信号进行回测 (含市场状态分层)。"""
     results = []
     for signal_val, direction in direction_map.items():
         if direction == 0:
             continue
         mask = df[indicator] == signal_val
-        subset = df[mask]
-        for n in windows:
-            ret_col = f"fwd_ret_{n}"
-            valid = subset[ret_col].dropna()
-            n_samples = len(valid)
-            if n_samples < MIN_SAMPLE_SIZE:
-                continue
+        subset_all = df[mask]
 
-            hits = int(((direction > 0) & (valid > 0)).sum() +
-                       ((direction < 0) & (valid < 0)).sum())
-            hit_rate = hits / n_samples
-            avg_ret = float(valid.mean())
-            std_ret = float(valid.std()) if n_samples > 1 else 0.0
+        for regime in ALL_REGIMES:
+            if regime == REGIME_ALL:
+                subset = subset_all
+            else:
+                subset = subset_all[subset_all["market_regime"] == regime]
 
-            # 二项检验 (正态近似)
-            se = 0.5 / (n_samples ** 0.5)
-            t_stat = (hit_rate - 0.5) / se if se > 0 else 0.0
-            p_value = 2 * (1 - stats.norm.cdf(abs(t_stat)))
-
-            conf, grade = compute_confidence(n_samples, hit_rate, p_value, avg_ret)
-
-            results.append({
-                "indicator": indicator,
-                "signal_value": signal_val,
-                "signal_direction": direction,
-                "forward_window": n,
-                "sample_count": n_samples,
-                "hit_count": hits,
-                "hit_rate": round(hit_rate, 4),
-                "avg_return": round(avg_ret, 6),
-                "std_return": round(std_ret, 6),
-                "t_statistic": round(t_stat, 4),
-                "p_value": round(p_value, 6),
-                "confidence_score": conf,
-                "confidence_grade": grade,
-            })
+            for n in windows:
+                r = _backtest_single(subset, indicator, signal_val,
+                                     direction, n, regime)
+                if r:
+                    results.append(r)
     return results
 
 
 def _backtest_bollinger(df: pd.DataFrame, windows: List[int]) -> List[dict]:
-    """对布林带数值型信号进行回测"""
+    """对布林带数值型信号进行回测 (含市场状态分层)。"""
     results = []
     boll = df["bollinger_position"].dropna()
     if boll.empty:
@@ -182,45 +332,30 @@ def _backtest_bollinger(df: pd.DataFrame, windows: List[int]) -> List[dict]:
         (-1, BOLLINGER_SELL_THRESHOLD, 100, "高位(≥80)"),
     ]:
         mask = (df["bollinger_position"] >= lo) & (df["bollinger_position"] < hi + 1)
-        subset = df[mask]
-        for n in windows:
-            ret_col = f"fwd_ret_{n}"
-            valid = subset[ret_col].dropna()
-            n_samples = len(valid)
-            if n_samples < MIN_SAMPLE_SIZE:
-                continue
+        subset_all = df[mask]
 
-            hits = int(((direction > 0) & (valid > 0)).sum() +
-                       ((direction < 0) & (valid < 0)).sum())
-            hit_rate = hits / n_samples
-            avg_ret = float(valid.mean())
-            std_ret = float(valid.std()) if n_samples > 1 else 0.0
+        for regime in ALL_REGIMES:
+            if regime == REGIME_ALL:
+                subset = subset_all
+            else:
+                subset = subset_all[subset_all["market_regime"] == regime]
 
-            se = 0.5 / (n_samples ** 0.5)
-            t_stat = (hit_rate - 0.5) / se if se > 0 else 0.0
-            p_value = 2 * (1 - stats.norm.cdf(abs(t_stat)))
-            conf, grade = compute_confidence(n_samples, hit_rate, p_value, avg_ret)
-
-            results.append({
-                "indicator": "bollinger",
-                "signal_value": label,
-                "signal_direction": direction,
-                "forward_window": n,
-                "sample_count": n_samples,
-                "hit_count": hits,
-                "hit_rate": round(hit_rate, 4),
-                "avg_return": round(avg_ret, 6),
-                "std_return": round(std_ret, 6),
-                "t_statistic": round(t_stat, 4),
-                "p_value": round(p_value, 6),
-                "confidence_score": conf,
-                "confidence_grade": grade,
-            })
+            for n in windows:
+                r = _backtest_single(subset, "bollinger", label,
+                                     direction, n, regime)
+                if r:
+                    results.append(r)
     return results
 
 
 def run_backtest(conn=None) -> pd.DataFrame:
-    """执行完整回测，返回统计结果 DataFrame"""
+    """执行完整回测，返回统计结果 DataFrame。
+
+    v2 改进:
+      - 市场状态分层: 每个信号×窗口×市场状态 组合独立统计
+      - 收益加权命中率: 新增 weighted_hit_rate 列
+      - 评分公式 v2: 对数样本+效果量门槛+Sharpe收益
+    """
     close_conn = False
     if conn is None:
         from src.utils.database import get_db_connection
@@ -231,6 +366,11 @@ def run_backtest(conn=None) -> pd.DataFrame:
         df = _load_tech_with_price(conn)
         df = _compute_forward_returns(df)
 
+        # 市场状态分类
+        df["market_regime"] = _classify_market_regime(df)
+        regime_counts = df["market_regime"].value_counts()
+        logger.info(f"市场状态分布: {dict(regime_counts)}")
+
         all_results = []
         for ind_col, dir_map in SIGNAL_DIRECTIONS.items():
             all_results.extend(_backtest_categorical(df, ind_col, dir_map, FORWARD_WINDOWS))
@@ -238,7 +378,8 @@ def run_backtest(conn=None) -> pd.DataFrame:
         all_results.extend(_backtest_bollinger(df, FORWARD_WINDOWS))
 
         result_df = pd.DataFrame(all_results)
-        logger.info(f"回测完成: {len(result_df)} 组统计")
+        logger.info(f"回测完成: {len(result_df)} 组统计 "
+                    f"(含市场状态分层, {len(result_df[result_df['market_regime']==REGIME_ALL])} 组全市场)")
         return result_df
     finally:
         if close_conn:
@@ -250,7 +391,7 @@ def run_backtest(conn=None) -> pd.DataFrame:
 # ============================================================
 
 def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
-    """保存回测结果到 signal_backtest_stats 表"""
+    """保存回测结果到 signal_backtest_stats 表 (v2 schema)"""
     close_conn = False
     if conn is None:
         from src.utils.database import get_db_connection
@@ -258,7 +399,6 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
         close_conn = True
 
     try:
-        # 建表（如果不存在）
         conn.execute("""
             CREATE TABLE IF NOT EXISTS signal_backtest_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,9 +406,11 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
                 signal_value TEXT NOT NULL,
                 signal_direction INTEGER NOT NULL,
                 forward_window INTEGER NOT NULL,
+                market_regime TEXT NOT NULL DEFAULT 'all',
                 sample_count INTEGER NOT NULL,
                 hit_count INTEGER NOT NULL,
                 hit_rate REAL NOT NULL,
+                weighted_hit_rate REAL,
                 avg_return REAL NOT NULL,
                 std_return REAL,
                 t_statistic REAL,
@@ -276,7 +418,7 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
                 confidence_score REAL NOT NULL,
                 confidence_grade TEXT,
                 backtest_date TEXT NOT NULL,
-                UNIQUE(indicator, signal_value, forward_window)
+                UNIQUE(indicator, signal_value, forward_window, market_regime)
             )
         """)
         conn.execute("DELETE FROM signal_backtest_stats")
@@ -312,8 +454,33 @@ def _get_bollinger_signal(val) -> Tuple[str, int]:
     return (f"中位({v:.0f}%)", 0)
 
 
+def _get_current_market_regime(conn) -> str:
+    """获取当前市场状态。"""
+    proxy = pd.read_sql_query(
+        f"SELECT date, current_price AS close FROM portfolio_snapshots "
+        f"WHERE code = '{MARKET_PROXY_CODE}' ORDER BY date", conn)
+    if len(proxy) < REGIME_MA_PERIOD + REGIME_SLOPE_PERIOD:
+        return REGIME_SIDEWAYS
+
+    proxy = proxy.tail(REGIME_MA_PERIOD + REGIME_SLOPE_PERIOD).reset_index(drop=True)
+    ma = proxy["close"].rolling(REGIME_MA_PERIOD, min_periods=1).mean().iloc[-1]
+    ma_prev = proxy["close"].rolling(REGIME_MA_PERIOD, min_periods=1).mean().iloc[-1 - REGIME_SLOPE_PERIOD]
+    price = proxy["close"].iloc[-1]
+    slope = ma - ma_prev
+
+    if price > ma and slope > 0:
+        return REGIME_BULL
+    if price < ma and slope < 0:
+        return REGIME_BEAR
+    return REGIME_SIDEWAYS
+
+
 def get_current_confidence(conn=None) -> pd.DataFrame:
-    """获取当前各ETF最新信号及其置信度
+    """获取当前各ETF最新信号及其置信度 (v2)。
+
+    v2 改进:
+      - 市场状态感知: 使用当前市场状态对应的回测结果 (回退到 'all')
+      - 一致性加成: 窗口间命中率方向一致 → +5, 混合 → -5
 
     返回列: code, name, date, indicator, signal_value, signal_direction,
            conf_5d, conf_10d, conf_20d, conf_30d, conf_60d,
@@ -348,17 +515,30 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
         if latest.empty:
             return pd.DataFrame()
 
-        # 3. 读取回测统计
+        # 3. 获取当前市场状态
+        current_regime = _get_current_market_regime(conn)
+        logger.info(f"当前市场状态: {current_regime}")
+
+        # 4. 读取回测统计
         stats_df = pd.read_sql_query(
             "SELECT * FROM signal_backtest_stats", conn)
 
-        # 构建查找索引: (indicator, signal_value, forward_window) → row
+        # 构建查找索引: (indicator, signal_value, forward_window, market_regime) → row
         stats_lookup = {}
         for _, r in stats_df.iterrows():
-            key = (r["indicator"], r["signal_value"], int(r["forward_window"]))
+            key = (r["indicator"], r["signal_value"], int(r["forward_window"]),
+                   r["market_regime"])
             stats_lookup[key] = r
 
-        # 4. 为每只ETF的每个指标匹配置信度
+        def _lookup(ind, sig_val, n, regime):
+            """查找回测统计: 优先用指定市场状态, 回退到 'all'"""
+            key = (ind, sig_val, n, regime)
+            if key in stats_lookup:
+                return stats_lookup[key]
+            key_all = (ind, sig_val, n, REGIME_ALL)
+            return stats_lookup.get(key_all)
+
+        # 5. 为每只ETF的每个指标匹配置信度
         results = []
         for _, etf in latest.iterrows():
             code = etf["code"]
@@ -381,7 +561,6 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
 
             # 布林带特殊处理
             boll_label, boll_dir = _get_bollinger_signal(etf["bollinger_position"])
-            # 布林带回测统计中 signal_value 用 "低位(≤20)" / "高位(≥80)"
             if boll_dir == 1:
                 boll_lookup_val = "低位(≤20)"
             elif boll_dir == -1:
@@ -405,19 +584,21 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                     "indicator": ind,
                     "signal_value": sig_val_display,
                     "signal_direction": direction,
+                    "market_regime": current_regime if direction != 0 else None,
                 }
 
                 confs = []
+                hit_rates_for_consistency = []
                 for n in FORWARD_WINDOWS:
                     col_conf = f"conf_{n}d"
                     col_hr = f"hit_rate_{n}d"
                     if lookup_val is not None:
-                        key = (ind, lookup_val, n)
-                        s = stats_lookup.get(key)
+                        s = _lookup(ind, lookup_val, n, current_regime)
                         if s is not None:
                             row[col_conf] = float(s["confidence_score"])
                             row[col_hr] = float(s["hit_rate"])
                             confs.append(float(s["confidence_score"]))
+                            hit_rates_for_consistency.append(float(s["hit_rate"]))
                         else:
                             row[col_conf] = None
                             row[col_hr] = None
@@ -425,14 +606,18 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                         row[col_conf] = None
                         row[col_hr] = None
 
-                # 综合置信度: 有方向信号的窗口置信度加权平均
-                # 权重: 5d=0.10, 10d=0.15, 20d=0.25, 30d=0.25, 60d=0.25
+                # 综合置信度: 加权平均 + 一致性加成
                 if confs:
-                    weights = [0.10, 0.15, 0.25, 0.25, 0.25]
+                    weights = [WINDOW_WEIGHTS[n] for n in FORWARD_WINDOWS]
                     valid_pairs = [(c, w) for c, w in zip(confs, weights) if c is not None]
                     if valid_pairs:
                         total_w = sum(w for _, w in valid_pairs)
-                        composite = sum(c * w for c, w in valid_pairs) / total_w
+                        base_composite = sum(c * w for c, w in valid_pairs) / total_w
+
+                        # 一致性加成
+                        consistency = _compute_consistency_bonus(hit_rates_for_consistency)
+                        composite = max(0.0, min(100.0, base_composite + consistency))
+
                         row["composite_confidence"] = round(composite, 1)
                         row["composite_grade"] = (
                             "A" if composite >= 70 else
@@ -455,7 +640,7 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
 
 
 def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
-    """保存当前信号置信度到 signal_confidence_current 表"""
+    """保存当前信号置信度到 signal_confidence_current 表 (v2 schema)"""
     close_conn = False
     if conn is None:
         from src.utils.database import get_db_connection
@@ -472,6 +657,7 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
                 indicator TEXT NOT NULL,
                 signal_value TEXT NOT NULL,
                 signal_direction INTEGER NOT NULL,
+                market_regime TEXT,
                 conf_5d REAL,
                 conf_10d REAL,
                 conf_20d REAL,
@@ -512,6 +698,8 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
 def run_full_backtest_pipeline() -> dict:
     """完整回测流程: 回测 → 保存 → 当前置信度 → 保存
 
+    v2: 含市场状态分层 + 收益加权命中率 + 评分公式优化
+
     Returns:
         {"backtest_rows": int, "confidence_rows": int}
     """
@@ -529,7 +717,7 @@ def run_full_backtest_pipeline() -> dict:
             conf_n = save_current_confidence(conf_df, conn)
         else:
             conf_n = 0
-        logger.info(f"回测流程完成: {bt_n} 统计行, {conf_n} 置信度行")
+        logger.info(f"回测流程完成 (v2): {bt_n} 统计行, {conf_n} 置信度行")
         return {"backtest_rows": bt_n, "confidence_rows": conf_n}
     finally:
         conn.close()

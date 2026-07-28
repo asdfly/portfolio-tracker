@@ -522,6 +522,7 @@ def _render_signal_confidence(positions):
 
         conf_df = pd.read_sql_query("""
             SELECT code, name, indicator, signal_value, signal_direction,
+                   market_regime,
                    conf_5d, conf_10d, conf_20d, conf_30d, conf_60d,
                    composite_confidence, composite_grade,
                    hit_rate_5d, hit_rate_10d, hit_rate_20d, hit_rate_30d, hit_rate_60d
@@ -547,10 +548,13 @@ def _render_signal_confidence(positions):
         avg_conf = conf_df["composite_confidence"].mean()
 
         cc1, cc2, cc3, cc4 = st.columns(4)
+        regime_labels = {"bull": "牛市", "bear": "熊市", "sideways": "震荡"}
+        _regime_vals = conf_df["market_regime"].dropna()
+        current_regime_label = regime_labels.get(_regime_vals.iloc[0] if not _regime_vals.empty else "all", "未知")
         cc1.metric("有效信号数", total_signals)
         cc2.metric("A级(高置信)", grade_a)
         cc3.metric("B级(中置信)", grade_b)
-        cc4.metric("平均置信度", f"{avg_conf:.1f}")
+        cc4.metric(f"当前: {current_regime_label}", f"{avg_conf:.1f}")
 
         etf_options = conf_df[["code", "name"]].drop_duplicates().sort_values("name")
         etf_options["label"] = etf_options["name"] + " (" + etf_options["code"] + ")"
@@ -650,7 +654,7 @@ def _render_backtest_heatmap():
         '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
         '信号回测统计<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
         '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
-        '全市场历史回测：6类指标x15种信号x5个前瞻窗口，共108组统计。'
+        '全市场历史回测：6类指标x22种信号x5个前瞻窗口x4种市场状态，共420组统计。含收益加权命中率+市场状态分层。'
         '</span></div>',
         unsafe_allow_html=True,
     )
@@ -658,14 +662,24 @@ def _render_backtest_heatmap():
     try:
         conn = get_db_connection()
 
+        # 市场状态选择器
+        regime_options = {"all": "全部市场状态", "bull": "牛市", "bear": "熊市", "sideways": "震荡市"}
+        sel_regime = st.selectbox(
+            "选择市场状态",
+            options=list(regime_options.keys()),
+            format_func=lambda r: regime_options[r],
+            key="backtest_regime_sel",
+        )
+
         stats_df = pd.read_sql_query("""
             SELECT indicator, signal_value, signal_direction, forward_window,
-                   sample_count, hit_count, hit_rate, avg_return,
-                   std_return, t_statistic, p_value,
-                   confidence_score, confidence_grade
+                   market_regime, sample_count, hit_count, hit_rate,
+                   weighted_hit_rate, avg_return, std_return,
+                   t_statistic, p_value, confidence_score, confidence_grade
             FROM signal_backtest_stats
+            WHERE market_regime = ?
             ORDER BY confidence_score DESC
-        """, conn)
+        """, conn, params=(sel_regime,))
         conn.close()
 
         if stats_df.empty:
@@ -718,13 +732,14 @@ def _render_backtest_heatmap():
             top_df["窗口"] = top_df["forward_window"].map(lambda x: f"{x}日")
             top_df["样本"] = top_df["sample_count"]
             top_df["命中率"] = top_df["hit_rate"].map(lambda x: f"{x:.1%}")
+            top_df["加权命中"] = top_df["weighted_hit_rate"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "-")
             top_df["均收益"] = top_df["avg_return"].map(lambda x: f"{x:+.2%}")
             top_df["p值"] = top_df["p_value"].map(lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
             top_df["置信度"] = top_df.apply(
                 lambda r: f"{r['confidence_score']:.1f} [{r['confidence_grade']}]", axis=1
             )
             st.dataframe(
-                top_df[["指标", "信号", "窗口", "样本", "命中率", "均收益", "p值", "置信度"]],
+                top_df[["指标", "信号", "窗口", "样本", "命中率", "加权命中", "均收益", "p值", "置信度"]],
                 use_container_width=True, hide_index=True, height=300,
             )
 
@@ -736,13 +751,14 @@ def _render_backtest_heatmap():
             bot_df["窗口"] = bot_df["forward_window"].map(lambda x: f"{x}日")
             bot_df["样本"] = bot_df["sample_count"]
             bot_df["命中率"] = bot_df["hit_rate"].map(lambda x: f"{x:.1%}")
+            bot_df["加权命中"] = bot_df["weighted_hit_rate"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "-")
             bot_df["均收益"] = bot_df["avg_return"].map(lambda x: f"{x:+.2%}")
             bot_df["p值"] = bot_df["p_value"].map(lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
             bot_df["置信度"] = bot_df.apply(
                 lambda r: f"{r['confidence_score']:.1f} [{r['confidence_grade']}|-]", axis=1
             )
             st.dataframe(
-                bot_df[["指标", "信号", "窗口", "样本", "命中率", "均收益", "p值", "置信度"]],
+                bot_df[["指标", "信号", "窗口", "样本", "命中率", "加权命中", "均收益", "p值", "置信度"]],
                 use_container_width=True, hide_index=True, height=300,
             )
 
