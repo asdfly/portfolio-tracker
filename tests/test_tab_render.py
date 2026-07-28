@@ -53,12 +53,12 @@ def _setup_streamlit_mock():
     """Inject mock_st as streamlit; save/restore originals; clear cached tabs/src modules."""
     saved = {k: v for k, v in list(sys.modules.items())
              if k.startswith("streamlit") or k.startswith("tabs")
-             or k.startswith("dashboard_main") or k.startswith("src")}
+             or k.startswith("dashboard_main") or k.startswith("components")}
     saved_keys = set(saved.keys())
     # Remove all cached streamlit.* modules so fresh imports use mock
     to_remove = [k for k in list(sys.modules)
                  if k.startswith("streamlit") or k.startswith("tabs")
-                 or k.startswith("dashboard_main") or k.startswith("src")]
+                 or k.startswith("dashboard_main") or k.startswith("components")]
     for k in to_remove:
         del sys.modules[k]
     sys.modules["streamlit"] = mock_st
@@ -66,7 +66,7 @@ def _setup_streamlit_mock():
     # Teardown: clean up modules injected during this test module
     to_cleanup = [k for k in list(sys.modules)
                    if k.startswith("streamlit") or k.startswith("tabs")
-                   or k.startswith("dashboard_main") or k.startswith("src")]
+                   or k.startswith("dashboard_main") or k.startswith("components")]
     for k in to_cleanup:
         if k not in saved_keys:
             del sys.modules[k]

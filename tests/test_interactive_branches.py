@@ -25,7 +25,7 @@ def _ctx_mgr():
     return MagicMock(
         __enter__=MagicMock(return_value=MagicMock()),
         __exit__=MagicMock(return_value=False),
-    )
+)
 
 mock_st = MagicMock()
 mock_st.columns = _mock_columns
@@ -80,18 +80,18 @@ def _setup_streamlit_mock():
     """Save original streamlit-related modules, inject mock, restore on teardown."""
     saved = {k: v for k, v in list(sys.modules.items())
              if k.startswith("streamlit") or k.startswith("tabs")
-             or k.startswith("dashboard_main") or k.startswith("src")}
+ or k.startswith("dashboard_main") }
     saved_keys = set(saved.keys())
     to_remove = [k for k in list(sys.modules)
                  if k.startswith("streamlit") or k.startswith("tabs")
-                 or k.startswith("dashboard_main") or k.startswith("src")]
+ or k.startswith("dashboard_main") ]
     for k in to_remove:
         del sys.modules[k]
     sys.modules["streamlit"] = mock_st
     yield
     to_cleanup = [k for k in list(sys.modules)
                    if k.startswith("streamlit") or k.startswith("tabs")
-                   or k.startswith("dashboard_main") or k.startswith("src")]
+ or k.startswith("dashboard_main") ]
     for k in to_cleanup:
         if k not in saved_keys:
             del sys.modules[k]

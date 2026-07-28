@@ -59,12 +59,12 @@ mock_st = _create_mock_st()
 def _setup_streamlit_mock():
     """Install streamlit mock before tests, restore real streamlit after."""
     # Save all streamlit-related modules
-    saved = {k: v for k, v in sys.modules.items() if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("src")}
+    saved = {k: v for k, v in sys.modules.items() if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("components")}
     saved_keys = set(saved.keys())
 
     # Clean and install mock
     for k in list(sys.modules):
-        if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("src"):
+        if k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("components"):
             del sys.modules[k]
     sys.modules["streamlit"] = mock_st
 
@@ -72,7 +72,7 @@ def _setup_streamlit_mock():
 
     # Restore original modules
     to_remove = [k for k in list(sys.modules)
-                 if (k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("src"))
+                 if (k.startswith("streamlit") or k.startswith("tabs") or k.startswith("dashboard") or k.startswith("components"))
                  and k not in saved_keys]
     for k in to_remove:
         del sys.modules[k]

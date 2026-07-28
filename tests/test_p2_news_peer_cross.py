@@ -89,8 +89,12 @@ class TestSectorSentiment:
 
 class TestSentimentTrend:
     def test_basic(self):
+        from datetime import datetime, timedelta
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        d3 = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
         df = pd.DataFrame({"category":["大盘行情"]*3, "sentiment_score":[0.5,0.6,0.7],
-                           "date":["2026-06-12","2026-06-13","2026-06-14"]})
+                           "date":[d3, yesterday, today]})
         t = compute_sentiment_trend(df, days=30)
         assert len(t) == 3 and "avg_score" in t.columns
     def test_empty(self):
