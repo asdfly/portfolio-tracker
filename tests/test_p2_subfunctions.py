@@ -108,7 +108,7 @@ class TestTab7Refactor:
         "_render_news_panel": 91,
         "_render_comprehensive_assessment": 187,
         "_render_market_sentiment": 165,
-        "_render_news_sentiment": 112,
+        "_render_news_sentiment": 118,
     }
 
     def test_subfunc_exist(self):

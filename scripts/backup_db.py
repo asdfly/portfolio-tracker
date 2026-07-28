@@ -70,7 +70,7 @@ def list_backups(backup_dir=None):
     if not backups:
         print("No backups found.")
         return
-    print(f"Backup File{" "*30} Size       Age")
+    print(f'Backup File{" "*30} Size       Age')
     print("-" * 60)
     for bp in backups:
         size_mb = bp.stat().st_size / (1024 * 1024)
