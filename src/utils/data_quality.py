@@ -39,7 +39,14 @@ class DataQualityChecker:
             date_col = info["date_col"]
             label = info["label"]
             try:
-                cur.execute(f"SELECT MAX({date_col}) FROM {table}")
+                if "source_table" in info:
+                    # 虚拟表: 从 source_table 按 indicator_code 过滤
+                    cur.execute(
+                        f"SELECT MAX({date_col}) FROM {info['source_table']} WHERE indicator_code = ?",
+                        (info["indicator_code"],)
+                    )
+                else:
+                    cur.execute(f"SELECT MAX({date_col}) FROM {table}")
                 row = cur.fetchone()
                 if row and row[0]:
                     latest = datetime.strptime(str(row[0]), "%Y-%m-%d").date()
@@ -82,17 +89,25 @@ class DataQualityChecker:
         results = {}
         for table, info in QUALITY_CHECK_TABLES.items():
             try:
-                cur.execute(f"SELECT COUNT(*) FROM {table}")
-                total = cur.fetchone()[0]
+                if "source_table" in info:
+                    src = info["source_table"]
+                    cur.execute(f"SELECT COUNT(*) FROM {src} WHERE indicator_code = ?", (info["indicator_code"],))
+                    total = cur.fetchone()[0]
+                    cur.execute(f"SELECT MIN({info['date_col']}), MAX({info['date_col']}) FROM {src} WHERE indicator_code = ?", (info["indicator_code"],))
+                    row = cur.fetchone()
+                    date_range = f"{row[0]} ~ {row[1]}" if row[0] else "N/A"
+                    codes = 0
+                else:
+                    cur.execute(f"SELECT COUNT(*) FROM {table}")
+                    total = cur.fetchone()[0]
+                    cur.execute(f"SELECT MIN({info['date_col']}), MAX({info['date_col']}) FROM {table}")
+                    row = cur.fetchone()
+                    date_range = f"{row[0]} ~ {row[1]}" if row[0] else "N/A"
 
-                cur.execute(f"SELECT MIN({info['date_col']}), MAX({info['date_col']}) FROM {table}")
-                row = cur.fetchone()
-                date_range = f"{row[0]} ~ {row[1]}" if row[0] else "N/A"
-
-                codes = 0
-                if info["code_col"]:
-                    cur.execute(f"SELECT COUNT(DISTINCT {info['code_col']}) FROM {table}")
-                    codes = cur.fetchone()[0]
+                    codes = 0
+                    if info["code_col"]:
+                        cur.execute(f"SELECT COUNT(DISTINCT {info['code_col']}) FROM {table}")
+                        codes = cur.fetchone()[0]
 
                 results[table] = {
                     "total_rows": total,
@@ -162,7 +177,8 @@ class DataQualityChecker:
         # 2. 覆盖度评分 (0-30分)
         coverage_score = 0
         expected_tables = ["portfolio_snapshots", "etf_technical", "fund_flows",
-                          "index_quotes", "macro_daily", "market_sentiment"]
+                          "index_quotes", "macro_daily", "market_sentiment",
+                          "_gold_comex", "_gold_sge"]
         per_table = 30 / len(expected_tables)
         for t in expected_tables:
             info = coverage.get(t, {})
@@ -227,7 +243,7 @@ class DataQualityChecker:
         cur = conn.cursor()
         # 每个表需要检查的关键列(排除id和created_at)
         key_cols_map = {
-            "fund_flows": ["net_inflow", "buy_amount", "sell_amount"],
+            "fund_flows": ["net_inflow"],
             "stock_lhb": ["code", "net_inflow"],
             "stock_margin": ["code", "margin_balance"],
             "stock_institution_research": ["code", "institution"],
@@ -262,6 +278,154 @@ class DataQualityChecker:
                 pass
         conn.close()
         return results
+
+    def check_gold_data(self) -> Dict:
+        """黄金数据专项质量检查。
+
+        检查 macro_daily 表中 COMEX_GOLD 和 SGE_GOLD 指标的:
+        - 数据新鲜度
+        - 价格连续性 (日涨跌幅异常)
+        - COMEX vs SGE 价差合理性
+        - NULL 值比例
+        """
+        conn = self._conn()
+        cur = conn.cursor()
+        result = {"indicators": [], "anomalies": []}
+
+        for code, name in [("COMEX_GOLD", "COMEX黄金"), ("SGE_GOLD", "上海金基准")]:
+            try:
+                cur.execute("""
+                    SELECT COUNT(*), MIN(date), MAX(date),
+                           AVG(value), MIN(value), MAX(value),
+                           SUM(CASE WHEN value IS NULL THEN 1 ELSE 0 END),
+                           SUM(CASE WHEN change_pct IS NULL THEN 1 ELSE 0 END)
+                    FROM macro_daily WHERE indicator_code = ?
+                """, (code,))
+                row = cur.fetchone()
+                total, min_date, max_date, avg_val, min_val, max_val, null_val, null_chg = row
+
+                # NULL 率
+                null_val_rate = null_val / total if total > 0 else 0
+                null_chg_rate = null_chg / total if total > 0 else 0
+
+                # 日涨跌幅异常 (|change_pct| > 10%)
+                cur.execute("""
+                    SELECT date, value, change_pct FROM macro_daily
+                    WHERE indicator_code = ? AND ABS(change_pct) > 10
+                    ORDER BY date DESC LIMIT 10
+                """, (code,))
+                anomalies = cur.fetchall()
+
+                # 近7天数据
+                cur.execute("""
+                    SELECT date, value, change_pct FROM macro_daily
+                    WHERE indicator_code = ? ORDER BY date DESC LIMIT 7
+                """, (code,))
+                recent = cur.fetchall()
+
+                result["indicators"].append({
+                    "code": code,
+                    "name": name,
+                    "total_rows": total,
+                    "date_range": f"{min_date} ~ {max_date}",
+                    "avg_value": round(avg_val, 2) if avg_val else 0,
+                    "value_range": f"{min_val} ~ {max_val}",
+                    "null_value_rate": round(null_val_rate, 4),
+                    "null_change_rate": round(null_chg_rate, 4),
+                    "recent_data": [{"date": r[0], "value": r[1], "change_pct": r[2]} for r in recent],
+                    "price_anomalies": [{"date": r[0], "value": r[1], "change_pct": r[2]} for r in anomalies],
+                })
+
+                # 异常告警
+                latest_date = max_date
+                if latest_date:
+                    try:
+                        from datetime import datetime as dt2
+                        latest = dt2.strptime(str(latest_date), "%Y-%m-%d").date()
+                        lag = (date.today() - latest).days
+                        if lag > 5:
+                            result["anomalies"].append({
+                                "severity": "HIGH",
+                                "indicator": code,
+                                "message": f"{name} 数据过期: 最新 {latest_date}, 延迟 {lag} 天",
+                            })
+                    except ValueError:
+                        pass
+
+                if null_val_rate > 0.01:
+                    result["anomalies"].append({
+                        "severity": "MEDIUM",
+                        "indicator": code,
+                        "message": f"{name} value NULL率 {null_val_rate*100:.1f}%",
+                    })
+
+                if null_chg_rate > 0.3:
+                    result["anomalies"].append({
+                        "severity": "LOW",
+                        "indicator": code,
+                        "message": f"{name} change_pct NULL率 {null_chg_rate*100:.1f}% (早期数据可能无涨跌幅)",
+                    })
+
+            except sqlite3.OperationalError as e:
+                result["indicators"].append({
+                    "code": code, "name": name, "error": str(e),
+                })
+
+        # COMEX vs SGE 价差检查 (同日比值应在合理范围)
+        try:
+            cur.execute("""
+                SELECT a.date, a.value as comex, b.value as sge,
+                       CAST(a.value AS REAL) / CAST(b.value AS REAL) as ratio
+                FROM macro_daily a
+                JOIN macro_daily b ON a.date = b.date
+                WHERE a.indicator_code = 'COMEX_GOLD' AND b.indicator_code = 'SGE_GOLD'
+                  AND a.value IS NOT NULL AND b.value IS NOT NULL AND b.value > 0
+                ORDER BY a.date DESC LIMIT 5
+            """)
+            ratio_rows = cur.fetchall()
+            if ratio_rows:
+                ratios = [r[3] for r in ratio_rows if r[3] and r[3] > 0]
+                if ratios:
+                    avg_ratio = sum(ratios) / len(ratios)
+                    # COMEX 美元/盎司 vs SGE 元/克, 合理比值约 7-10 (取决于汇率和单位)
+                    result["price_ratio"] = {
+                        "comex_sge_avg_ratio": round(avg_ratio, 4),
+                        "recent": [{"date": r[0], "comex": r[1], "sge": r[2], "ratio": round(r[3], 4)} for r in ratio_rows],
+                    }
+        except sqlite3.OperationalError:
+            pass
+
+        # COMEX-SGE 比值一致性检查 (同日比值应在合理范围)
+        # COMEX: USD/oz, SGE: CNY/g, 理论比值 = USD_CNY / 31.1035
+        # 汇率 6.5-7.5 时, 合理比值约 3.4-4.8
+        try:
+            cur.execute("""
+                SELECT a.date, a.value as comex, b.value as sge,
+                       CAST(a.value AS REAL) / CAST(b.value AS REAL) as ratio
+                FROM macro_daily a
+                JOIN macro_daily b ON a.date = b.date
+                WHERE a.indicator_code = 'COMEX_GOLD' AND b.indicator_code = 'SGE_GOLD'
+                  AND a.value IS NOT NULL AND b.value IS NOT NULL AND b.value > 0
+                  AND (CAST(a.value AS REAL) / CAST(b.value AS REAL)) NOT BETWEEN 3.0 AND 5.0
+                ORDER BY a.date DESC LIMIT 20
+            """)
+            ratio_anomalies = cur.fetchall()
+            if ratio_anomalies:
+                result["ratio_anomalies"] = [
+                    {"date": r[0], "comex": r[1], "sge": r[2], "ratio": round(r[3], 4)}
+                    for r in ratio_anomalies
+                ]
+                result["anomalies"].append({
+                    "severity": "HIGH",
+                    "indicator": "COMEX/SGE_RATIO",
+                    "message": f"COMEX/SGE 比值异常: {len(ratio_anomalies)} 天比值超出 3.0-5.0 范围, "
+                               f"最近: {ratio_anomalies[0][0]} ratio={ratio_anomalies[0][3]:.4f}",
+                })
+        except sqlite3.OperationalError:
+            pass
+
+        conn.close()
+        return result
 
     def check_date_gaps(self, lookback_days: int = 10) -> List[Dict]:
         """检查近N天内各表是否存在日期缺口。"""
@@ -340,7 +504,17 @@ class DataQualityChecker:
                     "suggestion": "运行 backfill_market_events 或对应采集器的回填函数",
                 })
 
-        # 4. 评分告警
+        # 4. 黄金数据告警
+        gold_check = self.check_gold_data()
+        for anomaly in gold_check.get("anomalies", []):
+            alerts.append({
+                "severity": anomaly["severity"],
+                "category": "gold_data",
+                "table": anomaly["indicator"],
+                "message": anomaly["message"],
+            })
+
+        # 5. 评分告警
         if score_data["total_score"] < 70:
             alerts.append({
                 "severity": "HIGH",

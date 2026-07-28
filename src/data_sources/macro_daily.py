@@ -31,7 +31,10 @@ def fetch_usd_cny(date_str: str = None) -> list:
             start = date_str.replace("-", "")
             df = ak.currency_boc_sina(symbol='美元', start_date=start, end_date=start)
         else:
-            df = ak.currency_boc_sina(symbol='美元', start_date='20260501', end_date='20260520')
+            from datetime import timedelta
+            today_str = date.today().strftime("%Y%m%d")
+            month_ago = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
+            df = ak.currency_boc_sina(symbol='美元', start_date=month_ago, end_date=today_str)
         if df is not None and not df.empty:
             for _, row in df.iterrows():
                 dt = str(row['日期'])

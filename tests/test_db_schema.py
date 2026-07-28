@@ -58,7 +58,11 @@ class TestDbSchema:
         from src.utils.db_schema import get_all_table_names, QUALITY_CHECK_TABLES
         all_tables = set(get_all_table_names())
         for t in QUALITY_CHECK_TABLES:
-            assert t in all_tables, f"{t} not in registered tables"
+            if t.startswith("_"):
+                src = QUALITY_CHECK_TABLES[t].get("source_table")
+                assert src and src in all_tables, f"virtual {t} -> {src} not in registered tables"
+            else:
+                assert t in all_tables, f"{t} not in registered tables"
 
     def test_init_all_tables(self):
         """init_all_tables should create all 20 tables."""

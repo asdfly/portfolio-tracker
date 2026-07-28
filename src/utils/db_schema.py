@@ -430,6 +430,10 @@ QUALITY_CHECK_TABLES = {
     "stock_institution_research": {"date_col": "date", "code_col": "code", "label": "机构调研"},
     "trade_records": {"date_col": "date", "code_col": "code", "label": "交易流水"},
     "stock_block_trade": {"date_col": "date", "code_col": "code", "label": "大宗交易"},
+    # 黄金相关指标 (存储在 macro_daily 中, 用 indicator_code 区分)
+    # 使用虚拟表名, DataQualityChecker 中特殊处理
+    "_gold_comex": {"date_col": "date", "code_col": None, "label": "COMEX黄金", "source_table": "macro_daily", "indicator_code": "COMEX_GOLD"},
+    "_gold_sge": {"date_col": "date", "code_col": None, "label": "上海金基准", "source_table": "macro_daily", "indicator_code": "SGE_GOLD"},
 }
 
 # ============================================================
