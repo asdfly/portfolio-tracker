@@ -345,7 +345,7 @@ def run_etf_fundamental_collection(
 
                 df_spot["date"] = target_date
                 stats["spot"] = save_to_db(conn, "etf_fundamental", df_spot, ["date","code"])
-                logger.info(f"  ETF行情: {stats["spot"]}条, 估值: {stats["valuation"]}条")
+                logger.info(f'  ETF行情: {stats["spot"]}条, 估值: {stats["valuation"]}条')
         except (KeyError, ValueError, TypeError) as e:
             stats["errors"].append(f"ETF行情: {e}")
             logger.warning(f"  ETF行情失败: {e}")
@@ -364,7 +364,7 @@ def run_etf_fundamental_collection(
             df_ind_all = pd.concat(industry_all, ignore_index=True)
             stats["industry"] = save_to_db(
                 conn, "etf_industry_alloc", df_ind_all, ["code","industry"])
-            logger.info(f"  行业配置: {stats["industry"]}条")
+            logger.info(f'  行业配置: {stats["industry"]}条')
 
         # 3. 前N大重仓股
         holdings_all = []
@@ -380,7 +380,7 @@ def run_etf_fundamental_collection(
             df_hold_all = pd.concat(holdings_all, ignore_index=True)
             stats["holdings"] = save_to_db(
                 conn, "etf_top_holdings", df_hold_all, ["code","stock_code","quarter"])
-            logger.info(f"  重仓股: {stats["holdings"]}条")
+            logger.info(f'  重仓股: {stats["holdings"]}条')
 
     finally:
         conn.close()

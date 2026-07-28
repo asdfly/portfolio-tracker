@@ -525,9 +525,11 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
 SOURCE_CONFIG = [
     ("stock_margin", "fetch_margin_data", ["date", "code"], 2),
     ("stock_lhb", "fetch_lhb_data", ["date", "code"], 2),
-    ("stock_holder_change", "fetch_holder_change_data", ["date", "holder_name"], 5),
+    ("stock_holder_change", "fetch_holder_change_data", ["date", "holder_name"], 3),
     ("stock_institution_research", "fetch_institution_research_data",
      ["date", "code", "institution"], 2),
+    ("stock_block_trade", "fetch_block_trade_data",
+     ["date", "code", "buyer_broker", "seller_broker"], 2),
 ]
 
 # 每日采集最大回填天数(防止无限回填)
@@ -564,6 +566,7 @@ def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
         "stock_lhb": fetch_lhb_data,
         "stock_holder_change": fetch_holder_change_data,
         "stock_institution_research": fetch_institution_research_data,
+        "stock_block_trade": lambda d: fetch_block_trade_data(d, d),
     }
 
     for table, fetch_name, unique_cols, max_stale in SOURCE_CONFIG:
