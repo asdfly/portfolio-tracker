@@ -522,7 +522,7 @@ def _render_signal_confidence(positions):
 
         conf_df = pd.read_sql_query("""
             SELECT code, name, indicator, signal_value, signal_direction,
-                   market_regime,
+                   market_regime, scope,
                    conf_5d, conf_10d, conf_20d, conf_30d, conf_60d,
                    composite_confidence, composite_grade,
                    hit_rate_5d, hit_rate_10d, hit_rate_20d, hit_rate_30d, hit_rate_60d
@@ -540,6 +540,7 @@ def _render_signal_confidence(positions):
             "ma_signal": "均线信号", "macd_signal": "MACD信号",
             "rsi_status": "RSI状态", "kdj_signal": "KDJ信号",
             "bollinger": "布林带位置", "trend": "趋势信号",
+            "combo": "组合信号",
         }
 
         total_signals = len(conf_df)
@@ -585,6 +586,10 @@ def _render_signal_confidence(positions):
         display_df["指标"] = display_df["indicator"].map(lambda x: ind_map.get(x, x))
         display_df["当前信号"] = display_df["signal_value"]
         display_df["方向"] = display_df["signal_direction"].map(lambda d: "看多" if d > 0 else ("看空" if d < 0 else "中性"))
+        if "scope" in display_df.columns:
+            display_df["scope"] = display_df["scope"].map(lambda s: "ETF" if s == "etf" else "全市场" if s == "all" else s)
+        else:
+            display_df["scope"] = "-"
         display_df["综合"] = display_df.apply(
             lambda r: f"{r['composite_confidence']:.1f} [{r['composite_grade']}]", axis=1
         )
@@ -595,7 +600,7 @@ def _render_signal_confidence(positions):
                 lambda r: f"{r[col]:.1f}" if pd.notna(r[col]) else "-", axis=1
             )
 
-        table_cols = ["name", "指标", "当前信号", "方向", "5日", "10日", "20日", "30日", "60日", "综合"]
+        table_cols = ["name", "指标", "当前信号", "方向", "scope", "5日", "10日", "20日", "30日", "60日", "综合"]
         st.dataframe(
             display_df[table_cols].rename(columns={"name": "ETF"}),
             use_container_width=True,
@@ -690,6 +695,7 @@ def _render_backtest_heatmap():
             "ma_signal": "均线", "macd_signal": "MACD",
             "rsi_status": "RSI", "kdj_signal": "KDJ",
             "bollinger": "布林带", "trend": "趋势",
+            "combo": "组合",
         }
 
         st.markdown("**置信度热力图（信号 x 前瞻窗口）**")

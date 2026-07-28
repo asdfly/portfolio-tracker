@@ -1,10 +1,14 @@
 """
-ETF 趋势信号回测引擎 (v2)
+ETF 趋势信号回测引擎 (v3)
 
-P0 优化:
+P0 优化 (v2):
   1. 评分公式优化 — 对数样本标度+效果量门槛+Sharpe收益+一致性分量
   2. 收益加权命中率 — 连续评分替代二值命中率
   3. 市场状态分层 — 牛/熊/震荡分别回测
+
+P1 优化 (v3):
+  4. Per-ETF 独立回测 — 数据充足的ETF单独统计，消除品种混合偏差
+  5. 多信号组合确认 — 组合信号回测，过滤假信号提升置信度
 
 对 etf_technical 表中 6 类技术指标信号进行历史回测，
 量化各信号在不同前瞻时间窗口（5/10/20/30/60 交易日）下
@@ -58,6 +62,7 @@ BOLLINGER_BUY_THRESHOLD = 20
 BOLLINGER_SELL_THRESHOLD = 80
 
 MIN_SAMPLE_SIZE = 10  # 最小样本量
+PER_ETF_MIN_ROWS = 1000  # Per-ETF 独立回测的最低数据量
 
 # 市场状态
 REGIME_BULL = "bull"
@@ -67,15 +72,101 @@ REGIME_ALL = "all"
 ALL_REGIMES = [REGIME_ALL, REGIME_BULL, REGIME_BEAR, REGIME_SIDEWAYS]
 
 # 市场状态分类参数
-REGIME_MA_PERIOD = 20  # 20日均线
-REGIME_SLOPE_PERIOD = 5  # 均线斜率判断周期
-MARKET_PROXY_CODE = "510300"  # 沪深300作为市场代理
+REGIME_MA_PERIOD = 20
+REGIME_SLOPE_PERIOD = 5
+MARKET_PROXY_CODE = "510300"
 
-# 窗口权重 (用于综合置信度加权)
+# 窗口权重
 WINDOW_WEIGHTS = {5: 0.10, 10: 0.15, 20: 0.25, 30: 0.25, 60: 0.25}
 
 # 效果量门槛
-EFFECT_SIZE_THRESHOLD = 0.05  # |hit_rate - 0.5| > 5% 才算有效果
+EFFECT_SIZE_THRESHOLD = 0.05
+
+# Per-ETF 回测标记
+SCOPE_ALL = "all"      # 全市场统计
+SCOPE_ETF = "etf"      # Per-ETF 统计
+
+# ============================================================
+# 多信号组合定义
+# ============================================================
+
+# 组合信号: (名称, 条件列表, 方向)
+# 每个条件: (indicator, signal_values, direction)
+# 同一行数据中所有条件同时满足时触发组合信号
+COMBO_SIGNALS: List[Dict] = [
+    {
+        "name": "RSI超卖+MACD金叉",
+        "conditions": [
+            ("rsi_status", ["超卖", "严重超卖"], 1),
+            ("macd_signal", ["金叉", "看多", "多头"], 1),
+        ],
+        "direction": 1,
+    },
+    {
+        "name": "RSI超卖+布林带低位",
+        "conditions": [
+            ("rsi_status", ["超卖", "严重超卖"], 1),
+            ("bollinger", ["low"], 1),
+        ],
+        "direction": 1,
+    },
+    {
+        "name": "RSI超买+布林带高位",
+        "conditions": [
+            ("rsi_status", ["超买", "严重超买"], -1),
+            ("bollinger", ["high"], -1),
+        ],
+        "direction": -1,
+    },
+    {
+        "name": "多头排列+趋势上涨",
+        "conditions": [
+            ("ma_signal", ["多头排列"], 1),
+            ("trend", ["强势上涨", "温和上涨"], 1),
+        ],
+        "direction": 1,
+    },
+    {
+        "name": "空头排列+趋势下跌",
+        "conditions": [
+            ("ma_signal", ["空头排列"], -1),
+            ("trend", ["下跌", "温和下跌", "强势下跌"], -1),
+        ],
+        "direction": -1,
+    },
+    {
+        "name": "KDJ金叉+MACD看多",
+        "conditions": [
+            ("kdj_signal", ["金叉"], 1),
+            ("macd_signal", ["金叉", "看多", "多头"], 1),
+        ],
+        "direction": 1,
+    },
+    {
+        "name": "KDJ死叉+MACD空头",
+        "conditions": [
+            ("kdj_signal", ["死叉"], -1),
+            ("macd_signal", ["死叉", "空头"], -1),
+        ],
+        "direction": -1,
+    },
+    {
+        "name": "RSI严重超买+趋势强势",
+        "conditions": [
+            ("rsi_status", ["严重超买"], -1),
+            ("trend", ["强势上涨"], 1),
+        ],
+        "direction": -1,  # 反转信号
+    },
+    {
+        "name": "RSI严重超卖+趋势强势跌",
+        "conditions": [
+            ("rsi_status", ["严重超卖"], 1),
+            ("trend", ["强势下跌"], -1),
+        ],
+        "direction": 1,  # 反转信号
+    },
+]
 
 
 # ============================================================
@@ -85,35 +176,14 @@ EFFECT_SIZE_THRESHOLD = 0.05  # |hit_rate - 0.5| > 5% 才算有效果
 def compute_confidence(n: int, hit_rate: float, p_value: float,
                        avg_return: float, std_return: float = 0.0,
                        weighted_hit_rate: Optional[float] = None) -> Tuple[float, str]:
-    """计算置信度评分 v2 (0-100) 和等级 (A/B/C/D)。
-
-    v2 改进:
-      1. 预测力 (40分): 优先使用收益加权命中率, 回退到二值命中率
-      2. 样本量 (15分): 对数标度, 500样本满分 (替代旧的 n/100 线性标度)
-      3. 统计显著性 (25分): p值 + 效果量双重门槛 (防止大样本微效应虚高)
-      4. 风险调整收益 (20分): Sharpe比率形式, 纳入波动率 (替代旧的 abs(avg_return)/0.05)
-
-    Args:
-        n: 样本量
-        hit_rate: 二值命中率 (0-1)
-        p_value: 统计检验 p 值
-        avg_return: 平均收益
-        std_return: 收益标准差
-        weighted_hit_rate: 收益加权命中率 (-1 到 1), None 则回退到二值
-
-    Returns:
-        (score, grade)
-    """
+    """计算置信度评分 v2 (0-100) 和等级 (A/B/C/D)。"""
     # 1. 预测力 (40分)
     if weighted_hit_rate is not None and not math.isnan(weighted_hit_rate):
-        # 收益加权命中率: [-1, 1], 0 = 无预测力
         predictive = min(abs(weighted_hit_rate) * 200, 40)
     else:
-        # 回退: 二值命中率偏离 50%
         predictive = min(abs(hit_rate - 0.5) * 80, 40)
 
     # 2. 样本量 (15分) — 对数标度
-    # log10(10)≈1 → 5.4分, log10(50)≈1.7 → 9.2分, log10(500)≈2.7 → 15分
     sample_component = min(math.log10(max(n, 1)) / math.log10(500), 1.0) * 15
 
     # 3. 统计显著性 (25分) — p值 + 效果量双重门槛
@@ -143,16 +213,7 @@ def compute_confidence(n: int, hit_rate: float, p_value: float,
 
 
 def _compute_weighted_hit_rate(returns: pd.Series, direction: int) -> float:
-    """计算收益加权命中率。
-
-    weighted_hit_rate = Σ(sign(direction) × return) / Σ(|return|)
-    范围 [-1, 1]:
-      1 = 完美正向预测 (所有收益按方向正确且幅度大)
-      0 = 无预测力
-     -1 = 完美反向预测
-
-    相比二值命中率的优点: 考虑收益幅度, 0.01% 和 5% 不再等价
-    """
+    """计算收益加权命中率 [-1, 1]。"""
     if len(returns) == 0:
         return 0.0
     signed_returns = returns * (1 if direction > 0 else -1)
@@ -163,18 +224,14 @@ def _compute_weighted_hit_rate(returns: pd.Series, direction: int) -> float:
 
 
 def _compute_consistency_bonus(hit_rates: List[float]) -> float:
-    """计算窗口间一致性加成 (-5 到 +5).
-
-    所有窗口命中率在同侧 (都>0.5 或都<0.5) → +5
-    混合 → -5
-    """
+    """计算窗口间一致性加成 (-5 到 +5)。"""
     if len(hit_rates) < 2:
         return 0.0
     above = sum(1 for hr in hit_rates if hr > 0.5)
     below = sum(1 for hr in hit_rates if hr < 0.5)
     if above == 0 or below == 0:
-        return 5.0  # 全部同侧
-    return -5.0  # 混合
+        return 5.0
+    return -5.0
 
 
 # ============================================================
@@ -182,19 +239,9 @@ def _compute_consistency_bonus(hit_rates: List[float]) -> float:
 # ============================================================
 
 def _classify_market_regime(df: pd.DataFrame) -> pd.Series:
-    """为每行数据打上市场状态标签。
-
-    使用市场代理 (沪深300) 的20日均线和均线斜率分类:
-      - bull:  价格 > MA20 且 MA20 上升
-      - bear:  价格 < MA20 且 MA20 下降
-      - sideways: 其他
-
-    Returns:
-        与 df 等长的 Series, 值为 'bull'/'bear'/'sideways'
-    """
+    """为每行数据打上市场状态标签。"""
     proxy = df[df["code"] == MARKET_PROXY_CODE].copy()
     if proxy.empty:
-        # 回退: 用第一只ETF作为代理
         first_code = df["code"].iloc[0]
         proxy = df[df["code"] == first_code].copy()
 
@@ -207,7 +254,6 @@ def _classify_market_regime(df: pd.DataFrame) -> pd.Series:
     proxy.loc[above_ma & ma_rising, "regime"] = REGIME_BULL
     proxy.loc[~above_ma & ~ma_rising, "regime"] = REGIME_BEAR
 
-    # 建立日期→状态映射
     date_regime = dict(zip(proxy["date"], proxy["regime"]))
     return df["date"].map(date_regime).fillna(REGIME_SIDEWAYS)
 
@@ -249,7 +295,8 @@ def _compute_forward_returns(df: pd.DataFrame,
 
 def _backtest_single(subset: pd.DataFrame, indicator: str,
                      signal_val: str, direction: int,
-                     n: int, regime: str) -> Optional[dict]:
+                     n: int, regime: str,
+                     code: str = None, scope: str = SCOPE_ALL) -> Optional[dict]:
     """对单个 信号×窗口×市场状态 组合进行回测统计。"""
     ret_col = f"fwd_ret_{n}"
     valid = subset[ret_col].dropna()
@@ -257,18 +304,15 @@ def _backtest_single(subset: pd.DataFrame, indicator: str,
     if n_samples < MIN_SAMPLE_SIZE:
         return None
 
-    # 二值命中率
     hits = int(((direction > 0) & (valid > 0)).sum() +
                ((direction < 0) & (valid < 0)).sum())
     hit_rate = hits / n_samples
 
-    # 收益加权命中率
     whr = _compute_weighted_hit_rate(valid, direction)
 
     avg_ret = float(valid.mean())
     std_ret = float(valid.std()) if n_samples > 1 else 0.0
 
-    # 二项检验 (正态近似)
     se = 0.5 / (n_samples ** 0.5)
     t_stat = (hit_rate - 0.5) / se if se > 0 else 0.0
     p_value = 2 * (1 - stats.norm.cdf(abs(t_stat)))
@@ -282,6 +326,8 @@ def _backtest_single(subset: pd.DataFrame, indicator: str,
         "signal_direction": direction,
         "forward_window": n,
         "market_regime": regime,
+        "scope": scope,
+        "code": code,
         "sample_count": n_samples,
         "hit_count": hits,
         "hit_rate": round(hit_rate, 4),
@@ -297,7 +343,9 @@ def _backtest_single(subset: pd.DataFrame, indicator: str,
 
 def _backtest_categorical(df: pd.DataFrame, indicator: str,
                           direction_map: Dict[str, int],
-                          windows: List[int]) -> List[dict]:
+                          windows: List[int],
+                          code: str = None,
+                          scope: str = SCOPE_ALL) -> List[dict]:
     """对分类信号进行回测 (含市场状态分层)。"""
     results = []
     for signal_val, direction in direction_map.items():
@@ -314,13 +362,15 @@ def _backtest_categorical(df: pd.DataFrame, indicator: str,
 
             for n in windows:
                 r = _backtest_single(subset, indicator, signal_val,
-                                     direction, n, regime)
+                                     direction, n, regime, code, scope)
                 if r:
                     results.append(r)
     return results
 
 
-def _backtest_bollinger(df: pd.DataFrame, windows: List[int]) -> List[dict]:
+def _backtest_bollinger(df: pd.DataFrame, windows: List[int],
+                        code: str = None,
+                        scope: str = SCOPE_ALL) -> List[dict]:
     """对布林带数值型信号进行回测 (含市场状态分层)。"""
     results = []
     boll = df["bollinger_position"].dropna()
@@ -342,19 +392,88 @@ def _backtest_bollinger(df: pd.DataFrame, windows: List[int]) -> List[dict]:
 
             for n in windows:
                 r = _backtest_single(subset, "bollinger", label,
-                                     direction, n, regime)
+                                     direction, n, regime, code, scope)
                 if r:
                     results.append(r)
     return results
 
 
+# ============================================================
+# 多信号组合回测
+# ============================================================
+
+def _evaluate_combo_condition(row: pd.Series, indicator: str,
+                              signal_values: List[str],
+                              direction: int) -> bool:
+    """检查单行数据是否满足组合信号中的一个条件。"""
+    if indicator == "bollinger":
+        val = row.get("bollinger_position")
+        if pd.isna(val):
+            return False
+        v = float(val)
+        if "low" in signal_values and v <= BOLLINGER_BUY_THRESHOLD:
+            return True
+        if "high" in signal_values and v >= BOLLINGER_SELL_THRESHOLD:
+            return True
+        return False
+
+    cell_val = str(row.get(indicator, ""))
+    if cell_val in signal_values:
+        return True
+    return False
+
+
+def _backtest_combos(df: pd.DataFrame, windows: List[int],
+                     code: str = None,
+                     scope: str = SCOPE_ALL) -> List[dict]:
+    """对多信号组合进行回测。"""
+    results = []
+    for combo in COMBO_SIGNALS:
+        combo_name = combo["name"]
+        combo_dir = combo["direction"]
+        conditions = combo["conditions"]
+
+        # 检查每行是否满足所有条件
+        mask = pd.Series(True, index=df.index)
+        for ind, sig_vals, cond_dir in conditions:
+            cond_mask = df.apply(
+                lambda row: _evaluate_combo_condition(row, ind, sig_vals, cond_dir),
+                axis=1
+            )
+            mask = mask & cond_mask
+
+        subset_all = df[mask]
+        if len(subset_all) < MIN_SAMPLE_SIZE:
+            continue
+
+        for regime in ALL_REGIMES:
+            if regime == REGIME_ALL:
+                subset = subset_all
+            else:
+                subset = subset_all[subset_all["market_regime"] == regime]
+
+            for n in windows:
+                r = _backtest_single(
+                    subset, "combo", combo_name,
+                    combo_dir, n, regime, code, scope
+                )
+                if r:
+                    results.append(r)
+
+    return results
+
+
+# ============================================================
+# 回测主函数
+# ============================================================
+
 def run_backtest(conn=None) -> pd.DataFrame:
     """执行完整回测，返回统计结果 DataFrame。
 
-    v2 改进:
-      - 市场状态分层: 每个信号×窗口×市场状态 组合独立统计
-      - 收益加权命中率: 新增 weighted_hit_rate 列
-      - 评分公式 v2: 对数样本+效果量门槛+Sharpe收益
+    v3 改进:
+      - Per-ETF 独立回测: 数据>=1000行的ETF单独统计
+      - 多信号组合回测: 9种组合信号的独立统计
+      - 保留 v2: 市场状态分层 + 收益加权命中率 + 评分公式 v2
     """
     close_conn = False
     if conn is None:
@@ -372,14 +491,40 @@ def run_backtest(conn=None) -> pd.DataFrame:
         logger.info(f"市场状态分布: {dict(regime_counts)}")
 
         all_results = []
-        for ind_col, dir_map in SIGNAL_DIRECTIONS.items():
-            all_results.extend(_backtest_categorical(df, ind_col, dir_map, FORWARD_WINDOWS))
 
+        # ---- 1. 全市场回测 (scope=all) ----
+        for ind_col, dir_map in SIGNAL_DIRECTIONS.items():
+            all_results.extend(
+                _backtest_categorical(df, ind_col, dir_map, FORWARD_WINDOWS))
         all_results.extend(_backtest_bollinger(df, FORWARD_WINDOWS))
 
+        # ---- 2. Per-ETF 回测 (scope=etf) ----
+        etf_counts = df.groupby("code").size()
+        per_etf_codes = etf_counts[etf_counts >= PER_ETF_MIN_ROWS].index.tolist()
+        logger.info(f"Per-ETF回测: {len(per_etf_codes)} 只ETF (>= {PER_ETF_MIN_ROWS} 行)")
+
+        for code in per_etf_codes:
+            etf_df = df[df["code"] == code]
+            for ind_col, dir_map in SIGNAL_DIRECTIONS.items():
+                all_results.extend(
+                    _backtest_categorical(etf_df, ind_col, dir_map,
+                                          FORWARD_WINDOWS, code, SCOPE_ETF))
+            all_results.extend(
+                _backtest_bollinger(etf_df, FORWARD_WINDOWS, code, SCOPE_ETF))
+
+        # ---- 3. 多信号组合回测 (全市场 + Per-ETF) ----
+        all_results.extend(_backtest_combos(df, FORWARD_WINDOWS))
+        for code in per_etf_codes:
+            etf_df = df[df["code"] == code]
+            all_results.extend(
+                _backtest_combos(etf_df, FORWARD_WINDOWS, code, SCOPE_ETF))
+
         result_df = pd.DataFrame(all_results)
+        n_all = len(result_df[result_df["scope"] == SCOPE_ALL])
+        n_etf = len(result_df[result_df["scope"] == SCOPE_ETF])
+        n_combo = len(result_df[result_df["indicator"] == "combo"])
         logger.info(f"回测完成: {len(result_df)} 组统计 "
-                    f"(含市场状态分层, {len(result_df[result_df['market_regime']==REGIME_ALL])} 组全市场)")
+                    f"(全市场={n_all}, Per-ETF={n_etf}, 组合信号={n_combo})")
         return result_df
     finally:
         if close_conn:
@@ -391,7 +536,7 @@ def run_backtest(conn=None) -> pd.DataFrame:
 # ============================================================
 
 def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
-    """保存回测结果到 signal_backtest_stats 表 (v2 schema)"""
+    """保存回测结果到 signal_backtest_stats 表 (v3 schema)"""
     close_conn = False
     if conn is None:
         from src.utils.database import get_db_connection
@@ -407,6 +552,8 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
                 signal_direction INTEGER NOT NULL,
                 forward_window INTEGER NOT NULL,
                 market_regime TEXT NOT NULL DEFAULT 'all',
+                scope TEXT NOT NULL DEFAULT 'all',
+                code TEXT,
                 sample_count INTEGER NOT NULL,
                 hit_count INTEGER NOT NULL,
                 hit_rate REAL NOT NULL,
@@ -418,7 +565,7 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
                 confidence_score REAL NOT NULL,
                 confidence_grade TEXT,
                 backtest_date TEXT NOT NULL,
-                UNIQUE(indicator, signal_value, forward_window, market_regime)
+                UNIQUE(indicator, signal_value, forward_window, market_regime, scope, code)
             )
         """)
         conn.execute("DELETE FROM signal_backtest_stats")
@@ -428,10 +575,14 @@ def save_backtest_results(result_df: pd.DataFrame, conn=None) -> int:
         rows = result_df.copy()
         rows["backtest_date"] = today
 
-        rows.to_sql("signal_backtest_stats", conn, if_exists="append",
-                    index=False, method="multi")
+        # 分批写入避免 SQLite 变量数限制
+        batch_size = 500
+        for i in range(0, len(rows), batch_size):
+            batch = rows.iloc[i:i + batch_size]
+            batch.to_sql("signal_backtest_stats", conn, if_exists="append",
+                        index=False, method="multi")
         conn.commit()
-        logger.info(f"回测结果已保存: {len(rows)} 行")
+        logger.info(f"回测结果已保存: {len(rows)} 行 ({(len(rows)-1)//batch_size + 1} 批)")
         return len(rows)
     finally:
         if close_conn:
@@ -475,17 +626,35 @@ def _get_current_market_regime(conn) -> str:
     return REGIME_SIDEWAYS
 
 
+def _get_current_combo_signals(row: pd.Series) -> List[Tuple[str, int]]:
+    """检查当前ETF数据行是否触发任何组合信号。
+
+    Returns:
+        [(combo_name, direction), ...]
+    """
+    triggered = []
+    for combo in COMBO_SIGNALS:
+        conditions = combo["conditions"]
+        all_met = True
+        for ind, sig_vals, cond_dir in conditions:
+            if not _evaluate_combo_condition(row, ind, sig_vals, cond_dir):
+                all_met = False
+                break
+        if all_met:
+            triggered.append((combo["name"], combo["direction"]))
+    return triggered
+
+
 def get_current_confidence(conn=None) -> pd.DataFrame:
-    """获取当前各ETF最新信号及其置信度 (v2)。
+    """获取当前各ETF最新信号及其置信度 (v3)。
 
-    v2 改进:
-      - 市场状态感知: 使用当前市场状态对应的回测结果 (回退到 'all')
-      - 一致性加成: 窗口间命中率方向一致 → +5, 混合 → -5
+    v3 改进:
+      - Per-ETF 优先: 优先使用该ETF的独立回测结果 (scope=etf),
+        回退到全市场 (scope=all)
+      - 组合信号: 检查当前是否触发组合信号，附加组合置信度
 
-    返回列: code, name, date, indicator, signal_value, signal_direction,
-           conf_5d, conf_10d, conf_20d, conf_30d, conf_60d,
-           hit_rate_5d, hit_rate_10d, hit_rate_20d, hit_rate_30d, hit_rate_60d,
-           composite_confidence, composite_grade
+    Returns:
+        DataFrame with confidence per ETF per indicator + combo signals
     """
     close_conn = False
     if conn is None:
@@ -494,14 +663,12 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
         close_conn = True
 
     try:
-        # 1. 检查回测统计表是否存在
         cnt = conn.execute(
             "SELECT COUNT(*) FROM signal_backtest_stats").fetchone()[0]
         if cnt == 0:
-            logger.warning("signal_backtest_stats 表为空，请先运行 run_backtest + save_backtest_results")
+            logger.warning("signal_backtest_stats 表为空")
             return pd.DataFrame()
 
-        # 2. 获取每只ETF最新日的技术指标
         latest = pd.read_sql_query("""
             SELECT t.date, t.code, t.ma_signal, t.macd_signal,
                    t.rsi_value, t.rsi_status, t.kdj_signal,
@@ -515,37 +682,46 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
         if latest.empty:
             return pd.DataFrame()
 
-        # 3. 获取当前市场状态
         current_regime = _get_current_market_regime(conn)
         logger.info(f"当前市场状态: {current_regime}")
 
-        # 4. 读取回测统计
         stats_df = pd.read_sql_query(
             "SELECT * FROM signal_backtest_stats", conn)
 
-        # 构建查找索引: (indicator, signal_value, forward_window, market_regime) → row
+        # 构建查找索引
+        # (indicator, signal_value, forward_window, market_regime, scope, code) → row
         stats_lookup = {}
         for _, r in stats_df.iterrows():
             key = (r["indicator"], r["signal_value"], int(r["forward_window"]),
-                   r["market_regime"])
+                   r["market_regime"], r["scope"], r["code"] if pd.notna(r["code"]) else None)
             stats_lookup[key] = r
 
-        def _lookup(ind, sig_val, n, regime):
-            """查找回测统计: 优先用指定市场状态, 回退到 'all'"""
-            key = (ind, sig_val, n, regime)
+        def _lookup(ind, sig_val, n, regime, code=None):
+            """查找回测统计: Per-ETF → 全市场, 指定状态 → all"""
+            # 1. 尝试 Per-ETF + 指定状态
+            if code:
+                key = (ind, sig_val, n, regime, SCOPE_ETF, code)
+                if key in stats_lookup:
+                    return stats_lookup[key]
+            # 2. 尝试 全市场 + 指定状态
+            key = (ind, sig_val, n, regime, SCOPE_ALL, None)
             if key in stats_lookup:
                 return stats_lookup[key]
-            key_all = (ind, sig_val, n, REGIME_ALL)
-            return stats_lookup.get(key_all)
+            # 3. 尝试 Per-ETF + all
+            if code:
+                key = (ind, sig_val, n, REGIME_ALL, SCOPE_ETF, code)
+                if key in stats_lookup:
+                    return stats_lookup[key]
+            # 4. 回退: 全市场 + all
+            key = (ind, sig_val, n, REGIME_ALL, SCOPE_ALL, None)
+            return stats_lookup.get(key)
 
-        # 5. 为每只ETF的每个指标匹配置信度
         results = []
         for _, etf in latest.iterrows():
             code = etf["code"]
             name = etf["name"] if pd.notna(etf["name"]) else code
             date = etf["date"]
 
-            # 当前各指标信号值
             current_signals = {
                 "ma_signal": (str(etf["ma_signal"]),
                               SIGNAL_DIRECTIONS["ma_signal"].get(str(etf["ma_signal"]), 0)),
@@ -559,7 +735,6 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                           SIGNAL_DIRECTIONS["trend"].get(str(etf["trend"]), 0)),
             }
 
-            # 布林带特殊处理
             boll_label, boll_dir = _get_bollinger_signal(etf["bollinger_position"])
             if boll_dir == 1:
                 boll_lookup_val = "低位(≤20)"
@@ -585,6 +760,7 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                     "signal_value": sig_val_display,
                     "signal_direction": direction,
                     "market_regime": current_regime if direction != 0 else None,
+                    "scope": SCOPE_ETF if direction != 0 else None,
                 }
 
                 confs = []
@@ -593,10 +769,11 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                     col_conf = f"conf_{n}d"
                     col_hr = f"hit_rate_{n}d"
                     if lookup_val is not None:
-                        s = _lookup(ind, lookup_val, n, current_regime)
+                        s = _lookup(ind, lookup_val, n, current_regime, code)
                         if s is not None:
                             row[col_conf] = float(s["confidence_score"])
                             row[col_hr] = float(s["hit_rate"])
+                            row["scope"] = s.get("scope", SCOPE_ALL)
                             confs.append(float(s["confidence_score"]))
                             hit_rates_for_consistency.append(float(s["hit_rate"]))
                         else:
@@ -606,18 +783,65 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                         row[col_conf] = None
                         row[col_hr] = None
 
-                # 综合置信度: 加权平均 + 一致性加成
                 if confs:
                     weights = [WINDOW_WEIGHTS[n] for n in FORWARD_WINDOWS]
                     valid_pairs = [(c, w) for c, w in zip(confs, weights) if c is not None]
                     if valid_pairs:
                         total_w = sum(w for _, w in valid_pairs)
                         base_composite = sum(c * w for c, w in valid_pairs) / total_w
-
-                        # 一致性加成
                         consistency = _compute_consistency_bonus(hit_rates_for_consistency)
                         composite = max(0.0, min(100.0, base_composite + consistency))
+                        row["composite_confidence"] = round(composite, 1)
+                        row["composite_grade"] = (
+                            "A" if composite >= 70 else
+                            "B" if composite >= 50 else
+                            "C" if composite >= 30 else "D"
+                        )
+                    else:
+                        row["composite_confidence"] = None
+                        row["composite_grade"] = None
+                else:
+                    row["composite_confidence"] = None
+                    row["composite_grade"] = None
 
+                results.append(row)
+
+            # ---- 组合信号 ----
+            triggered_combos = _get_current_combo_signals(etf)
+            for combo_name, combo_dir in triggered_combos:
+                row = {
+                    "code": code, "name": name, "date": date,
+                    "indicator": "combo",
+                    "signal_value": combo_name,
+                    "signal_direction": combo_dir,
+                    "market_regime": current_regime,
+                    "scope": SCOPE_ETF,
+                }
+
+                confs = []
+                hit_rates_for_consistency = []
+                for n in FORWARD_WINDOWS:
+                    col_conf = f"conf_{n}d"
+                    col_hr = f"hit_rate_{n}d"
+                    s = _lookup("combo", combo_name, n, current_regime, code)
+                    if s is not None:
+                        row[col_conf] = float(s["confidence_score"])
+                        row[col_hr] = float(s["hit_rate"])
+                        row["scope"] = s.get("scope", SCOPE_ALL)
+                        confs.append(float(s["confidence_score"]))
+                        hit_rates_for_consistency.append(float(s["hit_rate"]))
+                    else:
+                        row[col_conf] = None
+                        row[col_hr] = None
+
+                if confs:
+                    weights = [WINDOW_WEIGHTS[n] for n in FORWARD_WINDOWS]
+                    valid_pairs = [(c, w) for c, w in zip(confs, weights) if c is not None]
+                    if valid_pairs:
+                        total_w = sum(w for _, w in valid_pairs)
+                        base_composite = sum(c * w for c, w in valid_pairs) / total_w
+                        consistency = _compute_consistency_bonus(hit_rates_for_consistency)
+                        composite = max(0.0, min(100.0, base_composite + consistency))
                         row["composite_confidence"] = round(composite, 1)
                         row["composite_grade"] = (
                             "A" if composite >= 70 else
@@ -640,7 +864,7 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
 
 
 def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
-    """保存当前信号置信度到 signal_confidence_current 表 (v2 schema)"""
+    """保存当前信号置信度到 signal_confidence_current 表 (v3 schema)"""
     close_conn = False
     if conn is None:
         from src.utils.database import get_db_connection
@@ -658,6 +882,7 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
                 signal_value TEXT NOT NULL,
                 signal_direction INTEGER NOT NULL,
                 market_regime TEXT,
+                scope TEXT,
                 conf_5d REAL,
                 conf_10d REAL,
                 conf_20d REAL,
@@ -671,7 +896,7 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
                 hit_rate_30d REAL,
                 hit_rate_60d REAL,
                 updated_at TEXT NOT NULL,
-                UNIQUE(code, indicator, date)
+                UNIQUE(code, indicator, signal_value, date)
             )
         """)
         conn.execute("DELETE FROM signal_confidence_current")
@@ -681,8 +906,11 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
         rows = conf_df.copy()
         rows["updated_at"] = now
 
-        rows.to_sql("signal_confidence_current", conn, if_exists="append",
-                    index=False, method="multi")
+        batch_size = 500
+        for i in range(0, len(rows), batch_size):
+            batch = rows.iloc[i:i + batch_size]
+            batch.to_sql("signal_confidence_current", conn, if_exists="append",
+                        index=False, method="multi")
         conn.commit()
         logger.info(f"当前置信度已保存: {len(rows)} 行")
         return len(rows)
@@ -698,7 +926,7 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
 def run_full_backtest_pipeline() -> dict:
     """完整回测流程: 回测 → 保存 → 当前置信度 → 保存
 
-    v2: 含市场状态分层 + 收益加权命中率 + 评分公式优化
+    v3: Per-ETF独立回测 + 多信号组合 + 市场状态分层 + 收益加权命中率
 
     Returns:
         {"backtest_rows": int, "confidence_rows": int}
@@ -706,18 +934,14 @@ def run_full_backtest_pipeline() -> dict:
     from src.utils.database import get_db_connection
     conn = get_db_connection()
     try:
-        # 1. 回测
         result_df = run_backtest(conn)
-        # 2. 保存回测结果
         bt_n = save_backtest_results(result_df, conn)
-        # 3. 计算当前置信度
         conf_df = get_current_confidence(conn)
-        # 4. 保存当前置信度
         if not conf_df.empty:
             conf_n = save_current_confidence(conf_df, conn)
         else:
             conf_n = 0
-        logger.info(f"回测流程完成 (v2): {bt_n} 统计行, {conf_n} 置信度行")
+        logger.info(f"回测流程完成 (v3): {bt_n} 统计行, {conf_n} 置信度行")
         return {"backtest_rows": bt_n, "confidence_rows": conf_n}
     finally:
         conn.close()
