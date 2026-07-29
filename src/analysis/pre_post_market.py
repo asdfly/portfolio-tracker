@@ -198,25 +198,23 @@ def _load_etf_signal_previews(conn) -> List[EtfSignalPreview]:
             preview.rsi_value = float(tr.get("rsi_value", 50))
             preview.rsi_status = str(tr.get("rsi_status", "--"))
         try:
-            sig_df = pd.read_sql_query(
-                "SELECT score FROM signal_score WHERE code=? ORDER BY date DESC LIMIT 1",
-                conn, params=(code,))
-            if not sig_df.empty:
-                preview.signal_score = float(sig_df.iloc[0]["score"])
-        except (pd.errors.DatabaseError, sqlite3.OperationalError):
+            from data_loader import load_signal_score
+            sig_dict = load_signal_score(code)
+            if sig_dict and "total_score" in sig_dict:
+                preview.signal_score = float(sig_dict["total_score"])
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError):
             pass
         try:
-            risk_df = pd.read_sql_query(
-                "SELECT total_score FROM etf_risk_scan WHERE code=? ORDER BY date DESC LIMIT 1",
-                conn, params=(code,))
-            if not risk_df.empty:
-                preview.risk_score = float(risk_df.iloc[0]["total_score"])
-        except (pd.errors.DatabaseError, sqlite3.OperationalError):
+            from data_loader import load_etf_risk_scan
+            risk_dict = load_etf_risk_scan(code)
+            if risk_dict and "total_score" in risk_dict:
+                preview.risk_score = float(risk_dict["total_score"])
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError):
             pass
         try:
             flow_df = pd.read_sql_query(
                 "SELECT net_inflow FROM fund_flows WHERE code=? "
-                "AND category IN ('etf_flow','sector') ORDER BY date DESC LIMIT 1",
+                "AND category = 'etf' ORDER BY date DESC LIMIT 1",
                 conn, params=(code,))
             if not flow_df.empty:
                 preview.fund_flow_net = float(flow_df.iloc[0]["net_inflow"]) / 1e4
