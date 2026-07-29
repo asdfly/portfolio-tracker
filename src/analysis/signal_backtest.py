@@ -888,6 +888,130 @@ def _get_current_combo_signals(row: pd.Series) -> List[Tuple[str, int]]:
     return triggered
 
 
+# ============================================================
+# 方向净值评分 + 矛盾检测 (方案一 + 方案三)
+# ============================================================
+
+# 信号等级权重
+GRADE_WEIGHTS = {"A": 1.0, "B": 0.7, "C": 0.4, "D": 0.1}
+
+# 矛盾类型检测规则
+# 每条规则: (看多指标集合, 看空指标集合, 矛盾描述模板)
+_CONFLICT_RULES = [
+    # 趋势vs超买
+    ({"ma_signal", "trend"}, {"rsi_status"},
+     "趋势上行但短期超涨"),
+    ({"ma_signal", "trend"}, {"bollinger"},
+     "趋势上行但估值偏高"),
+    ({"ma_signal"}, {"rsi_status", "bollinger"},
+     "中期趋势偏多但短期指标超买"),
+    # 短期vs长期
+    ({"kdj_signal", "macd_signal"}, {"ma_signal", "trend"},
+     "短期反弹但中期趋势偏空"),
+    ({"kdj_signal"}, {"ma_signal"},
+     "短期金叉但均线空头排列"),
+    # 位置vs趋势
+    ({"bollinger"}, {"ma_signal", "trend"},
+     "布林带低位但趋势偏空"),
+    ({"bollinger"}, {"trend"},
+     "布林带低位但趋势下行"),
+    # 通用
+    (set(), set(),
+     "多空信号并存"),
+]
+
+
+def _compute_direction_net_score(etf_signals):
+    """计算单只ETF的方向净值评分
+
+    Args:
+        etf_signals: 该ETF的所有信号行(list of dict)
+
+    Returns:
+        {"direction_net_score": float, "direction_label": str,
+         "bull_score": float, "bear_score": float}
+    """
+    bull_score = 0.0
+    bear_score = 0.0
+
+    for sig in etf_signals:
+        conf = sig.get("composite_confidence")
+        grade = sig.get("composite_grade")
+        direction = sig.get("signal_direction", 0)
+
+        if conf is None or direction == 0:
+            continue
+
+        weight = GRADE_WEIGHTS.get(grade, 0.5)
+        weighted = conf * weight
+
+        if direction > 0:
+            bull_score += weighted
+        else:
+            bear_score += weighted
+
+    net = bull_score - bear_score
+
+    if abs(net) <= 50:
+        label = "MIXED"
+    elif net > 0:
+        label = "BULL"
+    else:
+        label = "BEAR"
+
+    return {
+        "direction_net_score": round(net, 1),
+        "direction_label": label,
+        "bull_score": round(bull_score, 1),
+        "bear_score": round(bear_score, 1),
+    }
+
+
+def _detect_signal_conflict(etf_signals):
+    """检测单只ETF的信号矛盾类型
+
+    当 direction_label == MIXED 时调用。
+
+    Args:
+        etf_signals: 该ETF的所有信号行
+
+    Returns:
+        矛盾类型描述字符串，无矛盾时返回空字符串
+    """
+    bull_indicators = set()
+    bear_indicators = set()
+
+    for sig in etf_signals:
+        conf = sig.get("composite_confidence")
+        grade = sig.get("composite_grade")
+        direction = sig.get("signal_direction", 0)
+        indicator = sig.get("indicator", "")
+
+        if conf is None or direction == 0:
+            continue
+        if grade not in ("A", "B"):
+            continue
+
+        if direction > 0:
+            bull_indicators.add(indicator)
+        else:
+            bear_indicators.add(indicator)
+
+    if not bull_indicators or not bear_indicators:
+        return ""
+
+    for bull_set, bear_set, desc in _CONFLICT_RULES:
+        if bull_set and bear_set:
+            bull_match = bool(bull_indicators & bull_set)
+            bear_match = bool(bear_indicators & bear_set)
+            if bull_match and bear_match:
+                return desc
+        elif not bull_set and not bear_set:
+            return desc
+
+    return "多空信号并存"
+
+
 def get_current_confidence(conn=None) -> pd.DataFrame:
     """获取当前各ETF最新信号及其置信度 (v3)。
 
@@ -1133,7 +1257,27 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
 
                 results.append(row)
 
-        return pd.DataFrame(results)
+        # ── 方向净值评分 + 矛盾标注 (方案一 + 方案三) ──
+        results_df = pd.DataFrame(results)
+        if not results_df.empty:
+            direction_rows = []
+            for code, group in results_df.groupby("code"):
+                signals = group.to_dict("records")
+                net_info = _compute_direction_net_score(signals)
+                if net_info["direction_label"] == "MIXED":
+                    conflict_desc = _detect_signal_conflict(signals)
+                else:
+                    conflict_desc = ""
+                for _ in range(len(group)):
+                    direction_rows.append({
+                        "direction_net_score": net_info["direction_net_score"],
+                        "direction_label": net_info["direction_label"],
+                        "conflict_type": conflict_desc,
+                    })
+            results_df["direction_net_score"] = [r["direction_net_score"] for r in direction_rows]
+            results_df["direction_label"] = [r["direction_label"] for r in direction_rows]
+            results_df["conflict_type"] = [r["conflict_type"] for r in direction_rows]
+        return results_df
     finally:
         if close_conn:
             conn.close()
@@ -1174,6 +1318,9 @@ def save_current_confidence(conf_df: pd.DataFrame, conn=None) -> int:
                 hit_rate_30d REAL,
                 hit_rate_60d REAL,
                 stability_score REAL,
+                direction_net_score REAL,
+                direction_label TEXT,
+                conflict_type TEXT,
                 updated_at TEXT NOT NULL,
                 UNIQUE(code, indicator, signal_value, date)
             )

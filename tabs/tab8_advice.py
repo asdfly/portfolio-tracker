@@ -527,7 +527,8 @@ def _render_signal_confidence(positions):
                    conf_5d, conf_10d, conf_20d, conf_30d, conf_60d,
                    composite_confidence, composite_grade,
                    hit_rate_5d, hit_rate_10d, hit_rate_20d, hit_rate_30d, hit_rate_60d,
-                   stability_score
+                   stability_score,
+                   direction_net_score, direction_label, conflict_type
             FROM signal_confidence_current
             WHERE composite_confidence IS NOT NULL
             ORDER BY composite_confidence DESC
@@ -591,6 +592,25 @@ def _render_signal_confidence(positions):
                 _regime_vals.iloc[0] if not _regime_vals.empty else "all", "未知"
             )
             st.metric(f"当前: {current_regime}", f"{avg_conf:.1f}")
+
+        # 方向净值汇总
+        dir_counts = conf_df.drop_duplicates("code")["direction_label"].value_counts()
+        bull_n = int(dir_counts.get("BULL", 0))
+        bear_n = int(dir_counts.get("BEAR", 0))
+        mixed_n = int(dir_counts.get("MIXED", 0))
+        dc1, dc2, dc3 = st.columns(3)
+        dc1.metric("看多ETF", bull_n)
+        dc2.metric("看空ETF", bear_n)
+        dc3.metric("信号矛盾", mixed_n, delta=f"{mixed_n}只MIXED" if mixed_n else None)
+        if mixed_n > 0:
+            mixed_etfs = conf_df[conf_df["direction_label"] == "MIXED"].drop_duplicates("code")[["name", "direction_net_score", "conflict_type"]]
+            conflict_desc = mixed_etfs[mixed_etfs["conflict_type"] != ""]
+            if not conflict_desc.empty:
+                tips = "; ".join(
+            f'{r["name"]}({r["direction_net_score"]:.0f}): {r["conflict_type"]}'
+            for _, r in conflict_desc.iterrows()
+        )
+                st.caption(f"矛盾ETF: {tips}")
 
         # ── 筛选器区域 ──
         etf_options = conf_df[["code", "name"]].drop_duplicates().sort_values("name")
@@ -721,7 +741,17 @@ def _render_signal_confidence(positions):
         display_df["稳定性"] = display_df["stability_score"].map(
             lambda x: f"{x:.2f}" if pd.notna(x) else "-")
 
-        table_cols = ["name", "指标", "当前信号", "方向", "scope", "强度",
+        # 方向净值列
+        dir_label_map = {"BULL": "看多", "BEAR": "看空", "MIXED": "矛盾"}
+        def _fmt_dir(r):
+            if pd.notna(r.get("direction_net_score")):
+                lbl = dir_label_map.get(r.get("direction_label"), "-")
+                return f'{r["direction_net_score"]:.0f} ({lbl})'
+            return "-"
+        display_df["方向净值"] = display_df.apply(_fmt_dir, axis=1)
+        display_df["矛盾类型"] = display_df["conflict_type"].fillna("")
+
+        table_cols = ["name", "指标", "当前信号", "方向", "方向净值", "矛盾类型", "scope", "强度",
                       "5日", "10日", "20日", "30日", "60日", "综合", "稳定性"]
         st.dataframe(
             display_df[table_cols].rename(columns={"name": "ETF"}),
