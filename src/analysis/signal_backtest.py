@@ -978,6 +978,11 @@ def _detect_signal_conflict(etf_signals):
     Returns:
         矛盾类型描述字符串，无矛盾时返回空字符串
     """
+    _INDICATOR_CN = {
+        "bollinger": "布林带", "combo": "组合信号", "kdj_signal": "KDJ",
+        "ma_signal": "均线", "macd_signal": "MACD", "rsi_status": "RSI",
+        "trend": "趋势",
+    }
     # 分两层收集: A/B级(高质量)和C/D级(低质量)
     bull_ab = set()
     bear_ab = set()
@@ -1017,10 +1022,10 @@ def _detect_signal_conflict(etf_signals):
     # A/B级单边但有C/D级反向信号
     if bull_ab and bear_all and not bear_ab:
         bear_cd = bear_all - bear_ab
-        return f"高质量看多但{','.join(sorted(bear_cd))}偏空"
+        return f"高质量看多但{','.join(_INDICATOR_CN.get(i, i) for i in sorted(bear_cd))}偏空"
     if bear_ab and bull_all and not bull_ab:
         bull_cd = bull_all - bear_ab
-        return f"高质量看空但{','.join(sorted(bull_cd))}偏多"
+        return f"高质量看空但{','.join(_INDICATOR_CN.get(i, i) for i in sorted(bull_cd))}偏多"
 
     # 所有信号都是C/D级但方向并存
     if bull_all and bear_all:
