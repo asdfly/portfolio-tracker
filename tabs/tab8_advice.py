@@ -436,6 +436,17 @@ def _render_suggestion_details(suggestions, action_colors):
             "FROM signal_confidence_current WHERE composite_confidence IS NOT NULL",
             _conf_conn)
         _conf_conn.close()
+        # 方向信息独立查询: 取每只ETF第一行(方向信息应一致)
+        _dir_lookup = {}
+        for _, row in _conf_rows.iterrows():
+            key = row["code"]
+            if key not in _dir_lookup:
+                _dir_lookup[key] = {
+                    "dir_net": row["direction_net_score"],
+                    "dir_label": row["direction_label"],
+                    "conflict": row["conflict_type"],
+                }
+        # 置信度信息: 取最高composite_confidence行
         for _, row in _conf_rows.iterrows():
             key = row["code"]
             if key not in conf_lookup or row["composite_confidence"] > conf_lookup[key]["score"]:
@@ -444,10 +455,13 @@ def _render_suggestion_details(suggestions, action_colors):
                     "grade": row["composite_grade"],
                     "signal": row["signal_value"],
                     "indicator": row["indicator"],
-                    "dir_net": row["direction_net_score"],
-                    "dir_label": row["direction_label"],
-                    "conflict": row["conflict_type"],
                 }
+        # 合并方向信息
+        for key, dir_info in _dir_lookup.items():
+            if key in conf_lookup:
+                conf_lookup[key].update(dir_info)
+            else:
+                conf_lookup[key] = dir_info
     except Exception:
         pass
 

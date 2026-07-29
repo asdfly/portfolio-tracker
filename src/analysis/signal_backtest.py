@@ -978,8 +978,11 @@ def _detect_signal_conflict(etf_signals):
     Returns:
         矛盾类型描述字符串，无矛盾时返回空字符串
     """
-    bull_indicators = set()
-    bear_indicators = set()
+    # 分两层收集: A/B级(高质量)和C/D级(低质量)
+    bull_ab = set()
+    bear_ab = set()
+    bull_all = set()
+    bear_all = set()
 
     for sig in etf_signals:
         conf = sig.get("composite_confidence")
@@ -989,27 +992,45 @@ def _detect_signal_conflict(etf_signals):
 
         if conf is None or direction == 0:
             continue
-        if grade not in ("A", "B"):
-            continue
 
         if direction > 0:
-            bull_indicators.add(indicator)
+            bull_all.add(indicator)
+            if grade in ("A", "B"):
+                bull_ab.add(indicator)
         else:
-            bear_indicators.add(indicator)
+            bear_all.add(indicator)
+            if grade in ("A", "B"):
+                bear_ab.add(indicator)
 
-    if not bull_indicators or not bear_indicators:
-        return ""
-
-    for bull_set, bear_set, desc in _CONFLICT_RULES:
-        if bull_set and bear_set:
-            bull_match = bool(bull_indicators & bull_set)
-            bear_match = bool(bear_indicators & bear_set)
-            if bull_match and bear_match:
+    # 优先用 A/B 级信号匹配具体矛盾规则
+    if bull_ab and bear_ab:
+        for bull_set, bear_set, desc in _CONFLICT_RULES:
+            if bull_set and bear_set:
+                bull_match = bool(bull_ab & bull_set)
+                bear_match = bool(bear_ab & bear_set)
+                if bull_match and bear_match:
+                    return desc
+            elif not bull_set and not bear_set:
                 return desc
-        elif not bull_set and not bear_set:
-            return desc
+        return "多空信号并存"
 
-    return "多空信号并存"
+    # A/B级单边但有C/D级反向信号
+    if bull_ab and bear_all and not bear_ab:
+        bear_cd = bear_all - bear_ab
+        return f"高质量看多但{','.join(sorted(bear_cd))}偏空"
+    if bear_ab and bull_all and not bull_ab:
+        bull_cd = bull_all - bear_ab
+        return f"高质量看空但{','.join(sorted(bull_cd))}偏多"
+
+    # 所有信号都是C/D级但方向并存
+    if bull_all and bear_all:
+        return "多空信号并存(置信度偏低)"
+
+    # 单边信号但net接近0(信号弱)
+    if bull_all or bear_all:
+        return "信号方向偏弱"
+
+    return ""
 
 
 def get_current_confidence(conn=None) -> pd.DataFrame:
@@ -1260,7 +1281,8 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
         # ── 方向净值评分 + 矛盾标注 (方案一 + 方案三) ──
         results_df = pd.DataFrame(results)
         if not results_df.empty:
-            direction_rows = []
+            # 按 code 计算 direction 信息, 用 dict 映射赋值(避免位置错位)
+            dir_info_by_code = {}
             for code, group in results_df.groupby("code"):
                 signals = group.to_dict("records")
                 net_info = _compute_direction_net_score(signals)
@@ -1268,15 +1290,17 @@ def get_current_confidence(conn=None) -> pd.DataFrame:
                     conflict_desc = _detect_signal_conflict(signals)
                 else:
                     conflict_desc = ""
-                for _ in range(len(group)):
-                    direction_rows.append({
-                        "direction_net_score": net_info["direction_net_score"],
-                        "direction_label": net_info["direction_label"],
-                        "conflict_type": conflict_desc,
-                    })
-            results_df["direction_net_score"] = [r["direction_net_score"] for r in direction_rows]
-            results_df["direction_label"] = [r["direction_label"] for r in direction_rows]
-            results_df["conflict_type"] = [r["conflict_type"] for r in direction_rows]
+                dir_info_by_code[code] = {
+                    "direction_net_score": net_info["direction_net_score"],
+                    "direction_label": net_info["direction_label"],
+                    "conflict_type": conflict_desc,
+                }
+            results_df["direction_net_score"] = results_df["code"].map(
+                lambda c: dir_info_by_code[c]["direction_net_score"])
+            results_df["direction_label"] = results_df["code"].map(
+                lambda c: dir_info_by_code[c]["direction_label"])
+            results_df["conflict_type"] = results_df["code"].map(
+                lambda c: dir_info_by_code[c]["conflict_type"])
         return results_df
     finally:
         if close_conn:

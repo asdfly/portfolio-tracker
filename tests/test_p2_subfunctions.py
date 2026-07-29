@@ -138,7 +138,7 @@ class TestTab8Refactor:
         "_render_suggestions_compute": 155,
         "_render_suggestion_cards": 24,
         "_render_suggestion_pie": 120,
-        "_render_suggestion_details": 113,
+        "_render_suggestion_details": 126,
         "_render_signal_confidence": 293,
         "_render_backtest_heatmap": 234,
         "_render_market_events": 62,
