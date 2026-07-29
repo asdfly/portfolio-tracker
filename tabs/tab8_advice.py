@@ -431,7 +431,8 @@ def _render_suggestion_details(suggestions, action_colors):
     try:
         _conf_conn = get_db_connection()
         _conf_rows = pd.read_sql_query(
-            "SELECT code, composite_confidence, composite_grade, signal_value, indicator "
+            "SELECT code, composite_confidence, composite_grade, signal_value, indicator, "
+            "direction_net_score, direction_label, conflict_type "
             "FROM signal_confidence_current WHERE composite_confidence IS NOT NULL",
             _conf_conn)
         _conf_conn.close()
@@ -443,6 +444,9 @@ def _render_suggestion_details(suggestions, action_colors):
                     "grade": row["composite_grade"],
                     "signal": row["signal_value"],
                     "indicator": row["indicator"],
+                    "dir_net": row["direction_net_score"],
+                    "dir_label": row["direction_label"],
+                    "conflict": row["conflict_type"],
                 }
     except Exception:
         pass
@@ -463,15 +467,42 @@ def _render_suggestion_details(suggestions, action_colors):
             trend_icon = "⚪"
         reasons_str = " | ".join(s["reasons"][:5]) if s["reasons"] else "暂无明显信号"
 
-        # 信号置信度徽章
+        # 信号置信度徽章 + 方向净值
         conf_info = conf_lookup.get(s["code"])
         if conf_info:
             gc = grade_colors.get(conf_info["grade"], "#6b7280")
             conf_badge = (f'<span style="font-size:10px;color:{gc};background:{gc}15;'
                           f'padding:2px 6px;border-radius:3px;margin-left:6px;">'
                           f'回测置信 {conf_info["score"]:.0f} [{conf_info["grade"]}]</span>')
+            # 方向净值徽章
+            dir_label = conf_info.get("dir_label") or ""
+            dir_net = conf_info.get("dir_net")
+            dir_colors = {"BULL": "#22c55e", "BEAR": "#ef4444", "MIXED": "#f59e0b"}
+            dir_cn = {"BULL": "看多", "BEAR": "看空", "MIXED": "矛盾"}
+            if dir_label and dir_net is not None and str(dir_net) != "None":
+                dc = dir_colors.get(dir_label, "#8b949e")
+                dl = dir_cn.get(dir_label, dir_label)
+                conf_badge += (f'<span style="font-size:10px;color:{dc};background:{dc}15;'
+                               f'padding:2px 6px;border-radius:3px;margin-left:4px;">'
+                               f'方向 {dl} ({dir_net:.0f})</span>')
         else:
             conf_badge = ""
+
+        # 方向净值和矛盾信息预计算
+        _dir_net_val = conf_info.get("dir_net") if conf_info else None
+        _dir_net_valid = _dir_net_val is not None and str(_dir_net_val) not in ("None", "nan")
+        if _dir_net_valid:
+            _dn = float(_dir_net_val)
+            _dn_color = "#22c55e" if _dn > 50 else ("#ef4444" if _dn < -50 else "#f59e0b")
+            dir_net_html = f'<span>方向净值: <b style="color:{_dn_color};">{_dn:.0f}</b></span>'
+        else:
+            dir_net_html = ""
+
+        _conflict_desc = conf_info.get("conflict") if conf_info else None
+        if _conflict_desc and str(_conflict_desc) not in ("", "None", "nan"):
+            conflict_html = f'<div style="font-size:11px;color:#f59e0b;margin-top:3px;">\u26a0\ufe0f 信号矛盾: {_conflict_desc}</div>'
+        else:
+            conflict_html = ""
 
         st.markdown(
             f'<div style="background:#161b22;border-radius:6px;padding:12px 14px;margin-bottom:6px;border-left:3px solid {action_color};">'
@@ -487,9 +518,11 @@ def _render_suggestion_details(suggestions, action_colors):
             f'<span style="color:{action_color};font-size:13px;font-weight:bold;background:{action_color}15;padding:3px 10px;border-radius:4px;">{s["urgency"]}{s["action"]}</span>'
             f"</div></div>"
             f'<div style="font-size:12px;color:#6e7681;margin-top:6px;">信号: {reasons_str}</div>'
-            f'<div style="display:flex;gap:16px;margin-top:4px;font-size:11px;color:#484f58;">'
+            + conflict_html
+            + f'<div style="display:flex;gap:16px;margin-top:4px;font-size:11px;color:#484f58;">'
             f'<span>多空信号: <b style="color:#22c55e;">{s["buy_score"]:.1f}</b> / <b style="color:#ef4444;">{s["sell_score"]:.1f}</b></span>'
-            f'<span>净信号: <b style="color:{action_color};">{s["net_signal"]:+.1f}</b></span>'
+            + dir_net_html
+            + f'<span>净信号: <b style="color:{action_color};">{s["net_signal"]:+.1f}</b></span>'
             f'<span>收益率: <b style="color:{"#22c55e" if s["pnl_rate"] >= 0 else "#ef4444"};">{s["pnl_rate"]:+.2f}%</b></span>'
             f'<span>RSI: <b style="color:{"#ef4444" if s["rsi"] >= 70 else "#22c55e" if s["rsi"] <= 30 else "#8b949e"};">{s["rsi"]:.0f}</b></span>'
             f"</div></div>",
