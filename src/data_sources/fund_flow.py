@@ -24,6 +24,24 @@ for _proxy_key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'al
 import copy
 _OriginalSessionInit = copy.deepcopy(_requests.Session.__init__)
 
+
+def _determine_trading_date() -> str:
+    """确定当前交易日日期
+    
+    在开盘前（9:30前）运行时，API返回的是前一交易日的数据，
+    因此应使用前一交易日作为日期。
+    """
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    current_time = now.hour * 100 + now.minute
+    if current_time < 930:
+        days_back = 3 if now.weekday() == 0 else 1
+        trading_date = now - timedelta(days=days_back)
+        return trading_date.strftime('%Y-%m-%d')
+    return now.strftime('%Y-%m-%d')
+
+
+
 def _NoProxySessionInit(self, *args, **kwargs):
     _OriginalSessionInit(self, *args, **kwargs)
     self.trust_env = False
@@ -63,7 +81,7 @@ def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
             if _col in df.columns:
                 df[_col] = df[_col].apply(lambda v: float(v) * 1e8 if pd.notna(v) else None)
         df['category'] = 'sector'
-        df['date'] = date_str or datetime.now().strftime('%Y-%m-%d')
+        df['date'] = date_str or _determine_trading_date()
         keep_cols = ['date', 'code', 'name', 'change_pct', 'net_inflow', 'buy_amount', 'sell_amount', 'category']
         df = df[[c for c in keep_cols if c in df.columns]]
         return df
@@ -172,7 +190,7 @@ def fetch_main_fund_flow(days: int = 120) -> pd.DataFrame:
     ts = pd.to_numeric(df.get('流出资金',0), errors='coerce').sum() * 1e8
     tn = pd.to_numeric(df.get('净额',0), errors='coerce').sum() * 1e8
     np_ = round(tn/tb*100,2) if tb > 0 else 0.0
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = _determine_trading_date()
     result = pd.DataFrame([{
         'date': today, 'code': 'main_fund', 'name': '主力资金',
         'net_inflow': round(tn,2), 'net_inflow_pct': np_,
@@ -497,8 +515,7 @@ def fetch_etf_fund_flow_batch(etf_codes: list) -> pd.DataFrame:
             logger.debug(f"fund_etf_spot_em: 无匹配ETF (请求{len(etf_codes)}只, 数据库{len(df)}只)")
             return pd.DataFrame()
         
-        from datetime import datetime
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = _determine_trading_date()
         
         rows = []
         for _, row in matched.iterrows():

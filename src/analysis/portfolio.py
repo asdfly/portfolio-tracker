@@ -2,7 +2,7 @@
 投资组合分析器 - 整合所有分析功能（含风险分析）
 """
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Any
 import sys
 from pathlib import Path
@@ -41,7 +41,31 @@ class PortfolioAnalyzer:
         )
         self.db = DatabaseManager()
         self.position_reader = PositionReader()
-        self.today = date.today().strftime('%Y-%m-%d')
+        self.today = self._determine_trading_date()
+
+    def _determine_trading_date(self) -> str:
+        """确定当前交易日日期
+        
+        在开盘前（9:30前）运行时，API返回的是前一交易日的收盘数据，
+        因此应使用前一交易日作为日期，而非date.today()。
+        
+        Returns:
+            交易日字符串，格式 YYYY-MM-DD
+        """
+        now = datetime.now()
+        current_time = now.hour * 100 + now.minute  # e.g. 930 = 9:30
+        
+        if current_time < 930:
+            # 开盘前：使用前一交易日
+            days_back = 3 if now.weekday() == 0 else 1  # 周一→上周五, 其他→昨天
+            trading_date = now - timedelta(days=days_back)
+            logger.info(
+                f"开盘前运行({now.strftime('%H:%M')}), "
+                f"使用前一交易日: {trading_date.strftime('%Y-%m-%d')}"
+            )
+            return trading_date.strftime('%Y-%m-%d')
+        else:
+            return now.strftime('%Y-%m-%d')
 
     def _detect_position_file_updated(self) -> bool:
         """检测持仓文件是否比上次写入DB的日期更新
