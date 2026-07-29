@@ -171,8 +171,8 @@ def _score_fund_flow(fund_flow_df: pd.DataFrame) -> FactorDetail:
 
     # 近5日主力净流入占比
     recent5 = fund_flow_df.head(5)
-    if "net_amount" in recent5.columns:
-        net5 = recent5["net_amount"].astype(float).sum()
+    if "net_inflow" in recent5.columns:
+        net5 = recent5["net_inflow"].astype(float).sum()
         if net5 > 0:
             score += min(15, net5 / 1e8 * 5)  # 每1亿加5分，上限15
             details.append(f"近5日净流入{net5/1e8:.1f}亿")
@@ -182,9 +182,9 @@ def _score_fund_flow(fund_flow_df: pd.DataFrame) -> FactorDetail:
 
     # 近20日趋势
     recent20 = fund_flow_df.head(20)
-    if len(recent20) >= 10 and "net_amount" in recent20.columns:
-        net20 = recent20["net_amount"].astype(float).sum()
-        pos_days = (recent20["net_amount"].astype(float) > 0).sum()
+    if len(recent20) >= 10 and "net_inflow" in recent20.columns:
+        net20 = recent20["net_inflow"].astype(float).sum()
+        pos_days = (recent20["net_inflow"].astype(float) > 0).sum()
         total_days = len(recent20)
         if net20 > 0 and pos_days / total_days > 0.5:
             score += 10
@@ -194,8 +194,8 @@ def _score_fund_flow(fund_flow_df: pd.DataFrame) -> FactorDetail:
             details.append(f"近{total_days}日资金偏空(仅{pos_days}/{total_days}日净流入)")
 
     # 异动检测: 单日净流入超过近期日均3倍
-    if "net_amount" in recent5.columns and len(recent5) >= 3:
-        daily_net = recent5["net_amount"].astype(float)
+    if "net_inflow" in recent5.columns and len(recent5) >= 3:
+        daily_net = recent5["net_inflow"].astype(float)
         avg_net = daily_net.abs().mean()
         if avg_net > 0:
             max_single = daily_net.max()
@@ -252,7 +252,7 @@ def _score_fundamental(fund_data: dict) -> FactorDetail:
     details = []
 
     # PE估值
-    pe = fund_data.get("pe_ratio")
+    pe = fund_data.get("pe1") or fund_data.get("pe2")
     if pe is not None and not (isinstance(pe, float) and (pd.isna(pe) or pe <= 0)):
         try:
             pe_val = float(pe)
@@ -274,7 +274,7 @@ def _score_fundamental(fund_data: dict) -> FactorDetail:
             pass
 
     # 股息率
-    div = fund_data.get("dividend_yield")
+    div = fund_data.get("div_yield1") or fund_data.get("div_yield2")
     if div is not None and not (isinstance(div, float) and pd.isna(div)):
         try:
             div_val = float(div)
@@ -356,8 +356,8 @@ def _score_fund_flow(fund_flow_df: pd.DataFrame) -> FactorDetail:
     score = 50.0
     details = []
     recent5 = fund_flow_df.head(5)
-    if "net_amount" in recent5.columns:
-        net5 = recent5["net_amount"].astype(float).sum()
+    if "net_inflow" in recent5.columns:
+        net5 = recent5["net_inflow"].astype(float).sum()
         if net5 > 0:
             score += min(15, net5 / 1e8 * 5)
             details.append(f"近5日净流入{net5/1e8:.1f}亿")
@@ -365,9 +365,9 @@ def _score_fund_flow(fund_flow_df: pd.DataFrame) -> FactorDetail:
             score -= min(15, abs(net5) / 1e8 * 5)
             details.append(f"近5日净流出{abs(net5)/1e8:.1f}亿")
     recent20 = fund_flow_df.head(20)
-    if len(recent20) >= 10 and "net_amount" in recent20.columns:
-        net20 = recent20["net_amount"].astype(float).sum()
-        pos_days = (recent20["net_amount"].astype(float) > 0).sum()
+    if len(recent20) >= 10 and "net_inflow" in recent20.columns:
+        net20 = recent20["net_inflow"].astype(float).sum()
+        pos_days = (recent20["net_inflow"].astype(float) > 0).sum()
         total_days = len(recent20)
         if net20 > 0 and pos_days / total_days > 0.5:
             score += 10
@@ -375,8 +375,8 @@ def _score_fund_flow(fund_flow_df: pd.DataFrame) -> FactorDetail:
         elif net20 < 0 and pos_days / total_days < 0.4:
             score -= 10
             details.append(f"近{total_days}日资金偏空(仅{pos_days}/{total_days}日)")
-    if "net_amount" in recent5.columns and len(recent5) >= 3:
-        daily_net = recent5["net_amount"].astype(float)
+    if "net_inflow" in recent5.columns and len(recent5) >= 3:
+        daily_net = recent5["net_inflow"].astype(float)
         avg_net = daily_net.abs().mean()
         if avg_net > 0 and daily_net.max() > avg_net * 3:
             score += 5
@@ -403,7 +403,7 @@ def _score_fundamental(fund_data: dict) -> FactorDetail:
         )
     score = 50.0
     details = []
-    pe = fund_data.get("pe_ratio")
+    pe = fund_data.get("pe1") or fund_data.get("pe2")
     if pe is not None and not (isinstance(pe, float) and (pd.isna(pe) or pe <= 0)):
         try:
             pe_val = float(pe)
@@ -419,7 +419,7 @@ def _score_fundamental(fund_data: dict) -> FactorDetail:
                 score -= 20; details.append(f"PE {pe_val:.1f}（高估）")
         except (ValueError, TypeError):
             pass
-    div = fund_data.get("dividend_yield")
+    div = fund_data.get("div_yield1") or fund_data.get("div_yield2")
     if div is not None and not (isinstance(div, float) and pd.isna(div)):
         try:
             div_val = float(div)

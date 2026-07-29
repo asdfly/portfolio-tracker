@@ -54,17 +54,17 @@ class TestScoreFundFlow:
         assert r.score == 50.0
 
     def test_positive_flow(self):
-        df = pd.DataFrame({"net_amount": [2e8, 1.5e8, 1e8, 0.5e8, 0.3e8]})
+        df = pd.DataFrame({"net_inflow": [2e8, 1.5e8, 1e8, 0.5e8, 0.3e8]})
         r = self._fn()(df)
         assert r.score > 50.0 and "净流入" in r.detail
 
     def test_negative_flow(self):
-        df = pd.DataFrame({"net_amount": [-2e8, -1.5e8, -1e8, -0.5e8, -0.3e8]})
+        df = pd.DataFrame({"net_inflow": [-2e8, -1.5e8, -1e8, -0.5e8, -0.3e8]})
         r = self._fn()(df)
         assert r.score < 50.0 and "净流出" in r.detail
 
     def test_score_clamped(self):
-        r = self._fn()(pd.DataFrame({"net_amount": [1e10] * 5}))
+        r = self._fn()(pd.DataFrame({"net_inflow": [1e10] * 5}))
         assert 0 <= r.score <= 100
 
 
@@ -82,11 +82,11 @@ class TestScoreFundamental:
         assert r.score == 50.0
 
     def test_low_pe(self):
-        r = self._fn()({"pe_ratio": 10.0})
+        r = self._fn()({"pe1": 10.0})
         assert r.score > 50.0 and "低估" in r.level
 
     def test_high_pe(self):
-        r = self._fn()({"pe_ratio": 40.0})
+        r = self._fn()({"pe1": 40.0})
         assert r.score < 50.0 and "高估" in r.level
 
     def test_discount(self):
@@ -98,11 +98,11 @@ class TestScoreFundamental:
         assert r.score < 50.0
 
     def test_combined(self):
-        r = self._fn()({"pe_ratio": 11.0, "dividend_yield": 4.5, "discount_rate": -0.3})
+        r = self._fn()({"pe1": 11.0, "div_yield1": 4.5, "discount_rate": -0.3})
         assert r.score > 60.0
 
     def test_nan_pe(self):
-        r = self._fn()({"pe_ratio": float("nan")})
+        r = self._fn()({"pe1": float("nan")})
         assert r.score == 50.0
 
 
@@ -142,14 +142,14 @@ class TestComputeMultiFactorScore:
 
     def test_bullish_all_factors(self):
         r = self._fn()("Y", "TY", 90, 10,
-             fund_flow_df=pd.DataFrame({"net_amount": [5e8]*5}),
-             fund_data={"pe_ratio": 8.0, "discount_rate": -1.0})
+             fund_flow_df=pd.DataFrame({"net_inflow": [5e8]*5}),
+             fund_data={"pe1": 8.0, "discount_rate": -1.0})
         assert r.total_score >= 75.0 and r.action == "买入"
 
     def test_bearish_all_factors(self):
         r = self._fn()("Z", "TZ", 10, 90,
-             fund_flow_df=pd.DataFrame({"net_amount": [-5e8]*5}),
-             fund_data={"pe_ratio": 50.0})
+             fund_flow_df=pd.DataFrame({"net_inflow": [-5e8]*5}),
+             fund_data={"pe1": 50.0})
         assert r.total_score <= 25.0 and r.action == "卖出"
 
     def test_score_range(self):
@@ -161,8 +161,8 @@ class TestComputeMultiFactorScore:
 
     def test_reasons_populated(self):
         r = self._fn()("R", "TR", 80, 20,
-             fund_flow_df=pd.DataFrame({"net_amount": [3e8]*5}),
-             fund_data={"pe_ratio": 12.0})
+             fund_flow_df=pd.DataFrame({"net_inflow": [3e8]*5}),
+             fund_data={"pe1": 12.0})
         assert len(r.reasons) > 0
 
     def test_dataclass_compat(self):
