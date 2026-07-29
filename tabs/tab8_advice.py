@@ -503,8 +503,9 @@ def _render_signal_confidence(positions):
     """渲染当前持仓ETF的信号置信度面板。
 
     展示每只ETF当前技术信号的回测置信度：
-    - 指标 × 前瞻窗口的热力表格
-    - 综合置信度评分与等级
+    - 可点击指标卡筛选（有效信号数/A级/B级/平均置信度）
+    - ETF多选 + 指标/方向/强度/等级多级筛选
+    - 指标 x 前瞻窗口的置信度矩阵
     - 命中率趋势图
     """
     st.markdown("---")
@@ -525,15 +526,16 @@ def _render_signal_confidence(positions):
                    market_regime, scope, signal_strength,
                    conf_5d, conf_10d, conf_20d, conf_30d, conf_60d,
                    composite_confidence, composite_grade,
-                   hit_rate_5d, hit_rate_10d, hit_rate_20d, hit_rate_30d, hit_rate_60d
+                   hit_rate_5d, hit_rate_10d, hit_rate_20d, hit_rate_30d, hit_rate_60d,
+                   stability_score
             FROM signal_confidence_current
             WHERE composite_confidence IS NOT NULL
             ORDER BY composite_confidence DESC
         """, conn)
+        conn.close()
 
         if conf_df.empty:
             st.info("暂无信号置信度数据，请先运行回测引擎（run_analysis 阶段六b）。")
-            conn.close()
             return
 
         ind_map = {
@@ -542,52 +544,165 @@ def _render_signal_confidence(positions):
             "bollinger": "布林带位置", "trend": "趋势信号",
             "combo": "组合信号",
         }
+        strength_labels = {"all": "全强度", "mild": "轻度", "moderate": "中度", "extreme": "极端"}
+        direction_map = {1: "看多", -1: "看空", 0: "中性"}
 
+        # ── 指标卡（可点击筛选） ──
         total_signals = len(conf_df)
         grade_a = len(conf_df[conf_df["composite_grade"] == "A"])
         grade_b = len(conf_df[conf_df["composite_grade"] == "B"])
         avg_conf = conf_df["composite_confidence"].mean()
 
-        cc1, cc2, cc3, cc4 = st.columns(4)
-        regime_labels = {"bull": "牛市", "bear": "熊市", "sideways": "震荡"}
-        _regime_vals = conf_df["market_regime"].dropna()
-        current_regime_label = regime_labels.get(_regime_vals.iloc[0] if not _regime_vals.empty else "all", "未知")
-        cc1.metric("有效信号数", total_signals)
-        cc2.metric("A级(高置信)", grade_a)
-        cc3.metric("B级(中置信)", grade_b)
-        cc4.metric(f"当前: {current_regime_label}", f"{avg_conf:.1f}")
+        # 初始化 session_state
+        if "sig_conf_grade_filter" not in st.session_state:
+            st.session_state["sig_conf_grade_filter"] = None
 
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        with cc1:
+            if st.button(
+                f"**有效信号数**\n{total_signals}",
+                key="btn_total_signals",
+                use_container_width=True,
+                help="点击清除等级筛选",
+            ):
+                st.session_state["sig_conf_grade_filter"] = None
+        with cc2:
+            btn_a_label = f"**A级(高置信)**\n{grade_a}"
+            if st.session_state.get("sig_conf_grade_filter") == "A":
+                btn_a_label = f"**A级(高置信)**\n{grade_a} ✓"
+            if st.button(btn_a_label, key="btn_grade_a", use_container_width=True,
+                         help="点击筛选A级信号"):
+                st.session_state["sig_conf_grade_filter"] = (
+                    None if st.session_state.get("sig_conf_grade_filter") == "A" else "A"
+                )
+        with cc3:
+            btn_b_label = f"**B级(中置信)**\n{grade_b}"
+            if st.session_state.get("sig_conf_grade_filter") == "B":
+                btn_b_label = f"**B级(中置信)**\n{grade_b} ✓"
+            if st.button(btn_b_label, key="btn_grade_b", use_container_width=True,
+                         help="点击筛选B级信号"):
+                st.session_state["sig_conf_grade_filter"] = (
+                    None if st.session_state.get("sig_conf_grade_filter") == "B" else "B"
+                )
+        with cc4:
+            regime_labels = {"bull": "牛市", "bear": "熊市", "sideways": "震荡"}
+            _regime_vals = conf_df["market_regime"].dropna()
+            current_regime = regime_labels.get(
+                _regime_vals.iloc[0] if not _regime_vals.empty else "all", "未知"
+            )
+            st.metric(f"当前: {current_regime}", f"{avg_conf:.1f}")
+
+        # ── 筛选器区域 ──
         etf_options = conf_df[["code", "name"]].drop_duplicates().sort_values("name")
         etf_options["label"] = etf_options["name"] + " (" + etf_options["code"] + ")"
+        etf_code_to_label = dict(zip(etf_options["code"], etf_options["label"]))
 
-        sel_col1, sel_col2 = st.columns([3, 1])
-        with sel_col1:
-            sel_etf = st.selectbox(
-                "选择ETF查看信号置信度",
-                options=etf_options["code"].tolist(),
-                format_func=lambda c: etf_options[etf_options["code"] == c]["label"].iloc[0],
-                key="sig_conf_etf",
-            )
-        with sel_col2:
-            show_all = st.checkbox("显示全部ETF", value=False, key="sig_conf_all")
+        with st.expander("筛选器", expanded=True):
+            filter_col1, filter_col2 = st.columns(2)
 
-        if show_all:
-            display_df = conf_df.copy()
-        else:
-            display_df = conf_df[conf_df["code"] == sel_etf].copy()
+            with filter_col1:
+                # ETF 多选
+                sel_etfs = st.multiselect(
+                    "选择ETF（可多选，留空=全部）",
+                    options=etf_options["code"].tolist(),
+                    default=[],
+                    format_func=lambda c: etf_code_to_label.get(c, c),
+                    key="sig_conf_etf_multi",
+                )
+
+                # 指标多选
+                avail_indicators = sorted(conf_df["indicator"].unique())
+                ind_label_map_inv = {ind_map.get(i, i): i for i in avail_indicators}
+                sel_ind_labels = st.multiselect(
+                    "指标类型",
+                    options=list(ind_label_map_inv.keys()),
+                    default=[],
+                    key="sig_conf_indicator_multi",
+                )
+                sel_indicators = [ind_label_map_inv[l] for l in sel_ind_labels]
+
+            with filter_col2:
+                # 方向多选
+                avail_directions = sorted(conf_df["signal_direction"].unique())
+                dir_labels = {direction_map.get(d, str(d)): d for d in avail_directions}
+                sel_dir_labels = st.multiselect(
+                    "信号方向",
+                    options=list(dir_labels.keys()),
+                    default=[],
+                    key="sig_conf_direction_multi",
+                )
+                sel_directions = [dir_labels[l] for l in sel_dir_labels]
+
+                # 强度多选
+                avail_strengths = sorted(
+                    s for s in conf_df["signal_strength"].dropna().unique()
+                )
+                sel_strength_labels = st.multiselect(
+                    "信号强度",
+                    options=[strength_labels.get(s, s) for s in avail_strengths],
+                    default=[],
+                    key="sig_conf_strength_multi",
+                )
+                strength_label_inv = {strength_labels.get(s, s): s for s in avail_strengths}
+                sel_strengths = [strength_label_inv[l] for l in sel_strength_labels]
+
+        # ── 应用筛选 ──
+        display_df = conf_df.copy()
+
+        # 等级筛选（来自指标卡点击）
+        active_grade = st.session_state.get("sig_conf_grade_filter")
+        if active_grade:
+            display_df = display_df[display_df["composite_grade"] == active_grade]
+
+        # ETF 筛选
+        if sel_etfs:
+            display_df = display_df[display_df["code"].isin(sel_etfs)]
+
+        # 指标筛选
+        if sel_indicators:
+            display_df = display_df[display_df["indicator"].isin(sel_indicators)]
+
+        # 方向筛选
+        if sel_directions:
+            display_df = display_df[display_df["signal_direction"].isin(sel_directions)]
+
+        # 强度筛选
+        if sel_strengths:
+            display_df = display_df[display_df["signal_strength"].isin(sel_strengths)]
+
+        # 筛选结果计数
+        filtered_count = len(display_df)
+        filter_desc_parts = []
+        if active_grade:
+            filter_desc_parts.append(f"等级={active_grade}")
+        if sel_etfs:
+            filter_desc_parts.append(f"ETF={len(sel_etfs)}只")
+        if sel_indicators:
+            filter_desc_parts.append(f"指标={len(sel_indicators)}种")
+        if sel_directions:
+            dir_names = [direction_map.get(d, str(d)) for d in sel_directions]
+            filter_desc_parts.append(f"方向={'/'.join(dir_names)}")
+        if sel_strengths:
+            filter_desc_parts.append(f"强度={len(sel_strengths)}种")
+        filter_desc = " | ".join(filter_desc_parts) if filter_desc_parts else "全部"
+        st.caption(f"筛选结果: **{filtered_count}** 条信号（{filter_desc}）")
 
         if display_df.empty:
-            st.info("该ETF暂无有效信号置信度数据")
-            conn.close()
+            st.info("当前筛选条件下无匹配信号，请调整筛选器。")
             return
 
+        # ── 信号置信度矩阵 ──
         st.markdown("**信号置信度矩阵（分数/等级）**")
         display_df = display_df.copy()
         display_df["指标"] = display_df["indicator"].map(lambda x: ind_map.get(x, x))
         display_df["当前信号"] = display_df["signal_value"]
-        display_df["方向"] = display_df["signal_direction"].map(lambda d: "看多" if d > 0 else ("看空" if d < 0 else "中性"))
+        display_df["方向"] = display_df["signal_direction"].map(
+            lambda d: "看多" if d > 0 else ("看空" if d < 0 else "中性")
+        )
         if "scope" in display_df.columns:
-            display_df["scope"] = display_df["scope"].map(lambda s: "ETF" if s == "etf" else "全市场" if s == "all" else s)
+            display_df["scope"] = display_df["scope"].map(
+                lambda s: "ETF" if s == "etf" else "全市场" if s == "all" else "-"
+            )
         else:
             display_df["scope"] = "-"
         display_df["综合"] = display_df.apply(
@@ -600,32 +715,31 @@ def _render_signal_confidence(positions):
                 lambda r: f"{r[col]:.1f}" if pd.notna(r[col]) else "-", axis=1
             )
 
-        strength_labels = {"all": "-", "mild": "轻度", "moderate": "中度", "extreme": "极端"}
         display_df["强度"] = display_df["signal_strength"].map(
             lambda s: strength_labels.get(s, "-") if pd.notna(s) else "-")
 
-        table_cols = ["name", "指标", "当前信号", "方向", "scope", "强度", "5日", "10日", "20日", "30日", "60日", "综合"]
+        display_df["稳定性"] = display_df["stability_score"].map(
+            lambda x: f"{x:.2f}" if pd.notna(x) else "-")
+
+        table_cols = ["name", "指标", "当前信号", "方向", "scope", "强度",
+                      "5日", "10日", "20日", "30日", "60日", "综合", "稳定性"]
         st.dataframe(
             display_df[table_cols].rename(columns={"name": "ETF"}),
             use_container_width=True,
             hide_index=True,
-            height=min(200 + len(display_df) * 35, 500),
+            height=min(200 + len(display_df) * 35, 600),
         )
 
+        # ── 命中率趋势图 ──
         st.markdown("**各信号命中率（偏离50%越大越有效）**")
-        if not show_all:
-            etf_conf = conf_df[conf_df["code"] == sel_etf].copy()
-        else:
-            etf_conf = conf_df.copy()
-
-        etf_conf = etf_conf[etf_conf["signal_direction"] != 0]
-        if not etf_conf.empty:
+        chart_df = display_df[display_df["signal_direction"] != 0].copy()
+        if not chart_df.empty:
             windows = [5, 10, 20, 30, 60]
             hr_cols = [f"hit_rate_{n}d" for n in windows]
             hr_labels = [f"{n}日" for n in windows]
 
             fig = go.Figure()
-            for _, row in etf_conf.iterrows():
+            for _, row in chart_df.iterrows():
                 ind_label = ind_map.get(row["indicator"], row["indicator"])
                 sig_label = f"{row['name']} - {ind_label}({row['signal_value']})"
                 values = [row[c] if pd.notna(row[c]) else None for c in hr_cols]
@@ -642,9 +756,7 @@ def _render_signal_confidence(positions):
             )
             render_chart(fig)
         else:
-            st.info("该ETF当前无方向性信号")
-
-        conn.close()
+            st.info("当前筛选条件下无方向性信号")
 
     except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
         st.warning(f"信号置信度数据加载失败: {e}")
@@ -654,7 +766,8 @@ def _render_backtest_heatmap():
     """渲染全市场信号回测热力图与排名。
 
     展示所有信号的回测统计结果：
-    - 热力图：指标信号 × 前瞻窗口，颜色编码置信度分数
+    - 多级筛选：市场状态/强度/范围/指标/方向/等级/窗口
+    - 热力图：指标信号 x 前瞻窗口，颜色编码置信度分数
     - 排名表：按置信度排序的Top/Bottom信号
     - 指标汇总：各指标平均置信度与命中率
     """
@@ -671,32 +784,72 @@ def _render_backtest_heatmap():
     try:
         conn = get_db_connection()
 
-        # 市场状态选择器
-        regime_options = {"all": "全部市场状态", "bull": "牛市", "bear": "熊市", "sideways": "震荡市"}
-        sel_regime = st.selectbox(
-            "选择市场状态",
-            options=list(regime_options.keys()),
-            format_func=lambda r: regime_options[r],
-            key="backtest_regime_sel",
-        )
+        ind_map = {
+            "ma_signal": "均线", "macd_signal": "MACD",
+            "rsi_status": "RSI", "kdj_signal": "KDJ",
+            "bollinger": "布林带", "trend": "趋势",
+            "combo": "组合",
+        }
+        direction_map = {1: "看多", -1: "看空", 0: "中性"}
+        strength_labels = {"all": "全强度", "mild": "轻度", "moderate": "中度", "extreme": "极端"}
 
-        # 信号强度选择器
-        strength_options = {"all": "全强度", "mild": "轻度", "moderate": "中度", "extreme": "极端"}
-        sel_strength = st.selectbox(
-            "信号强度",
-            options=list(strength_options.keys()),
-            format_func=lambda s: strength_options[s],
-            key="backtest_strength_sel",
-        )
+        # ── 筛选器 ──
+        with st.expander("回测筛选器", expanded=True):
+            fc1, fc2, fc3 = st.columns(3)
 
-        # scope 选择器
-        scope_options = {"all": "全市场+Per-ETF", "all_only": "仅全市场", "etf_only": "仅Per-ETF"}
-        sel_scope = st.selectbox(
-            "数据范围",
-            options=list(scope_options.keys()),
-            format_func=lambda s: scope_options[s],
-            key="backtest_scope_sel",
-        )
+            with fc1:
+                regime_options = {"all": "全部市场状态", "bull": "牛市", "bear": "熊市", "sideways": "震荡市"}
+                sel_regime = st.selectbox(
+                    "市场状态",
+                    options=list(regime_options.keys()),
+                    format_func=lambda r: regime_options[r],
+                    key="backtest_regime_sel",
+                )
+                sel_strength = st.selectbox(
+                    "信号强度",
+                    options=list(strength_labels.keys()),
+                    format_func=lambda s: strength_labels[s],
+                    key="backtest_strength_sel",
+                )
+
+            with fc2:
+                scope_options = {"all": "全市场+Per-ETF", "all_only": "仅全市场", "etf_only": "仅Per-ETF"}
+                sel_scope = st.selectbox(
+                    "数据范围",
+                    options=list(scope_options.keys()),
+                    format_func=lambda s: scope_options[s],
+                    key="backtest_scope_sel",
+                )
+                # 等级多选
+                grade_opts = ["A", "B", "C", "D"]
+                sel_grades = st.multiselect(
+                    "置信度等级",
+                    options=grade_opts,
+                    default=[],
+                    key="backtest_grade_multi",
+                )
+
+            with fc3:
+                # 指标多选
+                avail_inds = sorted(ind_map.keys())
+                ind_label_inv = {ind_map[i]: i for i in avail_inds}
+                sel_ind_labels = st.multiselect(
+                    "指标类型",
+                    options=list(ind_label_inv.keys()),
+                    default=[],
+                    key="backtest_indicator_multi",
+                )
+                sel_indicators = [ind_label_inv[l] for l in sel_ind_labels]
+
+                # 方向多选
+                sel_dir_labels = st.multiselect(
+                    "信号方向",
+                    options=["看多", "看空", "中性"],
+                    default=[],
+                    key="backtest_direction_multi",
+                )
+                dir_label_inv = {"看多": 1, "看空": -1, "中性": 0}
+                sel_directions = [dir_label_inv[l] for l in sel_dir_labels]
 
         scope_clause = ""
         if sel_scope == "all_only":
@@ -709,7 +862,7 @@ def _render_backtest_heatmap():
                    market_regime, sample_count, hit_count, hit_rate,
                    weighted_hit_rate, avg_return, std_return,
                    t_statistic, p_value, confidence_score, confidence_grade,
-                   signal_strength, stability_score
+                   signal_strength, stability_score, scope
             FROM signal_backtest_stats
             WHERE market_regime = ? AND signal_strength = ? {scope_clause}
             ORDER BY confidence_score DESC
@@ -720,12 +873,28 @@ def _render_backtest_heatmap():
             st.info("暂无回测统计数据，请先运行回测引擎。")
             return
 
-        ind_map = {
-            "ma_signal": "均线", "macd_signal": "MACD",
-            "rsi_status": "RSI", "kdj_signal": "KDJ",
-            "bollinger": "布林带", "trend": "趋势",
-            "combo": "组合",
-        }
+        # 应用应用层筛选
+        if sel_grades:
+            stats_df = stats_df[stats_df["confidence_grade"].isin(sel_grades)]
+        if sel_indicators:
+            stats_df = stats_df[stats_df["indicator"].isin(sel_indicators)]
+        if sel_directions:
+            stats_df = stats_df[stats_df["signal_direction"].isin(sel_directions)]
+
+        # 筛选结果计数
+        filter_parts = []
+        if sel_grades:
+            filter_parts.append(f"等级={'/'.join(sel_grades)}")
+        if sel_indicators:
+            filter_parts.append(f"指标={len(sel_indicators)}种")
+        if sel_directions:
+            filter_parts.append(f"方向={'/'.join(sel_dir_labels)}")
+        filter_desc = " | ".join(filter_parts) if filter_parts else "全部"
+        st.caption(f"筛选结果: **{len(stats_df)}** 组统计（{filter_desc}）")
+
+        if stats_df.empty:
+            st.info("当前筛选条件下无匹配的回测数据，请调整筛选器。")
+            return
 
         st.markdown("**置信度热力图（信号 x 前瞻窗口）**")
         pivot_conf = stats_df.pivot_table(
@@ -764,19 +933,24 @@ def _render_backtest_heatmap():
             top_df = stats_df.head(10).copy()
             top_df["指标"] = top_df["indicator"].map(lambda x: ind_map.get(x, x))
             top_df["信号"] = top_df["signal_value"]
+            top_df["方向"] = top_df["signal_direction"].map(
+                lambda d: direction_map.get(d, str(d)))
             top_df["窗口"] = top_df["forward_window"].map(lambda x: f"{x}日")
             top_df["样本"] = top_df["sample_count"]
             top_df["命中率"] = top_df["hit_rate"].map(lambda x: f"{x:.1%}")
-            top_df["加权命中"] = top_df["weighted_hit_rate"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "-")
+            top_df["加权命中"] = top_df["weighted_hit_rate"].map(
+                lambda x: f"{x:+.1%}" if pd.notna(x) else "-")
             top_df["均收益"] = top_df["avg_return"].map(lambda x: f"{x:+.2%}")
-            top_df["p值"] = top_df["p_value"].map(lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
+            top_df["p值"] = top_df["p_value"].map(
+                lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
             top_df["稳定"] = top_df["stability_score"].map(
                 lambda x: f"{x:.2f}" if pd.notna(x) else "-")
             top_df["置信度"] = top_df.apply(
                 lambda r: f"{r['confidence_score']:.1f} [{r['confidence_grade']}]", axis=1
             )
             st.dataframe(
-                top_df[["指标", "信号", "窗口", "样本", "命中率", "加权命中", "均收益", "p值", "稳定", "置信度"]],
+                top_df[["指标", "信号", "方向", "窗口", "样本", "命中率",
+                        "加权命中", "均收益", "p值", "稳定", "置信度"]],
                 use_container_width=True, hide_index=True, height=300,
             )
 
@@ -785,19 +959,24 @@ def _render_backtest_heatmap():
             bot_df = stats_df.tail(10).copy()
             bot_df["指标"] = bot_df["indicator"].map(lambda x: ind_map.get(x, x))
             bot_df["信号"] = bot_df["signal_value"]
+            bot_df["方向"] = bot_df["signal_direction"].map(
+                lambda d: direction_map.get(d, str(d)))
             bot_df["窗口"] = bot_df["forward_window"].map(lambda x: f"{x}日")
             bot_df["样本"] = bot_df["sample_count"]
             bot_df["命中率"] = bot_df["hit_rate"].map(lambda x: f"{x:.1%}")
-            bot_df["加权命中"] = bot_df["weighted_hit_rate"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "-")
+            bot_df["加权命中"] = bot_df["weighted_hit_rate"].map(
+                lambda x: f"{x:+.1%}" if pd.notna(x) else "-")
             bot_df["均收益"] = bot_df["avg_return"].map(lambda x: f"{x:+.2%}")
-            bot_df["p值"] = bot_df["p_value"].map(lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
+            bot_df["p值"] = bot_df["p_value"].map(
+                lambda x: f"{x:.4f}" if x > 0 else "<0.0001")
             bot_df["稳定"] = bot_df["stability_score"].map(
                 lambda x: f"{x:.2f}" if pd.notna(x) else "-")
             bot_df["置信度"] = bot_df.apply(
-                lambda r: f"{r['confidence_score']:.1f} [{r['confidence_grade']}|-]", axis=1
+                lambda r: f"{r['confidence_score']:.1f} [{r['confidence_grade']}]", axis=1
             )
             st.dataframe(
-                bot_df[["指标", "信号", "窗口", "样本", "命中率", "加权命中", "均收益", "p值", "稳定", "置信度"]],
+                bot_df[["指标", "信号", "方向", "窗口", "样本", "命中率",
+                        "加权命中", "均收益", "p值", "稳定", "置信度"]],
                 use_container_width=True, hide_index=True, height=300,
             )
 
