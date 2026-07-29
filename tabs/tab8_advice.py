@@ -815,21 +815,76 @@ def _render_signal_confidence(positions):
             hr_cols = [f"hit_rate_{n}d" for n in windows]
             hr_labels = [f"{n}日" for n in windows]
 
+            # 显示模式选择
+            hc1, hc2 = st.columns([3, 1])
+            with hc1:
+                chart_mode = st.radio(
+                    "显示模式",
+                    options=["汇总（按指标平均）", "详细（每ETF每信号）"],
+                    horizontal=True,
+                    key="hr_chart_mode",
+                )
+            with hc2:
+                if "详细" in chart_mode:
+                    max_traces = st.selectbox(
+                        "最多显示",
+                        options=[10, 15, 20, 30],
+                        index=0,
+                        key="hr_max_traces",
+                    )
+                else:
+                    max_traces = 999
+
             fig = go.Figure()
-            for _, row in chart_df.iterrows():
-                ind_label = ind_map.get(row["indicator"], row["indicator"])
-                sig_label = f"{row['name']} - {ind_label}({row['signal_value']})"
-                values = [row[c] if pd.notna(row[c]) else None for c in hr_cols]
-                fig.add_trace(go.Scatter(
-                    x=hr_labels, y=values, mode="lines+markers",
-                    name=sig_label, hovertemplate="%{y:.1%}<extra></extra>",
-                ))
+
+            if "汇总" in chart_mode:
+                # 按指标汇总平均命中率
+                for indicator in sorted(chart_df["indicator"].unique()):
+                    sub = chart_df[chart_df["indicator"] == indicator]
+                    values = []
+                    for col in hr_cols:
+                        vals = sub[col].dropna()
+                        values.append(float(vals.mean()) if not vals.empty else None)
+                    ind_label = ind_map.get(indicator, indicator)
+                    n_signals = len(sub)
+                    fig.add_trace(go.Scatter(
+                        x=hr_labels, y=values, mode="lines+markers",
+                        name=f"{ind_label} ({n_signals}信号)",
+                        hovertemplate="%{y:.1%}<extra></extra>",
+                        connectgaps=True,
+                    ))
+            else:
+                # 详细模式：每ETF每信号，限制数量
+                detail_df = chart_df.sort_values("composite_confidence", ascending=False)
+                if len(detail_df) > max_traces:
+                    st.caption(f"仅显示置信度最高的 {max_traces}/{len(detail_df)} 条信号")
+                    detail_df = detail_df.head(max_traces)
+                for _, row in detail_df.iterrows():
+                    ind_label = ind_map.get(row["indicator"], row["indicator"])
+                    sig_label = f"{row['name'][:8]} - {ind_label}({row['signal_value']})"
+                    values = [row[c] if pd.notna(row[c]) else None for c in hr_cols]
+                    fig.add_trace(go.Scatter(
+                        x=hr_labels, y=values, mode="lines+markers",
+                        name=sig_label, hovertemplate="%{y:.1%}<extra></extra>",
+                        connectgaps=True,
+                    ))
+
             fig.add_hline(y=0.5, line_dash="dash", line_color="gray",
                           annotation_text="随机基准(50%)")
+            n_traces = len(fig.data) - 1  # subtract hline
+            chart_height = max(350, min(600, 250 + n_traces * 25))
             fig.update_layout(
                 yaxis_title="命中率", xaxis_title="前瞻窗口",
-                height=350, margin=dict(l=40, r=20, t=20, b=40),
-                legend=dict(font_size=10, orientation="h", yanchor="bottom", y=-0.3),
+                yaxis_tickformat=".0%",
+                height=chart_height,
+                margin=dict(l=50, r=20, t=20, b=10),
+                legend=dict(
+                    font_size=10,
+                    orientation="h",
+                    yanchor="bottom", y=-0.15,
+                    xanchor="left", x=0,
+                ),
+                showlegend=True,
             )
             render_chart(fig)
         else:
