@@ -340,19 +340,16 @@ def compute_monthly_returns():
     df["daily_return"] = df["daily_return"] / 100
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
-    # 使用月首末日 total_value 计算正确的月度收益率
+    # 使用 daily_return 连乘计算月度收益率（避免追加投入/赎回/快照类型切换导致 total_value 跳变）
     monthly = df.groupby(["year", "month"]).agg(
-        first_value=("total_value", "first"),
-        last_value=("total_value", "last"),
+        monthly_return=("daily_return", lambda x: (1 + x).prod() - 1),
     ).reset_index()
-    monthly["monthly_return"] = monthly["last_value"] / monthly["first_value"] - 1
     pivot = monthly.pivot(index="year", columns="month", values="monthly_return")
     pivot.columns = [f"{m}月" for m in pivot.columns]
-    # 年度合计列
+    # 年度合计列（用 daily_return 连乘，避免 total_value 跳变）
     yearly = df.groupby("year").agg(
-        first_value=("total_value", "first"), last_value=("total_value", "last")
+        yearly_return=("daily_return", lambda x: (1 + x).prod() - 1),
     ).reset_index()
-    yearly["yearly_return"] = yearly["last_value"] / yearly["first_value"] - 1
     pivot = pivot.merge(
         yearly[["year", "yearly_return"]].rename(columns={"yearly_return": "年累计"}),
         left_index=True, right_on="year", how="left",

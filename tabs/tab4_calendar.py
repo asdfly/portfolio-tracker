@@ -53,14 +53,12 @@ def _render_year_overview(cal_data):
     if sel_month not in months_in_year:
         sel_month = months_in_year[-1] if months_in_year else 1
 
-    # 使用月首末日计算正确的月度收益率
+    # 使用 daily_return 连乘计算月度收益率（避免追加投入/赎回导致 total_value 跳变）
     month_returns = year_df.groupby("month").agg(
         pnl_sum=("daily_pnl", "sum"),
-        first_value=("total_value", "first"),
-        last_value=("total_value", "last"),
+        ret_sum=("daily_return", lambda x: (1 + x / 100).prod() - 1),
         days=("day", "count"),
     ).reset_index()
-    month_returns["ret_sum"] = month_returns["last_value"] / month_returns["first_value"] - 1
     yr_monthly = month_returns
 
     yr_monthly["profit_days"] = (
