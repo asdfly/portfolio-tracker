@@ -37,6 +37,44 @@ class TestPositionAdvice:
         a = self._fn()("H", "TH", "医药", 10.0, 100000, 50, 10.0)
         assert a["code"] == "H" and "adjust_action" in a.keys()
 
+    def test_add_target_weight_relative(self):
+        """加仓: 目标占比 = 当前占比 × (1 + pct)"""
+        a = self._fn()("I", "TI", "科技", 10.0, 100000, 80, 15.0)
+        assert a.adjust_action == "加仓"
+        # 评分80 → 加仓5%-15%, target = 10*(1.05) ~ 10*(1.15) = 10.5 ~ 11.5
+        assert abs(a.target_weight_min - 10.5) < 0.01
+        assert abs(a.target_weight_max - 11.5) < 0.01
+
+    def test_reduce_target_weight_relative(self):
+        """减仓: 目标占比 = 当前占比 × (1 - pct)"""
+        a = self._fn()("J", "TJ", "医药", 20.0, 200000, 30, 15.0)
+        assert a.adjust_action == "减仓"
+        # 评分30 → 28-42区间 → 减仓2%-8%, target = 20*(0.92) ~ 20*(0.98) = 18.4 ~ 19.6
+        assert abs(a.target_weight_min - 18.4) < 0.01
+        assert abs(a.target_weight_max - 19.6) < 0.01
+
+    def test_reduce_target_weight_large(self):
+        """减仓5%-15%: 目标占比 = 当前占比 × (1 - pct)"""
+        a = self._fn()("J2", "TJ2", "医药", 20.0, 200000, 10, 15.0)
+        assert a.adjust_action == "减仓"
+        # 评分10 → 0-28区间 → 减仓5%-15%, target = 20*(0.85) ~ 20*(0.95) = 17.0 ~ 19.0
+        assert abs(a.target_weight_min - 17.0) < 0.01
+        assert abs(a.target_weight_max - 19.0) < 0.01
+
+    def test_reduce_target_weight_floor(self):
+        """减仓: 目标占比不低于0"""
+        a = self._fn()("K", "TK", "医药", 2.0, 20000, 10, 15.0)
+        assert a.adjust_action == "减仓"
+        assert a.target_weight_min >= 0
+        assert a.target_weight_max >= 0
+
+    def test_hold_target_equals_current(self):
+        """维持: 目标占比 = 当前占比"""
+        a = self._fn()("L", "TL", "宽基", 8.0, 80000, 50, 10.0)
+        assert a.adjust_action == "维持"
+        assert abs(a.target_weight_min - 8.0) < 0.01
+        assert abs(a.target_weight_max - 8.0) < 0.01
+
 
 class TestSectorExposure:
     def test_normal_exposure(self):

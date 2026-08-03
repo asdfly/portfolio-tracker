@@ -98,13 +98,13 @@ def compute_position_advice(code, name, sector, current_weight, current_mv,
         adjust_action = "维持"
         pct_min, pct_max = 0.0, 0.0
 
-    # 计算目标仓位
+    # 计算目标仓位: pct_min/pct_max 为相对当前仓位的调整比例
     if adjust_action == "加仓":
-        target_min = current_weight + pct_min
-        target_max = current_weight + pct_max
+        target_min = current_weight * (1 + pct_min)
+        target_max = current_weight * (1 + pct_max)
     elif adjust_action == "减仓":
-        target_min = max(0, current_weight - pct_max)
-        target_max = max(0, current_weight - pct_min)
+        target_min = max(0, current_weight * (1 - pct_max))
+        target_max = max(0, current_weight * (1 - pct_min))
     else:
         target_min = current_weight
         target_max = current_weight
