@@ -106,6 +106,11 @@ def calc_dca_tracking(df_trades, df_snapshots):
         trade_net_invest = abs(code_trades[code_trades['change_amount'] < 0]['change_amount'].sum())
 
         snap = latest_snap[latest_snap['code'] == code]
+        # 如果最新快照不含该基金（如8/03仅有场内ETF），回退到包含该基金的最近快照
+        if snap.empty:
+            code_snaps = df_snapshots[df_snapshots['code'] == code].sort_values('date', ascending=False)
+            if not code_snaps.empty:
+                snap = code_snaps.iloc[[0]]
         mv = snap['market_value'].values[0] if not snap.empty else 0
         qty = snap['quantity'].values[0] if not snap.empty else 0
         cost_price = snap['cost_price'].values[0] if not snap.empty else 0
@@ -152,7 +157,7 @@ def calc_trade_cost_summary(df_trades):
     df = df_trades[(df_trades['commission'] > 0) | (df_trades['stamp_tax'] > 0)].copy()
     if df.empty:
         return pd.DataFrame(), pd.DataFrame(), {}
-    df['month'] = df['date'].str[:6]
+    df['month'] = df['date'].str[:7]
     df['total_fee'] = df['commission'] + df['stamp_tax']
     monthly = df.groupby('month').agg(
         trade_count=('date', 'count'),
@@ -183,7 +188,7 @@ def calc_trade_cost_summary(df_trades):
 def calc_monthly_cashflow(df_trades):
     """月度资金流向 pivot"""
     df = df_trades.copy()
-    df['month'] = df['date'].str[:6]
+    df['month'] = df['date'].str[:7]
     action_map = {
         '银行转存': '银转存', '产品申购确认': '申购',
         '产品定时定额投资确认': '定投', '产品赎回确认': '赎回',
