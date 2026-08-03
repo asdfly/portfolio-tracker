@@ -110,9 +110,29 @@ def load_index_quotes(code="sh000300", days=60, end_date=None):
     return df
 
 def load_technical(end_date=None):
-    """加载技术指标，关联ETF名称"""
+    """加载技术指标，关联ETF名称
+
+    当指定日期在 etf_technical 中无数据时（如 selected_date 来自 portfolio_snapshots
+    最新日期但技术指标尚未采集），自动回退到 etf_technical 中 <= end_date 的最近日期，
+    避免显示"暂无技术信号数据"。
+    """
     conn = get_db_connection()
-    date_filter = f"WHERE t.date = '{end_date}'" if end_date else "WHERE t.date = (SELECT MAX(date) FROM etf_technical)"
+    if end_date:
+        # 先检查指定日期是否有数据，无则回退到最近的可用日期
+        avail = pd.read_sql_query(
+            "SELECT MAX(date) as latest FROM etf_technical WHERE date <= ?",
+            conn, params=(end_date,))
+        effective_date = avail.iloc[0]['latest'] if not avail.empty and avail.iloc[0]['latest'] else None
+        if effective_date is None:
+            # 指定日期早于所有技术指标数据，取最早可用
+            avail = pd.read_sql_query("SELECT MIN(date) as earliest FROM etf_technical", conn)
+            effective_date = avail.iloc[0]['earliest'] if not avail.empty else None
+        if effective_date is None:
+            conn.close()
+            return pd.DataFrame()
+        date_filter = f"WHERE t.date = '{effective_date}'"
+    else:
+        date_filter = "WHERE t.date = (SELECT MAX(date) FROM etf_technical)"
     query = f"""
         SELECT t.*, p.name
         FROM etf_technical t

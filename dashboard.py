@@ -963,24 +963,39 @@ def _render_quick_stats(positions, profit_count, loss_count, technical):
                 for s, v in top_sec
             )
 
-        # 实际交易胜率（从 trade_records）
+        # 实际交易统计（从 trade_records，含场内买卖+场外定投/申购/赎回）
         trade_wr_text = ""
         try:
             trade_stats = pd.read_sql_query(
-                "SELECT COUNT(*) as total_fee_trades, "
+                "SELECT "
                 "SUM(CASE WHEN action='证券买入' THEN 1 ELSE 0 END) as buy_n, "
                 "SUM(CASE WHEN action='证券卖出' THEN 1 ELSE 0 END) as sell_n, "
-                "SUM(commission + stamp_tax) as total_fee "
-                "FROM trade_records WHERE action IN ('证券买入','证券卖出')",
+                "SUM(CASE WHEN action='产品定时定额投资确认' THEN 1 ELSE 0 END) as dca_n, "
+                "SUM(CASE WHEN action='产品申购确认' THEN 1 ELSE 0 END) as purchase_n, "
+                "SUM(CASE WHEN action='产品赎回确认' THEN 1 ELSE 0 END) as redeem_n, "
+                "SUM(CASE WHEN action IN ('股息入账','产品红利发放') THEN 1 ELSE 0 END) as div_n, "
+                "SUM(commission + stamp_tax) as total_fee, "
+                "SUM(CASE WHEN action IN ('股息入账','产品红利发放') THEN change_amount ELSE 0 END) as div_income "
+                "FROM trade_records",
                 get_db_connection())
-            if not trade_stats.empty and trade_stats.iloc[0]['total_fee_trades'] > 0:
-                bn = int(trade_stats.iloc[0]['buy_n'])
-                sn = int(trade_stats.iloc[0]['sell_n'])
-                tf = trade_stats.iloc[0]['total_fee']
-                trade_wr_text = (
-                    f'<span style="color:#8b949e;">实际交易: <b>{bn}买/{sn}卖</b> '
-                    f'<span style="color:#484f58;font-size:11px;">费用 ¥{tf:,.0f}</span></span>'
-                )
+            if not trade_stats.empty:
+                r = trade_stats.iloc[0]
+                bn = int(r['buy_n'] or 0)
+                sn = int(r['sell_n'] or 0)
+                dca_n = int(r['dca_n'] or 0)
+                redeem_n = int(r['redeem_n'] or 0)
+                div_n = int(r['div_n'] or 0)
+                tf = r['total_fee'] or 0
+                div_inc = r['div_income'] or 0
+                parts = [f'<b>{bn}买/{sn}卖</b>']
+                if dca_n > 0:
+                    parts.append(f'<b>{dca_n}</b>定投')
+                if redeem_n > 0:
+                    parts.append(f'<b>{redeem_n}</b>赎回')
+                if div_n > 0:
+                    parts.append(f'<b>{div_n}</b>红利<span style="color:#22c55e;font-size:11px;">+¥{div_inc:,.0f}</span>')
+                parts.append(f'<span style="color:#484f58;font-size:11px;">费用 ¥{tf:,.0f}</span>')
+                trade_wr_text = f'<span style="color:#8b949e;">实际交易: {" ".join(parts)}</span>'
         except Exception:
             pass
 
