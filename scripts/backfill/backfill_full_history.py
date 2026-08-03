@@ -356,6 +356,13 @@ def rebuild_portfolio_summary(db_path):
     conn = get_db_connection(db_path)
     cur = conn.cursor()
 
+    # 确保 snapshot_type 列存在
+    cur.execute("PRAGMA table_info(portfolio_summary)")
+    _cols = [r[1] for r in cur.fetchall()]
+    if 'snapshot_type' not in _cols:
+        cur.execute("ALTER TABLE portfolio_summary ADD COLUMN snapshot_type TEXT DEFAULT 'daily'")
+        conn.commit()
+
     cur.execute("DELETE FROM portfolio_summary")
     conn.commit()
 
@@ -386,9 +393,11 @@ def rebuild_portfolio_summary(db_path):
         profit_count = int(row[3] or 0)
         loss_count = int(row[4] or 0)
 
-        # 获取当前日期的持仓代码集合
+        # 获取当前日期的持仓代码集合和数量
         cur.execute("SELECT DISTINCT code FROM portfolio_snapshots WHERE date = ?", (dt,))
         curr_codes = set(r[0] for r in cur.fetchall())
+        # 判断快照类型：>25条表示含场外基金（完整快照），否则为日常采集（仅场内ETF）
+        snapshot_type = 'full' if len(curr_codes) > 25 else 'daily' 
 
         daily_return = 0
         daily_pnl = 0
@@ -470,10 +479,11 @@ def rebuild_portfolio_summary(db_path):
         cur.execute("""
             INSERT OR REPLACE INTO portfolio_summary
             (date, total_value, total_cost, total_pnl, daily_pnl, daily_return,
-             vs_hs300, profit_count, loss_count, sharpe_ratio, max_drawdown, volatility)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             vs_hs300, profit_count, loss_count, sharpe_ratio, max_drawdown, volatility,
+             snapshot_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (dt, total_value, total_cost, total_pnl, daily_pnl, daily_return,
-              vs_hs300, profit_count, loss_count, sharpe, max_dd, vol))
+              vs_hs300, profit_count, loss_count, sharpe, max_dd, vol, snapshot_type))
 
         prev_value = total_value
         prev_codes = curr_codes
