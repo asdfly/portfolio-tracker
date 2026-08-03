@@ -306,22 +306,48 @@ class TestCalcMonthlyCashflow:
         from tabs.tab15_trade_review import calc_monthly_cashflow
         pivot = calc_monthly_cashflow(trades_cashflow)
         assert 'month' in pivot.columns
-        assert '银转存' in pivot.columns
+        assert '银行转存' in pivot.columns
 
     def test_action_mapping(self, trades_cashflow):
-        """action_map 正确映射"""
+        """action_map 正确映射, 天添利单独归类"""
         from tabs.tab15_trade_review import calc_monthly_cashflow
         pivot = calc_monthly_cashflow(trades_cashflow)
-        assert '银转存' in pivot.columns
+        assert '银行转存' in pivot.columns
         assert '定投' in pivot.columns
-        assert '赎回' in pivot.columns
+        assert '天添利净流' in pivot.columns
 
     def test_cashflow_total(self, trades_cashflow):
-        """银转存总金额正确: 200+200=400"""
+        """银行转存总金额正确: 200+200=400"""
         from tabs.tab15_trade_review import calc_monthly_cashflow
         pivot = calc_monthly_cashflow(trades_cashflow)
-        total_deposit = pivot['银转存'].sum()
+        total_deposit = pivot['银行转存'].sum()
         assert abs(total_deposit - 400) < 0.01
+
+    def test_ttl_separated(self, trades_cashflow):
+        """天添利(880013)申购/赎回归入'天添利净流', 不在'基金申购'/'基金赎回'中"""
+        from tabs.tab15_trade_review import calc_monthly_cashflow
+        pivot = calc_monthly_cashflow(trades_cashflow)
+        assert '天添利净流' in pivot.columns
+        # 天添利 1月: 申购-200 + 赎回+200 = 0
+        jan_ttl = pivot[pivot['month'] == '2026-01']['天添利净流'].values[0]
+        assert abs(jan_ttl - 0) < 0.01
+        # 基金申购列不含天添利
+        if '基金申购' in pivot.columns:
+            jan_purchase = pivot[pivot['month'] == '2026-01']['基金申购'].values[0]
+            assert abs(jan_purchase - 0) < 0.01
+
+    def test_summary_columns(self, trades_cashflow):
+        """净投资流和净现金流汇总列正确"""
+        from tabs.tab15_trade_review import calc_monthly_cashflow
+        pivot = calc_monthly_cashflow(trades_cashflow)
+        assert '净投资流' in pivot.columns
+        assert '净现金流' in pivot.columns
+        # 2月: 定投-200 + 银行转存200 + 天添利净流0 = 净现金流0
+        feb_net_cash = pivot[pivot['month'] == '2026-02']['净现金流'].values[0]
+        assert abs(feb_net_cash - 0) < 0.01
+        # 2月: 净投资流 = 定投-200 (不含银行转存和天添利)
+        feb_net_invest = pivot[pivot['month'] == '2026-02']['净投资流'].values[0]
+        assert abs(feb_net_invest - (-200)) < 0.01
 
     def test_empty_df(self):
         """空 DataFrame"""

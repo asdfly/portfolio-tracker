@@ -186,19 +186,49 @@ def calc_trade_cost_summary(df_trades):
 
 
 def calc_monthly_cashflow(df_trades):
-    """月度资金流向 pivot"""
+    """月度资金流向 pivot
+
+    将天添利(880013, 货币基金)和银行转存从投资流中分离:
+    - 投资流: 买入/卖出/定投/基金申购/基金赎回/股息/红利/质押
+    - 现金管理: 银行转存/天添利净流
+    - 汇总: 净投资流(不含现金管理), 净现金流(全部)
+    """
     df = df_trades.copy()
     df['month'] = df['date'].str[:7]
+
+    # 天添利(880013) 单独归类, 其余按 action 映射
+    TTL_CODE = '880013'
     action_map = {
-        '银行转存': '银转存', '产品申购确认': '申购',
-        '产品定时定额投资确认': '定投', '产品赎回确认': '赎回',
-        '证券买入': '买入', '证券卖出': '卖出',
-        '股息入账': '股息', '产品红利发放': '红利',
-        '拆出质押购回': '质押',
+        '银行转存': '银行转存',
+        '产品申购确认': '基金申购', '产品定时定额投资确认': '定投',
+        '产品赎回确认': '基金赎回', '证券买入': '买入',
+        '证券卖出': '卖出', '股息入账': '股息',
+        '产品红利发放': '红利', '拆出质押购回': '质押',
     }
     df['flow_type'] = df['action'].map(action_map).fillna(df['action'])
+    # 天添利的申购/赎回/红利 → 统一归入 "天添利净流"
+    ttl_mask = df['code'] == TTL_CODE
+    df.loc[ttl_mask, 'flow_type'] = '天添利净流'
+
     pivot = df.pivot_table(index='month', columns='flow_type',
                            values='change_amount', aggfunc='sum', fill_value=0)
+
+    # 列排序: 投资流在前, 现金管理在后
+    invest_cols = ['买入', '卖出', '定投', '基金申购', '基金赎回',
+                   '股息', '红利', '质押']
+    cash_cols = ['银行转存', '天添利净流']
+    # 报价回购拆出 / 质押回购拆出 等罕见类型归入投资流尾部
+    other_cols = [c for c in pivot.columns
+                  if c not in invest_cols and c not in cash_cols]
+    ordered_cols = [c for c in invest_cols if c in pivot.columns]         + other_cols         + [c for c in cash_cols if c in pivot.columns]
+    pivot = pivot.reindex(columns=ordered_cols, fill_value=0)
+
+    # 汇总列
+    invest_present = [c for c in invest_cols + other_cols if c in pivot.columns]
+    cash_present = [c for c in cash_cols if c in pivot.columns]
+    pivot['净投资流'] = pivot[invest_present].sum(axis=1) if invest_present else 0
+    pivot['净现金流'] = pivot[invest_present + cash_present].sum(axis=1)
+
     return pivot.reset_index()
 
 
@@ -352,18 +382,33 @@ def _render_cashflow_section(df_trades):
     if pivot.empty or len(pivot.columns) < 3:
         render_empty_state("暂无资金流数据")
         return
+
+    # 汇总指标卡
+    total_invest = pivot['净投资流'].sum() if '净投资流' in pivot.columns else 0
+    total_cash = pivot['净现金流'].sum() if '净现金流' in pivot.columns else 0
+    c1, c2 = st.columns(2)
+    c1.metric("累计净投资流", f"¥{total_invest:,.0f}",
+              help="不含银行转存和天添利(货币基金)的净投资金额")
+    c2.metric("累计净现金流", f"¥{total_cash:,.0f}",
+              help="含银行转存和天添利的全部净现金流")
+
     st.dataframe(pivot.round(0), use_container_width=True, hide_index=True)
+
+    # 图表: 只展示投资流 + 净投资流, 排除现金管理列避免量纲差异
     colors_map = {
-        '银转存': '#4a90d9', '申购': '#fd7e14', '定投': '#ffc107',
-        '赎回': '#28a745', '买入': '#dc3545', '卖出': '#20c997',
+        '买入': '#dc3545', '卖出': '#20c997', '定投': '#ffc107',
+        '基金申购': '#fd7e14', '基金赎回': '#28a745',
         '股息': '#17a2b8', '红利': '#6f42c1', '质押': '#343a40',
+        '净投资流': '#1f77b4',
     }
-    flow_cols = [c for c in pivot.columns if c not in ('month', 'index')]
+    cash_cols = {'银行转存', '天添利净流', '净现金流'}
+    chart_cols = [c for c in pivot.columns
+                  if c not in cash_cols and c != 'month' and c != 'index']
     fig = go.Figure()
-    for col in flow_cols:
+    for col in chart_cols:
         fig.add_trace(go.Bar(name=col, x=pivot['month'], y=pivot[col],
                              marker_color=colors_map.get(col, '#888')))
-    fig.update_layout(barmode='group', title="月度资金流向",
+    fig.update_layout(barmode='group', title="月度投资资金流向",
                       height=400, xaxis_title='', yaxis_title='金额(¥)')
     render_chart(fig)
 
