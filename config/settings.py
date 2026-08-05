@@ -7,9 +7,17 @@ import os
 from pathlib import Path
 
 # ---------- 环境变量加载 ----------
-def _load_env_file():
-    """加载项目根目录的 .env 文件（不覆盖已有环境变量）"""
-    env_path = PROJECT_ROOT / ".env" if 'PROJECT_ROOT' in dir() else Path(__file__).parent.parent / ".env"
+def _load_env_file(env_path=None):
+    """加载 .env 文件（不覆盖已有环境变量）
+
+    Args:
+        env_path: 可选的 .env 文件路径。默认读取项目根目录下的 .env。
+            显式传入可用于测试，避免读写真实的项目 .env 文件。
+    """
+    if env_path is None:
+        env_path = Path(__file__).parent.parent / ".env"
+    else:
+        env_path = Path(env_path)
     if env_path.exists():
         with open(env_path, 'r', encoding='utf-8') as f:
             for line in f:

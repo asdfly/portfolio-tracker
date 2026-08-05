@@ -17,9 +17,16 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 @pytest.fixture(autouse=True)
 def _clean_env():
-    """每个测试前后清理相关环境变量"""
+    """每个测试前后清理相关环境变量
+
+    刻意不清理 DATABASE_PATH：本文件的 TestEnvIntegration 会
+    importlib.reload(config.settings)，若此时 DATABASE_PATH 不在 os.environ 中，
+    reload 会把 settings.DATABASE_PATH 重新算回【生产库】路径并在整个会话中残留，
+    从而绕过 conftest 的隔离。保留该变量不影响任何断言
+    （test_database_path_default 只要求路径里含 'portfolio.db'）。
+    """
     env_keys = [
-        'DATABASE_PATH', 'TDX_EXPORT_DIR',
+        'TDX_EXPORT_DIR',
         'EMAIL_ENABLED', 'EMAIL_SMTP_SERVER', 'EMAIL_SMTP_PORT',
         'EMAIL_USERNAME', 'EMAIL_PASSWORD', 'EMAIL_RECIPIENTS',
         'WECHAT_ENABLED', 'WECHAT_WEBHOOK_URL',
@@ -29,12 +36,17 @@ def _clean_env():
     saved = {}
     for k in env_keys:
         saved[k] = os.environ.pop(k, None)
+    # 清理上一个用例遗留的 D5_TEST_* 变量，避免断言读到陈旧值而假绿
+    for k in [k for k in os.environ if k.startswith('D5_TEST_')]:
+        del os.environ[k]
     yield
     for k, v in saved.items():
         if v is not None:
             os.environ[k] = v
         elif k in os.environ:
             del os.environ[k]
+    for k in [k for k in os.environ if k.startswith('D5_TEST_')]:
+        del os.environ[k]
 
 
 class TestEnvFunction:
@@ -89,10 +101,14 @@ class TestSettingsEnvOverride:
 class TestEnvFileLoading:
     """测试 .env 文件加载机制"""
 
-    def test_env_file_loading(self):
-        """创建临时 .env 文件到 PROJECT_DIR，验证加载"""
+    def test_env_file_loading(self, tmp_path):
+        """在 tmp_path 下创建 .env 文件，验证加载
+
+        注意：绝不可写项目根目录的真实 .env —— 该文件含用户凭据，
+        且 unlink 会直接销毁它（历史上已发生过一次事故）。
+        """
         import config.settings as cs
-        env_file = cs.PROJECT_ROOT / ".env"
+        env_file = tmp_path / ".env"
         env_file.write_text(
             "D5_TEST_FROM_FILE=test_value\n"
             "D5_TEST_NUM=42\n"
@@ -100,26 +116,18 @@ class TestEnvFileLoading:
             "D5_TEST_EMPTY=\n",
             encoding='utf-8'
         )
-        try:
-            cs._load_env_file()
-            assert os.environ.get('D5_TEST_FROM_FILE') == 'test_value'
-            assert os.environ.get('D5_TEST_NUM') == '42'
-            assert os.environ.get('D5_TEST_EMPTY') == ''
-        finally:
-            if env_file.exists():
-                env_file.unlink()
+        cs._load_env_file(env_file)
+        assert os.environ.get('D5_TEST_FROM_FILE') == 'test_value'
+        assert os.environ.get('D5_TEST_NUM') == '42'
+        assert os.environ.get('D5_TEST_EMPTY') == ''
 
-    def test_env_file_does_not_override_existing(self):
+    def test_env_file_does_not_override_existing(self, tmp_path):
         os.environ['D5_TEST_NO_OVERRIDE'] = 'original'
         import config.settings as cs
-        env_file = cs.PROJECT_ROOT / ".env"
+        env_file = tmp_path / ".env"
         env_file.write_text("D5_TEST_NO_OVERRIDE=should_not_override\n", encoding='utf-8')
-        try:
-            cs._load_env_file()
-            assert os.environ.get('D5_TEST_NO_OVERRIDE') == 'original'
-        finally:
-            if env_file.exists():
-                env_file.unlink()
+        cs._load_env_file(env_file)
+        assert os.environ.get('D5_TEST_NO_OVERRIDE') == 'original'
 
 
 class TestEnvExampleTemplate:

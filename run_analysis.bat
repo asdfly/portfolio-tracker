@@ -2,7 +2,7 @@
 chcp 65001 >nul
 
 set PROJECT_DIR=%~dp0
-set PYTHON=C:\Users\HUAWEI\AppData\Roaming\WPS 灵犀\python-env\python.exe
+set PYTHON="C:\Program Files\Python310\python.exe" -E
 
 echo ============================================
 echo   投资组合智能分析系统 v2.0
@@ -18,7 +18,7 @@ echo ============================================
 
 cd /d "%PROJECT_DIR%"
 
-"%PYTHON%" run_analysis.py
+%PYTHON% run_analysis.py
 
 if %ERRORLEVEL% NEQ 0 (
     echo.

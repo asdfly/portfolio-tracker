@@ -83,3 +83,6 @@ NUL
 coverage.json
 htmlcov/
 *.db
+
+# WorkBuddy 自动化/会话状态（不入版本控制）
+.workbuddy/

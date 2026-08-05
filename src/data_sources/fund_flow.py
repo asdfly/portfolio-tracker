@@ -130,10 +130,16 @@ def fetch_etf_fund_flow(code: str, name: str = '') -> pd.DataFrame:
         logger.warning(f"获取ETF {code} 资金流失败: {e}")
     return pd.DataFrame()
 
-def fetch_main_fund_flow(days: int = 120) -> pd.DataFrame:
+def fetch_main_fund_flow(days: int = 120, date_str: str = None) -> pd.DataFrame:
     """获取A股大盘主力资金净流入数据。
     方案A: push2his urllib 直连（完整数据，含超大单/大单/中单/小单细分）
     方案B: 同花顺行业资金流聚合（仅当日快照，无细分，作为 fallback）
+
+    Args:
+        days: 方案A 返回的历史天数上限
+        date_str: 回填模式下的目标日期 YYYY-MM-DD。仅作用于方案B——
+            方案A 由 push2his 返回真实历史日期序列，不可覆盖。
+            为 None 时沿用 _determine_trading_date()，普通每日运行行为不变。
     """
     # --- 方案A: push2his ---
     try:
@@ -190,7 +196,7 @@ def fetch_main_fund_flow(days: int = 120) -> pd.DataFrame:
     ts = pd.to_numeric(df.get('流出资金',0), errors='coerce').sum() * 1e8
     tn = pd.to_numeric(df.get('净额',0), errors='coerce').sum() * 1e8
     np_ = round(tn/tb*100,2) if tb > 0 else 0.0
-    today = _determine_trading_date()
+    today = date_str or _determine_trading_date()
     result = pd.DataFrame([{
         'date': today, 'code': 'main_fund', 'name': '主力资金',
         'net_inflow': round(tn,2), 'net_inflow_pct': np_,
@@ -484,7 +490,7 @@ def check_push2his_available(timeout=5) -> bool:
         return False
 
 
-def fetch_etf_fund_flow_batch(etf_codes: list) -> pd.DataFrame:
+def fetch_etf_fund_flow_batch(etf_codes: list, date_str: str = None) -> pd.DataFrame:
     """基于 fund_etf_spot_em 批量获取ETF当日资金流数据。
     
     优势：
@@ -494,6 +500,8 @@ def fetch_etf_fund_flow_batch(etf_codes: list) -> pd.DataFrame:
     
     Args:
         etf_codes: 需要筛选的ETF代码列表
+        date_str: 回填模式下的目标日期 YYYY-MM-DD。为 None 时沿用
+            _determine_trading_date()，普通每日运行行为不变。
     
     Returns:
         DataFrame with columns: [date, code, name, close, change_pct, net_inflow,
@@ -515,7 +523,7 @@ def fetch_etf_fund_flow_batch(etf_codes: list) -> pd.DataFrame:
             logger.debug(f"fund_etf_spot_em: 无匹配ETF (请求{len(etf_codes)}只, 数据库{len(df)}只)")
             return pd.DataFrame()
         
-        today_str = _determine_trading_date()
+        today_str = date_str or _determine_trading_date()
         
         rows = []
         for _, row in matched.iterrows():

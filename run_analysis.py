@@ -6,6 +6,7 @@
 import sys
 import os
 import time
+import argparse
 import logging
 import logging.handlers
 from datetime import datetime, date
@@ -240,12 +241,21 @@ def run_stage3_monitor(summary, risk_data):
 
 
 
-def run_stage_fund_flow():
+def run_stage_fund_flow(date_str=None):
     """阶段3.2: 资金流数据采集 - 行业/ETF/北向资金
     完全独立容错：任何采集失败均不影响主流程
+
+    Args:
+        date_str: 回填模式下的目标日期 YYYY-MM-DD(来自 --date)。
+            仅作用于"当日快照"型采集(行业资金流/ETF批量/主力资金同花顺兜底),
+            这些数据源只返回当前时点快照、本身不带日期，原先一律落到墙钟当天。
+            push2his 逐只ETF与K线回填返回的是带真实日期的历史序列，不做覆盖。
+            为 None 时全部沿用 _determine_trading_date()，普通每日运行行为不变。
     """
     logger = logging.getLogger(__name__)
     logger.info("[阶段3.2/5] 资金流数据采集")
+    if date_str:
+        logger.info(f"  回填模式: 当日快照类数据落库日期 -> {date_str}")
     logger.info("-" * 50)
 
     stats = {"sector": 0, "etf": 0, "main_fund": 0, "errors": []}
@@ -262,7 +272,7 @@ def run_stage_fund_flow():
     try:
         # --- 行业资金流 ---
         try:
-            sector_df = fetch_sector_fund_flow()
+            sector_df = fetch_sector_fund_flow(date_str)
             if not sector_df.empty:
                 n = save_fund_flows(conn, sector_df)
                 stats["sector"] = n
@@ -320,7 +330,7 @@ def run_stage_fund_flow():
         else:
             # push2his 不可用：走批量方案（单次请求，无逐只等待）
             logger.info("  ETF资金流: push2his 不可用，走批量方案")
-            batch_df = fetch_etf_fund_flow_batch(etf_codes)
+            batch_df = fetch_etf_fund_flow_batch(etf_codes, date_str)
             if not batch_df.empty:
                 n = save_fund_flows(conn, batch_df)
                 stats["etf"] = n
@@ -340,7 +350,7 @@ def run_stage_fund_flow():
 
         # --- 主力资金净流入（替代已停更的北向资金） ---
         try:
-            main_df = fetch_main_fund_flow(days=120)
+            main_df = fetch_main_fund_flow(days=120, date_str=date_str)
             if not main_df.empty:
                 n = save_fund_flows(conn, main_df)
                 stats["main_fund"] = n
@@ -355,7 +365,7 @@ def run_stage_fund_flow():
         # 仅在 push2his 可用且逐只采集时作为补充；批量方案已包含完整字段无需重复
         if _push2his_ok:
             try:
-                batch_df = fetch_etf_fund_flow_batch(etf_codes)
+                batch_df = fetch_etf_fund_flow_batch(etf_codes, date_str)
                 if not batch_df.empty:
                     n = save_fund_flows(conn, batch_df)
                     logger.info(f"  ETF实时资金流补充: {n} 条")
@@ -373,10 +383,18 @@ def run_stage_fund_flow():
 
     return stats
 
-def run_stage_news(positions, summary, index_quotes=None):
-    """阶段3.5: 行业新闻抓取与分析"""
+def run_stage_news(positions, summary, index_quotes=None, date_str=None):
+    """阶段3.5: 行业新闻抓取与分析
+
+    Args:
+        date_str: 回填模式下的目标日期 YYYY-MM-DD(来自 --date)。
+            为 None 时 save_news_to_db 内部回退到 date.today()，
+            普通每日运行行为不变。
+    """
     logger = logging.getLogger(__name__)
     logger.info("[阶段3.5] 行业新闻 - 抓取资讯并分析影响")
+    if date_str:
+        logger.info(f"  回填模式: 新闻落库日期 -> {date_str}")
     logger.info("-" * 50)
 
     try:
@@ -387,7 +405,7 @@ def run_stage_news(positions, summary, index_quotes=None):
         logger.info(f"获取新闻: {total_news} 条")
 
         # 保存到数据库
-        save_news_to_db(str(DATABASE_PATH), news_data)
+        save_news_to_db(str(DATABASE_PATH), news_data, date_str=date_str)
         logger.info("新闻数据已保存到数据库")
 
         # 新闻影响分析
@@ -491,7 +509,9 @@ def run_stage4_smart(results, summary, risk_data):
         report_dir = PROJECT_DIR / "data" / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
 
-        report_path = report_dir / f"smart_report_{date.today().strftime('%Y%m%d')}.md"
+        # 报告日期取自分析结果(回填模式下 = --date 指定日)，避免回填覆盖当天报告
+        _report_date = str(results.get('date') or date.today().strftime('%Y-%m-%d'))
+        report_path = report_dir / f"smart_report_{_report_date.replace('-', '')}.md"
         smart_report.generate_full_report(combined_data, str(report_path))
         logger.info(f"智能报告已保存: {report_path}")
 
@@ -502,10 +522,20 @@ def run_stage4_smart(results, summary, risk_data):
         return None
 
 
-def send_daily_report(results, alerts, advice_summary, news_result):
-    """阶段五: 发送HTML邮件报告"""
+def send_daily_report(results, alerts, advice_summary, news_result=None):
+    """阶段五: 发送HTML邮件报告
+
+    news_result 允许为 None(新闻阶段失败时): 报告照常生成, 只是不含新闻板块。
+    """
     logger = logging.getLogger(__name__)
     logger.info("[阶段五/5] 发送通知报告")
+
+    if news_result is None:
+        logger.warning("新闻数据缺失(新闻阶段未产出), 报告将不含资讯板块")
+
+    # 报告日期取自分析结果(回填模式下 = --date 指定日)，避免回填覆盖当天报告
+    _report_date = str((results or {}).get('date') or date.today().strftime('%Y-%m-%d'))
+    _report_stamp = _report_date.replace('-', '')
 
     try:
         # 始终生成本地增强版HTML报告（含图表）
@@ -513,7 +543,7 @@ def send_daily_report(results, alerts, advice_summary, news_result):
         try:
             enh_builder = EnhancedReportBuilder(str(DATABASE_PATH))
             enh_html = enh_builder.build_full_report(news_data=news_result)
-            enh_report_name = f"enhanced_report_{date.today().strftime('%Y%m%d')}.html"
+            enh_report_name = f"enhanced_report_{_report_stamp}.html"
             enh_builder.save_report(enh_html, enh_report_name, news_data=news_result)
             logger.info(f"增强版报告已保存: {enh_report_name}")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as enh_err:
@@ -540,7 +570,7 @@ def send_daily_report(results, alerts, advice_summary, news_result):
         html = builder.build_daily_report()
 
         # 保存本地副本
-        report_filename = f"daily_report_{date.today().strftime('%Y%m%d')}.html"
+        report_filename = f"daily_report_{_report_stamp}.html"
         builder.save_report(html, report_filename)
 
         # 发送邮件
@@ -654,13 +684,76 @@ def is_trading_day():
     return True
 
 
-def main():
+def parse_args(argv=None):
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(
+        prog='run_analysis.py',
+        description='投资组合智能分析系统 - 每日分析唯一入口(含自动数据库备份)'
+    )
+    parser.add_argument(
+        '--date',
+        dest='date',
+        default=None,
+        metavar='YYYY-MM-DD',
+        help='指定分析目标日期，用于回填历史交易日。'
+             '提供该参数时跳过周末早退判断，并以该日期作为分析日期与报告文件名日期。'
+    )
+    args = parser.parse_args(argv)
+
+    if args.date:
+        try:
+            datetime.strptime(args.date, '%Y-%m-%d')
+        except ValueError:
+            parser.error(f"--date 格式错误: {args.date!r}，要求 YYYY-MM-DD，例如 2026-06-01")
+
+    return args
+
+
+def run_database_backup(logger):
+    """运行数据库备份(复用 scripts/backup_db.py)
+
+    备份失败仅告警，不中断主流程。
+    该调用取代了 scheduled_run.bat 里已退休的 Stage 0 内联备份。
+    """
+    try:
+        try:
+            # 首选包路径导入(PROJECT_DIR 已在 sys.path 中)
+            from scripts.backup_db import backup_database, cleanup_old_backups
+        except ImportError:
+            # 兜底: 直接把 scripts 目录加入 sys.path
+            sys.path.insert(0, str(PROJECT_DIR / 'scripts'))
+            from backup_db import backup_database, cleanup_old_backups
+
+        backup_path = backup_database()
+        logger.info(f"数据库备份完成: {backup_path}")
+
+        try:
+            cleanup_old_backups(max_age_days=7, keep_min=3)
+        except Exception as e:
+            logger.warning(f"过期备份清理失败(不影响主流程): {e}")
+
+        return backup_path
+    except Exception as e:
+        logger.warning(f"数据库备份失败(不影响主流程): {e}")
+        return None
+
+
+def main(argv=None):
     """主函数 - 整合四阶段完整分析流程"""
+    args = parse_args(argv)
+
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    # 交易日判断
-    if not is_trading_day():
+    backfill_date = args.date
+
+    # === 阶段零: 数据库备份(每次运行都执行，含周末与回填) ===
+    run_database_backup(logger)
+
+    # 交易日判断（回填模式下按指定日期运行，跳过早退）
+    if backfill_date:
+        logger.info(f"以 {backfill_date} 为分析日期运行(回填模式)")
+    elif not is_trading_day():
         logger.info(f"今日为周末，跳过分析: {date.today()}")
         return 0
 
@@ -679,8 +772,18 @@ def main():
         monitor = Monitor(str(DATABASE_PATH), MONITOR_CONFIG)
         monitor.log_execution(task_name, "running", "开始每日完整分析")
 
+        # 主流程级通知器: 供各阶段(如阶段三.八 市场事件风险预警)复用。
+        # 此前该变量缺失, 导致告警分支抛 NameError 并被外层 except 吞成
+        # "市场事件信号分析失败" 的 warning, 风险预警静默不发。
+        _notifier = NotificationManager(NOTIFICATION_CONFIG)
+
         # 初始化分析器
         analyzer = PortfolioAnalyzer()
+
+        # 回填模式: 覆盖分析器的目标日期(PortfolioAnalyzer 内部以 self.today 为分析日期)
+        if backfill_date:
+            logger.info(f"回填模式: 分析日期 {analyzer.today} -> {backfill_date}")
+            analyzer.today = backfill_date
 
 
         # === 阶段零: 数据源健康检测 ===
@@ -748,14 +851,18 @@ def main():
 
         # === 阶段3.2: 资金流数据采集 ===
         try:
-            fund_flow_stats = run_stage_fund_flow()
+            fund_flow_stats = run_stage_fund_flow(backfill_date)
         except Exception as e:
             logger.warning(f"资金流数据采集失败(不影响主流程): {e}")
 
         # === 阶段三.五: 行业资讯与新闻分析 ===
+        # 预置 None: 新闻阶段抛错时该变量仍需可用,
+        # 否则后面 send_daily_report(..., news_result) 会 NameError 打断整个日报。
+        news_result = None
         try:
             positions = results.get('positions', [])
-            news_result = run_stage_news(positions, summary, results.get('indices', {}))
+            news_result = run_stage_news(positions, summary, results.get('indices', {}),
+                                         date_str=backfill_date)
         except Exception as e:
             logger.warning(f"新闻分析失败(不影响主流程): {e}")
 
@@ -781,7 +888,8 @@ def main():
             from src.data_sources.etf_fundamental import run_etf_fundamental_collection
             from config.settings import ETF_CATEGORIES
             etf_codes = list(ETF_CATEGORIES.keys())
-            f10_stats = run_etf_fundamental_collection(etf_codes, ETF_CATEGORIES)
+            f10_stats = run_etf_fundamental_collection(etf_codes, ETF_CATEGORIES,
+                                                       target_date=backfill_date)
             f10_total = sum(v for k, v in f10_stats.items() if k != 'errors')
             logger.info(f"ETF基本面采集完成: {f10_total} 条 ({f10_stats})")
         except Exception as e:
@@ -809,11 +917,19 @@ def main():
                     if _rpt['portfolio_risk_level'] == 'high':
                         _risk_codes = ", ".join(set(s.code for s in _rpt['related_signals']
                                                      if s.signal_type.value == 'risk'))
-                        _notifier.send_alert(
-                            "市场事件风险预警",
-                            f"持仓标的触发高风险信号: {_risk_codes}。请及时关注。",
-                            "error"
-                        )
+                        # 通知发送单独兜底: 发送失败必须以 error 级别显式暴露,
+                        # 不能与信号分析失败混为一谈后被降级成 warning。
+                        try:
+                            _notifier.send_alert(
+                                "市场事件风险预警",
+                                f"持仓标的触发高风险信号: {_risk_codes}。请及时关注。",
+                                "error"
+                            )
+                        except Exception as _notify_err:
+                            logger.error(
+                                f"市场事件风险预警发送失败(高风险信号未送达): {_notify_err}",
+                                exc_info=True
+                            )
                         logger.warning(f"市场事件风险预警: {_rpt['related_count']}条关联信号")
                     elif _rpt['related_count'] > 0:
                         logger.info(f"市场事件信号: {_rpt['related_count']}条关联, "
@@ -822,7 +938,8 @@ def main():
                         f"(风险 {_me_summary['by_type']['risk']}, "
                         f"机会 {_me_summary['by_type']['opp']})")
         except Exception as e:
-            logger.warning(f"市场事件信号分析失败(不影响主流程): {e}")
+            # exc_info 保留堆栈: 便于区分"数据缺失"与"代码缺陷(如 NameError)"
+            logger.warning(f"市场事件信号分析失败(不影响主流程): {e}", exc_info=True)
 
         # === 阶段四: 智能分析 ===
         advice_summary = run_stage4_smart(results, summary, risk_data)
