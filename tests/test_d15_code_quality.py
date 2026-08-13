@@ -23,7 +23,7 @@ class TestAdvisorHelpers:
 
     def test_advisor_function_count(self):
         fns = _get_functions(ADVISOR_PATH.read_text(encoding="utf-8"))
-        assert len(fns) == 22
+        assert len(fns) == 24
 
     def test_advisor_no_function_over_200(self):
         fns = _get_functions(ADVISOR_PATH.read_text(encoding="utf-8"))

@@ -81,6 +81,16 @@ class SmartAdvisor:
         if concentration_advice:
             advices.append(concentration_advice)
 
+        # 4b. 重复/同质敞口建议（P1 冗余 + P2 相关性）
+        overlap_advice = self._check_overlapping_exposure()
+        if overlap_advice:
+            advices.append(overlap_advice)
+
+        # 4c. 组合风险预算建议（P2 风险预算 + 集中度）
+        risk_budget_advice = self._check_risk_budget()
+        if risk_budget_advice:
+            advices.append(risk_budget_advice)
+
         # 5. 机会识别
         opportunity_advice = self._identify_opportunities(portfolio_data, technical_data)
         if opportunity_advice:
@@ -413,6 +423,76 @@ class SmartAdvisor:
                 created_at=datetime.now()
             )
         return None
+
+    def _check_overlapping_exposure(self) -> Optional[InvestmentAdvice]:
+        """检测重复/同质敞口（P1 冗余标的 + P2 相关性管理）。
+
+        同一底层指数/主题被多只 ETF 覆盖时相关度≈1，纯属冗余，浪费权重并推高集中度。
+        """
+        try:
+            from datetime import date
+            from src.analysis.rebalance_engine import RebalanceEngine
+            from src.utils.trading_calendar import last_trading_day_on_or_before
+            eng = RebalanceEngine(self.db)
+            as_of = str(last_trading_day_on_or_before(date.today()))
+            groups = eng.detect_overlapping_exposure(as_of)
+        except Exception as e:
+            logger.warning(f"重叠敞口检测失败，跳过: {e}")
+            return None
+        if not groups:
+            return None
+        lines = []
+        for g in groups:
+            codes = "、".join(f"{m['name']}({m['code']})" for m in g["members"])
+            lines.append(f"· {g['theme']}：{codes}（合计 {g['total_weight']*100:.1f}%）—— {g['note']}")
+        return InvestmentAdvice(
+            type=AdviceType.CAUTION,
+            priority=AdvicePriority.MEDIUM,
+            title="存在重复/同质敞口",
+            description="以下主题被多只 ETF 重复覆盖，相关度高、浪费权重：\n" + "\n".join(lines),
+            action_items=[
+                "合并同一底层指数的 ETF，保留流动性最佳的一只",
+                "释放冗余权重至宽基/债券，降低集中度",
+            ],
+            related_codes=[m["code"] for g in groups for m in g["members"]],
+            confidence=0.8,
+            created_at=datetime.now(),
+        )
+
+    def _check_risk_budget(self) -> Optional[InvestmentAdvice]:
+        """组合风险预算与集中度（P2 风险预算 + 集中度管理）。"""
+        try:
+            from datetime import date
+            from src.analysis.rebalance_engine import RebalanceEngine
+            from src.utils.trading_calendar import last_trading_day_on_or_before
+            eng = RebalanceEngine(self.db)
+            as_of = str(last_trading_day_on_or_before(date.today()))
+            m = eng.compute_risk_metrics(as_of)
+        except Exception as e:
+            logger.warning(f"风险指标计算失败，跳过: {e}")
+            return None
+        if not m:
+            return None
+        warnings = m.get("warnings", [])
+        if not warnings:
+            return None
+        summary = (f"HHI={m['hhi']:.3f}，前3集中度 {m['top3_concentration']*100:.1f}%，"
+                   f"有效持仓数 {m['n_effective']:.1f}，组合加权 Beta={m['portfolio_beta']:.2f}，"
+                   f"债券实际 {m['bond_actual']*100:.1f}% / 目标 {m['bond_target']*100:.1f}%")
+        return InvestmentAdvice(
+            type=AdviceType.RISK_MANAGEMENT,
+            priority=AdvicePriority.MEDIUM,
+            title="组合风险预算预警",
+            description=summary + "\n" + "；".join(warnings),
+            action_items=[
+                "提升债券至目标权重以压低波动率",
+                "降低高 Beta / 超配行业敞口",
+                "分散高相关同质标的",
+            ],
+            related_codes=[],
+            confidence=0.85,
+            created_at=datetime.now(),
+        )
 
     def _identify_opportunities(self, portfolio_data: Dict, 
                                technical_data: Dict) -> List[InvestmentAdvice]:

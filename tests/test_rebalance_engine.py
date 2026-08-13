@@ -277,3 +277,135 @@ class TestLayeredTrigger:
         plan = compute_rebalance_suggestion(conn, as_of_date=AS_OF, strategy="layered")
         assert plan.action_needed is False
         conn.close()
+
+
+def _make_overlap_db():
+    """双沪深300 + 双医药/创新药 + 债券，含 beta。用于重叠检测与风险指标测试。"""
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """CREATE TABLE portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, code TEXT NOT NULL,
+            name TEXT, quantity REAL, cost_price REAL, current_price REAL, market_value REAL,
+            pnl REAL, pnl_rate REAL, ytd_return REAL, beta REAL, UNIQUE(date, code))"""
+    )
+    rows = [
+        ("2026-08-07", "510300", "沪深300ETF华泰柏瑞", 1000, 4.0, 4.0, 2000.0, 0.0, 0.0, 0.0, 1.0),
+        ("2026-08-07", "159300", "沪深300ETF富国", 1000, 2.0, 2.0, 1000.0, 0.0, 0.0, 0.0, 1.0),
+        ("2026-08-07", "512010", "医药ETF易方达", 1000, 0.6, 0.6, 3000.0, 0.0, 0.0, 0.0, 0.8),
+        ("2026-08-07", "159992", "创新药ETF银华", 1000, 0.6, 0.6, 1500.0, 0.0, 0.0, 0.0, 0.9),
+        ("2026-08-07", "511520", "政金债ETF富国", 1000, 1.0, 1.0, 2500.0, 0.0, 0.0, 0.0, 0.1),
+    ]
+    conn.executemany(
+        "INSERT INTO portfolio_snapshots "
+        "(date,code,name,quantity,cost_price,current_price,market_value,pnl,pnl_rate,ytd_return,beta) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    return conn
+
+
+def _make_lowbond_db():
+    """债券占比极低（~6%），用于测试债券不足目标的预警分支。"""
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """CREATE TABLE portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, code TEXT NOT NULL,
+            name TEXT, quantity REAL, cost_price REAL, current_price REAL, market_value REAL,
+            pnl REAL, pnl_rate REAL, ytd_return REAL, beta REAL, UNIQUE(date, code))"""
+    )
+    rows = [
+        ("2026-08-07", "510300", "沪深300ETF华泰柏瑞", 1000, 4.0, 4.0, 5000.0, 0.0, 0.0, 0.0, 1.0),
+        ("2026-08-07", "512010", "医药ETF易方达", 1000, 0.6, 0.6, 3000.0, 0.0, 0.0, 0.0, 0.8),
+        ("2026-08-07", "511520", "政金债ETF富国", 1000, 1.0, 1.0, 500.0, 0.0, 0.0, 0.0, 0.1),
+    ]
+    conn.executemany(
+        "INSERT INTO portfolio_snapshots "
+        "(date,code,name,quantity,cost_price,current_price,market_value,pnl,pnl_rate,ytd_return,beta) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    return conn
+
+
+class TestClassificationRefinement:
+    """P1 分类校准：可转债应独立成 sleeve，不混入纯债桶。"""
+
+    def test_convertible_classified_as_convertible(self):
+        from src.analysis.rebalance_engine import RebalanceEngine
+        conn = _make_db()
+        eng = RebalanceEngine(conn)
+        assert eng.classify_sector("511380", "可转债ETF博时") == "可转债"
+
+    def test_convertible_in_target_weights(self):
+        from config.settings import SECTOR_TARGET_WEIGHTS
+        assert "可转债" in SECTOR_TARGET_WEIGHTS
+        assert SECTOR_TARGET_WEIGHTS["可转债"] > 0
+
+
+class TestOverlappingExposure:
+    """P1 冗余标的 + P2 相关性：重叠敞口检测。"""
+
+    def test_detects_duplicate_index_and_theme(self):
+        conn = _make_overlap_db()
+        eng = RebalanceEngine(conn)
+        groups = eng.detect_overlapping_exposure(AS_OF)
+        themes = {g["theme"] for g in groups}
+        assert "沪深300" in themes, f"应检出双沪深300: {themes}"
+        assert "医药/创新药" in themes, f"应检出双医药: {themes}"
+        hs = next(g for g in groups if g["theme"] == "沪深300")
+        assert {m["code"] for m in hs["members"]} == {"510300", "159300"}
+
+    def test_no_false_group_for_distinct_indices(self):
+        """宽基内不同指数（沪深300/科创50/医药）不应被合并。"""
+        conn = _make_db()
+        eng = RebalanceEngine(conn)
+        groups = eng.detect_overlapping_exposure(AS_OF)
+        assert groups == [], f"不应有重叠组: {groups}"
+
+
+class TestRiskMetrics:
+    """P2 风险预算 + 集中度指标。"""
+
+    def test_hhi_top3_beta(self):
+        conn = _make_overlap_db()
+        eng = RebalanceEngine(conn)
+        m = eng.compute_risk_metrics(AS_OF)
+        # 权重 0.2/0.1/0.3/0.15/0.25 -> HHI=0.225, top3=0.75
+        assert abs(m["hhi"] - 0.225) < 1e-6
+        assert abs(m["top3_concentration"] - 0.75) < 1e-6
+        # beta = 0.2*1+0.1*1+0.3*0.8+0.15*0.9+0.25*0.1 = 0.70
+        assert abs(m["portfolio_beta"] - 0.70) < 1e-6
+        # 债券 0.25 > 0.18(阈值) -> 未不足
+        assert m["bond_under_target"] is False
+
+    def test_bond_under_target_warning(self):
+        conn = _make_lowbond_db()
+        eng = RebalanceEngine(conn)
+        m = eng.compute_risk_metrics(AS_OF)
+        assert m["bond_under_target"] is True
+        assert any("债券" in w for w in m["warnings"])
+
+
+class TestTacticalOverrides:
+    """P2 战术留痕：尊重主观超配，只对漂移触发。"""
+
+    def test_tactical_override_respected(self):
+        import config.settings as S
+        saved = S.TACTICAL_OVERRIDES
+        conn = _make_layered_db()
+        base = compute_rebalance_suggestion(conn, as_of_date=AS_OF, strategy="layered")
+        base_med = (base.target_weights.get("512010", 0)
+                    + base.target_weights.get("159992", 0))
+        S.TACTICAL_OVERRIDES = {"医药": 0.24}
+        try:
+            plan = compute_rebalance_suggestion(conn, as_of_date=AS_OF, strategy="layered")
+            assert plan.action_needed is True
+            assert "战术留痕" in plan.reason, f"reason 应含战术留痕: {plan.reason}"
+            med = (plan.target_weights.get("512010", 0)
+                   + plan.target_weights.get("159992", 0))
+            # 战术超配应使医药目标高于战略基准情形（引擎不与之对着干）
+            assert med > base_med, f"战术留痕未抬升医药目标: {med} vs {base_med}"
+        finally:
+            S.TACTICAL_OVERRIDES = saved
