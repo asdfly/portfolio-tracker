@@ -214,9 +214,15 @@ class SmartReportGenerator:
         sections = []
 
         if fund_flows is not None and hasattr(fund_flows, 'empty') and not fund_flows.empty:
-            if 'code' in fund_flows.columns:
-                date_col = 'date' if 'date' in fund_flows.columns else 'trade_date'
-                agg = fund_flows.groupby('code').agg(
+            ff = fund_flows.copy()
+            # 仅看板块级(sector)与主力资金(main_fund)，避免与逐标的机会建议重复；
+            # 且 sector 类别下 code 会碰撞(如 '2' 对应多个板块)，必须按 name(板块名)聚合。
+            if 'category' in ff.columns:
+                ff = ff[ff['category'].isin(['sector', 'main_fund'])]
+            if 'name' in ff.columns:
+                ff['name'] = ff['name'].astype(str).str.strip()
+                date_col = 'date' if 'date' in ff.columns else 'trade_date'
+                agg = ff.groupby('name').agg(
                     total_net=('net_inflow', 'sum'),
                     days=(date_col, 'count')
                 ).reset_index()
@@ -224,13 +230,13 @@ class SmartReportGenerator:
                 top_outflow = agg.nsmallest(3, 'total_net')
                 lines.append("### 资金流向")
                 lines.append("")
-                lines.append("**净流入TOP3**:")
+                lines.append("**板块净流入TOP3**:")
                 for _, r in top_inflow.iterrows():
-                    lines.append(f"- {r['code']}: {r['total_net']/1e8:.2f}亿元 ({int(r['days'])}日)")
+                    lines.append(f"- {r['name']}: {self._fmt_amount(r['total_net'])} ({int(r['days'])}日)")
                 lines.append("")
-                lines.append("**净流出TOP3**:")
+                lines.append("**板块净流出TOP3**:")
                 for _, r in top_outflow.iterrows():
-                    lines.append(f"- {r['code']}: {r['total_net']/1e8:.2f}亿元 ({int(r['days'])}日)")
+                    lines.append(f"- {r['name']}: {self._fmt_amount(r['total_net'])} ({int(r['days'])}日)")
                 lines.append("")
                 sections.append(True)
 
@@ -239,7 +245,7 @@ class SmartReportGenerator:
             lines.append("")
             latest_s = sentiment.drop_duplicates('name', keep='first')
             for _, r in latest_s.iterrows():
-                lines.append(f"- {r['name']}: {r['value']}")
+                lines.append(f"- {r['name']}: {self._fmt_amount(r['value'])}")
             lines.append("")
             sections.append(True)
 
@@ -248,25 +254,34 @@ class SmartReportGenerator:
             lines.append("")
             latest_m = macro.drop_duplicates('name', keep='first')
             for _, r in latest_m.iterrows():
-                unit = r.get('unit', '')
-                val = r['value']
-                lines.append(f"- {r['name']}: {val} {unit}")
+                lines.append(f"- {r['name']}: {self._fmt_amount(r['value'])}")
             lines.append("")
             sections.append(True)
 
         if news is not None and hasattr(news, 'empty') and not news.empty:
             lines.append("### 近期新闻摘要")
             lines.append("")
-            sentiment_counts = news['sentiment_score'].value_counts() if 'sentiment_score' in news.columns else {}
             total_news = len(news)
-            lines.append(f"共{total_news}条新闻: ", )
-            for s, c in sentiment_counts.items():
-                lines.append(f"{s}({c}条) ", )
+            if 'sentiment_score' in news.columns:
+                labels = news['sentiment_score'].apply(self._sentiment_label)
+                sc = labels.value_counts()
+                dist = "、".join(f"{k} {int(v)}条" for k, v in sc.items())
+                lines.append(f"共 {total_news} 条新闻（情感分布：{dist}）")
+            else:
+                lines.append(f"共 {total_news} 条新闻")
             lines.append("")
             if 'category' in news.columns:
                 cat_counts = news['category'].value_counts().head(5)
                 lines.append("**热点板块**: " + ", ".join(f"{k}({v})" for k, v in cat_counts.items()))
-            lines.append("")
+                lines.append("")
+            if 'title' in news.columns:
+                lines.append("**近期要闻**:")
+                for _, r in news.head(5).iterrows():
+                    cat = r.get('category', '') or ''
+                    title = (r.get('title') or '').strip()
+                    if title:
+                        lines.append(f"- [{cat}] {title}")
+                lines.append("")
             sections.append(True)
 
         if not sections:
@@ -301,3 +316,41 @@ class SmartReportGenerator:
             'low': len([a for a in advices if a.priority.value == 'low']),
             'advices': advices
         }
+
+    # ------------------------------------------------------------------
+    # 展示辅助：大数格式化 / 情感分桶
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _fmt_amount(v) -> str:
+        """大数友好格式化：万亿 / 亿 / 万 + 千分位，避免裸浮点(如 1283743055996.0)。"""
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return str(v)
+        if v != v:  # NaN
+            return "N/A"
+        a = abs(v)
+        if a >= 1e12:
+            return f"{v / 1e12:.2f}万亿"
+        if a >= 1e8:
+            return f"{v / 1e8:.2f}亿"
+        if a >= 1e4:
+            return f"{v / 1e4:.2f}万"
+        if float(v).is_integer():
+            return f"{int(v):,}"
+        return f"{v:,.2f}"
+
+    @staticmethod
+    def _sentiment_label(score) -> str:
+        """将连续 sentiment_score 分桶为可读标签（数据缺失时统一为中性）。"""
+        try:
+            s = float(score)
+        except (TypeError, ValueError):
+            return "中性"
+        if s != s:  # NaN
+            return "中性"
+        if s >= 0.6:
+            return "正面"
+        if s <= 0.4:
+            return "负面"
+        return "中性"

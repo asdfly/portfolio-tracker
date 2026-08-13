@@ -53,17 +53,9 @@ class SmartAdvisor:
         """分析投资组合并生成建议"""
         advices = []
 
-        # 1. 再平衡建议（阈值法，文字信号）
-        rebalance_advice = self._check_rebalance_needs(portfolio_data)
-        if rebalance_advice:
-            advices.extend(rebalance_advice)
-
-        # 1b. 再平衡引擎：基于真实持仓快照生成可执行方案（T+1 + 成本预估）
+        # 1. 再平衡建议（分层引擎为唯一权威，避免与战略/战术目标自相矛盾）
         engine_plan = self.generate_rebalance_plan()
         if engine_plan is not None:
-            # 引擎方案作为权威再平衡建议；去掉阈值法的整体汇总，避免重复
-            advices = [a for a in advices
-                       if not (a.type == AdviceType.REBALANCE and a.title == "组合需要再平衡")]
             advices.insert(0, self._plan_to_advice(engine_plan))
 
         # 2. 风险管理建议
@@ -195,73 +187,6 @@ class SmartAdvisor:
         # 挂上完整方案，供 UI 直接渲染（序列化到建议历史时忽略此属性）
         advice.rebalance_plan = plan
         return advice
-
-    def _check_rebalance_needs(self, portfolio_data: Dict) -> List[InvestmentAdvice]:
-        """检查再平衡需求"""
-        advices = []
-        positions = portfolio_data.get('positions', [])
-
-        if not positions:
-            return advices
-
-        # 计算当前权重
-        total_value = sum(p.get('market_value', 0) for p in positions)
-        if total_value == 0:
-            return advices
-
-        current_weights = {}
-        target_weights = {}
-        deviations = {}
-
-        for pos in positions:
-            code = pos.get('code', '')
-            market_value = pos.get('market_value', 0)
-            current_weight = market_value / total_value
-            current_weights[code] = current_weight
-
-            # 假设目标权重为等权（可根据配置调整）
-            target_weight = 1.0 / len(positions)
-            target_weights[code] = target_weight
-
-            deviation = abs(current_weight - target_weight)
-            deviations[code] = deviation
-
-            # 如果偏离超过5%，建议再平衡
-            if deviation > 0.05:
-                direction = "增持" if current_weight < target_weight else "减持"
-                advices.append(InvestmentAdvice(
-                    type=AdviceType.REBALANCE,
-                    priority=AdvicePriority.MEDIUM if deviation > 0.1 else AdvicePriority.LOW,
-                    title=f"{pos.get('name', code)} 仓位偏离",
-                    description=f"当前权重 {current_weight*100:.1f}%，目标 {target_weight*100:.1f}%，偏离 {deviation*100:.1f}%",
-                    action_items=[
-                        f"建议{direction} {abs(current_weight - target_weight)*total_value:,.0f}元",
-                        f"将权重调整至 {target_weight*100:.1f}% 附近"
-                    ],
-                    related_codes=[code],
-                    confidence=min(deviation * 2, 0.9),
-                    created_at=datetime.now()
-                ))
-
-        # 检查整体偏离
-        max_deviation = max(deviations.values()) if deviations else 0
-        if max_deviation > 0.1:
-            advices.insert(0, InvestmentAdvice(
-                type=AdviceType.REBALANCE,
-                priority=AdvicePriority.HIGH,
-                title="组合需要再平衡",
-                description=f"最大仓位偏离 {max_deviation*100:.1f}%，建议进行组合再平衡",
-                action_items=[
-                    "审视当前各资产权重",
-                    "根据目标配置进行调整",
-                    "考虑交易成本和税费"
-                ],
-                related_codes=list(current_weights.keys()),
-                confidence=0.85,
-                created_at=datetime.now()
-            ))
-
-        return advices
 
     def _check_risk_indicators(self, risk_data: Dict) -> List[InvestmentAdvice]:
         """检查风险指标"""

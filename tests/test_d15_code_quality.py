@@ -23,7 +23,9 @@ class TestAdvisorHelpers:
 
     def test_advisor_function_count(self):
         fns = _get_functions(ADVISOR_PATH.read_text(encoding="utf-8"))
-        assert len(fns) == 24
+        # 2026-08-13: 移除遗留的 _check_rebalance_needs（等权目标，与分层引擎战略/战术
+        # 目标自相矛盾），再平衡统一由分层引擎(generate_rebalance_plan)作为唯一权威。
+        assert len(fns) == 23
 
     def test_advisor_no_function_over_200(self):
         fns = _get_functions(ADVISOR_PATH.read_text(encoding="utf-8"))

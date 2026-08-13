@@ -465,7 +465,7 @@ def run_stage4_smart(results, summary, risk_data):
 
         # === 闭环反馈: 扩展数据接入 ===
         try:
-            ff_query = "SELECT code, name, date as trade_date, net_inflow, " \
+            ff_query = "SELECT code, name, category, date as trade_date, net_inflow, " \
                 "super_large_inflow, large_inflow, medium_inflow, small_inflow " \
                 "FROM fund_flows WHERE date >= date('now','-7 days') " \
                 "ORDER BY date DESC, code"
