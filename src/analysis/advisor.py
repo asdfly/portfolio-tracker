@@ -540,7 +540,11 @@ class SmartAdvisor:
     #  资金流分析建议
     # ============================================================
     def _analyze_fund_flows(self, portfolio_data):
-        """分析ETF资金流异动，关联持仓标的"""
+        """分析ETF资金流异动，关联持仓标的。
+
+        优化: 将逐标的的重复模板合并为「净流入/净流出 TOP N」概览，
+        显著降低同质建议数量、提升信号密度（原每个持仓ETF各发一条）。
+        """
         advices = []
         ff_df = portfolio_data.get('fund_flows')
         if ff_df is None or (hasattr(ff_df, 'empty') and ff_df.empty):
@@ -551,52 +555,68 @@ class SmartAdvisor:
                 return advices
 
             positions = portfolio_data.get('positions', [])
-            held_codes = set(p.get('code', '') for p in positions if isinstance(p, dict))
+            held_codes = set(str(p.get('code', '')) for p in positions if isinstance(p, dict))
+            if not held_codes:
+                return advices
 
-            if 'code' in ff_df.columns:
-                date_col = 'date' if 'date' in ff_df.columns else 'trade_date'
-                agg = ff_df.groupby('code').agg(
-                    total_net_inflow=('net_inflow', 'sum'),
-                    avg_net_inflow=('net_inflow', 'mean'),
-                    days=(date_col, 'count')
-                ).reset_index()
+            date_col = 'date' if 'date' in ff_df.columns else 'trade_date'
+            agg = ff_df.groupby('code').agg(
+                total_net_inflow=('net_inflow', 'sum'),
+                days=(date_col, 'count')
+            ).reset_index()
+            agg['code'] = agg['code'].astype(str)
 
-                for _, row in agg.iterrows():
-                    code = str(row['code'])
-                    net = row.get('total_net_inflow', 0)
-                    if abs(net) < 100000000:  # <1亿忽略
-                        continue
+            # 仅保留持仓标的的资金异动，避免板块/主力等无关 code 混入
+            held = agg[agg['code'].isin(held_codes)].copy()
+            if held.empty:
+                return advices
 
-                    if code in held_codes:
-                        if net > 100000000:  # >1亿净流入
-                            advices.append(InvestmentAdvice(
-                                type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
-                                title=f"{code} 资金大幅净流入",
-                                description=f"近{int(row['days'])}个交易日累计净流入{net/1e8:.2f}亿元",
-                                action_items=["关注资金持续性", "评估是否跟随主力方向"],
-                                related_codes=[code], confidence=0.6,
-                                created_at=datetime.now()
-                            ))
-                        elif net < -100000000:  # >1亿净流出
-                            advices.append(InvestmentAdvice(
-                                type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
-                                title=f"{code} 资金大幅净流出",
-                                description=f"近{int(row['days'])}个交易日累计净流出{abs(net)/1e8:.2f}亿元",
-                                action_items=["警惕资金撤离风险", "评估止损或减仓时机"],
-                                related_codes=[code], confidence=0.6,
-                                created_at=datetime.now()
-                            ))
+            TOP_N = 5
+            name_map = {str(p.get('code', '')): p.get('name') for p in positions if isinstance(p, dict)}
+            inflow = held[held['total_net_inflow'] > 100000000].sort_values(
+                'total_net_inflow', ascending=False).head(TOP_N)
+            outflow = held[held['total_net_inflow'] < -100000000].sort_values(
+                'total_net_inflow').head(TOP_N)
 
-                total_inflow = agg['total_net_inflow'].sum()
-                if total_inflow < -500000000:  # 整体净流出>5亿
-                    advices.append(InvestmentAdvice(
-                        type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.MEDIUM,
-                        title="ETF市场整体资金流出",
-                        description=f"持仓ETF近{int(agg['days'].sum())}日累计净流出{abs(total_inflow)/1e8:.2f}亿元",
-                        action_items=["关注市场整体风险偏好", "考虑降低仓位防御"],
-                        related_codes=[], confidence=0.55,
-                        created_at=datetime.now()
-                    ))
+            if not inflow.empty:
+                lines = [
+                    f"- {name_map.get(c) or c}({c}): 近{int(r['days'])}日净流入 {r['total_net_inflow']/1e8:.2f}亿元"
+                    for _, r in inflow.iterrows() for c in [str(r['code'])]
+                ]
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+                    title=f"持仓ETF资金大幅净流入（TOP {len(inflow)}）",
+                    description="以下持仓ETF近期获资金青睐：\n" + "\n".join(lines),
+                    action_items=["关注资金持续性", "评估是否跟随主力方向", "结合估值与基本面确认"],
+                    related_codes=list(inflow['code']), confidence=0.6,
+                    created_at=datetime.now()
+                ))
+
+            if not outflow.empty:
+                lines = [
+                    f"- {name_map.get(c) or c}({c}): 近{int(r['days'])}日净流出 {abs(r['total_net_inflow'])/1e8:.2f}亿元"
+                    for _, r in outflow.iterrows() for c in [str(r['code'])]
+                ]
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                    title=f"持仓ETF资金大幅净流出（TOP {len(outflow)}）",
+                    description="以下持仓ETF近期资金撤离：\n" + "\n".join(lines),
+                    action_items=["警惕资金撤离风险", "评估止损或减仓时机"],
+                    related_codes=list(outflow['code']), confidence=0.6,
+                    created_at=datetime.now()
+                ))
+
+            # 持仓ETF整体净流出风险（基于持仓子集汇总，而非全市场）
+            held_total = held['total_net_inflow'].sum()
+            if held_total < -500000000:  # 整体净流出>5亿
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.MEDIUM,
+                    title="持仓ETF整体资金流出",
+                    description=f"持仓ETF近{int(held['days'].sum())}日累计净流出{abs(held_total)/1e8:.2f}亿元",
+                    action_items=["关注市场整体风险偏好", "考虑降低仓位防御"],
+                    related_codes=[], confidence=0.55,
+                    created_at=datetime.now()
+                ))
         except ValueError as e:
             logger.warning(f"资金流分析异常: {e}")
 
@@ -879,6 +899,8 @@ class SmartAdvisor:
             if df.empty or len(df) < 5:
                 return advices
 
+            # 四类信号分别收集，循环结束后分组汇总（避免逐标的重复模板）
+            surge, decline, short_surge, active_buy = [], [], [], []
             for code in df['code'].unique():
                 code_df = df[df['code'] == code].sort_values('date')
                 name = code_df['name'].iloc[-1] if 'name' in code_df.columns else code
@@ -896,49 +918,11 @@ class SmartAdvisor:
 
                 if std_val > 0 and mean_val > 0:
                     z_score = (current_balance - mean_val) / std_val
-
+                    change_pct = (current_balance - mean_val) / mean_val * 100
                     if z_score > 2.0:
-                        # 融资余额急剧增长 - 资金涌入信号
-                        change_pct = (current_balance - mean_val) / mean_val * 100
-                        advices.append(InvestmentAdvice(
-                            type=AdviceType.OPPORTUNITY,
-                            priority=AdvicePriority.MEDIUM,
-                            title=f"[{name}] 融资余额近5日异常增长",
-                            description=(
-                                f"近5日融资余额Z-score={z_score:.1f}，"
-                                f"当前{current_balance/1e8:.1f}亿元，"
-                                f"较均值偏离{change_pct:.1f}%，"
-                                f"显示杠杆资金积极买入"
-                            ),
-                            action_items=[
-                                "关注融资余额增长持续性",
-                                "结合技术面确认趋势方向",
-                                "警惕短期获利盘回吐压力"
-                            ],
-                            related_codes=[code], confidence=min(0.5 + z_score * 0.05, 0.85),
-                            created_at=datetime.now()
-                        ))
+                        surge.append((name, code, z_score, change_pct, current_balance))
                     elif z_score < -2.0:
-                        # 融资余额急剧萎缩 - 资金撤离信号
-                        change_pct = (current_balance - mean_val) / mean_val * 100
-                        advices.append(InvestmentAdvice(
-                            type=AdviceType.CAUTION,
-                            priority=AdvicePriority.MEDIUM,
-                            title=f"[{name}] 融资余额近5日大幅萎缩",
-                            description=(
-                                f"近5日融资余额Z-score={z_score:.1f}，"
-                                f"当前{current_balance/1e8:.1f}亿元，"
-                                f"较均值下降{abs(change_pct):.1f}%，"
-                                f"杠杆资金正在撤退"
-                            ),
-                            action_items=[
-                                "评估资金撤离是否与基本面变化相关",
-                                "关注后续企稳信号",
-                                "考虑适当降低仓位"
-                            ],
-                            related_codes=[code], confidence=min(0.5 + abs(z_score) * 0.05, 0.85),
-                            created_at=datetime.now()
-                        ))
+                        decline.append((name, code, z_score, change_pct, current_balance))
 
                 # --- 指标2: 融券量突增检测（空头情绪） ---
                 short_recent = code_df.head(5)['short_volume']
@@ -950,39 +934,72 @@ class SmartAdvisor:
                 if short_std > 0 and short_mean > 0:
                     short_z = (current_short - short_mean) / short_std
                     if short_z > 2.5 and current_short > 0:
-                        advices.append(InvestmentAdvice(
-                            type=AdviceType.CAUTION,
-                            priority=AdvicePriority.LOW,
-                            title=f"[{name}] 融券量近期显著增加",
-                            description=(
-                                f"近5日融券量Z-score={short_z:.1f}，"
-                                f"当前{current_short/1e8:.2f}亿元，"
-                                f"空头力量明显增强"
-                            ),
-                            action_items=["关注融券变化趋势", "结合价格走势判断是否有做空压力"],
-                            related_codes=[code], confidence=0.5,
-                            created_at=datetime.now()
-                        ))
+                        short_surge.append((name, code, short_z, current_short))
 
                 # --- 指标3: 融资买入活跃度 (买入/余额比) ---
                 if current_balance > 0:
                     recent_buy = code_df.head(5)['margin_buy'].iloc[0]
                     buy_ratio = recent_buy / current_balance
-
                     if buy_ratio > 0.05:  # 单日买入超余额5%
-                        advices.append(InvestmentAdvice(
-                            type=AdviceType.OPPORTUNITY,
-                            priority=AdvicePriority.LOW,
-                            title=f"[{name}] 融资买入活跃度偏高",
-                            description=(
-                                f"最近一日融资买入{recent_buy/1e8:.2f}亿元，"
-                                f"占融资余额{buy_ratio:.1%}，"
-                                f"杠杆资金买入积极性较高"
-                            ),
-                            action_items=["关注买入持续性", "配合技术面判断"],
-                            related_codes=[code], confidence=0.4,
-                            created_at=datetime.now()
-                        ))
+                        active_buy.append((name, code, buy_ratio, recent_buy))
+
+            # --- 分组汇总：四类信号各合并为一条排名概览，提升信号密度、降低同质噪声 ---
+            TOP = 5
+            if surge:
+                surge.sort(key=lambda x: x[2], reverse=True)
+                lines = [f"- {n}({c}): Z={z:.1f}，当前{b/1e8:.1f}亿，较均值+{cp:.1f}%"
+                         for n, c, z, cp, b in surge[:TOP]]
+                best = max(s[2] for s in surge)
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+                    title=f"融资余额近5日异常增长（{len(surge)}只）",
+                    description="杠杆资金积极涌入以下标的：\n" + "\n".join(lines),
+                    action_items=["关注融资余额增长持续性", "结合技术面确认趋势方向", "警惕短期获利盘回吐压力"],
+                    related_codes=[c for _, c, _, _, _ in surge],
+                    confidence=min(0.5 + best * 0.05, 0.85),
+                    created_at=datetime.now()
+                ))
+            if decline:
+                decline.sort(key=lambda x: x[2])
+                lines = [f"- {n}({c}): Z={z:.1f}，当前{b/1e8:.1f}亿，较均值{cp:.1f}%"
+                         for n, c, z, cp, b in decline[:TOP]]
+                worst = min(d[2] for d in decline)
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                    title=f"融资余额近5日大幅萎缩（{len(decline)}只）",
+                    description="杠杆资金正在撤退：\n" + "\n".join(lines),
+                    action_items=["评估资金撤离是否与基本面变化相关", "关注后续企稳信号", "考虑适当降低仓位"],
+                    related_codes=[c for _, c, _, _, _ in decline],
+                    confidence=min(0.5 + abs(worst) * 0.05, 0.85),
+                    created_at=datetime.now()
+                ))
+            if active_buy:
+                active_buy.sort(key=lambda x: x[2], reverse=True)
+                lines = [f"- {n}({c}): 买入{b/1e8:.2f}亿，占余额{r:.1%}"
+                         for n, c, r, b in active_buy[:TOP]]
+                best = max(a[2] for a in active_buy)
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.OPPORTUNITY, priority=AdvicePriority.LOW,
+                    title=f"融资买入活跃度偏高（{len(active_buy)}只）",
+                    description="杠杆资金买入积极性较高：\n" + "\n".join(lines),
+                    action_items=["关注买入持续性", "配合技术面判断"],
+                    related_codes=[c for _, c, _, _ in active_buy],
+                    confidence=min(0.4 + best * 0.5, 0.7),
+                    created_at=datetime.now()
+                ))
+            if short_surge:
+                short_surge.sort(key=lambda x: x[2], reverse=True)
+                lines = [f"- {n}({c}): 融券Z={z:.1f}，当前{s/1e8:.2f}亿"
+                         for n, c, z, s in short_surge[:TOP]]
+                advices.append(InvestmentAdvice(
+                    type=AdviceType.CAUTION, priority=AdvicePriority.LOW,
+                    title=f"融券量近期显著增加（{len(short_surge)}只）",
+                    description="空头力量明显增强：\n" + "\n".join(lines),
+                    action_items=["关注融券变化趋势", "结合价格走势判断是否有做空压力"],
+                    related_codes=[c for _, c, _, _ in short_surge],
+                    confidence=0.5,
+                    created_at=datetime.now()
+                ))
 
         except (pd.errors.DatabaseError, sqlite3.OperationalError, sqlite3.IntegrityError, KeyError, ValueError, TypeError) as e:
             logger.warning(f"融资融券分析异常: {e}")
