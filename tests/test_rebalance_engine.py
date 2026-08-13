@@ -52,6 +52,47 @@ def _make_db():
 AS_OF = "2026-08-07"
 
 
+def _make_layered_db():
+    """构造内存库：宽基 10% / 医药 90%（类别内市值占比均衡）。
+
+    用于锁定 P0 修复：大类严重偏离时，即便「类别内市值占比」已与分层目标一致
+    （单标偏离被稀释），也必须因「类别偏离」触发再平衡。
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """CREATE TABLE portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            name TEXT,
+            quantity REAL,
+            cost_price REAL,
+            current_price REAL,
+            market_value REAL,
+            pnl REAL,
+            pnl_rate REAL,
+            ytd_return REAL,
+            beta REAL,
+            UNIQUE(date, code)
+        )"""
+    )
+    # 宽基两只各 1000（合计 2000 / 20000 = 10%），医药两只各 9000（合计 18000 = 90%）
+    rows = [
+        ("2026-08-07", "510300", "300ETF", 1000, 1.0, 1.0, 1000.0, 0.0, 0.0, 0.0, 1.0),
+        ("2026-08-07", "588000", "科创50ETF", 1000, 1.0, 1.0, 1000.0, 0.0, 0.0, 0.0, 1.0),
+        ("2026-08-07", "512010", "医药ETF", 9000, 1.0, 1.0, 9000.0, 0.0, 0.0, 0.0, 1.0),
+        ("2026-08-07", "159992", "医药ETF", 9000, 1.0, 1.0, 9000.0, 0.0, 0.0, 0.0, 1.0),
+    ]
+    conn.executemany(
+        "INSERT INTO portfolio_snapshots "
+        "(date,code,name,quantity,cost_price,current_price,market_value,pnl,pnl_rate,ytd_return,beta) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    return conn
+
+
 class TestCurrentWeights:
     def test_weights_sum_to_one(self):
         conn = _make_db()
@@ -195,3 +236,44 @@ class TestLayered:
         assert max(eq.target_weights.values()) - min(eq.target_weights.values()) < 1e-6
         # 分层则明显不均
         assert max(ly.target_weights.values()) - min(ly.target_weights.values()) > 0.05
+
+
+class TestLayeredTrigger:
+    """P0 回归锁：类别严重偏离时必须触发再平衡（不因单标偏离被稀释而不触发）。
+
+    场景：宽基 10% / 医药 90%，且类别内市值占比已与分层目标一致（单标偏离≈0）。
+    旧版因 shrinkage=0.5 把目标拉向当前 + 只看单标偏离，导致大类偏离 24% 被判无需调仓；
+    修复后由「类别偏离 > SECTOR_DEVIATION_THRESHOLD」触发。
+    """
+
+    def test_category_deviation_triggers_rebalance(self):
+        conn = _make_layered_db()
+        plan = compute_rebalance_suggestion(conn, as_of_date=AS_OF, strategy="layered")
+        assert plan.action_needed is True, "类别严重偏离必须触发再平衡"
+        assert "类别偏离" in plan.reason, f"reason 应说明类别偏离触发: {plan.reason}"
+        by_code = {t.code: t for t in plan.trades}
+        # 宽基被低配 -> 应买入；医药被超配 -> 应卖出
+        assert by_code["510300"].direction == "买入"
+        assert by_code["588000"].direction == "买入"
+        assert by_code["512010"].direction == "卖出"
+        assert by_code["159992"].direction == "卖出"
+
+    def test_no_trigger_when_single_sector_on_target(self):
+        """单一类别、且已在该类别战略目标内时，不应触发。"""
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """CREATE TABLE portfolio_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, code TEXT NOT NULL,
+                name TEXT, quantity REAL, cost_price REAL, current_price REAL, market_value REAL,
+                pnl REAL, pnl_rate REAL, ytd_return REAL, beta REAL, UNIQUE(date, code))"""
+        )
+        conn.execute(
+            "INSERT INTO portfolio_snapshots "
+            "(date,code,name,quantity,cost_price,current_price,market_value,pnl,pnl_rate,ytd_return,beta) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("2026-08-07", "510300", "300ETF", 1000, 1.0, 1.0, 1000.0, 0.0, 0.0, 0.0, 1.0),
+        )
+        conn.commit()
+        plan = compute_rebalance_suggestion(conn, as_of_date=AS_OF, strategy="layered")
+        assert plan.action_needed is False
+        conn.close()

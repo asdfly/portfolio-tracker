@@ -5,6 +5,7 @@
     * threshold    阈值偏离（默认目标=等权，偏离 > 阈值才调仓）
     * periodic     定期（距上次再平衡达到 period_days 个交易日才调仓）
     * equal_weight 直接以等权为目标
+    * layered      分层（按资产类别战略基准 + 类别内市值占比；类别偏离超阈值即触发）
     * custom       给定目标权重向量
 - 输出 RebalancePlan：具体交易（买卖金额/手数）、换手率、预估交易成本、T+1 执行日
 - T+1 执行日 = 本地日历 next_trading_day(as_of_date)（A股 T+1：收盘决策、次交易日开盘执行）
@@ -129,7 +130,8 @@ class RebalanceEngine:
     def propose(self, as_of_date: str,
                 target_weights: Dict[str, float],
                 threshold: Optional[float] = None,
-                strategy: str = "custom") -> RebalancePlan:
+                strategy: str = "custom",
+                force: bool = False) -> RebalancePlan:
         """若当前与目标的最大权重偏离 > 阈值，生成调仓方案；否则返回 action_needed=False。"""
         if threshold is None:
             threshold = SMART_ANALYSIS_CONFIG.get("rebalance_threshold", 0.05)
@@ -143,7 +145,7 @@ class RebalanceEngine:
         all_codes = set(weights) | set(target_weights)
         max_dev = max(abs(weights.get(c, 0.0) - target_weights.get(c, 0.0)) for c in all_codes)
         exec_date = str(next_trading_day(as_of_date))
-        if max_dev <= threshold:
+        if max_dev <= threshold and not force:
             return RebalancePlan(
                 as_of_date=as_of_date, strategy=strategy, action_needed=False,
                 reason=f"最大偏离 {max_dev*100:.1f}% ≤ 阈值 {threshold*100:.1f}%，无需再平衡",
@@ -267,13 +269,19 @@ class RebalanceEngine:
     def propose_layered(self, as_of_date: str,
                         threshold: Optional[float] = None,
                         shrinkage: Optional[float] = None) -> RebalancePlan:
-        """分层再平衡：类别基准权重 + 类别内按市值分配（类别内也不均），阈值过滤小额偏离。
+        """分层再平衡：类别基准权重 + 类别内按市值分配（类别内也不均），战略偏离触发。
 
         不再把所有标的拉向 1/n 等权：
           - 在 SECTOR_TARGET_WEIGHTS 中的 sector -> 目标总权重 = 该基准（自动归一化）
           - 不在表中的 sector（现金管理 / 混合类 / 未知）-> 保持当前占比
           - 每个 sector 内部按当前市值占比分配（类别内不均）
-          - 最后用收缩系数向当前权重收缩，避免过度交易
+
+        触发逻辑（P0 修复核心）：
+          - 计算「类别当前权重 vs 类别战略权重」的最大偏离；
+          - 若 最大类别偏离 > SECTOR_DEVIATION_THRESHOLD 或 单标偏离 > threshold，
+            则触发再平衡，并以「完整战略目标(raw_target)」生成调仓交易；
+          - 旧版用 shrinkage 把目标拉向当前权重、又只看单标偏离，导致大类偏离 24%
+            也被判为「最大偏离 4.1% ≤ 5% 无需调仓」，战略纪律形同虚设。
         """
         weights, total, names, prices = self.get_current_weights(as_of_date)
         if not weights:
@@ -281,9 +289,11 @@ class RebalanceEngine:
                                  action_needed=False, reason="无持仓", total_value=0.0,
                                  execution_date=str(next_trading_day(as_of_date)))
         from config.settings import (ETF_CATEGORIES, SECTOR_TARGET_WEIGHTS,  # noqa
-                                     REBALANCE_SHRINKAGE)
+                                     REBALANCE_SHRINKAGE, SECTOR_DEVIATION_THRESHOLD)
         if shrinkage is None:
             shrinkage = REBALANCE_SHRINKAGE
+        if threshold is None:
+            threshold = SMART_ANALYSIS_CONFIG.get("rebalance_threshold", 0.05)
 
         # 1) 分类 + sector 当前总权重
         sectors = {c: self.classify_sector(c, names.get(c, "")) for c in weights}
@@ -297,33 +307,74 @@ class RebalanceEngine:
 
         # 2) 归一化：受管控 sector 基准和缩放，使其与"保持类"占比叠加后总和 = 1
         managed_target_sum = sum(managed.values())
-        if managed_target_sum <= 0:
-            target_weights = dict(weights)          # 无受管控 sector，退化为保持
-        else:
+        raw_target: Dict[str, float] = dict(weights)   # 兜底：保持当前
+        sector_tgt: Dict[str, float] = {}
+        if managed_target_sum > 0:
             scale = (1.0 - keep_sum) / managed_target_sum if keep_sum < 1.0 else 0.0
             scaled_managed = {s: wt * scale for s, wt in managed.items()}
-
             # 3) sector 内按当前市值占比分配（类别内不均）
-            raw_target: Dict[str, float] = {}
             for c, w in weights.items():
                 s = sectors[c]
                 if s in scaled_managed and sector_cur[s] > 0:
                     inner_share = w / sector_cur[s]
                     raw_target[c] = scaled_managed[s] * inner_share
-                else:
-                    raw_target[c] = w               # 保持类维持当前
+                # 保持类维持当前
+            sector_tgt = dict(scaled_managed)
+        else:
+            sector_tgt = {s: sector_cur[s] for s in keep_sectors}
+        # 4) 归一化确保 raw_target 总和 = 1
+        tw_sum = sum(raw_target.values())
+        if tw_sum > 0:
+            raw_target = {c: v / tw_sum for c, v in raw_target.items()}
 
-            # 4) 收缩：目标 = (1-λ)·当前 + λ·分层基准（避免过度交易）
-            target_weights = {
-                c: (1 - shrinkage) * weights[c] + shrinkage * raw_target.get(c, weights[c])
-                for c in weights
-            }
-            # 5) 归一化确保总和 = 1
-            tw_sum = sum(target_weights.values())
-            if tw_sum > 0:
-                target_weights = {c: v / tw_sum for c, v in target_weights.items()}
+        # 5) 触发判断：类别偏离 或 单标偏离（关键修复点）
+        max_cat_dev = 0.0
+        worst_cat = ""
+        for s in sector_tgt:
+            dev = abs(sector_cur.get(s, 0.0) - sector_tgt.get(s, 0.0))
+            if dev > max_cat_dev:
+                max_cat_dev = dev
+                worst_cat = s
+        max_sec_dev = max(
+            abs(weights.get(c, 0.0) - raw_target.get(c, 0.0))
+            for c in set(weights) | set(raw_target)
+        )
+        cat_trigger = max_cat_dev > SECTOR_DEVIATION_THRESHOLD
+        sec_trigger = max_sec_dev > threshold
 
-        return self.propose(as_of_date, target_weights, threshold=threshold, strategy="layered")
+        if not (cat_trigger or sec_trigger):
+            return RebalancePlan(
+                as_of_date=as_of_date, strategy="layered", action_needed=False,
+                reason=f"战略配置无显著偏离（类别最大偏离 {max_cat_dev*100:.1f}% ≤ "
+                       f"{SECTOR_DEVIATION_THRESHOLD*100:.0f}%，单标最大偏离 {max_sec_dev*100:.1f}% ≤ "
+                       f"{threshold*100:.0f}%），无需再平衡",
+                current_weights=weights, target_weights=raw_target,
+                execution_date=str(next_trading_day(as_of_date)), total_value=total,
+            )
+
+        # 6) 触发：以完整战略目标为基准，按 shrinkage 决定移动幅度（默认 1.0=一步到位）
+        target_weights = {
+            c: (1 - shrinkage) * weights[c] + shrinkage * raw_target.get(c, weights[c])
+            for c in weights
+        }
+        tw_sum2 = sum(target_weights.values())
+        if tw_sum2 > 0:
+            target_weights = {c: v / tw_sum2 for c, v in target_weights.items()}
+
+        reason_parts = []
+        if cat_trigger:
+            reason_parts.append(
+                f"类别偏离触发：{worst_cat} 当前 {sector_cur.get(worst_cat, 0)*100:.1f}% → "
+                f"目标 {sector_tgt.get(worst_cat, 0)*100:.1f}%（差 {max_cat_dev*100:+.1f}%）"
+            )
+        if sec_trigger:
+            reason_parts.append(f"单标偏离 {max_sec_dev*100:.1f}% > {threshold*100:.0f}%")
+        reason = "分层再平衡：" + "；".join(reason_parts)
+
+        plan = self.propose(as_of_date, target_weights, threshold=threshold,
+                            strategy="layered", force=True)
+        plan.reason = reason
+        return plan
 
 
 def compute_rebalance_suggestion(db_connection: sqlite3.Connection,
