@@ -11,7 +11,7 @@ class TestDbSchema:
         assert isinstance(TABLE_DEFS, list)
         assert isinstance(QUALITY_CHECK_TABLES, dict)
 
-    def test_all_22_tables_defined(self):
+    def test_all_tables_defined(self):
         from src.utils.db_schema import get_all_table_names
         tables = get_all_table_names()
         expected = {
@@ -23,10 +23,10 @@ class TestDbSchema:
             "stock_institution_research", "stock_block_trade",
             "trade_records",
             "signal_backtest_stats", "signal_confidence_current",
-            "gold_sge_hist", "gold_etf_holdings",
+            "gold_sge_hist", "gold_etf_holdings", "portfolio_nav",
         }
         assert set(tables) == expected
-        assert len(tables) == 22
+        assert len(tables) == 23
 
     def test_ddl_syntax_valid(self):
         """Each DDL should be executable SQL."""
@@ -66,14 +66,14 @@ class TestDbSchema:
                 assert t in all_tables, f"{t} not in registered tables"
 
     def test_init_all_tables(self):
-        """init_all_tables should create all 22 tables."""
+        """init_all_tables should create all 23 tables."""
         from src.utils.db_schema import init_all_tables
         conn = sqlite3.connect(":memory:")
         init_all_tables(conn)
         cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         tables = {r[0] for r in cur.fetchall()}
         tables.discard("sqlite_sequence")
-        assert len(tables) == 22
+        assert len(tables) == 23
 
     def test_market_event_tables_unique_constraints(self):
         """New market event tables should have UNIQUE constraints."""

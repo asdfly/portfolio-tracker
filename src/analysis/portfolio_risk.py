@@ -267,7 +267,32 @@ class PortfolioRiskAnalyzer:
         return self.db.get_portfolio_history(days)
 
     def _get_benchmark_returns(self, index_code: str, days: int) -> np.ndarray:
-        """获取基准指数收益率"""
-        # 从数据库获取指数历史数据
-        # 这里简化处理，实际应从数据库查询
-        return np.array([])  # 返回空数组表示无基准数据
+        """从 index_quotes 读取基准指数日收益序列（小数），与组合历史对齐。
+
+        P0-4 修复：原实现直接返回空数组，导致 RiskAnalyzer.calculate_all 中
+        `if benchmark_returns is not None and len(benchmark_returns) == len(returns)`
+        分支永不进入，Beta/Alpha/TE/IR 相对收益指标从未计算。
+        """
+        try:
+            import sqlite3
+            import pandas as pd
+            from config.settings import DATABASE_PATH
+
+            conn = sqlite3.connect(str(DATABASE_PATH))
+            df = pd.read_sql_query(
+                "SELECT date, close FROM index_quotes WHERE code=? ORDER BY date",
+                conn,
+                params=(index_code,),
+            )
+            conn.close()
+            if df.empty or len(df) < 2:
+                logger.warning(f"基准 {index_code} 数据不足，无法计算相对收益")
+                return np.array([])
+            df["ret"] = df["close"].pct_change()
+            recent = df["ret"].dropna().tail(days)
+            if len(recent) < 2:
+                return np.array([])
+            return recent.values.astype(float)
+        except Exception as e:
+            logger.warning(f"获取基准收益失败({index_code}): {e}")
+            return np.array([])

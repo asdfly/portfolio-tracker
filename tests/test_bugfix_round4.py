@@ -78,28 +78,25 @@ class TestCleanseDailyReturns:
         cleaned, stats = _cleanse_daily_returns(df)
         assert len(cleaned) == 5 and stats["filtered"] == 0 and stats["tailed"] == 0
 
-    def test_filter_extreme(self):
+    def test_keep_extreme_when_not_suspect(self):
         from data_loader import _cleanse_daily_returns
         df = self._df([0.1, -0.2, 8.0, -10.0, 0.3])
-        cleaned, stats = _cleanse_daily_returns(df, threshold=5.0)
+        # P0-3：即便幅度很大（真实大波动日），无 suspect 标记也不删
+        cleaned, stats = _cleanse_daily_returns(df, suspect_dates=set())
+        assert len(cleaned) == 5 and stats["filtered"] == 0
+
+    def test_drop_suspect_dates(self):
+        from data_loader import _cleanse_daily_returns
+        df = self._df([0.1, -0.2, 8.0, -10.0, 0.3])
+        # B频率跳过周末: 日期为 01-01,01-02,01-03,01-06,01-07；标记第3、4个(01-03,01-06)为失真 -> 剔除
+        cleaned, stats = _cleanse_daily_returns(df, suspect_dates={"2025-01-03", "2025-01-06"})
         assert len(cleaned) == 3 and stats["filtered"] == 2
 
-    def test_tail_truncation(self):
-        from data_loader import _cleanse_daily_returns
-        df = self._df([0.1] * 800)
-        cleaned, stats = _cleanse_daily_returns(df, max_tail=500)
-        assert len(cleaned) == 500 and stats["tailed"] == 300
-
-    def test_filter_plus_tail(self):
-        from data_loader import _cleanse_daily_returns
-        df = self._df([0.1] * 795 + [8.0] * 5)
-        cleaned, stats = _cleanse_daily_returns(df, threshold=5.0, max_tail=500)
-        assert stats["filtered"] == 5 and stats["tailed"] == 295
-
-    def test_all_filtered(self):
+    def test_all_suspect(self):
         from data_loader import _cleanse_daily_returns
         df = self._df([10.0, -15.0, 20.0])
-        cleaned, stats = _cleanse_daily_returns(df, threshold=5.0)
+        cleaned, stats = _cleanse_daily_returns(
+            df, suspect_dates={"2025-01-01", "2025-01-02", "2025-01-03"})
         assert len(cleaned) == 0 and stats["filtered"] == 3
 
     def test_custom_column(self):
@@ -108,12 +105,12 @@ class TestCleanseDailyReturns:
             "date": pd.date_range("2025-01-01", periods=3, freq="B"),
             "ret": [0.1, -0.2, 0.3],
         })
-        cleaned, _ = _cleanse_daily_returns(df, return_col="ret")
+        cleaned, _ = _cleanse_daily_returns(df, return_col="ret", suspect_dates=set())
         assert len(cleaned) == 3
 
     def test_stats_keys(self):
         from data_loader import _cleanse_daily_returns
-        _, stats = _cleanse_daily_returns(self._df([0.1] * 5))
+        _, stats = _cleanse_daily_returns(self._df([0.1] * 5), suspect_dates=set())
         assert {"original", "after_filter", "after_tail", "filtered", "tailed"}.issubset(stats)
 
 

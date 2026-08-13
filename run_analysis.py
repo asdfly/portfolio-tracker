@@ -37,6 +37,12 @@ from src.data_sources.fund_flow import (
     check_push2his_available, fetch_etf_fund_flow_batch,
 )
 from src.data_sources.market_events import run_market_events_collection
+from src.data_sources.collect_core import (
+    run_with_hard_timeout, install_requests_timeout,
+    start_watchdog, cancel_watchdog,
+    CollectTimeout, RunReporter,
+    fetch_run_quality_issues, count_pending_retries,
+)
 from src.analysis.backtest import StrategyBacktester, RebalanceStrategy
 from data_loader import get_db_connection
 
@@ -746,6 +752,7 @@ def main(argv=None):
     logger = logging.getLogger(__name__)
 
     backfill_date = args.date
+    _reporter = None   # P5 运行报告器; 仅在真正开始采集后创建
 
     # === 阶段零: 数据库备份(每次运行都执行，含周末与回填) ===
     run_database_backup(logger)
@@ -756,6 +763,17 @@ def main(argv=None):
     elif not is_trading_day():
         logger.info(f"今日为周末，跳过分析: {date.today()}")
         return 0
+
+    # === P1 止血: 全局超时补丁 + 看门狗（仅正常/回填运行需要） ===
+    # install_requests_timeout 给所有 requests/akshare 调用注入默认 (connect,read)
+    # 超时，消除无限挂死；start_watchdog 作为最后兜底，到点强制退出。
+    install_requests_timeout(connect=10, read=30)
+    _wd = start_watchdog(minutes=50, logger_=logger)
+
+    # === P5 可观测: 创建运行报告器(贯穿全程增量记录, finally 出报告) ===
+    _report_date = backfill_date or datetime.now().strftime("%Y-%m-%d")
+    _reporter = RunReporter(_report_date,
+                            mode=("backfill" if backfill_date else "daily"))
 
     start_time = time.time()
     task_name = "portfolio_daily_analysis"
@@ -796,17 +814,22 @@ def main(argv=None):
             for _k in ['http_proxy','https_proxy','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','all_proxy']:
                 _saved_proxies[_k] = os.environ.pop(_k, None)
             _api_checks = [
-                ('AKShare-行情', lambda: ak.stock_zh_a_spot_em()),
-                ('AKShare-板块', lambda: ak.stock_board_industry_name_em()),
-                ('AKShare-北向', lambda: ak.stock_hsgt_hist_em(symbol='沪股通')),
+                ('AKShare-行情', ak.stock_zh_a_spot_em, {}),
+                ('AKShare-板块', ak.stock_board_industry_name_em, {}),
+                ('AKShare-北向', ak.stock_hsgt_hist_em, {'symbol': '沪股通'}),
             ]
-            for _name, _fn in _api_checks:
+            for _name, _fn, _kw in _api_checks:
                 try:
                     _t0 = _time.time()
-                    _df = _fn()
+                    # 硬超时包裹：单源探测卡死也只损失该探测，不拖垮主流程
+                    _df = run_with_hard_timeout(_fn, timeout=30, **_kw)
                     _ms = (_time.time() - _t0) * 1000
                     _status = 'OK' if _df is not None and len(_df) > 0 else 'EMPTY'
                     health_results.append((_name, _status, f'{_ms:.0f}ms'))
+                except CollectTimeout as _e:
+                    # P1 止血生效: 硬超时已被杀进程恢复 -> P5 记"挂死恢复"告警
+                    health_results.append((_name, 'TIMEOUT', str(_e)[:60]))
+                    _reporter.mark_hang_recovered()
                 except requests.RequestException as _e:
                     _err_str = str(_e)
                     # ProxyError/ConnectionError = 网络不可达，非数据源故障
@@ -825,6 +848,12 @@ def main(argv=None):
             for _n, _s, _d in health_results:
                 _icon = 'V' if _s == 'OK' else 'X' if _s == 'FAIL' else '?' if _s == 'NETWORK' else '!'
                 logger.info(f"  [{_icon}] {_n}: {_s} ({_d})")
+                # P5: 各健康探测源独立计入运行报告
+                _reporter.record_source(
+                    f"HEALTH_{_n}", ok=1 if _s == 'OK' else 0,
+                    fail=1 if _s == 'FAIL' else 0,
+                    timeout=1 if _s == 'TIMEOUT' else 0,
+                    source_used=_s, detail=_d)
             # 仅当有 FAIL（非 NETWORK）时才告警
             if _fail_count > 0:
                 monitor.log_execution('source_health_check', 'warning',
@@ -841,19 +870,24 @@ def main(argv=None):
 
         # === 阶段一: 基础分析 ===
         results = run_stage1_basic(analyzer)
+        _reporter.stage("basic", "ok")
 
         # === 阶段二: 风险分析 ===
         risk_data = run_stage2_risk(analyzer, results)
+        _reporter.stage("risk", "ok")
 
         # === 阶段三: 监控告警 ===
         summary = results.get('summary', {})
         alerts = run_stage3_monitor(summary, risk_data)
+        _reporter.stage("monitor", "ok")
 
         # === 阶段3.2: 资金流数据采集 ===
         try:
             fund_flow_stats = run_stage_fund_flow(backfill_date)
+            _reporter.stage("fund_flow", "ok")
         except Exception as e:
             logger.warning(f"资金流数据采集失败(不影响主流程): {e}")
+            _reporter.stage("fund_flow", "error", note=str(e)[:160])
 
         # === 阶段三.五: 行业资讯与新闻分析 ===
         # 预置 None: 新闻阶段抛错时该变量仍需可用,
@@ -863,8 +897,10 @@ def main(argv=None):
             positions = results.get('positions', [])
             news_result = run_stage_news(positions, summary, results.get('indices', {}),
                                          date_str=backfill_date)
+            _reporter.stage("news", "ok")
         except Exception as e:
             logger.warning(f"新闻分析失败(不影响主流程): {e}")
+            _reporter.stage("news", "error", note=str(e)[:160])
 
 
         # === 阶段三.六: 宏观数据采集 ===
@@ -872,16 +908,24 @@ def main(argv=None):
             macro_stats = fetch_all_macro_daily()
             macro_count = sum(macro_stats.values())
             logger.info(f"宏观数据采集完成: {macro_stats}")
+            _reporter.stage("macro", "ok")
         except Exception as e:
             logger.warning(f"宏观数据采集失败: {e}")
+            _reporter.stage("macro", "error", note=str(e)[:160])
 
         # === 阶段三.七: 市场事件数据采集（龙虎榜/融资融券/股东增减持/机构调研/大宗交易）===
         try:
             me_stats = run_market_events_collection()
             me_total = sum(v for k, v in me_stats.items() if k != 'errors')
             logger.info(f"市场事件采集完成: {me_total} 条 ({me_stats})")
+            _reporter.stage("market_events", "ok")
+            for _k in ("margin", "lhb", "holder_change",
+                       "institution_research", "block_trade"):
+                _n = int(me_stats.get(_k, 0) or 0)
+                _reporter.record_source(f"ME_{_k}", ok=_n, source_used="akshare")
         except Exception as e:
             logger.warning(f"市场事件采集失败(不影响主流程): {e}")
+            _reporter.stage("market_events", "error", note=str(e)[:160])
 
         # === 阶段三.七b: ETF基本面数据采集（持仓F10数据）===
         try:
@@ -892,8 +936,13 @@ def main(argv=None):
                                                        target_date=backfill_date)
             f10_total = sum(v for k, v in f10_stats.items() if k != 'errors')
             logger.info(f"ETF基本面采集完成: {f10_total} 条 ({f10_stats})")
+            _reporter.stage("etf_fundamental", "ok")
+            _reporter.record_source("ETF_FUNDAMENTAL", ok=f10_total,
+                                    source_used="em_spot+sina_fallback")
         except Exception as e:
             logger.warning(f"ETF基本面采集失败(不影响主流程): {e}")
+            _reporter.stage("etf_fundamental", "error", note=str(e)[:160])
+            _reporter.record_source("ETF_FUNDAMENTAL", fail=1, source_used="error")
 
         # === 阶段三.八: 市场事件信号分析 + 告警 ===
         try:
@@ -937,12 +986,15 @@ def main(argv=None):
             logger.info(f"市场事件信号: 总计 {_me_summary['total']} 条 "
                         f"(风险 {_me_summary['by_type']['risk']}, "
                         f"机会 {_me_summary['by_type']['opp']})")
+            _reporter.stage("market_event_signals", "ok")
         except Exception as e:
             # exc_info 保留堆栈: 便于区分"数据缺失"与"代码缺陷(如 NameError)"
             logger.warning(f"市场事件信号分析失败(不影响主流程): {e}", exc_info=True)
+            _reporter.stage("market_event_signals", "error", note=str(e)[:160])
 
         # === 阶段四: 智能分析 ===
         advice_summary = run_stage4_smart(results, summary, risk_data)
+        _reporter.stage("smart", "ok")
 
 
         # === 阶段六: 数据质量巡检 ===
@@ -952,6 +1004,7 @@ def main(argv=None):
             score_data = dq.compute_quality_score()
             total_score = score_data['total_score']
             grade = score_data['grade']
+            _reporter.set_dq_score(total_score)   # P5: 真实 DQ 评分汇入报告
             freshness_txt = dq.get_freshness_summary()
             logger.info(f"数据质量评分: {total_score}/100 ({grade})")
             if freshness_txt:
@@ -974,8 +1027,10 @@ def main(argv=None):
                 logger.info("数据质量检查通过，无告警")
                 monitor.log_execution('data_quality_check', 'success',
                                    f"score={total_score}, grade={grade}")
+            _reporter.stage("dq_check", "ok")
         except Exception as e:
             logger.warning(f"数据质量巡检失败(不影响主流程): {e}")
+            _reporter.stage("dq_check", "error", note=str(e)[:160])
 
 
         # === 阶段六b: 信号回测 ===
@@ -983,14 +1038,28 @@ def main(argv=None):
             from src.analysis.signal_backtest import run_full_backtest_pipeline
             bt_result = run_full_backtest_pipeline()
             logger.info(f"[阶段六b/6b] 信号回测完成: {bt_result['backtest_rows']} 统计行, {bt_result['confidence_rows']} 置信度行")
+            _reporter.stage("backtest", "ok")
         except Exception as e:
             logger.warning(f"信号回测失败(不影响主流程): {e}")
+            _reporter.stage("backtest", "error", note=str(e)[:160])
 
         # === 打印摘要 ===
         print_summary(results, alerts, advice_summary)
 
         # === 阶段五: 发送通知报告 ===
         send_daily_report(results, alerts, advice_summary, news_result)
+
+        # === P0-2: 重建单位净值账本（TWR 时间加权收益）===
+        # 挂接在报告发送之后，summary 与 trade_records 此时均已就绪。
+        # 异常仅记 warning，不阻断主流程（与资金流/新闻等阶段同级容错）。
+        try:
+            from src.analysis.nav_engine import rebuild_portfolio_nav
+            _nav_rows = rebuild_portfolio_nav()
+            logger.info(f"单位净值账本重建完成: {_nav_rows} 行")
+            _reporter.stage("nav_rebuild", "ok")
+        except Exception as e:
+            logger.warning(f"单位净值账本重建失败(不影响主流程): {e}")
+            _reporter.stage("nav_rebuild", "error", note=str(e)[:160])
 
         # 记录执行成功
         duration = time.time() - start_time
@@ -1016,6 +1085,39 @@ def main(argv=None):
             logger.critical(f"Unhandled error in task {task_name}: {e}")
 
         return 1
+
+    finally:
+        # P1 止血: 正常/异常结束都取消看门狗，避免僵尸定时器
+        cancel_watchdog()
+
+        # === P5 可观测: 无论成功/异常, 都产出本次运行报告(可观测兜底) ===
+        if _reporter is not None:
+            try:
+                _issues = []
+                _pending = 0
+                _rep_conn = None
+                try:
+                    _rep_conn = get_db_connection()
+                    _issues = fetch_run_quality_issues(_rep_conn, _reporter.run_date)
+                    _pending = count_pending_retries(_rep_conn)
+                except Exception as _e:
+                    logger.warning(f"[P5] 读取质量/队列数据失败: {_e}")
+                finally:
+                    if _rep_conn is not None:
+                        try:
+                            _rep_conn.close()
+                        except Exception:
+                            pass
+                _report, _rpath = _reporter.finalize_and_write(
+                    dq_issues=_issues, queue_pending=_pending,
+                    reports_dir=str(PROJECT_DIR / "data" / "reports"),
+                    dispatch_config=str(PROJECT_DIR / "config" / "notification.json"))
+                if _rpath:
+                    logger.info(f"[P5] 运行报告已生成: {_rpath} "
+                                f"(dq_score={_report.get('dq_score')}, "
+                                f"alerts={len(_report.get('alerts', []))})")
+            except Exception as _e:
+                logger.warning(f"[P5] 报告生成失败(不影响主流程): {_e}")
 
 
 if __name__ == '__main__':

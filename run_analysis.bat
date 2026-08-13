@@ -2,7 +2,7 @@
 chcp 65001 >nul
 
 set PROJECT_DIR=%~dp0
-set PYTHON="C:\Program Files\Python310\python.exe" -E
+set PYTHON="%~dp0venv313\Scripts\python.exe" -E
 
 echo ============================================
 echo   投资组合智能分析系统 v2.0

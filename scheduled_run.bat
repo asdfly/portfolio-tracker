@@ -13,4 +13,8 @@ cd /d "%~dp0"
 if not exist logs mkdir logs
 
 call "%~dp0run_analysis.bat" >> logs\scheduled_run.log 2>&1
+
+:: 收盘分析完成后推送日报邮件（HTML 附件，免确认；未启用 SMTP 时脚本内部自动跳过）
+call "%~dp0send_report_email.bat" >> logs\scheduled_run.log 2>&1
+
 exit /b %ERRORLEVEL%

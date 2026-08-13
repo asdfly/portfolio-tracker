@@ -12,10 +12,12 @@ logger = logging.getLogger(__name__)
 class RiskAnalyzer:
     """风险分析器"""
 
-    def __init__(self, risk_free_rate: float = 0.025, 
-                 trading_days_per_year: int = 252):
-        self.risk_free_rate = risk_free_rate  # 无风险利率
-        self.trading_days = trading_days_per_year
+    def __init__(self, risk_free_rate: float = None,
+                 trading_days_per_year: int = None):
+        # P0-1: 默认统一引用 config.settings 单一来源，消除 0.025 / 252 硬编码
+        from config.settings import RISK_FREE_RATE, TRADING_DAYS_PER_YEAR
+        self.risk_free_rate = risk_free_rate if risk_free_rate is not None else RISK_FREE_RATE
+        self.trading_days = trading_days_per_year if trading_days_per_year is not None else TRADING_DAYS_PER_YEAR
 
     def calculate_all(self, returns: np.ndarray, prices: np.ndarray,
                      benchmark_returns: Optional[np.ndarray] = None) -> Dict[str, Any]:
@@ -231,8 +233,16 @@ class RiskAnalyzer:
         # 跟踪误差
         tracking_error = np.std(returns - benchmark_returns) * np.sqrt(self.trading_days)
 
-        # 信息比率
-        information_ratio = alpha / tracking_error if tracking_error > 0 else 0
+        # 信息比率（标准定义）：主动收益均值 / 跟踪误差
+        # 原实现用 alpha / tracking_error，混用了 Jensen's alpha(CAPM) 与主动管理框架，
+        # 量纲与含义均不对。标准 IR = mean(Rp-Rb) / std(Rp-Rb) * sqrt(年化天数)。
+        active_returns = returns - benchmark_returns
+        active_std = np.std(active_returns, ddof=1)
+        information_ratio = (
+            np.mean(active_returns) / active_std * np.sqrt(self.trading_days)
+            if active_std > 0
+            else 0
+        )
 
         return {
             'beta': round(beta, 4),

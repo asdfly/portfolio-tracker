@@ -3,7 +3,7 @@ chcp 65001 >nul
 title 投资组合智能分析系统 v2.0
 
 set PROJECT_DIR=%~dp0
-set "PYTHON_ENV=C:\Program Files\Python310\python.exe"
+set "PYTHON_ENV=%PROJECT_DIR%venv313\Scripts\python.exe"
 set "VENV_ACTIVATE=%PROJECT_DIR%venv\Scripts\activate.bat"
 set "PYTHON=%PYTHON_ENV%"
 

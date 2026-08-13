@@ -50,26 +50,32 @@ ETF_TO_INDEX = {
 }
 
 
-def fetch_etf_spot_batch(codes: List[str]) -> pd.DataFrame:
+def fetch_etf_spot_batch(codes: List[str]):
     """批量获取ETF实时行情(含份额/折价率/资金流)。
 
     一次调接口获取全量ETF列表, 再过滤目标代码, 避免逐个请求。
+    EM主源缺漏的特殊ETF(如债券ETF 511380)自动降级到新浪历史K线组装行。
 
     Args:
         codes: ETF代码列表 (6位数字)
 
     Returns:
-        DataFrame, 标准化列名
+        (df, sina_fallback_codes):
+            df: 标准化列名的 DataFrame(已含主源+兜底行)
+            sina_fallback_codes: 走新浪兜底补齐的代码列表([]表示无兜底)
     """
     import akshare as ak
+    sina_fallback_codes: List[str] = []
     try:
         df = ak.fund_etf_spot_em()
     except Exception as e:
         logger.warning(f"ETF实时行情获取失败: {e}")
-        return pd.DataFrame()
+        df = pd.DataFrame()
 
+    # EM 完全失败时不走新浪全量兜底(避免对全部持仓逐个请求的网络风暴),
+    # 仅当 EM 返回了数据但缺漏部分持仓ETF时才降级。
     if df is None or df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), sina_fallback_codes
 
     col_map = {
         "代码": "code", "名称": "name",
@@ -94,6 +100,70 @@ def fetch_etf_spot_batch(codes: List[str]) -> pd.DataFrame:
     df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
     df = df[df["code"].isin(codes)]
     df = df.reset_index(drop=True)
+
+    # ---- P3 降级: EM 缺漏的持仓ETF(如债券ETF 511380)走新浪历史K线兜底 ----
+    present = set(df["code"].tolist())
+    missing = [c for c in codes if c not in present]
+    if missing:
+        fb = fetch_etf_spot_sina_fallback(missing)
+        if not fb.empty:
+            sina_fallback_codes = fb["code"].tolist()
+            df = pd.concat([df, fb], ignore_index=True)
+            df = df.reset_index(drop=True)
+            logger.info(f"[P3降级] 新浪兜底补齐 {len(sina_fallback_codes)} 只ETF: "
+                        f"{sina_fallback_codes}")
+    return df, sina_fallback_codes
+
+
+def fetch_etf_spot_sina_fallback(codes: List[str]) -> pd.DataFrame:
+    """新浪历史K线兜底: 为 fund_etf_spot_em 缺漏的持仓ETF(如债券ETF 511380)组装spot行。
+
+    取最新一日OHLC, iopv 标注为收盘价代理(非真实IOPV), change_pct 诚实留空。
+    防御性: 单只失败不影响其它; 列名取不到时降级为 0/None。
+    """
+    import akshare as ak
+
+    rows = []
+    for code in codes:
+        try:
+            market = "sh" if code.startswith(("51", "56", "58")) else "sz"
+            hist = ak.fund_etf_hist_sina(symbol=f"{market}{code}")
+            if hist is None or hist.empty:
+                logger.debug(f"{code} 新浪历史K线为空, 跳过兜底")
+                continue
+            latest = hist.iloc[-1]
+
+            def _g(key):
+                v = latest.get(key)
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return None
+                return v
+
+            rows.append({
+                "code": code,
+                "name": "",                       # 名称由 etf_categories 在 run 中补齐
+                "price": float(_g("收盘价") or 0),
+                "iopv": float(_g("收盘价") or 0),  # 新浪收盘价代理(非真实IOPV)
+                "open": float(_g("开盘价") or 0),
+                "high": float(_g("最高价") or 0),
+                "low": float(_g("最低价") or 0),
+                "pre_close": None,
+                "volume": float(_g("成交量") or 0),
+                "amount": float(_g("成交额") or 0),
+                "change_pct": None,               # 诚实留空
+                "data_date": str(_g("日期") or ""),
+            })
+        except Exception as e:
+            logger.debug(f"{code} 新浪兜底失败: {e}")
+
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    # 对齐主源列(缺的补 None), 保证 concat 后列一致
+    for col in ["name", "price", "iopv", "open", "high", "low", "pre_close",
+                "volume", "amount", "change_pct", "data_date"]:
+        if col not in df.columns:
+            df[col] = None
     return df
 
 
@@ -318,11 +388,18 @@ def run_etf_fundamental_collection(
 
         # 1. ETF实时行情(含份额/折价/资金流)
         try:
-            df_spot = fetch_etf_spot_batch(codes)
+            df_spot, sina_codes = fetch_etf_spot_batch(codes)
             if not df_spot.empty:
                 # 添加sector信息
                 df_spot["sector"] = df_spot["code"].map(
                     lambda c: etf_categories.get(c, {}).get("sector", ""))
+                # 新浪兜底行 name 为空, 用 etf_categories 补齐(主源行已有name)
+                if sina_codes:
+                    sina_set = set(sina_codes)
+                    df_spot["name"] = df_spot.apply(
+                        lambda r: (etf_categories.get(r["code"], {}).get("name", "") or "")
+                        if r["code"] in sina_set else (r.get("name") or ""),
+                        axis=1)
                 # 添加跟踪指数估值
                 index_valuations = {}
                 for code in codes:
@@ -344,7 +421,32 @@ def run_etf_fundamental_collection(
                 stats["valuation"] = len(index_valuations)
 
                 df_spot["date"] = target_date
-                stats["spot"] = save_to_db(conn, "etf_fundamental", df_spot, ["date","code"])
+                # ---- P2 真实性闸门: 实时快照只能标今天, 历史请求整体拒绝 ----
+                from src.data_sources.collect_core import (
+                    gate_spot_for_today, flag_spot_stale, record_quality_issue)
+                df_spot, _n_rej, _issues = gate_spot_for_today(
+                    df_spot, target_date, "etf_fundamental", conn=conn)
+                if df_spot is None or df_spot.empty:
+                    logger.warning(
+                        "[真实性闸门] ETF实时快照: 历史日期请求被拒绝，未落库"
+                        "(如需历史净值请走新浪回填路径)")
+                    stats["spot"] = 0
+                else:
+                    # 软校验: 源数据日期(data_date) 滞后提示(仍落库, 仅标记)
+                    flag_spot_stale(df_spot, target_date, "etf_fundamental", conn=conn)
+                    stats["spot"] = save_to_db(conn, "etf_fundamental", df_spot, ["date","code"])
+                    # ---- P3 诚实标注: 新浪兜底行的 iopv 实为收盘价代理 ----
+                    if sina_codes:
+                        record_quality_issue(
+                            conn, target_date, target_date, "etf_fundamental", [{
+                                "issue_type": "sina_iopv_proxy",
+                                "detail": (f"{len(sina_codes)} 只ETF(如债券ETF)EM主源缺漏，"
+                                           f"iopv采用新浪收盘价代理(非真实IOPV): "
+                                           f"{','.join(sina_codes)}"),
+                                "n_affected": len(sina_codes),
+                                "action": "stored_as_target",
+                                "sample": ",".join(sina_codes[:5]),
+                            }])
                 logger.info(f'  ETF行情: {stats["spot"]}条, 估值: {stats["valuation"]}条')
         except (KeyError, ValueError, TypeError) as e:
             stats["errors"].append(f"ETF行情: {e}")

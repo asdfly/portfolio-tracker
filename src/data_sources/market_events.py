@@ -261,21 +261,38 @@ def fetch_block_trade_data(start_date: str, end_date: str) -> pd.DataFrame:
 # ============================================================
 
 def save_market_events(conn: sqlite3.Connection, df: pd.DataFrame, table_name: str,
-                       unique_columns: List[str]) -> int:
+                       unique_columns: List[str],
+                       target_date: Optional[str] = None,
+                       source_date_col: str = "date",
+                       run_date: Optional[str] = None) -> int:
     """通用保存函数：INSERT OR REPLACE 写入市场事件表。
-    
+
     Args:
         conn: 数据库连接
         df: 待写入 DataFrame
         table_name: 目标表名
         unique_columns: 用于判断重复的列名列表
-        
+        target_date: 目标采集日期 (YYYY-MM-DD)。传入即启用 P2 真实性闸门——
+            仅保留 `source_date_col` == target_date 的行，其余记为质量事件并排除。
+        source_date_col: 源自带真实日期的列名（默认 'date'）。
+        run_date: 闸门运行日期（默认今天），仅用于质量事件记录。
+
     Returns:
         写入/更新行数
     """
     if df is None or df.empty:
         return 0
-    
+
+    # ---- P2 真实性闸门：落库前断言"返回日期 == 目标日期" ----
+    if target_date is not None:
+        from src.data_sources.collect_core import gate_source_date_matches
+        df, _n_rej, _issues = gate_source_date_matches(
+            df, source_date_col, target_date, table_name,
+            conn=conn, run_date=run_date)
+        if df is None or df.empty:
+            logger.info(f"[真实性闸门] {table_name}: 全部行未通过日期校验，跳过写入")
+            return 0
+
     # 清理NaN
     df = df.copy()
     for col in df.columns:
@@ -344,7 +361,8 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         # 1. 龙虎榜
         try:
             df = fetch_lhb_data(date_param)
-            stats["lhb"] = save_market_events(conn, df, "stock_lhb", ["date", "code"])
+            stats["lhb"] = save_market_events(conn, df, "stock_lhb", ["date", "code"],
+                                             target_date=target_date)
             logger.info(f"  龙虎榜: {stats['lhb']} 条")
         except sqlite3.OperationalError as e:
             stats["errors"].append(f"龙虎榜: {e}")
@@ -355,8 +373,15 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         # 2. 融资融券
         try:
             df = fetch_margin_data(date_param)
-            stats["margin"] = save_market_events(conn, df, "stock_margin", ["date", "code"])
+            stats["margin"] = save_market_events(conn, df, "stock_margin", ["date", "code"],
+                                                 target_date=target_date)
             logger.info(f"  融资融券: {stats['margin']} 条")
+            # P3: 空数据 -> 加入补采队列, 由补采窗口/自动化(P4)重试
+            if stats["margin"] == 0:
+                from src.data_sources.collect_core import enqueue_retry
+                enqueue_retry(conn, target_date, "stock_margin",
+                              reason="当日两融数据为空,待补采窗口重试")
+                logger.warning(f"  融资融券: 空数据, 已加入补采队列({target_date})")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"融资融券: {e}")
             logger.warning(f"  融资融券失败(跳过): {e}")
@@ -367,7 +392,8 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         try:
             df = fetch_holder_change_data(date_param)
             stats["holder_change"] = save_market_events(
-                conn, df, "stock_holder_change", ["date", "holder_name"])
+                conn, df, "stock_holder_change", ["date", "holder_name"],
+                target_date=target_date)
             logger.info(f"  股东增减持: {stats['holder_change']} 条")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"股东增减持: {e}")
@@ -379,7 +405,8 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         try:
             df = fetch_institution_research_data(date_param)
             stats["institution_research"] = save_market_events(
-                conn, df, "stock_institution_research", ["date", "code", "institution"])
+                conn, df, "stock_institution_research", ["date", "code", "institution"],
+                target_date=target_date)
             logger.info(f"  机构调研: {stats['institution_research']} 条")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"机构调研: {e}")
@@ -391,7 +418,8 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         try:
             df = fetch_block_trade_data(date_param, date_param)
             stats["block_trade"] = save_market_events(
-                conn, df, "stock_block_trade", ["date", "code", "buyer_broker", "seller_broker"])
+                conn, df, "stock_block_trade", ["date", "code", "buyer_broker", "seller_broker"],
+                target_date=target_date)
             logger.info(f"  大宗交易: {stats['block_trade']} 条")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"大宗交易: {e}")
@@ -409,6 +437,62 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
     total = sum(v for k, v in stats.items() if k != "errors")
     logger.info(f"[市场事件] 采集完成, 合计 {total} 条")
     return stats
+
+
+def run_pending_margin_retries(conn, date_display: Optional[str] = None,
+                               max_attempts: int = 3) -> Dict[str, Any]:
+    """消费补采队列中的 stock_margin 待重试项, 重新采集并落库(走 P2 闸门)。
+
+    由补采窗口(16:30)/次日 09:30 自动化(P4)调用。每项最多尝试 max_attempts 次:
+    成功置 done; 仍为空且达上限置 exhausted(放弃); 否则保留 pending 待下次窗口。
+
+    Args:
+        conn: 数据库连接
+        date_display: 仅处理该目标日期的 pending 项; None 处理全部
+        max_attempts: 单项目最大尝试次数
+
+    Returns:
+        {"attempted": int, "succeeded": int, "still_pending": int}
+    """
+    from src.data_sources.collect_core import list_pending_retries
+
+    pending = list_pending_retries(conn, source="stock_margin", target_date=date_display)
+    attempted = succeeded = still_pending = 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for rid, tdate, _source in pending:
+        attempted += 1
+        ymd = tdate.replace("-", "")
+        try:
+            df = fetch_margin_data(ymd)
+        except Exception as e:
+            logger.warning(f"  两融补采重试失败({tdate}): {e}")
+            df = pd.DataFrame()
+        if df is not None and not df.empty:
+            n = save_market_events(conn, df, "stock_margin", ["date", "code"],
+                                   target_date=tdate)
+            if n > 0:
+                conn.execute(
+                    "UPDATE collection_retry_queue SET status='done', "
+                    "attempts=attempts+1, last_tried=? WHERE id=?", (now, rid))
+                succeeded += 1
+                logger.info(f"  两融补采成功({tdate}): {n} 条")
+                continue
+        # 仍为空
+        conn.execute(
+            "UPDATE collection_retry_queue SET attempts=attempts+1, last_tried=? "
+            "WHERE id=?", (now, rid))
+        cur = conn.execute(
+            "SELECT attempts FROM collection_retry_queue WHERE id=?", (rid,)).fetchone()
+        att = cur[0] if cur else 0
+        if att >= max_attempts:
+            conn.execute(
+                "UPDATE collection_retry_queue SET status='exhausted' WHERE id=?", (rid,))
+            logger.warning(f"  两融补采放弃({tdate}): 已达 {max_attempts} 次")
+        else:
+            logger.info(f"  两融补采仍空({tdate}): 保留待下次窗口(attempt {att})")
+            still_pending += 1
+    conn.commit()
+    return {"attempted": attempted, "succeeded": succeeded, "still_pending": still_pending}
 
 
 # ============================================================
@@ -459,7 +543,8 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
             if "lhb" in all_sources:
                 try:
                     df = fetch_lhb_data(date_str)
-                    n = save_market_events(conn, df, "stock_lhb", ["date", "code"])
+                    n = save_market_events(conn, df, "stock_lhb", ["date", "code"],
+                                          target_date=date_display)
                     totals["lhb"] += n
                 except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  龙虎榜失败: {e}")
@@ -469,7 +554,8 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
             if "margin" in all_sources:
                 try:
                     df = fetch_margin_data(date_str)
-                    n = save_market_events(conn, df, "stock_margin", ["date", "code"])
+                    n = save_market_events(conn, df, "stock_margin", ["date", "code"],
+                                          target_date=date_display)
                     totals["margin"] += n
                 except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  融资融券失败: {e}")
@@ -480,7 +566,8 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                 try:
                     df = fetch_holder_change_data(date_str)
                     n = save_market_events(conn, df, "stock_holder_change",
-                                          ["date", "holder_name"])
+                                          ["date", "holder_name"],
+                                          target_date=date_display)
                     totals["holder_change"] += n
                 except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  股东增减持失败: {e}")
@@ -491,7 +578,8 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                 try:
                     df = fetch_institution_research_data(date_str)
                     n = save_market_events(conn, df, "stock_institution_research",
-                                          ["date", "code", "institution"])
+                                          ["date", "code", "institution"],
+                                          target_date=date_display)
                     totals["institution_research"] += n
                 except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  机构调研失败: {e}")
@@ -502,7 +590,8 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                 try:
                     df = fetch_block_trade_data(date_str, date_str)
                     n = save_market_events(conn, df, "stock_block_trade",
-                                          ["date", "code", "buyer_broker", "seller_broker"])
+                                          ["date", "code", "buyer_broker", "seller_broker"],
+                                          target_date=date_display)
                     totals["block_trade"] += n
                 except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  大宗交易失败: {e}")
@@ -611,7 +700,8 @@ def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
         for d in missing:
             try:
                 df = fetch_fn(d.replace("-", ""))
-                n = save_market_events(conn, df, table, unique_cols)
+                n = save_market_events(conn, df, table, unique_cols,
+                                       target_date=d)
                 backfill_total += n
                 if n > 0:
                     logger.info(f"  {table} {d}: 回填 {n} 条")

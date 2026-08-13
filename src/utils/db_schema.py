@@ -110,7 +110,11 @@ TABLE_DEFS = [
             medium_inflow REAL,
             medium_pct REAL,
             small_inflow REAL,
-            small_pct REAL
+            small_pct REAL,
+            -- P1-A 数据可信度标签: 标记每条资金流的来源与可靠性
+            source TEXT,            -- 数据源标识: em_push2his / em_spot / ths / ths_agg / ths_decomp / em_hsgt / kline_est
+            is_estimated BOOLEAN DEFAULT 0,  -- 1=估算/反推(非交易所直采), 0=真实采集
+            confidence REAL         -- 0~1 置信度 (真实源=1.0, 估算源按精度递减)
         )
     """, []),
 
@@ -406,7 +410,7 @@ TABLE_DEFS = [
     """, [
         "CREATE INDEX IF NOT EXISTS idx_block_date ON stock_block_trade(date)",
         "CREATE INDEX IF NOT EXISTS idx_block_code ON stock_block_trade(code)",
-    ]),
+    ]),
     # gold_sge_hist: SGE黄金K线数据
     ("gold_sge_hist", """
         CREATE TABLE IF NOT EXISTS gold_sge_hist (
@@ -435,7 +439,23 @@ TABLE_DEFS = [
     """, [
         "CREATE INDEX IF NOT EXISTS idx_gold_etf_date ON gold_etf_holdings(date)",
     ]),
-]
+
+    # --- P0-2: 单位净值账本（时间加权收益 TWR） ---
+    ("portfolio_nav", """
+        CREATE TABLE IF NOT EXISTS portfolio_nav (
+            date TEXT PRIMARY KEY,
+            unit_nav REAL,          -- 单位净值，起始 1.0
+            total_units REAL,       -- 总份额（无申赎则恒定=初始市值）
+            total_value REAL,       -- 当日组合市值（冗余，便于校验）
+            net_flow REAL,          -- 当日净现金流（流入为正，来自 trade_records）
+            twr_cumulative REAL,    -- 累计时间加权收益（剔除申赎扰动）
+            mwr_return REAL,        -- 资金加权收益（基于现金流 IRR，可选）
+            is_suspect BOOLEAN DEFAULT 0  -- P0-2: total_value 跳变与日收益/现金流不符(疑似数据失真)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_nav_date ON portfolio_nav(date)",
+    ]),
+]
 
 # ============================================================
 #  DataQualityChecker 使用的表注册信息

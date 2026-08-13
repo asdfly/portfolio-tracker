@@ -13,7 +13,10 @@ class TestRootDirectoryClean:
 
     def test_root_only_has_core_py(self):
         py_files = [f.name for f in PROJECT_DIR.glob("*.py")]
-        assert set(py_files) == {"dashboard.py", "run_analysis.py", "data_loader.py", "sidebar.py"}, \
+        # 根目录允许的 .py：核心模块 + 合法的根级运行脚本
+        allowed = {"dashboard.py", "run_analysis.py", "data_loader.py", "sidebar.py",
+                   "run_morning.py", "run_supplemental.py"}
+        assert set(py_files) == allowed, \
             f"Unexpected: {py_files}"
 
     def test_root_no_test_py(self):

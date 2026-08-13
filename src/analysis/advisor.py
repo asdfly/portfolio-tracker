@@ -53,10 +53,18 @@ class SmartAdvisor:
         """分析投资组合并生成建议"""
         advices = []
 
-        # 1. 再平衡建议
+        # 1. 再平衡建议（阈值法，文字信号）
         rebalance_advice = self._check_rebalance_needs(portfolio_data)
         if rebalance_advice:
             advices.extend(rebalance_advice)
+
+        # 1b. 再平衡引擎：基于真实持仓快照生成可执行方案（T+1 + 成本预估）
+        engine_plan = self.generate_rebalance_plan()
+        if engine_plan is not None:
+            # 引擎方案作为权威再平衡建议；去掉阈值法的整体汇总，避免重复
+            advices = [a for a in advices
+                       if not (a.type == AdviceType.REBALANCE and a.title == "组合需要再平衡")]
+            advices.insert(0, self._plan_to_advice(engine_plan))
 
         # 2. 风险管理建议
         risk_advice = self._check_risk_indicators(risk_data)
@@ -128,6 +136,55 @@ class SmartAdvisor:
 
         self.advice_history.extend(advices)
         return advices
+
+    # ------------------------------------------------------------------
+    #  再平衡引擎接入（P2-B 产品化）
+    # ------------------------------------------------------------------
+    def generate_rebalance_plan(self, as_of: Optional[str] = None,
+                                 strategy: str = "layered") -> "Optional[RebalancePlan]":
+        """调用再平衡引擎，对真实持仓生成可执行调仓方案。
+
+        返回 RebalancePlan（仅在需要调仓时非空），供 UI/报告渲染完整方案。
+        只读，不写库；缺表或空库等异常时安全返回 None（静默降级）。
+        """
+        try:
+            from src.analysis.rebalance_engine import compute_rebalance_suggestion
+            plan = compute_rebalance_suggestion(self.db, as_of_date=as_of, strategy=strategy)
+        except Exception as e:  # 引擎依赖持仓快照/日历，缺表或空库时静默降级
+            logger.warning(f"再平衡引擎调用失败，跳过: {e}")
+            return None
+        return plan if getattr(plan, "action_needed", False) else None
+
+    def _plan_to_advice(self, plan: "RebalancePlan") -> "InvestmentAdvice":
+        """将 RebalancePlan 转为 InvestmentAdvice（兼容现有建议渲染/序列化）。"""
+        items = []
+        for t in plan.trades[:12]:
+            items.append(
+                f"{t.direction} {t.name}({t.code}) {t.trade_value:,.0f}元 / {t.shares}手 "
+                f"（{t.current_weight*100:.1f}%→{t.target_weight*100:.1f}%）"
+            )
+        if len(plan.trades) > 12:
+            items.append(f"…其余 {len(plan.trades) - 12} 笔")
+        items.append(
+            f"预估交易成本 ≈ {plan.estimated_cost:,.0f}元，T+1 执行日 {plan.execution_date}"
+        )
+        advice = InvestmentAdvice(
+            type=AdviceType.REBALANCE,
+            priority=AdvicePriority.HIGH if plan.turnover > 0.15 else AdvicePriority.MEDIUM,
+            title="组合再平衡方案（可执行）",
+            description=(
+                f"基于真实持仓快照，最大权重偏离触发再平衡。总市值 {plan.total_value:,.0f}元，"
+                f"换手率 {plan.turnover*100:.1f}%，预估成本 {plan.estimated_cost:,.0f}元，"
+                f"T+1 执行日 {plan.execution_date}。"
+            ),
+            action_items=items,
+            related_codes=[t.code for t in plan.trades[:10]],
+            confidence=min(0.6 + plan.turnover, 0.95),
+            created_at=datetime.now(),
+        )
+        # 挂上完整方案，供 UI 直接渲染（序列化到建议历史时忽略此属性）
+        advice.rebalance_plan = plan
+        return advice
 
     def _check_rebalance_needs(self, portfolio_data: Dict) -> List[InvestmentAdvice]:
         """检查再平衡需求"""

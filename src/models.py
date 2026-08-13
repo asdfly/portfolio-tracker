@@ -135,6 +135,7 @@ class ReturnAttribution:
     benchmark_return: float = 0.0
     allocation_effect: Dict[str, float] = field(default_factory=dict)
     selection_effect: Dict[str, float] = field(default_factory=dict)
+    interaction_effect: Dict[str, float] = field(default_factory=dict)
     sector_returns: Dict[str, float] = field(default_factory=dict)
     sector_weights: Dict[str, float] = field(default_factory=dict)
     bench_weights: Dict[str, float] = field(default_factory=dict)

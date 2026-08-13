@@ -15,8 +15,10 @@ import pandas as pd
 import sqlite3
 from typing import Dict, List
 
-# 无风险利率（年化），用于计算超额收益
-RISK_FREE_RATE_ANNUAL = 0.02  # 2% 年化
+from config.settings import RISK_CONFIG
+
+# 无风险利率（年化），用于计算超额收益（P0-1: 统一引用 RISK_CONFIG，消除 0.02 硬编码）
+RISK_FREE_RATE_ANNUAL = RISK_CONFIG["risk_free_rate"]
 
 # 因子构建所需的指数代码
 FACTOR_INDEX_CODES = {

@@ -6,6 +6,7 @@
 数据清洗（_cleanse_*）和数据库初始化函数。
 """
 
+import logging
 import sqlite3
 from datetime import datetime
 
@@ -13,7 +14,17 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from config.settings import CHART_DAYS, DATABASE_PATH, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
+logger = logging.getLogger(__name__)
+
+from config.settings import (
+    CHART_DAYS,
+    DATABASE_PATH,
+    ETF_CATEGORIES,
+    INDEX_CODES,
+    RISK_FREE_RATE,
+    SECTOR_COLORS,
+    TRADING_DAYS_PER_YEAR,
+)
 
 from src.models import (
     MonteCarloResult,
@@ -185,52 +196,58 @@ def load_calendar_data():
     df["day"] = df["date"].dt.day
     return df
 
-def _cleanse_daily_returns(df, return_col="daily_return", threshold=5.0, max_tail=500):
-    """清洗日收益率数据：过滤异常值 + 截断早期高波动区间
+def _load_suspect_dates():
+    """从 portfolio_nav 加载 is_suspect=1 的失真日期集合（'YYYY-MM-DD'）。
 
-    Args:
-        df: 包含 daily_return 列的 DataFrame
-        return_col: 收益率列名
-        threshold: 异常值阈值（%），默认5%（ETF单日正常波动上限）
-        max_tail: 最大采样条数，默认500（约2个交易年），避免早期高波动区间污染
+    P0-3：用数据质量标记替代 |ret|>5% 幅度截断——幅度截断会误删真实的大波动日，
+    而 is_suspect 只标记 total_value 跳变与日收益/现金流不符的失真日（约13/3450天）。
+    """
+    try:
+        conn = get_db_connection()
+        df = pd.read_sql_query("SELECT date FROM portfolio_nav WHERE is_suspect = 1", conn)
+        conn.close()
+        if df.empty:
+            return set()
+        return set(pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d").tolist())
+    except Exception:
+        return set()
+
+
+def _cleanse_daily_returns(df, return_col="daily_return", suspect_dates=None):
+    """清洗日收益率：剔除 portfolio_nav.is_suspect 标记的失真日。
+
+    不再使用 |ret| > 5% 幅度截断（会误删真实大波动日），改为按数据质量标记剔除。
+    suspect_dates: 'YYYY-MM-DD' 集合；为 None 时从 portfolio_nav 自动加载。
 
     Returns:
         (cleaned_df, stats) 元组
-        stats = {'original': n, 'after_filter': n, 'after_tail': n, 'filtered': n, 'tailed': n}
+        stats = {'original', 'after_filter', 'after_tail', 'filtered', 'tailed'}
     """
     original_count = len(df)
-
-    # 步骤1: 过滤 |return| > threshold 的异常值
-    mask = df[return_col].abs() <= threshold
-    filtered_df = df[mask].copy()
-    filtered_count = original_count - len(filtered_df)
-
-    # 步骤2: 截断到最近 max_tail 条，排除早期高波动区间
-    if len(filtered_df) > max_tail:
-        tailed_df = filtered_df.tail(max_tail).copy()
-        tailed_count = len(filtered_df) - len(tailed_df)
-    else:
-        tailed_df = filtered_df
-        tailed_count = 0
+    if suspect_dates is None:
+        suspect_dates = _load_suspect_dates()
+    dates = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    mask = ~dates.isin(suspect_dates)
+    cleaned_df = df[mask].copy()
+    filtered_count = original_count - len(cleaned_df)
 
     stats = {
         "original": original_count,
-        "after_filter": len(filtered_df),
-        "after_tail": len(tailed_df),
+        "after_filter": len(cleaned_df),
+        "after_tail": len(cleaned_df),
         "filtered": filtered_count,
-        "tailed": tailed_count,
+        "tailed": 0,
     }
 
-    if filtered_count > 0 or tailed_count > 0:
+    if filtered_count > 0:
         import logging
 
         logger = logging.getLogger(__name__)
         logger.info(
-            f"日收益率清洗: {original_count}条 -> 过滤|ret|>{threshold}%: {filtered_count}条, "
-            f"截断早期: {tailed_count}条, 剩余{len(tailed_df)}条"
+            f"日收益率质量剔除: {original_count}条 -> 剔除 is_suspect 失真日: {filtered_count}条, 剩余{len(cleaned_df)}条"
         )
 
-    return tailed_df, stats
+    return cleaned_df, stats
 
 def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
     """计算扩展风险指标（基于持仓稳定后的日收益率）
@@ -261,10 +278,13 @@ def compute_extended_risk_metrics(end_date=None, min_date="2025-08-01"):
 
     # Sortino Ratio (downside deviation)
     neg_returns = returns[returns < 0]
-    downside_std = neg_returns.std() * np.sqrt(252) if len(neg_returns) > 1 else np.nan
-    annual_return = returns.mean() * 252
-    annual_std = returns.std() * np.sqrt(252)
-    sortino = (annual_return - 0.025) / downside_std if downside_std and downside_std > 0 else np.nan
+    downside_std = neg_returns.std() * np.sqrt(TRADING_DAYS_PER_YEAR) if len(neg_returns) > 1 else np.nan
+    # P0-1: 统一为几何年化口径（与 risk.py 的 calculate_return_metrics 一致），
+    # 原算术年化 returns.mean()*252 会系统性高估。
+    n_ret = len(returns)
+    annual_return = (1 + returns).prod() ** (TRADING_DAYS_PER_YEAR / n_ret) - 1
+    annual_std = returns.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+    sortino = (annual_return - RISK_FREE_RATE) / downside_std if downside_std and downside_std > 0 else np.nan
 
     # Max Drawdown Duration（使用 corrected daily_return 累积净值，避免 total_value 跳变）
     max_dd_duration = 0
@@ -667,9 +687,9 @@ def run_monte_carlo(days=252, n_simulations=500, end_date=None):
     df["daily_return"] = df["daily_return"] / 100
     returns = df["daily_return"].dropna()
 
-    # ===== 数据清洗（统一使用 _cleanse_daily_returns）=====
+    # ===== 数据清洗（剔除 portfolio_nav.is_suspect 失真日，P0-3）=====
     df_clean, clean_stats = _cleanse_daily_returns(
-        df[["date", "daily_return"]], return_col="daily_return", threshold=5.0, max_tail=500
+        df[["date", "daily_return"]], return_col="daily_return"
     )
     returns = df_clean["daily_return"]
     filtered_count = clean_stats["filtered"]
@@ -834,21 +854,73 @@ def compute_return_attribution(days=CHART_DAYS["default"], end_date=None):
     all_sectors = set(list(sector_weights.keys()) + list(bench_weights.keys()))
     allocation_effect = {}
     selection_effect = {}
+    interaction_effect = {}
+
+    # P0-4: 修复 Brinson 归因
+    # 原实现 r_b = sector_returns（与 r_p 同值）→ selection_effect ≡ 0，归因结论不可用。
+    # 改为用基准行业收益：有行业主题指数则用主题指数 N 日收益，否则 fallback 沪深300。
+    SECTOR_INDEX = {
+        '医药': 'sz399989',   # 中证医疗
+        '红利': 'sh000015',   # 红利指数
+        '酒':   'sz399987',   # 中证酒
+    }
+    DEFAULT_IDX = 'sh000300'
+    _conn_b = get_db_connection()
+    try:
+        def _idx_n_ret(code):
+            _d = pd.read_sql_query(
+                "SELECT close FROM index_quotes WHERE code=? ORDER BY date DESC LIMIT 1 OFFSET ?",
+                _conn_b, params=(code, days))
+            if len(_d) < 2:
+                return 0.0
+            return float(_d['close'].iloc[0] / _d['close'].iloc[-1] - 1)
+
+        sector_bench_ret = {s: _idx_n_ret(SECTOR_INDEX.get(s, DEFAULT_IDX)) for s in all_sectors}
+    finally:
+        _conn_b.close()
 
     for s in all_sectors:
         w_p = sector_weights.get(s, 0)  # 组合权重
-        w_b = bench_weights.get(s, 0)  # 基准权重
+        w_b = bench_weights.get(s, 0)  # 基准权重（近似：1/n 均匀，缺沪深300真实行业权重）
         r_p = sector_returns.get(s, 0)  # 行业组合收益
-        r_b = sector_returns.get(s, 0)  # 行业基准收益（简化：使用同值）
+        r_b = sector_bench_ret.get(s, 0)  # 行业基准收益（真实/代理，不再等于 r_p）
 
+        # P0-4 修正：选股效应改用基准权重 w_b（标准三因子 Brinson）。
+        # 原代码 selection 用 w_p，会与 interaction 重复计入，且 allocation+selection
+        # 不再满足 Brinson 恒等式。正确形式为：
+        #   allocation  = (w_p - w_b) * r_b
+        #   selection   = w_b * (r_p - r_b)
+        #   interaction = (w_p - w_b) * (r_p - r_b)
         allocation_effect[s] = (w_p - w_b) * r_b
-        selection_effect[s] = w_p * (r_p - r_b)
+        selection_effect[s] = w_b * (r_p - r_b)
+        interaction_effect[s] = (w_p - w_b) * (r_p - r_b)
+
+    # P0-4 回归断言：allocation + selection + interaction == Rp_w - Rb_w（Brinson 恒等式）
+    # Rp_w / Rb_w 为按权重的组合/基准收益，是 Brinson 分解对齐的数学基准。
+    Rp_w = sum(sector_weights.get(s, 0) * sector_returns.get(s, 0) for s in all_sectors)
+    Rb_w = sum(bench_weights.get(s, 0) * sector_bench_ret.get(s, 0) for s in all_sectors)
+    _decomp = sum(allocation_effect.values()) + sum(selection_effect.values()) + sum(interaction_effect.values())
+    _brinson_excess = Rp_w - Rb_w
+    if abs(_decomp - _brinson_excess) > 1e-6:
+        logger.warning(
+            f"Brinson 分解残差 {_decomp:.6f} 与加权超额收益 {_brinson_excess:.6f} 偏差 "
+            f"{_decomp - _brinson_excess:.6f}（>1e-6），请检查基准行业收益口径"
+        )
+    # 透明化：Brinson 加权口径与组合实际口径(比值法 total_return)的差异，属正常近似
+    _headline_excess = total_return - benchmark_return
+    if abs(_brinson_excess - _headline_excess) > 0.01:
+        logger.info(
+            f"Brinson 加权超额收益 {_brinson_excess:.4f} 与组合实际口径超额收益 "
+            f"{_headline_excess:.4f} 差异 {_brinson_excess - _headline_excess:.4f}"
+            f"（比值法含现金流/调仓效应，非 Brinson 可解释部分）"
+        )
 
     return ReturnAttribution(
         total_return=total_return,
         benchmark_return=benchmark_return,
         allocation_effect=allocation_effect,
         selection_effect=selection_effect,
+        interaction_effect=interaction_effect,
         sector_returns=sector_returns,
         sector_weights=sector_weights,
         bench_weights=bench_weights,

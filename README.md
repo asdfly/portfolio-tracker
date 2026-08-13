@@ -12,7 +12,7 @@
 | 持仓快照 | 35,101 条（含 22 只场内 ETF + 11 只场外基金） |
 | 技术指标 | 34,408 条（23 只 ETF × 1,496 交易日） |
 | 代码规模 | 198 文件 / 54,552 行 Python |
-| 测试用例 | 1,413 个（75 个测试文件） |
+| 测试用例 | 1,525 个 |
 | Git 提交 | 304 次 |
 
 ## 功能概览
@@ -61,6 +61,7 @@
 - **仓位管理建议**: 多因子评分 → 评分区间映射 → 加仓/维持/减仓建议，目标占比按相对比例计算
 - **信号回测**: 4 轮迭代（v1 展示 → v2 置信度 → v3 Per-ETF+组合 → v4 强度分级+滚动窗口），12,296 组回测
 - **策略回测**: 5 种再平衡策略（买入持有/定期/阈值/动量/均值回归）
+- **再平衡引擎**: 4 种调仓策略（threshold/periodic/equal_weight/layered），默认 `layered` 分层配置——按类别基准权重（宽基35%/债券20%/医药10%…）+ 类内市值占比分配，非等权；含换手率与交易成本估算，T+1 执行
 - **告警系统**: 9 条自动监控规则（数据源中断/数据质量/持仓变化/市值变化/回撤/集中度/夏普/波动率/异常），告警去重
 - **P3 高级功能**: ERP 股债性价比、定投回测对比、行业景气度指标、智能预警推送
 
@@ -86,7 +87,10 @@ portfolio_tracker/
 │   │   ├── advisor.py           # 智能建议引擎（17 方法/13 步骤）
 │   │   ├── position_advisor.py  # 仓位管理建议（评分→操作→目标占比）
 │   │   ├── multi_factor_score.py # 多因子评分（资金+估值+技术+风险）
-│   │   ├── backtest.py          # 策略回测引擎（5 种策略）
+│   │   │   ├── backtest.py          # 策略回测引擎（5 种策略）
+│   │   ├── rebalance_engine.py  # 再平衡引擎（分层/阈值/周期/等权策略）
+│   │   ├── nav_engine.py        # 单位净值（TWR）账本
+│   │   ├── stats_utils.py       # 统计工具（Newey-West HAC / FDR 校正）
 │   │   ├── factor_attribution.py # 因子归因（OLS 回归）
 │   │   ├── candle_patterns.py   # K 线形态识别
 │   │   ├── dca_backtest.py      # 定投回测对比
@@ -103,6 +107,7 @@ portfolio_tracker/
 │   │   ├── trade_importer.py    # 对账单 PDF 导入
 │   │   ├── position_reader.py   # 通达信持仓读取
 │   │   ├── chart_utils.py       # 图表工具
+│   │   ├── trading_calendar.py # 本地交易日历（离线，内置 2024-2026 休市）
 │   │   ├── backfill.py          # 数据回填
 │   │   └── screenshot.py        # Playwright 截图/PDF
 │   └── models.py                # 5 个 dataclass（RiskMetrics/MonteCarloResult/...）
@@ -118,8 +123,9 @@ portfolio_tracker/
 ├── scripts/
 │   ├── backfill/                # 历史数据回填（6 脚本）
 │   ├── backup_db.py             # 数据库备份
+│   ├── send_report_email.py     # 收盘日报邮件自动推送（SMTP）
 │   └── setup/                   # 通知配置向导
-├── tests/                       # 测试套件（75 文件 / 1,413 用例）
+├── tests/                       # 测试套件（约 78 文件 / 1,525 用例）
 ├── run_all.bat                  # 交互式启动菜单（9 选项）
 ├── scheduled_run.bat            # 定时任务入口（备份+分析）
 ├── pyproject.toml               # black/isort/mypy/bandit 配置
@@ -185,6 +191,23 @@ scheduled_run.bat
 
 调度按 cron 周一至周五执行。
 
+## 邮件自动推送（收盘日报）
+
+每日 15:30 收盘分析完成后，自动将当日报告推送到邮箱（HTML 可视化报告 + Markdown 摘要双附件），无需人工确认。
+
+配置在 `.env`（已被 `.gitignore` 忽略，不会入库）：
+
+| 变量 | 说明 |
+|------|------|
+| `EMAIL_ENABLED` | 设为 `true` 启用推送 |
+| `EMAIL_SMTP_SERVER` | SMTP 服务器（默认 `smtp.qq.com`） |
+| `EMAIL_SMTP_PORT` | 端口（587 = STARTTLS） |
+| `EMAIL_USERNAME` | 发件人邮箱 |
+| `EMAIL_PASSWORD` | QQ 邮箱授权码（非登录密码，在 QQ 邮箱「设置 → 账户 → 开启 SMTP」生成） |
+| `EMAIL_RECIPIENTS` | 收件人列表（逗号分隔） |
+
+调度链路：`scheduled_run.bat` 在 `run_analysis.bat` 之后调用 `send_report_email.bat`，复用现有 Windows 定时任务（15:30 触发），无需新建计划任务。`EMAIL_PASSWORD` 为空时脚本自动跳过（exit 0），不会报错或刷失败日志。
+
 ## 数据库
 
 SQLite 数据库位于 `data/database/portfolio.db`，包含 30 张表：
@@ -238,4 +261,4 @@ python -m pytest tests/test_bugfix_round4.py -v
 
 ## 许可证
 
-私有项目，未开源。
+私有项目，未开源。许可证见仓库 LICENSE 文件（MIT）。

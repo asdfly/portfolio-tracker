@@ -454,12 +454,27 @@ class PortfolioAnalyzer:
         risk_summary['max_weight'] = concentration.get('max_weight')
         risk_summary['hhi'] = concentration.get('hhi')
 
+        # P0-5: 真实持有期收益（含分红）——优先 portfolio_nav 累计TWR（已含分红再投资），
+        # 回退到原 open-position 口径（仅当 NAV 账本尚未建立）
+        nav_return_pct = None
+        try:
+            _nc = get_db_connection(self.db.db_path)
+            _cur = _nc.cursor()
+            _cur.execute("SELECT twr_cumulative FROM portfolio_nav ORDER BY date DESC LIMIT 1")
+            _row = _cur.fetchone()
+            _nc.close()
+            if _row and _row[0] is not None:
+                nav_return_pct = float(_row[0]) * 100
+        except Exception:
+            nav_return_pct = None
+
         return {
             'date': self.today,
             'total_value': round(total_value, 2),
             'total_cost': round(total_cost, 2),
             'total_pnl': round(total_pnl, 2),
-            'total_return_pct': round(total_pnl / total_cost * 100, 2) if total_cost and total_cost > 0 else 0,
+            'total_return_pct': round(nav_return_pct, 2) if nav_return_pct is not None
+                                 else (round(total_pnl / total_cost * 100, 2) if total_cost and total_cost > 0 else 0),
             'daily_pnl': round(daily_pnl, 2),
             'daily_return': round(daily_return, 2),
             'vs_hs300': round(vs_hs300, 2),

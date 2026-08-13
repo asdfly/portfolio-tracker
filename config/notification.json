@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "channels": {
+    "webhook": {
+      "url": "",
+      "method": "POST"
+    },
+    "log_file": "data/reports/alerts.log"
+  },
+  "events": [
+    "hang_recovered",
+    "source_all_down",
+    "data_distortion_blocked",
+    "stale_over_threshold",
+    "dq_low_score"
+  ]
+}

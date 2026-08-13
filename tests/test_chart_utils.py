@@ -20,19 +20,23 @@ class TestDownsample:
 
 class TestCleanse:
     def test_no_outliers(self):
-        df = pd.DataFrame({"daily_return": [0.1, -0.2, 0.3]})
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=3, freq="B"),
+                           "daily_return": [0.1, -0.2, 0.3]})
         r, s = _cleanse_daily_returns(df)
         assert len(r) == 3 and s["filtered"] == 0
-    def test_filters(self):
-        df = pd.DataFrame({"daily_return": [0.1, 99.0, -50.0, 0.2]})
-        r, s = _cleanse_daily_returns(df, threshold=5.0)
+    def test_drops_suspect(self):
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=4, freq="B"),
+                           "daily_return": [0.1, 99.0, -50.0, 0.2]})
+        r, s = _cleanse_daily_returns(df, suspect_dates={"2025-01-02", "2025-01-03"})
         assert len(r) == 2 and s["filtered"] == 2
-    def test_tails(self):
-        df = pd.DataFrame({"daily_return": [0.1]*1000})
-        r, s = _cleanse_daily_returns(df, max_tail=100)
-        assert len(r) == 100 and s["tailed"] == 900
+    def test_passthrough_without_suspect(self):
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=1000, freq="B"),
+                           "daily_return": [0.1]*1000})
+        r, s = _cleanse_daily_returns(df)
+        assert len(r) == 1000 and s["tailed"] == 0
     def test_stats_keys(self):
-        df = pd.DataFrame({"daily_return": [0.1]*10})
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=10, freq="B"),
+                           "daily_return": [0.1]*10})
         _, s = _cleanse_daily_returns(df)
         for k in ("original","after_filter","after_tail","filtered","tailed"): assert k in s
 

@@ -4,6 +4,7 @@ from config.settings import DOWNSAMPLE_MAX_POINTS
 """
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 
 
@@ -71,26 +72,28 @@ def _add_min_max_annotations(fig, x_data, y_data, row=None, col=None, y_label=No
     )
 
 
-def _cleanse_daily_returns(df, return_col="daily_return", threshold=5.0, max_tail=500):
-    """清洗日收益率数据：过滤异常值 + 截断早期高波动区间"""
+def _cleanse_daily_returns(df, return_col="daily_return", suspect_dates=None):
+    """清洗日收益率：剔除 suspect_dates 标记的失真日（与 data_loader 口径一致）。
+
+    不再使用 |ret| > 5% 幅度截断。suspect_dates 为 'YYYY-MM-DD' 集合；
+    为 None 时（无外部标记）直接透传，不做剔除。
+    """
     original_count = len(df)
-    mask = df[return_col].abs() <= threshold
-    filtered_df = df[mask].copy()
-    filtered_count = original_count - len(filtered_df)
-    if len(filtered_df) > max_tail:
-        tailed_df = filtered_df.tail(max_tail).copy()
-        tailed_count = len(filtered_df) - len(tailed_df)
+    if suspect_dates:
+        dates = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+        mask = ~dates.isin(suspect_dates)
+        cleaned_df = df[mask].copy()
     else:
-        tailed_df = filtered_df
-        tailed_count = 0
+        cleaned_df = df.copy()
+    filtered_count = original_count - len(cleaned_df)
     stats = {
         "original": original_count,
-        "after_filter": len(filtered_df),
-        "after_tail": len(tailed_df),
+        "after_filter": len(cleaned_df),
+        "after_tail": len(cleaned_df),
         "filtered": filtered_count,
-        "tailed": tailed_count,
+        "tailed": 0,
     }
-    return tailed_df, stats
+    return cleaned_df, stats
 
 
 def _fmt(v, suffix="", dec=2, inv=False):

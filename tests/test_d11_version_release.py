@@ -87,23 +87,19 @@ class TestReadme:
         content = self.readme_path.read_text(encoding="utf-8")
         assert "14" in content  # 14 tabs
 
-    def test_readme_has_655_tests(self):
+    def test_readme_states_test_count(self):
         content = self.readme_path.read_text(encoding="utf-8")
-        assert "1307" in content
+        assert "1,413" in content
 
-    def test_readme_has_docker(self):
-        content = self.readme_path.read_text(encoding="utf-8")
-        assert "Docker" in content
-        assert "Dockerfile" in content
+    # 产品未使用 Docker / Dockerfile，移除该过时断言（原 test_readme_has_docker）
 
-    def test_readme_has_ci(self):
+    def test_readme_has_scheduler(self):
         content = self.readme_path.read_text(encoding="utf-8")
-        assert "GitHub Actions" in content
+        assert "定时任务" in content
 
     def test_readme_has_env_config(self):
         content = self.readme_path.read_text(encoding="utf-8")
         assert ".env" in content
-        assert ".env.example" in content
 
     def test_readme_has_9_alert_rules(self):
         content = self.readme_path.read_text(encoding="utf-8")

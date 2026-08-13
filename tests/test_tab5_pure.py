@@ -29,24 +29,28 @@ class TestFormatValue:
 
 class TestCleanseDailyReturns:
     def test_no_outliers(self):
-        df = pd.DataFrame({"daily_return": [0.01, -0.02, 0.03]})
-        result = _cleanse_daily_returns(df, threshold=5.0)
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=3, freq="B"),
+                           "daily_return": [0.01, -0.02, 0.03]})
+        result = _cleanse_daily_returns(df, suspect_dates=set())
         assert isinstance(result, tuple) and len(result) == 2
         stats = result[1]
         assert stats["filtered"] == 0
 
     def test_returns_tuple(self):
-        df = pd.DataFrame({"daily_return": [0.01]})
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=1, freq="B"),
+                           "daily_return": [0.01]})
         result = _cleanse_daily_returns(df)
         assert isinstance(result[0], pd.DataFrame)
         assert isinstance(result[1], dict)
 
-    def test_large_dataset_tail(self):
-        df = pd.DataFrame({"daily_return": np.random.normal(0, 0.02, 1000)})
-        result = _cleanse_daily_returns(df, max_tail=500)
-        assert result[1]["tailed"] > 0 or len(result[0]) == 500
+    def test_large_dataset_passthrough(self):
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=1000, freq="B"),
+                           "daily_return": np.random.normal(0, 0.02, 1000)})
+        result = _cleanse_daily_returns(df)
+        assert result[1]["tailed"] == 0 and len(result[0]) == 1000
 
     def test_all_zeros(self):
-        df = pd.DataFrame({"daily_return": [0.0] * 10})
+        df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=10, freq="B"),
+                           "daily_return": [0.0] * 10})
         result = _cleanse_daily_returns(df)
         assert len(result[0]) == 10

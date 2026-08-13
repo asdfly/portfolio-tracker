@@ -255,18 +255,20 @@ class TestBetaAlpha:
         assert abs(r["tracking_error"] - round(expected_te * 100, 2)) < 0.1
 
     def test_information_ratio(self):
-        """信息比率 = alpha / tracking_error"""
+        """信息比率 = mean(Rp-Rb) / std(Rp-Rb) * sqrt(交易日)（标准定义，P0-4 修正）
+
+        原实现误用 alpha / tracking_error（混用 Jensen's alpha 与主动管理框架，
+        量纲与含义均不对）。标准 IR 衡量单位主动风险带来的超额收益。
+        """
         from src.analysis.risk import RiskAnalyzer
         ra = RiskAnalyzer(risk_free_rate=RF, trading_days_per_year=TRADING_DAYS)
         rng = np.random.RandomState(42)
         benchmark = rng.normal(0.001, 0.02, 100)
         portfolio = benchmark * 1.2 + rng.normal(0.001, 0.005, 100)
         r = ra.calculate_beta_alpha(portfolio, benchmark)
-        alpha_annual = r["alpha_annual"] / 100
-        te_annual = r["tracking_error"] / 100
-        if te_annual > 1e-10:
-            expected_ir = alpha_annual / te_annual
-            assert abs(r["information_ratio"] - round(expected_ir, 4)) < 0.01
+        active = portfolio - benchmark
+        expected_ir = np.mean(active) / np.std(active, ddof=1) * np.sqrt(TRADING_DAYS)
+        assert abs(r["information_ratio"] - round(expected_ir, 4)) < 0.01
 
 
 class TestVarMetrics:

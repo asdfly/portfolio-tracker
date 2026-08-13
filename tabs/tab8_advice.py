@@ -1419,6 +1419,46 @@ def _render_feedback_tracking(positions, summary):
             env_conn.close()
         except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
             st.warning(f"市场环境数据加载失败: {e}")
+def _render_rebalance_engine_panel():
+    """渲染再平衡引擎方案（P2-B 产品化）：真实持仓快照 → 可执行调仓 + T+1 执行日 + 成本。"""
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:16px;border-bottom:none;padding:5px 0;">'
+        '再平衡引擎方案</div>', unsafe_allow_html=True,
+    )
+    try:
+        from datetime import date
+        from src.analysis.rebalance_engine import compute_rebalance_suggestion
+        from src.utils.trading_calendar import last_trading_day_on_or_before
+        conn = get_db_connection()
+        try:
+            as_of = str(last_trading_day_on_or_before(date.today()))
+            strat = st.radio("目标策略", ["threshold", "equal_weight", "periodic"],
+                             horizontal=True, key="rb_engine_strategy")
+            plan = compute_rebalance_suggestion(conn, as_of_date=as_of, strategy=strat)
+            if not plan.action_needed:
+                st.success(f"截至 {plan.as_of_date}：{plan.reason}（T+1 执行日 {plan.execution_date}）")
+            else:
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("总市值", f"{plan.total_value:,.0f}")
+                c2.metric("换手率", f"{plan.turnover*100:.1f}%")
+                c3.metric("预估成本", f"{plan.estimated_cost:,.0f}")
+                c4.metric("T+1 执行日", plan.execution_date)
+                rows = [{
+                    "方向": t.direction, "代码": t.code, "名称": t.name,
+                    "当前权重": f"{t.current_weight*100:.1f}%",
+                    "目标权重": f"{t.target_weight*100:.1f}%",
+                    "金额(元)": f"{t.trade_value:,.0f}",
+                    "手数": t.shares,
+                } for t in plan.trades]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                             height=min(200 + len(rows) * 28, 600))
+        finally:
+            conn.close()
+    except Exception as e:
+        st.warning(f"再平衡引擎方案加载失败: {e}")
+
+
 def render_tab8():
     selected_date = st.session_state.get("selected_date", "")
     selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
@@ -1444,6 +1484,8 @@ def render_tab8():
     else:
         st.info("暂无持仓数据")
     
+    _render_rebalance_engine_panel()
+
     _render_market_events(positions, summary)
     _render_data_export(positions, summary, selected_benchmark, selected_date)
     _render_feedback_tracking(positions, summary)
