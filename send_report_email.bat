@@ -10,9 +10,9 @@ cd /d "%PROJECT_DIR%"
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [WARN] report email send failed, rc=%ERRORLEVEL%
+    echo [WARN] report email send FAILED, rc=%ERRORLEVEL%
     exit /b %ERRORLEVEL%
 ) else (
     echo.
-    echo [成功] 日报邮件推送完成
+    echo [OK] daily report email sent
 )
