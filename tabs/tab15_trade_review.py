@@ -261,7 +261,7 @@ def _render_etf_pnl_section(df_trades):
     by_code.columns = ['代码', '名称', '配对数', '总盈亏(¥)', '平均收益率(%)']
     by_code['总盈亏(¥)'] = by_code['总盈亏(¥)'].round(0)
     by_code['平均收益率(%)'] = by_code['平均收益率(%)'].round(1)
-    st.dataframe(by_code.reset_index(drop=True), use_container_width=True, hide_index=True)
+    st.dataframe(by_code.reset_index(drop=True), width="stretch", hide_index=True)
 
     colors = ['#28a745' if x > 0 else '#dc3545' for x in by_code['总盈亏(¥)']]
     fig = go.Figure(go.Bar(x=by_code['名称'], y=by_code['总盈亏(¥)'],
@@ -313,7 +313,7 @@ def _render_dca_section(df_trades, df_snapshots):
         display[col] = display[col].round(0)
     for col in ['持仓收益率%', '全周期收益率%']:
         display[col] = display[col].round(1)
-    st.dataframe(display.reset_index(drop=True), use_container_width=True, hide_index=True)
+    st.dataframe(display.reset_index(drop=True), width="stretch", hide_index=True)
 
     fig = go.Figure()
     fig.add_trace(go.Bar(name='持仓投入(隐含成本)', x=dca_df['name'], y=dca_df['total_invested'],
@@ -357,14 +357,14 @@ def _render_cost_section(df_trades):
         'total_commission': '佣金', 'total_stamp_tax': '印花税',
         'total_fee': '总费用', 'total_amount': '交易额', 'fee_rate': '费率%'
     })
-    st.dataframe(m_disp.reset_index(drop=True), use_container_width=True, hide_index=True)
+    st.dataframe(m_disp.reset_index(drop=True), width="stretch", hide_index=True)
 
     st.markdown("**按证券 TOP 10**")
     bc = by_code.head(10).round(2).rename(columns={
         'code': '代码', 'name': '名称', 'trade_count': '笔数',
         'total_commission': '佣金', 'total_stamp_tax': '印花税', 'total_fee': '总费用'
     })
-    st.dataframe(bc.reset_index(drop=True), use_container_width=True, hide_index=True)
+    st.dataframe(bc.reset_index(drop=True), width="stretch", hide_index=True)
 
     fig = go.Figure()
     fig.add_trace(go.Bar(x=monthly['month'], y=monthly['total_commission'], name='佣金'))
@@ -392,7 +392,7 @@ def _render_cashflow_section(df_trades):
     c2.metric("累计净现金流", f"¥{total_cash:,.0f}",
               help="含银行转存和天添利的全部净现金流")
 
-    st.dataframe(pivot.round(0), use_container_width=True, hide_index=True)
+    st.dataframe(pivot.round(0), width="stretch", hide_index=True)
 
     # 图表: 只展示投资流 + 净投资流, 排除现金管理列避免量纲差异
     colors_map = {

@@ -305,7 +305,7 @@ def _render_backtest_history(tab_obj, positions, summary, selected_date):
                 disp['win_rate'] = disp['win_rate'].apply(lambda x: f"{x:.1f}%")
                 disp['avg_pnl'] = disp['avg_pnl'].apply(lambda x: f"{x:+.3f}%")
                 disp['created_at'] = disp['created_at'].str[:16]
-                st.dataframe(disp, use_container_width=True, hide_index=True, height=350)
+                st.dataframe(disp, width="stretch", hide_index=True, height=350)
         except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError, ValueError, KeyError) as e:
             st.info(f"回测历史加载失败: {str(e)[:80]}")
 

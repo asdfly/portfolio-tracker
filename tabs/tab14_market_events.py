@@ -151,7 +151,7 @@ def _render_lhb_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================
@@ -250,7 +250,7 @@ def _render_margin_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================
@@ -339,7 +339,7 @@ def _render_holder_change_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================
@@ -438,7 +438,7 @@ def _render_institution_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=350)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=350)
 
 
 # ============================================================
@@ -557,7 +557,7 @@ def _render_block_trade_panel():
     
     cn_cols = [_COL_CN.get(c, c) for c in display_df.columns]
     display_df.columns = cn_cols
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=400)
 
 
 # ============================================================

@@ -1092,13 +1092,18 @@ def main():
         ("📋 市场事件",   "tabs.tab14_market_events",   "render_tab14"),
         ("🔁 交易复盘",   "tabs.tab15_trade_review",   "render_tab15"),
     ]
-    tab_objects = st.tabs([label for label, _, _ in TAB_REGISTRY])
-
     _render_quick_stats(positions, profit_count, loss_count, technical)
-    for tab_obj, (_, module_path, func_name) in zip(tab_objects, TAB_REGISTRY):
-        mod = __import__(module_path, fromlist=[func_name])
-        with tab_obj:
-            getattr(mod, func_name)()
+
+    # 懒加载：仅渲染用户选中的 Tab，避免 st.tabs 同步执行全部 15 个 Tab 的
+    # 数据加载/重计算导致首屏卡顿（尤其含 akshare 外部请求的黄金/宏观等 Tab）。
+    # 各 Tab 内部数据加载已用 @st.cache_data 缓存，切换回来时无需重复重算。
+    _labels = [label for label, _, _ in TAB_REGISTRY]
+    _active = st.radio("页面导航", _labels, index=0, horizontal=True, key="nav_tab")
+    for _label, _module_path, _func_name in TAB_REGISTRY:
+        if _label == _active:
+            _mod = __import__(_module_path, fromlist=[_func_name])
+            getattr(_mod, _func_name)()
+            break
 
 if __name__ == "__main__":
     main()

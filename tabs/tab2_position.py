@@ -917,7 +917,7 @@ def _render_trade_history_panel(code, name):
         'price': '价格', 'amount': '金额', 'commission': '佣金',
         'stamp_tax': '印花税', 'change_amount': '发生额'
     })[['日期', '操作', '数量', '价格', '金额', '佣金', '印花税', '发生额']]
-    st.dataframe(display.reset_index(drop=True), use_container_width=True, hide_index=True)
+    st.dataframe(display.reset_index(drop=True), width="stretch", hide_index=True)
 
 
 def render_tab2():

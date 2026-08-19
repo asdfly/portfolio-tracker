@@ -440,18 +440,22 @@ class TestStreamlitElementKeys:
 
 class TestDeprecatedStreamlitAPI:
 
-    def test_dataframe_no_string_width(self):
-        """st.dataframe 不得使用 width="stretch"（应使用 use_container_width=True）"""
+    def test_no_deprecated_use_container_width(self):
+        """st.dataframe/plotly_chart/button/render_chart 不得使用弃用的 use_container_width=，应改用 width="stretch"/"content" """
+        targets = ("st.dataframe", "st.plotly_chart", "st.button", "render_chart")
         issues = []
         for filepath in _scan_py_files():
             source = filepath.read_text(encoding="utf-8")
             for lineno, line in enumerate(source.split(chr(10)), 1):
-                if "st.dataframe" in line and 'width="stretch"' in line and not line.strip().startswith("#"):
+                s = line.strip()
+                if s.startswith("#"):
+                    continue
+                if any(t in line for t in targets) and "use_container_width=" in line:
                     rel = filepath.relative_to(PROJECT_ROOT)
                     issues.append(f"{rel}:{lineno}")
         if issues:
             detail = chr(10).join(f"  {i}" for i in issues)
-            pytest.fail('st.dataframe 使用了 width="stretch"（应使用 use_container_width=True）:' + chr(10) + detail)
+            pytest.fail('使用了弃用的 use_container_width=（应改用 width="stretch"/"content"）:' + chr(10) + detail)
 
 
 # ── 4. main() 调用参数一致性 ─────────────────────────────────────────

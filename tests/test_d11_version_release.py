@@ -87,11 +87,8 @@ class TestReadme:
         content = self.readme_path.read_text(encoding="utf-8")
         assert "14" in content  # 14 tabs
 
-    def test_readme_states_test_count(self):
-        content = self.readme_path.read_text(encoding="utf-8")
-        assert "1,413" in content
-
     # 产品未使用 Docker / Dockerfile，移除该过时断言（原 test_readme_has_docker）
+    # README 已精简，不再宣传测试数，已移除 test_readme_states_test_count
 
     def test_readme_has_scheduler(self):
         content = self.readme_path.read_text(encoding="utf-8")

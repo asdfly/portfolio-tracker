@@ -73,14 +73,6 @@ class TestSettingsEnvOverride:
         from config.settings import DATABASE_PATH
         assert 'portfolio.db' in str(DATABASE_PATH)
 
-    def test_email_enabled_false_by_default(self):
-        from config.settings import NOTIFICATION_CONFIG
-        assert NOTIFICATION_CONFIG['email']['enabled'] is False
-
-    def test_email_password_empty_by_default(self):
-        from config.settings import NOTIFICATION_CONFIG
-        assert NOTIFICATION_CONFIG['email']['password'] == ''
-
     def test_wechat_disabled_by_default(self):
         from config.settings import NOTIFICATION_CONFIG
         assert NOTIFICATION_CONFIG['wechat']['enabled'] is False

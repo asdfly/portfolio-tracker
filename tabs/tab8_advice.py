@@ -610,7 +610,7 @@ def _render_signal_confidence(positions):
             if st.button(
                 f"**有效信号数**\n{total_signals}",
                 key="btn_total_signals",
-                use_container_width=True,
+                width="stretch",
                 help="点击清除等级筛选",
             ):
                 st.session_state["sig_conf_grade_filter"] = None
@@ -618,7 +618,7 @@ def _render_signal_confidence(positions):
             btn_a_label = f"**A级(高置信)**\n{grade_a}"
             if st.session_state.get("sig_conf_grade_filter") == "A":
                 btn_a_label = f"**A级(高置信)**\n{grade_a} ✓"
-            if st.button(btn_a_label, key="btn_grade_a", use_container_width=True,
+            if st.button(btn_a_label, key="btn_grade_a", width="stretch",
                          help="点击筛选A级信号"):
                 st.session_state["sig_conf_grade_filter"] = (
                     None if st.session_state.get("sig_conf_grade_filter") == "A" else "A"
@@ -627,7 +627,7 @@ def _render_signal_confidence(positions):
             btn_b_label = f"**B级(中置信)**\n{grade_b}"
             if st.session_state.get("sig_conf_grade_filter") == "B":
                 btn_b_label = f"**B级(中置信)**\n{grade_b} ✓"
-            if st.button(btn_b_label, key="btn_grade_b", use_container_width=True,
+            if st.button(btn_b_label, key="btn_grade_b", width="stretch",
                          help="点击筛选B级信号"):
                 st.session_state["sig_conf_grade_filter"] = (
                     None if st.session_state.get("sig_conf_grade_filter") == "B" else "B"
@@ -802,7 +802,7 @@ def _render_signal_confidence(positions):
                       "5日", "10日", "20日", "30日", "60日", "综合", "稳定性"]
         st.dataframe(
             display_df[table_cols].rename(columns={"name": "ETF"}),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=min(200 + len(display_df) * 35, 600),
         )
@@ -1083,7 +1083,7 @@ def _render_backtest_heatmap():
             st.dataframe(
                 top_df[["指标", "信号", "方向", "窗口", "样本", "命中率",
                         "加权命中", "均收益", "p值", "稳定", "置信度"]],
-                use_container_width=True, hide_index=True, height=300,
+                width="stretch", hide_index=True, height=300,
             )
 
         with tc2:
@@ -1109,7 +1109,7 @@ def _render_backtest_heatmap():
             st.dataframe(
                 bot_df[["指标", "信号", "方向", "窗口", "样本", "命中率",
                         "加权命中", "均收益", "p值", "稳定", "置信度"]],
-                use_container_width=True, hide_index=True, height=300,
+                width="stretch", hide_index=True, height=300,
             )
 
         st.markdown("**各指标回测汇总**")
@@ -1122,7 +1122,7 @@ def _render_backtest_heatmap():
             平均稳定性=("stability_score", "mean"),
         ).round(2).sort_values("平均置信度", ascending=False)
         summary_df.index = [ind_map.get(x, x) for x in summary_df.index]
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        st.dataframe(summary_df, width="stretch", hide_index=True)
 
     except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, ValueError) as e:
         st.warning(f"回测统计数据加载失败: {e}")
@@ -1215,7 +1215,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date):
                         data=f.read(),
                         file_name=os.path.basename(output),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
+                        width="stretch",
                     key="dl_excel_advice",
                     )
             except (OSError, ValueError, ImportError, RuntimeError) as e:
@@ -1235,7 +1235,7 @@ def _render_data_export(positions, summary, selected_benchmark, selected_date):
                         data=f.read(),
                         file_name=os.path.basename(report_path),
                         mime="text/html",
-                        use_container_width=True,
+                        width="stretch",
                     key="dl_html_advice",
                     )
             except (OSError, ValueError, ImportError, RuntimeError) as e:
@@ -1322,7 +1322,7 @@ def _render_feedback_tracking(positions, summary):
             display_cols = ['时间', '优先级', '类型', '标题', '状态', '置信度', '相关标的']
             st.dataframe(
                 page_df[display_cols],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=min(400, 35 * len(page_df) + 40),
             )
@@ -1451,7 +1451,7 @@ def _render_rebalance_engine_panel():
                     "金额(元)": f"{t.trade_value:,.0f}",
                     "手数": t.shares,
                 } for t in plan.trades]
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True,
                              height=min(200 + len(rows) * 28, 600))
         finally:
             conn.close()
@@ -1529,7 +1529,7 @@ def _render_position_advice_panel(positions):
                 "状态": e.status,
                 "建议": e.advice if e.advice else "-",
             })
-        st.dataframe(exp_data, use_container_width=True, hide_index=True,
+        st.dataframe(exp_data, width="stretch", hide_index=True,
                      height=min(200 + len(exp_data) * 28, 400))
 
     # 仓位建议明细
@@ -1546,7 +1546,7 @@ def _render_position_advice_panel(positions):
                 "目标占比": f"{a.target_weight_min:.1f}-{a.target_weight_max:.1f}%",
                 "建议": a.advice_text,
             })
-        st.dataframe(adj_data, use_container_width=True, hide_index=True,
+        st.dataframe(adj_data, width="stretch", hide_index=True,
                      height=min(200 + len(adj_data) * 28, 500))
 
 
@@ -1572,7 +1572,7 @@ def _render_pre_market_panel():
             st.info(report.summary_text)
         if report.index_changes:
             idx_data = [{"指数": ic.name, "涨跌幅": f"{ic.change_pct:+.2f}%"} for ic in report.index_changes]
-            st.dataframe(idx_data, use_container_width=True, hide_index=True,
+            st.dataframe(idx_data, width="stretch", hide_index=True,
                          height=min(200 + len(idx_data) * 28, 400))
         if report.macro_alerts:
             st.markdown("**宏观异动**")
@@ -1585,7 +1585,7 @@ def _render_pre_market_panel():
                          "MACD": es.macd_signal, "RSI": f"{es.rsi_value:.0f}",
                          "技术评分": f"{es.signal_score:.0f}", "风险评分": f"{es.risk_score:.0f}",
                          "资金流(万)": f"{es.fund_flow_net:+.0f}"} for es in report.etf_signals]
-            st.dataframe(sig_data, use_container_width=True, hide_index=True,
+            st.dataframe(sig_data, width="stretch", hide_index=True,
                          height=min(200 + len(sig_data) * 28, 500))
         ns = report.news_sentiment
         if ns.get("total", 0) > 0:
@@ -1655,7 +1655,7 @@ def _render_post_market_panel():
                           "收益率%": round(a["pnl_rate"], 2),
                           "贡献度%": round(a["contribution_pct"], 1)}
                          for a in sorted(report.pnl_attribution, key=lambda x: x["pnl"], reverse=True)]
-            st.dataframe(attr_data, use_container_width=True, hide_index=True,
+            st.dataframe(attr_data, width="stretch", hide_index=True,
                          height=min(200 + len(attr_data) * 28, 500))
         if report.signal_changes:
             st.markdown("**技术信号变化**")
@@ -1667,7 +1667,7 @@ def _render_post_market_panel():
                 flow_data = [{"代码": fc["code"], "今日(万)": round(fc["today_flow"]),
                               "昨日(万)": round(fc["yesterday_flow"]),
                               "变化(万)": round(fc["flow_change"])} for fc in report.fund_flow_changes[:20]]
-                st.dataframe(flow_data, use_container_width=True, hide_index=True)
+                st.dataframe(flow_data, width="stretch", hide_index=True)
         if report.news_highlights:
             with st.expander("今日重大新闻", expanded=False):
                 for nh in report.news_highlights:

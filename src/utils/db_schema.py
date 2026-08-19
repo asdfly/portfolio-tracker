@@ -455,6 +455,62 @@ TABLE_DEFS = [
     """, [
         "CREATE INDEX IF NOT EXISTS idx_nav_date ON portfolio_nav(date)",
     ]),
+
+    # --- 预测底座 (Phase 0): OHLCV历史 / 数值特征 / 前瞻收益标签 ---
+    ("etf_price_history", """
+        CREATE TABLE IF NOT EXISTS etf_price_history (
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume REAL,
+            amount REAL,
+            adj_close REAL,
+            source TEXT,
+            PRIMARY KEY (date, code)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_eph_code_date ON etf_price_history(code, date)",
+        "CREATE INDEX IF NOT EXISTS idx_eph_date ON etf_price_history(date)",
+    ]),
+
+    ("etf_features", """
+        CREATE TABLE IF NOT EXISTS etf_features (
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            feat_version TEXT,
+            ma5 REAL, ma10 REAL, ma20 REAL, ma60 REAL,
+            macd REAL, macd_signal REAL, macd_hist REAL,
+            rsi_14 REAL,
+            boll_mid REAL, boll_upper REAL, boll_lower REAL, boll_pctb REAL,
+            kdj_k REAL, kdj_d REAL, kdj_j REAL,
+            atr_14 REAL, atr_pct REAL,
+            ret_1d REAL, ret_5d REAL, ret_20d REAL,
+            vol_20d REAL, mom_20d REAL,
+            ff_net_inflow_5d REAL, ff_net_inflow_20d REAL,
+            ff_super_net_5d REAL, ff_large_net_5d REAL,
+            hs300_ret_20d REAL, hs300_vol_20d REAL,
+            PRIMARY KEY (date, code)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_feat_code_date ON etf_features(code, date)",
+        "CREATE INDEX IF NOT EXISTS idx_feat_date ON etf_features(date)",
+    ]),
+
+    ("etf_forward_returns", """
+        CREATE TABLE IF NOT EXISTS etf_forward_returns (
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            fwd_ret_5 REAL, fwd_ret_20 REAL, fwd_ret_60 REAL,
+            is_up_5 INTEGER, is_up_20 INTEGER, is_up_60 INTEGER,
+            PRIMARY KEY (date, code)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_fr_code_date ON etf_forward_returns(code, date)",
+        "CREATE INDEX IF NOT EXISTS idx_fr_date ON etf_forward_returns(date)",
+    ]),
 ]
 
 # ============================================================

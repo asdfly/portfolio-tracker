@@ -194,7 +194,7 @@ def render_realtime_quotes():
         q_df = _get_quotations()
         if q_df is not None and not q_df.empty:
             # 美化显示
-            st.dataframe(q_df, use_container_width=True, height=400, hide_index=True)
+            st.dataframe(q_df, width="stretch", height=400, hide_index=True)
         else:
             st.info("SGE实时行情接口暂不可用，请稍后重试。\n\n上海金交所交易时间：\n- 日盘：周一至周五 09:50-15:30\n- 夜盘：19:50-02:30")
 

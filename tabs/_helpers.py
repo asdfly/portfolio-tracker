@@ -559,7 +559,7 @@ def _render_peer_comparison(code, sector, fund_df):
                           "涨跌幅%", "换手率%", "量比",
                           "资金净流入(万)", "资金净流入%", "规模(亿)"]
 
-    st.dataframe(display_df, use_container_width=True, height=min(200 + len(display_df) * 28, 400),
+    st.dataframe(display_df, width="stretch", height=min(200 + len(display_df) * 28, 400),
                  hide_index=True)
 
     if len(peer_df) >= 2:
@@ -592,7 +592,7 @@ def _render_peer_comparison(code, sector, fund_df):
             margin=dict(l=40, r=40, t=30, b=30),
             height=350,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def _render_signal_score_panel(code, technical_df):
@@ -777,7 +777,7 @@ def _render_risk_scan_panel(code, fund_df):
         height=300,
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 
@@ -831,7 +831,7 @@ def _render_fund_flow_panel(code):
         height=320,
         xaxis=dict(tickangle=-45, nticks=10),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # 资金流统计摘要
     c1, c2, c3 = st.columns(3)
@@ -879,7 +879,7 @@ def _render_fund_flow_panel(code):
     display = recent[["date", "net_inflow", "net_inflow_pct",
                        "super_large_inflow", "large_inflow", "small_inflow"]].copy()
     display.columns = ["日期", "净流入(万)", "净流入%", "超大单(万)", "大单(万)", "小单(万)"]
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
 
 
 def _render_trade_review_panel(code):
@@ -944,7 +944,7 @@ def _render_trade_review_panel(code):
         display.columns = col_names
         display["金额"] = display["价格"] * display["数量"]
         display.columns = list(display.columns[:-1]) + ["金额"]
-        st.dataframe(display, use_container_width=True, hide_index=True)
+        st.dataframe(display, width="stretch", hide_index=True)
 
     # 买卖点标注价格图
     if not trades_df.empty:
@@ -992,7 +992,7 @@ def _render_trade_review_panel(code):
                     height=300,
                     xaxis=dict(tickangle=-45, nticks=10),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         except (ValueError, TypeError, KeyError) as e:
             logger.debug(f"Chart render skipped: {e}")
 
@@ -1073,7 +1073,7 @@ def _render_industry_news_panel(code):
         display["情绪"] = display["情绪"].apply(
             lambda x: "偏多" if (pd.notna(x) and x > 0.1) else ("偏空" if (pd.notna(x) and x < -0.1) else "中性")
         )
-        st.dataframe(display, use_container_width=True, hide_index=True, height=min(200 + len(display) * 28, 400))
+        st.dataframe(display, width="stretch", hide_index=True, height=min(200 + len(display) * 28, 400))
         # P2: Sentiment trend chart
         try:
             from data_loader import load_news_sentiment_for_positions
@@ -1087,7 +1087,7 @@ def _render_industry_news_panel(code):
                     fig = px.line(sent.trend_df, x="date", y="avg_score", color="sector",
                                   title="板块情绪趋势(14日)", markers=True)
                     fig.update_yaxes(range=[0, 1])
-                    render_chart(fig, use_container_width=True)
+                    render_chart(fig, width="stretch")
         except (ValueError, TypeError, KeyError) as e:
             logger.debug(f"Chart render skipped: {e}")
 
@@ -1427,7 +1427,7 @@ def _render_peer_penetration_panel(code, sector):
                 "detail": o.overlap_detail,
             })
         odf = pd.DataFrame(overlap_rows)
-        st.dataframe(odf, use_container_width=True, hide_index=True)
+        st.dataframe(odf, width="stretch", hide_index=True)
         # Show top overlap detail
         if pen.overlap_results:
             top_o = pen.overlap_results[0]
@@ -1457,7 +1457,7 @@ def _render_peer_penetration_panel(code, sector):
                 "\u7efc\u5408\u5f97\u5206": r.composite_rank,
             })
         rdf = pd.DataFrame(rank_rows)
-        st.dataframe(rdf, use_container_width=True, hide_index=True)
+        st.dataframe(rdf, width="stretch", hide_index=True)
 
 def _render_signal_cross_validate(code):
     """Render signal cross-validation panel."""
@@ -1536,7 +1536,7 @@ def _render_signal_cross_validate(code):
             "\u6743\u91cd": f"{s.weight:.0%}",
             "\u8bf4\u660e": s.detail,
         })
-    st.dataframe(pd.DataFrame(sig_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(sig_rows), width="stretch", hide_index=True)
 
 # ============================================================
 # P3: ERP股债性价比面板
@@ -1568,7 +1568,7 @@ def _render_erp_panel():
             "信号": f"{signal_color} {r.signal}",
         })
 
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     # 详情展开
     for r in results:
