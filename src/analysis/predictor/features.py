@@ -13,12 +13,15 @@ from typing import Iterable, Optional
 import numpy as np
 import pandas as pd
 
-FEAT_VERSION = "v1"
+FEAT_VERSION = "v2"
 
 TECH_COLS = [
     "ma5", "ma10", "ma20", "ma60", "macd", "macd_signal", "macd_hist", "rsi_14",
     "boll_mid", "boll_upper", "boll_lower", "boll_pctb", "kdj_k", "kdj_d", "kdj_j",
     "atr_14", "atr_pct", "ret_1d", "ret_5d", "ret_20d", "vol_20d", "mom_20d",
+    # v2 新增：波动率结构 + 多周期动量 + 量价
+    "vol_5d", "vol_60d", "vol_ratio_5_20", "ret_60d", "mom_5d", "range_20d",
+    "parkinson_vol_20d", "hl_range_20d", "volume_zscore_20d",
 ]
 FLOW_COLS = ["ff_net_inflow_5d", "ff_net_inflow_20d", "ff_super_net_5d", "ff_large_net_5d"]
 MARKET_COLS = ["hs300_ret_20d", "hs300_vol_20d"]
@@ -91,6 +94,15 @@ def compute_technical_from_close(close: pd.Series, ohlc: Optional[pd.DataFrame] 
     out["ret_20d"] = s.pct_change(20)
     out["mom_20d"] = s / s.shift(20) - 1.0
     out["vol_20d"] = ret.rolling(20, min_periods=10).std()
+    # v2：波动率结构 + 多周期动量 + 振幅
+    out["vol_5d"] = ret.rolling(5, min_periods=3).std()
+    out["vol_60d"] = ret.rolling(60, min_periods=30).std()
+    out["vol_ratio_5_20"] = out["vol_5d"] / out["vol_20d"]
+    out["ret_60d"] = s.pct_change(60)
+    out["mom_5d"] = s / s.shift(5) - 1.0
+    hi20 = s.rolling(20, min_periods=10).max()
+    lo20 = s.rolling(20, min_periods=10).min()
+    out["range_20d"] = (hi20 - lo20) / s
 
     if ohlc is not None and not ohlc.empty and "high" in ohlc.columns and "low" in ohlc.columns:
         high = ohlc["high"]
@@ -109,6 +121,15 @@ def compute_technical_from_close(close: pd.Series, ohlc: Optional[pd.DataFrame] 
         atr = tr.ewm(alpha=1 / 14, adjust=False).mean()
         out["atr_14"] = atr
         out["atr_pct"] = atr / c
+        # v2：Parkinson 波动率 + 高低价差 + 成交量 zscore
+        ln_hl = np.log(high / low)
+        out["parkinson_vol_20d"] = np.sqrt((ln_hl ** 2).rolling(20, min_periods=10).mean() / (4.0 * np.log(2.0)))
+        out["hl_range_20d"] = (high / low - 1.0).rolling(20, min_periods=10).mean()
+        if "volume" in ohlc.columns:
+            v = ohlc["volume"]
+            vm = v.rolling(20, min_periods=10).mean()
+            vs = v.rolling(20, min_periods=10).std()
+            out["volume_zscore_20d"] = (v - vm) / vs
     return out
 
 
@@ -168,7 +189,7 @@ def load_ohlc(conn, codes: Iterable[str]) -> dict:
     codes = list(codes)
     try:
         placeholders = ",".join("?" for _ in codes)
-        q = f"SELECT date, code, open, high, low, close FROM etf_price_history WHERE code IN ({placeholders})"
+        q = f"SELECT date, code, open, high, low, close, volume FROM etf_price_history WHERE code IN ({placeholders})"
         df = pd.read_sql_query(q, conn, params=codes)
     except Exception:
         return {}
@@ -178,7 +199,7 @@ def load_ohlc(conn, codes: Iterable[str]) -> dict:
     res = {}
     for code, g in df.groupby("code"):
         g = g.sort_values("date").set_index("date")
-        res[code] = g[["open", "high", "low", "close"]]
+        res[code] = g[["open", "high", "low", "close", "volume"]]
     return res
 
 

@@ -38,8 +38,36 @@ def compute_forward_returns(close: pd.Series, windows=FORWARD_WINDOWS) -> pd.Dat
     return out
 
 
+def compute_forward_volatility(close: pd.Series, windows=FORWARD_WINDOWS) -> pd.DataFrame:
+    """计算前瞻风险标签：未来窗口已实现波动率 + 最大回撤。
+
+    - fwd_vol_n[t]   = 未来 n 日日对数收益的标准差（已实现波动率，信噪比高于方向）。
+    - fwd_max_dd_n[t] = 未来 n 日窗口内最大回撤（负值，越负越差）。
+    标签只用未来收盘，绝不参与特征构造（无未来函数）。
+    """
+    s = close.sort_index()
+    out = pd.DataFrame(index=s.index)
+    log_ret = np.log(s / s.shift(1))
+    vals = s.values
+    N = len(vals)
+    for n in windows:
+        # 未来 n 日已实现波动率：std(log_ret[t+1..t+n])
+        lr_f = log_ret.shift(-1)  # t 位置 = t+1 日收益
+        out[f"fwd_vol_{n}"] = lr_f.rolling(n).std()
+        # 未来 n 日窗口最大回撤
+        dd = np.full(N, np.nan)
+        for t in range(N):
+            seg = vals[t + 1:t + 1 + n]
+            if len(seg) < 2:
+                break
+            peak = np.maximum.accumulate(seg)
+            dd[t] = (seg / peak - 1.0).min()
+        out[f"fwd_max_dd_{n}"] = pd.Series(dd, index=s.index)
+    return out
+
+
 def build_labels(conn, codes: Iterable[str], windows=FORWARD_WINDOWS) -> pd.DataFrame:
-    """为给定 6 位代码集合构建前瞻收益标签表。"""
+    """为给定 6 位代码集合构建前瞻收益标签 + 风险标签表。"""
     codes = list(codes)
     placeholders = ",".join("?" for _ in codes)
     q = f"""
@@ -55,12 +83,16 @@ def build_labels(conn, codes: Iterable[str], windows=FORWARD_WINDOWS) -> pd.Data
     frames = []
     for code, g in snap.groupby("code"):
         g = g.sort_values("date").set_index("date")
-        lab = compute_forward_returns(g["close"], windows)
+        ret = compute_forward_returns(g["close"], windows)
+        vol = compute_forward_volatility(g["close"], windows)
+        lab = pd.concat([ret, vol], axis=1)
         lab["code"] = code
         frames.append(lab)
     res = pd.concat(frames).reset_index().rename(columns={"index": "date"})
     res["date"] = res["date"].dt.strftime("%Y-%m-%d")
-    cols = ["date", "code"] + [f"fwd_ret_{n}" for n in windows] + [f"is_up_{n}" for n in windows]
+    cols = ["date", "code"]
+    for n in windows:
+        cols += [f"fwd_ret_{n}", f"is_up_{n}", f"fwd_vol_{n}", f"fwd_max_dd_{n}"]
     return res[cols]
 
 

@@ -89,7 +89,7 @@ def test_build_feature_matrix_integrates(memdb):
         assert col in feat.columns
     late = feat[feat["date"] >= "2024-06-01"]
     assert late["ma20"].notna().all()
-    assert (feat["feat_version"] == "v1").all()
+    assert (feat["feat_version"] == "v2").all()
     # 后期资金流特征也应有值（合成数据已为 510300 提供 fund_flows）
     late_300 = late[late["code"] == "510300"]
     assert late_300["ff_net_inflow_5d"].notna().all()

@@ -489,6 +489,9 @@ TABLE_DEFS = [
             atr_14 REAL, atr_pct REAL,
             ret_1d REAL, ret_5d REAL, ret_20d REAL,
             vol_20d REAL, mom_20d REAL,
+            vol_5d REAL, vol_60d REAL, vol_ratio_5_20 REAL,
+            ret_60d REAL, mom_5d REAL, range_20d REAL,
+            parkinson_vol_20d REAL, hl_range_20d REAL, volume_zscore_20d REAL,
             ff_net_inflow_5d REAL, ff_net_inflow_20d REAL,
             ff_super_net_5d REAL, ff_large_net_5d REAL,
             hs300_ret_20d REAL, hs300_vol_20d REAL,
@@ -505,11 +508,34 @@ TABLE_DEFS = [
             code TEXT NOT NULL,
             fwd_ret_5 REAL, fwd_ret_20 REAL, fwd_ret_60 REAL,
             is_up_5 INTEGER, is_up_20 INTEGER, is_up_60 INTEGER,
+            fwd_vol_5 REAL, fwd_vol_20 REAL, fwd_vol_60 REAL,
+            fwd_max_dd_5 REAL, fwd_max_dd_20 REAL, fwd_max_dd_60 REAL,
             PRIMARY KEY (date, code)
         )
     """, [
         "CREATE INDEX IF NOT EXISTS idx_fr_code_date ON etf_forward_returns(code, date)",
         "CREATE INDEX IF NOT EXISTS idx_fr_date ON etf_forward_returns(date)",
+    ]),
+
+    ("etf_predictions", """
+        CREATE TABLE IF NOT EXISTS etf_predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            model TEXT NOT NULL,
+            forward_window INTEGER NOT NULL,
+            direction INTEGER,
+            score REAL,
+            probability REAL,
+            confidence REAL,
+            grade TEXT,
+            features TEXT,
+            created_at TEXT,
+            UNIQUE (date, code, model, forward_window)
+        )
+    """, [
+        "CREATE INDEX IF NOT EXISTS idx_pred_code_date ON etf_predictions(code, date)",
+        "CREATE INDEX IF NOT EXISTS idx_pred_model ON etf_predictions(model)",
     ]),
 ]
 
@@ -551,6 +577,42 @@ def get_all_table_names():
     return [t[0] for t in TABLE_DEFS]
 
 
+_RISK_LABEL_COLS = [
+    ("fwd_vol_5", "REAL"), ("fwd_vol_20", "REAL"), ("fwd_vol_60", "REAL"),
+    ("fwd_max_dd_5", "REAL"), ("fwd_max_dd_20", "REAL"), ("fwd_max_dd_60", "REAL"),
+]
+
+_V2_FEATURE_COLS = [
+    ("vol_5d", "REAL"), ("vol_60d", "REAL"), ("vol_ratio_5_20", "REAL"),
+    ("ret_60d", "REAL"), ("mom_5d", "REAL"), ("range_20d", "REAL"),
+    ("parkinson_vol_20d", "REAL"), ("hl_range_20d", "REAL"), ("volume_zscore_20d", "REAL"),
+]
+
+
+def _ensure_columns(conn, table, cols):
+    """幂等补齐指定表的列（ALTER TABLE ADD COLUMN，迁移用）。"""
+    cur = conn.cursor()
+    try:
+        cur.execute(f"PRAGMA table_info({table})")
+        existing = {r[1] for r in cur.fetchall()}
+    except sqlite3.OperationalError:
+        return
+    for col, typ in cols:
+        if col not in existing:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+    conn.commit()
+
+
+def ensure_etf_forward_returns_risk_columns(conn):
+    """对已存在的 etf_forward_returns 表幂等补齐风险标签列（迁移用）。"""
+    _ensure_columns(conn, "etf_forward_returns", _RISK_LABEL_COLS)
+
+
+def ensure_etf_features_v2_columns(conn):
+    """对已存在的 etf_features 表幂等补齐 v2 特征列（迁移用）。"""
+    _ensure_columns(conn, "etf_features", _V2_FEATURE_COLS)
+
+
 def init_all_tables(conn):
     """在给定连接上执行所有 DDL（建表+索引）"""
     cur = conn.cursor()
@@ -562,3 +624,6 @@ def init_all_tables(conn):
             except sqlite3.OperationalError:  # 索引创建失败可忽略
                 pass
     conn.commit()
+    # 迁移：补齐已存在表的新增列
+    ensure_etf_forward_returns_risk_columns(conn)
+    ensure_etf_features_v2_columns(conn)
