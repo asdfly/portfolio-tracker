@@ -201,7 +201,16 @@ def fetch_institution_research_data(date_str: str) -> pd.DataFrame:
             df = df.drop(columns=['_seq'])
         
         df['date'] = pd.to_datetime(df['research_date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna(datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d'))
-        
+
+        # 关键: 东方财富接口按"披露窗口"返回, 调研日期(research_date)常比查询日
+        # 晚 1~3 天(查 0817 可能返回 0818/0819/0820 的事件)。因此不能用
+        # 严格"日期==查询日"闸门(会丢弃全部行导致永久陈旧), 改为保留真实
+        # 调研日期落库, 仅过滤掉未来日期(避免写入尚未发生的调研)。
+        _today = datetime.now().strftime('%Y-%m-%d')
+        df = df[df['date'] <= _today]
+        if df.empty:
+            return pd.DataFrame()
+
         keep = ['date', 'code', 'name', 'price', 'change_pct', 'institution',
                 'inst_type', 'researchers', 'receive_method', 'receive_person',
                 'receive_location', 'research_date', 'announce_date']
@@ -404,9 +413,11 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
         # 4. 机构调研
         try:
             df = fetch_institution_research_data(date_param)
+            # 关闭严格"日期==查询日"闸门: 该接口按披露窗口返回, 调研日期常晚于查询日,
+            # 真实调研日期已在 fetch 内保留并过滤未来日期, 故按实际调研日期落库。
             stats["institution_research"] = save_market_events(
                 conn, df, "stock_institution_research", ["date", "code", "institution"],
-                target_date=target_date)
+                target_date=None)
             logger.info(f"  机构调研: {stats['institution_research']} 条")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"机构调研: {e}")
@@ -579,7 +590,7 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                     df = fetch_institution_research_data(date_str)
                     n = save_market_events(conn, df, "stock_institution_research",
                                           ["date", "code", "institution"],
-                                          target_date=date_display)
+                                          target_date=None)
                     totals["institution_research"] += n
                 except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  机构调研失败: {e}")

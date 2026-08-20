@@ -67,12 +67,17 @@ class DataQualityChecker:
                 lag = 999
                 status = "ERROR"
 
+            # 用户手动管理的表(如交易流水)非自动采集源：展示最新日期但不告警/不计惩罚
+            if info.get("user_managed") and status in ("STALE", "WARN"):
+                status = "USER"
+
             results.append({
                 "table": table,
                 "label": label,
                 "latest_date": str(latest) if latest else "N/A",
                 "days_lag": lag,
                 "status": status,
+                "user_managed": bool(info.get("user_managed", False)),
             })
 
         conn.close()
@@ -163,16 +168,18 @@ class DataQualityChecker:
         backtest = self.check_indicator_backtest()
 
         # 1. 新鲜度评分 (0-40分)
+        # 用户管理的表(如交易流水)非自动采集源，不参与新鲜度评分
+        auto_freshness = [f for f in freshness if not f.get("user_managed")]
         freshness_score = 0
-        weight_per_table = 40 / len(freshness)
-        for f in freshness:
+        weight_per_table = 40 / len(auto_freshness) if auto_freshness else 0
+        for f in auto_freshness:
             if f["status"] == "OK":
                 freshness_score += weight_per_table
             elif f["status"] == "WARN":
                 freshness_score += weight_per_table * 0.5
             elif f["status"] == "STALE":
                 freshness_score += weight_per_table * 0.2
-            # EMPTY/ERROR: 0
+            # EMPTY/ERROR/USER: 0
 
         # 2. 覆盖度评分 (0-30分)
         coverage_score = 0
@@ -540,6 +547,6 @@ class DataQualityChecker:
         results = self.check_table_freshness()
         lines = []
         for r in results:
-            status_icon = {"OK": "V", "WARN": "!", "STALE": "X", "EMPTY": "-", "ERROR": "?"}.get(r["status"], "?")
+            status_icon = {"OK": "V", "WARN": "!", "STALE": "X", "EMPTY": "-", "ERROR": "?", "USER": "U"}.get(r["status"], "?")
             lines.append(f"  [{status_icon}] {r['label']:8s} | 最新: {r['latest_date']:12s} | 延迟: {r['days_lag']}天 | {r['status']}")
         return "\n".join(lines)

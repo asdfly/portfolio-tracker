@@ -6,16 +6,21 @@
 找到最新 enhanced_report HTML + smart_report MD，发送带 HTML 正文的邮件，
 并把两份报告作为附件。未启用 (EMAIL_ENABLED != true) 时静默跳过。
 
+时效守卫(P1 修复): 若取到的最新 enhanced_report 不是"今日"，说明 run_analysis.py
+当日未成功产出今日报告(被 watchdog 截断/异常)，则现场调用 EnhancedReportBuilder
+重生今日报告再发，杜绝"旧 HTML + 新摘要"的日期错配推送。重生失败则拒绝发送并
+大声报错(返回 1)，绝不再发错日期的 stale 报告。
+
 免确认：走项目内 SMTP（config.NOTIFICATION_CONFIG），不经过任何需要
 人工二次确认的外部连接器。
 """
 from __future__ import annotations
 
+import datetime
 import glob
 import os
 import smtplib
 import sys
-from datetime import datetime
 
 from email.header import Header
 from email.mime.application import MIMEApplication
@@ -51,32 +56,103 @@ def build_summary(md_path: str) -> str:
         return f"（摘要读取失败：{exc}）"
 
 
-def main() -> int:
-    cfg = NOTIFICATION_CONFIG.get("email", {})
-    if not cfg.get("enabled"):
-        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 未启用 (EMAIL_ENABLED != true)，跳过推送")
-        return 0
+def _resolve_report(today_str: str):
+    """解析待发送的报告文件，处理时效守卫与现场重生。
 
+    Returns:
+        {"html_path", "md_path", "report_date"}  —— 可发送；
+        None  —— 拒绝发送(stale 且重生失败)。
+
+    守卫逻辑:
+      - 若最新 enhanced_report 日期 == 今日: 直接使用(正常路径)。
+      - 若 != 今日(缺失/过期): 现场调用 EnhancedReportBuilder 重生今日报告，
+        写 enhanced_report_<today>.html + latest_report.html；重生失败则拒绝。
+      - 文字摘要(smart_report)若与报告日期不一致, 不附带过期摘要(md_path=None)。
+    """
     html_path = find_latest("enhanced_report_*.html")
     md_path = find_latest("smart_report_*.md")
     if not html_path:
-        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 未找到 enhanced_report_*.html，跳过")
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 未找到 enhanced_report_*.html，尝试现场重生今日报告")
+        html_path = None
+
+    report_date = today_str
+    if html_path:
+        base = os.path.basename(html_path)
+        date_str = base.replace("enhanced_report_", "").replace(".html", "")
+        try:
+            found_date = datetime.datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+        except Exception:
+            found_date = date_str
+
+        if found_date == today_str:
+            # 正常: 今日报告已存在, 直接使用
+            print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 命中今日报告: {base}")
+        else:
+            # stale: 当日报告缺失/过期, 现场重生
+            print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 检测到报告日期 {found_date} 非今日 {today_str}，"
+                  f"尝试现场重生今日报告(避免错配推送)")
+            html_path = None
+    else:
+        found_date = None
+
+    if html_path is None:
+        # 现场重生今日报告
+        try:
+            from config.settings import DATABASE_PATH
+            from src.utils.enhanced_report import EnhancedReportBuilder
+            builder = EnhancedReportBuilder(str(DATABASE_PATH))
+            fresh_html = builder.build_full_report(news_data=None)
+            stamp = today_str.replace("-", "")
+            fresh_name = f"enhanced_report_{stamp}.html"
+            saved = builder.save_report(fresh_html, fresh_name, news_data=None)
+            html_path = saved
+            report_date = today_str
+            print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 已重生今日报告: {os.path.basename(saved)}")
+        except Exception as exc:
+            # 重生失败: 绝不发送错日期的旧报告, 大声报错并拒绝
+            stale_base = "N/A" if found_date is None else f"enhanced_report_{found_date.replace('-','')}.html"
+            print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL][CRITICAL] 今日报告重生失败({exc})，"
+                  f"拒绝发送 stale 报告 {stale_base}")
+            return None
+
+    # 文字摘要若与报告日期不一致(来自不同日), 不附带过期摘要
+    if md_path:
+        mbase = os.path.basename(md_path).replace("smart_report_", "").replace(".md", "")
+        try:
+            mdate = datetime.datetime.strptime(mbase, "%Y%m%d").strftime("%Y-%m-%d")
+        except Exception:
+            mdate = mbase
+        if mdate != report_date:
+            print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 文字摘要日期 {mdate} 与报告日期 {report_date} 不一致, 不附带过期摘要")
+            md_path = None
+
+    return {"html_path": html_path, "md_path": md_path, "report_date": report_date}
+
+
+def main() -> int:
+    cfg = NOTIFICATION_CONFIG.get("email", {})
+    if not cfg.get("enabled"):
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 未启用 (EMAIL_ENABLED != true)，跳过推送")
         return 0
 
-    base = os.path.basename(html_path)
-    date_str = base.replace("enhanced_report_", "").replace(".html", "")
-    try:
-        report_date = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
-    except Exception:
-        report_date = date_str
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+
+    resolved = _resolve_report(today_str)
+    if resolved is None:
+        # stale 且重生失败: 拒绝发送, 由操作员介入(调度日志可见失败)
+        return 1
+
+    html_path = resolved["html_path"]
+    md_path = resolved["md_path"]
+    report_date = resolved["report_date"]
 
     username = (cfg.get("username") or "").strip()
     recipients = [r.strip() for r in (cfg.get("recipients") or []) if r.strip()]
     if not username or not recipients:
-        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 发件人/收件人未配置，跳过")
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 发件人/收件人未配置，跳过")
         return 0
     if not (cfg.get("password") or "").strip():
-        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 授权码(EMAIL_PASSWORD)未填，跳过推送")
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 授权码(EMAIL_PASSWORD)未填，跳过推送")
         return 0
 
     with open(html_path, "r", encoding="utf-8") as f:
@@ -117,12 +193,12 @@ def main() -> int:
             os.path.basename(p) for p in (html_path, md_path) if p and os.path.exists(p)
         )
         print(
-            f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 已推送日报 {report_date} "
+            f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 已推送日报 {report_date} "
             f"至 {', '.join(recipients)}（附件: {attach_note}）"
         )
         return 0
     except Exception as exc:
-        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 发送失败: {exc}")
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 发送失败: {exc}")
         return 1
 
 

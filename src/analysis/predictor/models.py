@@ -372,6 +372,76 @@ def run_risk_prediction(conn, log=print) -> dict:
     return {"results": results}
 
 
+def predict_risk_latest(conn, model: str = "lgb", as_of: Optional[str] = None,
+                         windows=(20, 60)) -> pd.DataFrame:
+    """用全量历史重训波动率模型，预测最新特征日各 ETF 的未来已实现波动率。
+
+    与 predict_latest（方向）平行：训练只使用有标签的历史样本（dropna），
+    预测对象为最新特征日（该日无未来标签，属正常）。
+    返回 [date, code, forward_window, pred_vol, model]，pred_vol 为日对数收益标准差口径。
+    """
+    df = load_panel(conn)
+    if df.empty:
+        return pd.DataFrame(columns=["date", "code", "forward_window", "pred_vol", "model"])
+    if as_of is None:
+        as_of = df["date"].max().strftime("%Y-%m-%d")
+    latest = df[df["date"] == pd.to_datetime(as_of)]
+    if latest.empty:
+        raise ValueError(f"as_of={as_of} 无特征数据")
+    rows = []
+    for w in windows:
+        vol_col = f"fwd_vol_{w}"
+        panel = df.dropna(subset=[vol_col]).copy()
+        if panel.empty:
+            continue
+        X_all = panel[FEATURE_COLS].fillna(0.0)
+        y_all = panel[vol_col].astype(float)
+        if model == "lgb":
+            mdl = _fit_lgb(X_all, y_all)
+            pred = mdl.predict(latest[FEATURE_COLS].fillna(0.0))
+        else:
+            sc, mdl = _fit_ridge(X_all, y_all)
+            pred = _pred_ridge(sc, mdl, latest[FEATURE_COLS].fillna(0.0))
+        for r, p in zip(latest.itertuples(index=False), pred):
+            rows.append((as_of, r.code, w, float(p), model))
+    return pd.DataFrame(rows, columns=["date", "code", "forward_window", "pred_vol", "model"])
+
+
+def run_risk_predict_latest(conn, model: str = "lgb", log=print) -> int:
+    """预测最新日波动率并落表 etf_predictions（model='risk_lgb'）。
+
+    字段复用：score=日波动率预测(fwd_vol)，probability=年化波动率，
+    direction=高/低波动分类(1/-1，以该窗口截面中位数为界)，
+    confidence=截面分位(0-100)。供日报/前端复用，避免重复重训。
+    """
+    pred = predict_risk_latest(conn, model=model)
+    if pred.empty:
+        log("[Risk] 无最新波动率预测")
+        return 0
+    pred = pred.copy()
+    pred["pred_vol_ann"] = pred["pred_vol"] * (252 ** 0.5)
+    out = []
+    now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for w, g in pred.groupby("forward_window"):
+        med = g["pred_vol"].median()
+        for r in g.itertuples(index=False):
+            hi = r.pred_vol >= med
+            pct = float((g["pred_vol"] < r.pred_vol).mean() * 100)
+            out.append((r.date, r.code, "risk_lgb", int(r.forward_window),
+                        1 if hi else -1, r.pred_vol, round(float(r.pred_vol_ann), 4),
+                        round(pct, 1), "R", "risk_panel", now))
+    cur = conn.cursor()
+    for row in out:
+        cur.execute(
+            """INSERT OR REPLACE INTO etf_predictions
+               (date, code, model, forward_window, direction, score, probability,
+                confidence, grade, features, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""", row)
+    conn.commit()
+    log(f"[Risk] 最新波动率预测落表 {len(out)} 行")
+    return len(out)
+
+
 def _main():
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

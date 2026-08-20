@@ -558,7 +558,8 @@ QUALITY_CHECK_TABLES = {
     "stock_margin": {"date_col": "date", "code_col": "code", "label": "融资融券"},
     "stock_holder_change": {"date_col": "date", "code_col": "code", "label": "股东增减持"},
     "stock_institution_research": {"date_col": "date", "code_col": "code", "label": "机构调研"},
-    "trade_records": {"date_col": "date", "code_col": "code", "label": "交易流水"},
+    "trade_records": {"date_col": "date", "code_col": "code", "label": "交易流水",
+                      "user_managed": True},  # 用户手动导入(招商证券对账单)，非自动采集源
     "stock_block_trade": {"date_col": "date", "code_col": "code", "label": "大宗交易"},
     # 黄金相关指标 (存储在 macro_daily 中, 用 indicator_code 区分)
     # 使用虚拟表名, DataQualityChecker 中特殊处理

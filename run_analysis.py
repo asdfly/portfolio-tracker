@@ -555,53 +555,19 @@ def send_daily_report(results, alerts, advice_summary, news_result=None):
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as enh_err:
             logger.warning(f"增强版报告生成失败: {enh_err}")
 
-        # 检查是否有notification.json配置
+        # 检查是否有 notification.json 配置（企业微信通知）
         config_path = PROJECT_DIR / "config" / "notification.json"
         if not config_path.exists():
-            logger.info("通知未配置 (缺少 config/notification.json)，跳过发送")
+            logger.info("通知未配置 (缺少 config/notification.json)，跳过企业微信")
             return
 
         import json
         with open(config_path, 'r', encoding='utf-8') as f:
             notify_cfg = json.load(f)
 
-        # 检查邮件是否启用
-        email_cfg = notify_cfg.get('email', {})
-        if not email_cfg.get('enabled', False):
-            logger.info("邮件通知未启用，跳过发送")
-            return
-
-        # 生成HTML报告
-        builder = EmailReportBuilder(str(DATABASE_PATH))
-        html = builder.build_daily_report()
-
-        # 保存本地副本
-        report_filename = f"daily_report_{_report_stamp}.html"
-        builder.save_report(html, report_filename)
-
-        # 发送邮件
-        import smtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"投资组合日报 - {date.today().strftime('%Y-%m-%d')}"
-        msg['From'] = email_cfg.get('sender', email_cfg.get('username'))
-        msg['To'] = ', '.join(email_cfg.get('recipients', []))
-        msg.attach(MIMEText(html, 'html', 'utf-8'))
-
-        port = email_cfg.get('smtp_port', 465)
-        if port == 465:
-            server = smtplib.SMTP_SSL(email_cfg.get('smtp_server'), port, timeout=15)
-        else:
-            server = smtplib.SMTP(email_cfg.get('smtp_server'), port, timeout=15)
-            server.starttls()
-
-        server.login(email_cfg.get('username'), email_cfg.get('password'))
-        server.send_message(msg)
-        server.quit()
-
-        logger.info(f"邮件报告发送成功: {', '.join(email_cfg.get('recipients', []))}")
+        # 邮件发送已统一收敛到 scripts/send_report_email.py（单一发送入口，
+        # 含 stale 守卫与现场重生），本函数不再发送邮件，避免重复推送。
+        # 企业微信轻量摘要仍在此发送（非重复邮件）。
 
         # 发送企业微信
         wechat_cfg = notify_cfg.get('wechat', {})
@@ -768,7 +734,12 @@ def main(argv=None):
     # install_requests_timeout 给所有 requests/akshare 调用注入默认 (connect,read)
     # 超时，消除无限挂死；start_watchdog 作为最后兜底，到点强制退出。
     install_requests_timeout(connect=10, read=30)
-    _wd = start_watchdog(minutes=50, logger_=logger)
+    # P1 修复: 报告生成保护 —— 预留时间给"日报生成+邮件发送",
+    # 避免最重阶段(signal_backtest)跑超全局 watchdog 后被强杀, 导致
+    # send_daily_report 永远到不了, 次日 pusher 只得发送 stale 报告。
+    _WATCHDOG_MINUTES = 50
+    _REPORT_RESERVE_SECONDS = 600  # 预留 10 分钟给日报生成与邮件发送
+    _wd = start_watchdog(minutes=_WATCHDOG_MINUTES, logger_=logger)
 
     # === P5 可观测: 创建运行报告器(贯穿全程增量记录, finally 出报告) ===
     _report_date = backfill_date or datetime.now().strftime("%Y-%m-%d")
@@ -776,6 +747,9 @@ def main(argv=None):
                             mode=("backfill" if backfill_date else "daily"))
 
     start_time = time.time()
+    # 软截止时刻: 到点则跳过非必需重分析阶段(智能分析/信号回测/NAV重建),
+    # 优先保证 send_daily_report 在 watchdog 强杀前一定能执行。
+    _report_soft_deadline = start_time + (_WATCHDOG_MINUTES * 60 - _REPORT_RESERVE_SECONDS)
     task_name = "portfolio_daily_analysis"
 
     try:
@@ -993,8 +967,14 @@ def main(argv=None):
             _reporter.stage("market_event_signals", "error", note=str(e)[:160])
 
         # === 阶段四: 智能分析 ===
-        advice_summary = run_stage4_smart(results, summary, risk_data)
-        _reporter.stage("smart", "ok")
+        # 报告保护: 软截止已到则跳过(非必需), 优先保证日报生成
+        if time.time() > _report_soft_deadline:
+            logger.warning("[报告保护] 软截止已到, 跳过智能分析阶段(非必需)，优先保证日报生成")
+            advice_summary = None
+            _reporter.stage("smart", "skipped", note="soft deadline protection")
+        else:
+            advice_summary = run_stage4_smart(results, summary, risk_data)
+            _reporter.stage("smart", "ok")
 
 
         # === 阶段六: 数据质量巡检 ===
@@ -1034,11 +1014,20 @@ def main(argv=None):
 
 
         # === 阶段六b: 信号回测 ===
+        # P1 修复: 软截止跳过 + 硬超时预算(540s) 双重保护, 杜绝 signal_backtest
+        # 跑超全局 watchdog 而截断后续日报生成。
         try:
             from src.analysis.signal_backtest import run_full_backtest_pipeline
-            bt_result = run_full_backtest_pipeline()
-            logger.info(f"[阶段六b/6b] 信号回测完成: {bt_result['backtest_rows']} 统计行, {bt_result['confidence_rows']} 置信度行")
-            _reporter.stage("backtest", "ok")
+            if time.time() > _report_soft_deadline:
+                logger.warning("[报告保护] 软截止已到, 跳过信号回测(非必需)，优先保证日报生成")
+                _reporter.stage("backtest", "skipped", note="soft deadline protection")
+            else:
+                bt_result = run_with_hard_timeout(run_full_backtest_pipeline, timeout=540)
+                logger.info(f"[阶段六b/6b] 信号回测完成: {bt_result['backtest_rows']} 统计行, {bt_result['confidence_rows']} 置信度行")
+                _reporter.stage("backtest", "ok")
+        except CollectTimeout:
+            logger.warning("[报告保护] 信号回测硬超时(540s), 已跳过, 不影响日报生成")
+            _reporter.stage("backtest", "timeout", note="hard timeout 540s")
         except Exception as e:
             logger.warning(f"信号回测失败(不影响主流程): {e}")
             _reporter.stage("backtest", "error", note=str(e)[:160])
@@ -1052,14 +1041,19 @@ def main(argv=None):
         # === P0-2: 重建单位净值账本（TWR 时间加权收益）===
         # 挂接在报告发送之后，summary 与 trade_records 此时均已就绪。
         # 异常仅记 warning，不阻断主流程（与资金流/新闻等阶段同级容错）。
-        try:
-            from src.analysis.nav_engine import rebuild_portfolio_nav
-            _nav_rows = rebuild_portfolio_nav()
-            logger.info(f"单位净值账本重建完成: {_nav_rows} 行")
-            _reporter.stage("nav_rebuild", "ok")
-        except Exception as e:
-            logger.warning(f"单位净值账本重建失败(不影响主流程): {e}")
-            _reporter.stage("nav_rebuild", "error", note=str(e)[:160])
+        # 报告保护: 软截止已到则跳过(非必需)，优先保证日报生成。
+        if time.time() > _report_soft_deadline:
+            logger.info("[报告保护] 软截止已到, 跳过 NAV 重建(非必需)")
+            _reporter.stage("nav_rebuild", "skipped", note="soft deadline protection")
+        else:
+            try:
+                from src.analysis.nav_engine import rebuild_portfolio_nav
+                _nav_rows = rebuild_portfolio_nav()
+                logger.info(f"单位净值账本重建完成: {_nav_rows} 行")
+                _reporter.stage("nav_rebuild", "ok")
+            except Exception as e:
+                logger.warning(f"单位净值账本重建失败(不影响主流程): {e}")
+                _reporter.stage("nav_rebuild", "error", note=str(e)[:160])
 
         # 记录执行成功
         duration = time.time() - start_time

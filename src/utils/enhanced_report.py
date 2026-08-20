@@ -170,6 +170,9 @@ class EnhancedReportBuilder:
         # 技术信号板块
         tech_block = self._build_technical_signals(technical, price_30d)
 
+        # ETF 风险展望板块
+        risk_block = self._build_risk_outlook()
+
         # 组装HTML
         html = (
             '<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -194,6 +197,7 @@ class EnhancedReportBuilder:
             '<table><thead><tr><th>名称</th><th>代码</th><th>持仓量</th><th>成本</th><th>现价</th><th>市值</th><th>盈亏</th><th>收益率</th><th>占比</th></tr></thead>'
             '<tbody>' + pos_rows + '</tbody></table></div>'
             + tech_block
+            + risk_block
             + adv_block
             + news_block
             + '<div class="ft">投资组合跟踪分析系统 v2.0 自动生成<br>本报告仅供参考，不构成任何投资建议或买卖操作指令。投资有风险，入市需谨慎。 | 生成时间: ' + now.strftime('%Y-%m-%d %H:%M:%S') + '</div>'
@@ -541,3 +545,17 @@ class EnhancedReportBuilder:
         if not blocks:
             return ""
         return '<div class="sec"><div class="st">📰 行业资讯与影响分析</div>' + blocks + '</div>'
+
+    def _build_risk_outlook(self):
+        """ETF 风险展望区块（从 etf_predictions 读取已落表的波动率预测）。"""
+        try:
+            from src.utils.risk_report import build_risk_outlook_html, get_risk_outlook
+            conn = get_db_connection(self.db_path)
+            try:
+                outlook = get_risk_outlook(conn, self.db_path)
+            finally:
+                conn.close()
+            return build_risk_outlook_html(outlook, theme="dark")
+        except Exception as exc:
+            logger.warning("风险展望块生成失败: %s", exc)
+            return ""

@@ -152,6 +152,9 @@ class EmailReportBuilder:
             </div>
             '''.format(count=len(advice), items=advice_items)
 
+        # ETF 风险展望区块
+        risk_block = self._build_risk_outlook()
+
         html = '''<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -235,6 +238,8 @@ class EmailReportBuilder:
 
     {advice_block}
 
+    {risk_block}
+
     <div class="footer">
         投资组合跟踪分析系统 v2.0 自动生成<br>
         本报告仅供参考，不构成投资建议 | 生成时间: {now}
@@ -258,10 +263,25 @@ class EmailReportBuilder:
             loss_count=summary.get('loss_count', 0),
             position_rows=position_rows,
             advice_block=advice_block,
+            risk_block=risk_block,
             now=now.strftime('%Y-%m-%d %H:%M:%S')
         )
 
         return html
+
+    def _build_risk_outlook(self):
+        """ETF 风险展望区块（从 etf_predictions 读取已落表的波动率预测）。"""
+        try:
+            from src.utils.risk_report import build_risk_outlook_html, get_risk_outlook
+            conn = get_db_connection(self.db_path)
+            try:
+                outlook = get_risk_outlook(conn, self.db_path)
+            finally:
+                conn.close()
+            return build_risk_outlook_html(outlook, theme="light")
+        except Exception as exc:
+            logger.warning("风险展望块生成失败: %s", exc)
+            return ""
 
     def build_alert_email(self, alerts: List[Dict]) -> str:
         """构建告警邮件HTML"""
