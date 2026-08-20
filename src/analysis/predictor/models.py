@@ -291,13 +291,16 @@ def _r2(y_true, y_pred):
 
 def risk_walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
                               n_splits: int = N_SPLITS,
-                              embargo: int = EMBARGO_DAYS) -> dict:
-    """预测未来 n 日已实现波动率 fwd_vol_n：回归 R²/IC + 高低波动分类 AUC。
+                              embargo: int = EMBARGO_DAYS,
+                              label_col: Optional[str] = None) -> dict:
+    """预测未来 n 日风险标签（默认 fwd_vol_n，可传 fwd_max_dd_n 预测回撤）。
 
-    波动率有强自相关/聚类性，信噪比远高于价格方向，预期 R²/AUC 显著优于方向预测。
+    回归 R²/IC + 高低波动（或深/浅回撤）分类 AUC。波动率有强自相关/聚类性，
+    信噪比远高于价格方向，预期 R²/AUC 显著优于方向预测。
     """
-    vol_col = f"fwd_vol_{window}"
-    panel = df.dropna(subset=[vol_col]).copy()
+    if label_col is None:
+        label_col = f"fwd_vol_{window}"
+    panel = df.dropna(subset=[label_col]).copy()
     if panel.empty:
         return {"error": "no labeled rows"}
     dates = sorted(panel["date"].unique())
@@ -308,7 +311,7 @@ def risk_walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
         return {"error": f"insufficient history ({len(dates)} days)"}
 
     X_all = panel[FEATURE_COLS].fillna(0.0)
-    y_all = panel[vol_col].astype(float)
+    y_all = panel[label_col].astype(float)
     ys, ps = [], []
     ys_cls, ps_cls = [], []
     for tr_end, ts_start, ts_end in splits:
@@ -439,6 +442,102 @@ def run_risk_predict_latest(conn, model: str = "lgb", log=print) -> int:
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""", row)
     conn.commit()
     log(f"[Risk] 最新波动率预测落表 {len(out)} 行")
+    return len(out)
+
+
+# ============ 回撤预测（未来最大回撤）============
+
+def run_drawdown_prediction(conn, log=print) -> dict:
+    """回撤预测主流程：walk-forward 评估未来最大回撤（lgb/ridge × 三窗口）。
+
+    与 run_risk_prediction（波动率）平行：复用 risk_walkforward_evaluate，
+    仅把目标列换成 fwd_max_dd_n（负值，越负回撤越深）。
+    """
+    df = load_panel(conn)
+    if df.empty:
+        log("[Drawdown] 面板数据为空")
+        return {"error": "empty panel"}
+    log("[Drawdown] 面板 %d 行，回撤标签 fwd_max_dd_5/20/60", len(df))
+    results = {}
+    for w in WINDOWS:
+        results[w] = {}
+        for m in ("lgb", "ridge"):
+            res = risk_walkforward_evaluate(df, w, model=m, label_col=f"fwd_max_dd_{w}")
+            res["window"] = w
+            res["model"] = m
+            results[w][m] = res
+            log(f"[Drawdown] w={w} {m}: R²={res.get('r2')} IC={res.get('ic_pearson')} "
+                f"AUC={res.get('auc')} (n={res.get('n_test')})")
+    return {"results": results}
+
+
+def predict_drawdown_latest(conn, model: str = "lgb", as_of: Optional[str] = None,
+                            windows=(20, 60)) -> pd.DataFrame:
+    """用全量历史重训回撤模型，预测最新特征日各 ETF 的未来最大回撤（负值口径）。
+
+    与 predict_risk_latest（波动率）平行：训练只用有标签历史样本（dropna），
+    预测对象为最新特征日（无未来标签属正常）。
+    返回 [date, code, forward_window, pred_dd, model]，pred_dd 为回撤小数（如 -0.15 = -15%）。
+    """
+    df = load_panel(conn)
+    if df.empty:
+        return pd.DataFrame(columns=["date", "code", "forward_window", "pred_dd", "model"])
+    if as_of is None:
+        as_of = df["date"].max().strftime("%Y-%m-%d")
+    latest = df[df["date"] == pd.to_datetime(as_of)]
+    if latest.empty:
+        raise ValueError(f"as_of={as_of} 无特征数据")
+    rows = []
+    for w in windows:
+        dd_col = f"fwd_max_dd_{w}"
+        panel = df.dropna(subset=[dd_col]).copy()
+        if panel.empty:
+            continue
+        X_all = panel[FEATURE_COLS].fillna(0.0)
+        y_all = panel[dd_col].astype(float)
+        if model == "lgb":
+            mdl = _fit_lgb(X_all, y_all)
+            pred = mdl.predict(latest[FEATURE_COLS].fillna(0.0))
+        else:
+            sc, mdl = _fit_ridge(X_all, y_all)
+            pred = _pred_ridge(sc, mdl, latest[FEATURE_COLS].fillna(0.0))
+        for r, p in zip(latest.itertuples(index=False), pred):
+            rows.append((as_of, r.code, w, float(p), model))
+    return pd.DataFrame(rows, columns=["date", "code", "forward_window", "pred_dd", "model"])
+
+
+def run_drawdown_predict_latest(conn, model: str = "lgb", log=print) -> int:
+    """预测最新日回撤并落表 etf_predictions（model='risk_dd_lgb'）。
+
+    字段复用：score=预期最大回撤(负值,越负越差)，probability=回撤百分比(负值)，
+    direction=深/浅回撤分类(1=深,以截面中位数为界)，confidence=截面分位(0-100,
+    回撤越深分位越高)。供前端/日报复用，避免重复重训。
+    """
+    pred = predict_drawdown_latest(conn, model=model)
+    if pred.empty:
+        log("[Drawdown] 无最新回撤预测")
+        return 0
+    pred = pred.copy()
+    out = []
+    now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for w, g in pred.groupby("forward_window"):
+        med = g["pred_dd"].median()
+        for r in g.itertuples(index=False):
+            deep = r.pred_dd <= med  # dd 为负值，更负 = 更深回撤
+            pct = float((g["pred_dd"] > r.pred_dd).mean() * 100)  # 回撤越深分位越高
+            out.append((r.date, r.code, "risk_dd_lgb", int(r.forward_window),
+                        1 if deep else -1, round(float(r.pred_dd), 6),
+                        round(float(r.pred_dd * 100), 3), round(pct, 1),
+                        "R", "risk_dd_panel", now))
+    cur = conn.cursor()
+    for row in out:
+        cur.execute(
+            """INSERT OR REPLACE INTO etf_predictions
+               (date, code, model, forward_window, direction, score, probability,
+                confidence, grade, features, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""", row)
+    conn.commit()
+    log(f"[Drawdown] 最新回撤预测落表 {len(out)} 行")
     return len(out)
 
 
