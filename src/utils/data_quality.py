@@ -402,9 +402,10 @@ class DataQualityChecker:
         except sqlite3.OperationalError:
             pass
 
-        # COMEX-SGE 比值一致性检查 (同日比值应在合理范围)
+        # COMEX-SGE 比值一致性检查 (近30天，同日比值应在合理范围)
         # COMEX: USD/oz, SGE: CNY/g, 理论比值 = USD_CNY / 31.1035
         # 汇率 6.5-7.5 时, 合理比值约 3.4-4.8
+        # 只检查近30天，避免历史异常（如数据断层期）被永久告警
         try:
             cur.execute("""
                 SELECT a.date, a.value as comex, b.value as sge,
@@ -413,6 +414,7 @@ class DataQualityChecker:
                 JOIN macro_daily b ON a.date = b.date
                 WHERE a.indicator_code = 'COMEX_GOLD' AND b.indicator_code = 'SGE_GOLD'
                   AND a.value IS NOT NULL AND b.value IS NOT NULL AND b.value > 0
+                  AND a.date >= date('now', '-30 days')
                   AND (CAST(a.value AS REAL) / CAST(b.value AS REAL)) NOT BETWEEN 3.0 AND 5.0
                 ORDER BY a.date DESC LIMIT 20
             """)
@@ -425,7 +427,7 @@ class DataQualityChecker:
                 result["anomalies"].append({
                     "severity": "HIGH",
                     "indicator": "COMEX/SGE_RATIO",
-                    "message": f"COMEX/SGE 比值异常: {len(ratio_anomalies)} 天比值超出 3.0-5.0 范围, "
+                    "message": f"COMEX/SGE 比值异常: 近30天 {len(ratio_anomalies)} 天比值超出 3.0-5.0 范围, "
                                f"最近: {ratio_anomalies[0][0]} ratio={ratio_anomalies[0][3]:.4f}",
                 })
         except sqlite3.OperationalError:
