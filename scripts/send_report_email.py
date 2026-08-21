@@ -158,8 +158,23 @@ def main() -> int:
         print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 授权码(EMAIL_PASSWORD)未填，跳过推送")
         return 0
 
-    with open(html_path, "r", encoding="utf-8") as f:
-        html_body = f.read()
+    # 邮件正文用浅色主题现场生成（更贴合邮件客户端白底），不覆盖 dashboard 的 latest_report
+    try:
+        from config.settings import DATABASE_PATH
+        from src.utils.enhanced_report import EnhancedReportBuilder
+        builder = EnhancedReportBuilder(str(DATABASE_PATH), theme="light")
+        html_body = builder.build_full_report(news_data=None)
+        light_name = f"enhanced_report_{report_date.replace('-', '')}_email.html"
+        from pathlib import Path as _Path
+        light_path = _Path(ROOT) / "data" / "reports" / light_name
+        light_path.write_text(html_body, encoding="utf-8")
+        html_path = str(light_path)
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 已生成浅色邮件正文: {light_name}")
+    except Exception as exc:
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 浅色正文生成失败({exc})，退回已有报告")
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_body = f.read()
+
     text_body = build_summary(md_path)
 
     msg = MIMEMultipart("mixed")

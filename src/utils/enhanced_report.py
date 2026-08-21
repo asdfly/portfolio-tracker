@@ -7,6 +7,7 @@ import base64
 import io
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import matplotlib
 matplotlib.use('Agg')
@@ -21,7 +22,28 @@ from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-CSS = (
+# 主题颜色映射（深色 dashboard 版 / 浅色邮件版）。语义色（涨跌/优先级）不在此处，
+# 两主题共用 #27ae60(绿) #e74c3c(红) #f39c12(琥珀) #1a73e8(蓝) #3498db(蓝) 等。
+THEMES = {
+    "dark": {
+        "row1": "#162447", "row2": "#1a2d50", "text": "#e0e6ed", "sub": "#8899aa",
+        "muted": "#95a5a6", "faint": "#607080", "gray": "#7f8c8d",
+        "border": "#2a3f5f", "alert_bg": "#2d1a1a", "ok_bg": "#1a2d1a",
+        "warn_bg": "#2d2618", "risk_green": "#162d1f", "risk_red": "#2d1a1a",
+        "risk_amber": "#2d2618", "advice_bg": "#162447", "header_sub": "#b0c4de",
+        "card_bg": "#111d35", "body_bg": "#0a1628",
+    },
+    "light": {
+        "row1": "#f8f9fa", "row2": "#ffffff", "text": "#2c3e50", "sub": "#6b7a8d",
+        "muted": "#7f8c8d", "faint": "#9aa5b1", "gray": "#7f8c8d",
+        "border": "#e5e9f0", "alert_bg": "#fef5f5", "ok_bg": "#eaf7ee",
+        "warn_bg": "#fdf6e3", "risk_green": "#eaf7ee", "risk_red": "#fef5f5",
+        "risk_amber": "#fdf6e3", "advice_bg": "#f0f4fb", "header_sub": "#e8f0fe",
+        "card_bg": "#ffffff", "body_bg": "#f5f7fa",
+    },
+}
+
+_CSS_DARK = (
     "body{margin:0;padding:0;background:#0a1628;font-family:-apple-system,BlinkMacSystemFont,"
     "'Segoe UI',Roboto,Arial,sans-serif;}"
     ".c{max-width:720px;margin:20px auto;background:#111d35;border-radius:12px;overflow:hidden;"
@@ -47,13 +69,45 @@ CSS = (
     ".rc .rv{font-size:16px;font-weight:700;margin-top:3px;}"
 )
 
+_CSS_LIGHT = (
+    "body{margin:0;padding:0;background:#f5f7fa;font-family:-apple-system,BlinkMacSystemFont,"
+    "'Segoe UI',Roboto,Arial,sans-serif;}"
+    ".c{max-width:720px;margin:20px auto;background:#ffffff;border-radius:12px;overflow:hidden;"
+    "box-shadow:0 2px 12px rgba(0,0,0,0.06);border:1px solid #e5e9f0;}"
+    ".hd{background:linear-gradient(135deg,#1a73e8,#0d47a1);color:#fff;padding:24px 20px;text-align:center;}"
+    ".hd h1{margin:0;font-size:20px;letter-spacing:1px;}"
+    ".hd p{margin:4px 0 0;font-size:12px;color:#e8f0fe;}"
+    ".ms{display:flex;flex-wrap:wrap;gap:10px;padding:16px 20px;}"
+    ".m{flex:1 1 30%;min-width:130px;padding:12px 14px;background:#f0f4fb;border-radius:8px;text-align:center;}"
+    ".m .l{font-size:10px;color:#6b7a8d;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;}"
+    ".m .v{font-size:18px;font-weight:700;color:#2c3e50;}"
+    ".m .s{font-size:10px;color:#7f8c8d;margin-top:2px;}"
+    ".sec{padding:0 20px 14px;}"
+    ".st{font-size:14px;font-weight:600;color:#2c3e50;margin:14px 0 8px;padding-bottom:5px;border-bottom:2px solid #e5e9f0;}"
+    "table{width:100%;border-collapse:collapse;}"
+    "th{padding:7px 10px;font-size:10px;color:#6b7a8d;text-transform:uppercase;letter-spacing:0.5px;"
+    "text-align:left;background:#eef1f6;border-bottom:2px solid #e5e9f0;}"
+    "th:nth-child(n+3),td:nth-child(n+3){text-align:right;}"
+    ".ft{padding:14px 20px;text-align:center;font-size:10px;color:#9aa5b1;border-top:1px solid #e5e9f0;background:#fafbfc;}"
+    ".rg{display:flex;gap:10px;}"
+    ".rc{flex:1;padding:12px;border-radius:8px;text-align:center;}"
+    ".rc .rl{font-size:10px;color:#6b7a8d;}"
+    ".rc .rv{font-size:16px;font-weight:700;margin-top:3px;color:#2c3e50;}"
+)
+
 
 class EnhancedReportBuilder:
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, theme: str = "dark"):
         self.db_path = db_path
+        self.theme = theme
 
-    def build_full_report(self, news_data=None) -> str:
+    def build_full_report(self, news_data=None, theme: Optional[str] = None) -> str:
+        theme = theme or self.theme
+        T = THEMES.get(theme, THEMES["dark"])
+        css = _CSS_LIGHT if theme == "light" else _CSS_DARK
+        self._T = T
+        self._theme = theme
         summary = self._load_summary()
         positions = self._load_positions()
         alerts = self._load_alerts()
@@ -106,7 +160,7 @@ class EnhancedReportBuilder:
         sc = '#27ae60' if sharpe and float(sharpe) > 0.5 else '#f39c12' if sharpe else '#95a5a6'
         ddc = '#e74c3c' if max_dd and abs(float(max_dd)) > 10 else '#f39c12' if max_dd and abs(float(max_dd)) > 5 else '#27ae60'
         vc = '#e74c3c' if vol and float(vol) > 25 else '#f39c12' if vol and float(vol) > 15 else '#27ae60'
-        vbg = '#2d2618' if vol and float(vol) > 15 else '#162d1f'
+        vbg = T['risk_amber'] if vol and float(vol) > 15 else T['risk_green']
 
         # 持仓表格
         tv = summary.get('total_value', 1) or 1
@@ -118,18 +172,18 @@ class EnhancedReportBuilder:
             wt = mv / tv * 100
             pc = clr(pnl)
             ps = sign(pnl)
-            bg = '#162447' if i % 2 == 0 else '#1a2d50'
+            bg = T['row1'] if i % 2 == 0 else T['row2']
             pos_rows += (
                 '<tr style="background:' + bg + ';">'
                 '<td style="padding:7px 10px;font-size:12px;font-weight:500;">' + p['name'] + '</td>'
-                '<td style="padding:7px 10px;font-size:12px;color:#7f8c8d;">' + p['code'] + '</td>'
+                '<td style="padding:7px 10px;font-size:12px;color:' + T['gray'] + ';">' + p['code'] + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + f"{p['quantity']:,.0f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + f"{p['cost_price']:.3f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;font-weight:500;">' + f"{p['current_price']:.3f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + ps + '¥' + f"{mv:,.0f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;color:' + pc + ';font-weight:500;">' + ps + '¥' + f"{pnl:,.0f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;color:' + pc + ';">' + ps + f"{pnl_rate:.2f}" + '%</td>'
-                '<td style="padding:7px 10px;font-size:12px;text-align:right;color:#7f8c8d;">' + f"{wt:.1f}" + '%</td>'
+                '<td style="padding:7px 10px;font-size:12px;text-align:right;color:' + T['gray'] + ';">' + f"{wt:.1f}" + '%</td>'
                 '</tr>'
             )
 
@@ -140,9 +194,9 @@ class EnhancedReportBuilder:
                 lc = '#e74c3c' if a['level'] == 'error' else '#f39c12'
                 ic = '🔴' if a['level'] == 'error' else '🟡'
                 ai += '<tr><td style="padding:6px 10px;font-size:12px;">' + ic + ' <span style="color:' + lc + ';font-weight:600;">[' + a['level'].upper() + ']</span> ' + a['message'] + '</td></tr>'
-            ab = '<div style="margin:14px 0;padding:14px;background:#2d1a1a;border-radius:8px;border-left:4px solid #e74c3c;"><div style="font-size:13px;font-weight:600;color:#e74c3c;margin-bottom:8px;">⚠️ 今日告警 (' + str(len(alerts)) + ')</div><table style="width:100%;border-collapse:collapse;">' + ai + '</table></div>'
+            ab = '<div style="margin:14px 0;padding:14px;background:' + T['alert_bg'] + ';border-radius:8px;border-left:4px solid #e74c3c;"><div style="font-size:13px;font-weight:600;color:#e74c3c;margin-bottom:8px;">⚠️ 今日告警 (' + str(len(alerts)) + ')</div><table style="width:100%;border-collapse:collapse;">' + ai + '</table></div>'
         else:
-            ab = '<div style="margin:14px 0;padding:14px;background:#1a2d1a;border-radius:8px;border-left:4px solid #27ae60;"><span style="font-size:12px;color:#27ae60;">✅ 今日无告警，投资组合运行正常</span></div>'
+            ab = '<div style="margin:14px 0;padding:14px;background:' + T['ok_bg'] + ';border-radius:8px;border-left:4px solid #27ae60;"><span style="font-size:12px;color:#27ae60;">✅ 今日无告警，投资组合运行正常</span></div>'
 
         # 智能建议
         adv_block = ''
@@ -151,15 +205,15 @@ class EnhancedReportBuilder:
             items = ''
             for a in advice[:6]:
                 pl, pcolor = pm.get(a.get('priority', 'low'), ('⚪ 低', '#95a5a6'))
-                items += '<div style="padding:6px 0;border-bottom:1px solid #2a3f5f;font-size:12px;"><span style="font-weight:600;color:' + pcolor + ';">' + pl + '</span> ' + a.get('title', '') + '</div>'
-            adv_block = '<div style="margin:14px 0;padding:14px;background:#162447;border-radius:8px;"><div style="font-size:13px;font-weight:600;color:#e0e6ed;margin-bottom:8px;">💡 智能建议 (' + str(len(advice)) + ')</div>' + items + '</div>'
+                items += '<div style="padding:6px 0;border-bottom:1px solid ' + T['border'] + ';font-size:12px;"><span style="font-weight:600;color:' + pcolor + ';">' + pl + '</span> ' + a.get('title', '') + '</div>'
+            adv_block = '<div style="margin:14px 0;padding:14px;background:' + T['advice_bg'] + ';border-radius:8px;"><div style="font-size:13px;font-weight:600;color:' + T['text'] + ';margin-bottom:8px;">💡 智能建议 (' + str(len(advice)) + ')</div>' + items + '</div>'
 
         # 图表
         cb = ''
         if nav_b64:
-            cb += '<div style="margin:14px 0;"><div style="font-size:13px;font-weight:600;color:#e0e6ed;margin-bottom:8px;">📈 组合净值走势（vs 沪深300）</div><img src="data:image/png;base64,' + nav_b64 + '" style="width:100%;border-radius:6px;" /></div>'
+            cb += '<div style="margin:14px 0;"><div style="font-size:13px;font-weight:600;color:' + T['text'] + ';margin-bottom:8px;">📈 组合净值走势（vs 沪深300）</div><img src="data:image/png;base64,' + nav_b64 + '" style="width:100%;border-radius:6px;" /></div>'
         if dd_b64:
-            cb += '<div style="margin:14px 0;"><div style="font-size:13px;font-weight:600;color:#e0e6ed;margin-bottom:8px;">📉 回撤曲线</div><img src="data:image/png;base64,' + dd_b64 + '" style="width:100%;border-radius:6px;" /></div>'
+            cb += '<div style="margin:14px 0;"><div style="font-size:13px;font-weight:600;color:' + T['text'] + ';margin-bottom:8px;">📉 回撤曲线</div><img src="data:image/png;base64,' + dd_b64 + '" style="width:100%;border-radius:6px;" /></div>'
 
         # 基准对比板块
         index_block = self._build_index_comparison(index_today, summary, clr, sign)
@@ -177,9 +231,9 @@ class EnhancedReportBuilder:
         html = (
             '<!DOCTYPE html><html><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<style>' + CSS + '</style></head><body>'
+            '<style>' + css + '</style></head><body>'
             '<div class="c">'
-            '<div class="hd"><h1>📊 投资组合日报</h1><p>' + date_str + ' ' + weekday + '</p><p style=\'font-size:10px;margin-top:6px;color:#8899aa;\'>' + '数据来源: 新浪财经 / 东方财富 | 更新时间: ' + now.strftime('%H:%M:%S') + '</p></div>'
+            '<div class="hd"><h1>📊 投资组合日报</h1><p>' + date_str + ' ' + weekday + '</p><p style=\'font-size:10px;margin-top:6px;color:' + T['sub'] + ';\'>' + '数据来源: 新浪财经 / 东方财富 | 更新时间: ' + now.strftime('%H:%M:%S') + '</p></div>'
             '<div class="ms">'
             '<div class="m"><div class="l">总市值</div><div class="v" style="color:#1a73e8;">¥' + f"{summary['total_value']:,.0f}" + '</div></div>'
             '<div class="m"><div class="l">当日盈亏</div><div class="v" style="color:' + clr(dr) + ';">' + sign(dr) + '¥' + f"{dp:,.0f}" + '</div><div class="s">' + sign(dr) + f"{dr:.2f}" + '%</div></div>'
@@ -187,8 +241,8 @@ class EnhancedReportBuilder:
             '</div>'
             '<div class="sec"><div class="st">⚠️ 风险指标</div>'
             '<div class="rg">'
-            '<div class="rc" style="background:#162d1f;"><div class="rl">夏普比率</div><div class="rv" style="color:' + sc + ';">' + ss + '</div></div>'
-            '<div class="rc" style="background:#2d1a1a;"><div class="rl">最大回撤</div><div class="rv" style="color:' + ddc + ';">' + dds + '%</div></div>'
+            '<div class="rc" style="background:' + T['risk_green'] + ';"><div class="rl">夏普比率</div><div class="rv" style="color:' + sc + ';">' + ss + '</div></div>'
+            '<div class="rc" style="background:' + T['risk_red'] + ';"><div class="rl">最大回撤</div><div class="rv" style="color:' + ddc + ';">' + dds + '%</div></div>'
             '<div class="rc" style="background:' + vbg + ';"><div class="rl">年化波动率</div><div class="rv" style="color:' + vc + ';">' + vss + '%</div></div>'
             '</div></div>'
             + index_block
@@ -379,6 +433,7 @@ class EnhancedReportBuilder:
             return {}
 
     def _build_index_comparison(self, index_today, summary, clr, sign):
+        T = getattr(self, '_T', THEMES['dark'])
         if not index_today:
             return ""
         dr = summary.get('daily_return', 0) or 0
@@ -390,7 +445,7 @@ class EnhancedReportBuilder:
             name = idx.get('name', idx.get('code', ''))
             close = idx.get('close', 0)
             close_str = f"{close:,.2f}" if close > 100 else f"{close:.4f}"
-            bg = '#162447' if len(rows_html) == 0 else '#1a2d50'
+            bg = T['row1'] if len(rows_html) == 0 else T['row2']
             # 标记组合表现
             compare = ""
             if idx.get('code') == 'sh000300' and dr != 0:
@@ -414,14 +469,15 @@ class EnhancedReportBuilder:
         )
 
     def _build_technical_signals(self, technical, price_30d=None):
+        T = getattr(self, '_T', THEMES['dark'])
         if not technical:
             return ""
         rows_html = ""
         for i, t in enumerate(technical):
-            bg = '#162447' if i % 2 == 0 else '#1a2d50'
+            bg = T['row1'] if i % 2 == 0 else T['row2']
             name = t.get('name') or t.get('code', '未知')
             # 30日涨跌幅
-            chg30_cell = '<span style="color:#7f8c8d;">--</span>'
+            chg30_cell = '<span style="color:' + T['gray'] + ';">--</span>'
             if price_30d and isinstance(price_30d, dict):
                 code = t.get('code', '')
                 old_price = price_30d.get(code)
@@ -453,13 +509,13 @@ class EnhancedReportBuilder:
                 bp = float(bp)
                 bar_w = max(5, min(80, bp * 0.8))
                 bar_c = '#e74c3c' if bp > 80 else '#f39c12' if bp > 60 else '#27ae60'
-                bp_bar = '<div style="background:#1a2d50;border-radius:3px;height:6px;width:80px;display:inline-block;vertical-align:middle;"><div style="background:' + bar_c + ';border-radius:3px;height:6px;width:' + f"{bar_w:.0f}" + 'px;"></div></div> <span style="font-size:10px;color:#7f8c8d;">' + f"{bp:.0f}" + '%</span>'
+                bp_bar = '<div style="background:' + T['row2'] + ';border-radius:3px;height:6px;width:80px;display:inline-block;vertical-align:middle;"><div style="background:' + bar_c + ';border-radius:3px;height:6px;width:' + f"{bar_w:.0f}" + 'px;"></div></div> <span style="font-size:10px;color:' + T['gray'] + ';">' + f"{bp:.0f}" + '%</span>'
             rows_html += (
                 '<tr style="background:' + bg + ';">'
                 '<td style="padding:5px 8px;font-size:11px;font-weight:500;">' + name + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + ma_c + ';">' + str(ma) + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + macd_c + ';">' + str(macd) + '</td>'
-                '<td style="padding:5px 8px;font-size:11px;"><span style="color:' + rsi_c + ';">' + f"{rsi:.1f}" + '</span> <span style="font-size:10px;color:#7f8c8d;">' + str(rsi_s) + '</span></td>' + chg30_cell +
+                '<td style="padding:5px 8px;font-size:11px;"><span style="color:' + rsi_c + ';">' + f"{rsi:.1f}" + '</span> <span style="font-size:10px;color:' + T['gray'] + ';">' + str(rsi_s) + '</span></td>' + chg30_cell +
                 '<td style="padding:5px 8px;font-size:11px;">' + bp_bar + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + kdj_c + ';">' + str(kdj) + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + trend_c + ';">' + str(trend) + '</td>'
@@ -472,6 +528,7 @@ class EnhancedReportBuilder:
         )
 
     def _build_news_section(self, news_data):
+        T = getattr(self, '_T', THEMES['dark'])
         if not news_data:
             return ""
         news = news_data.get('news', {})
@@ -492,11 +549,11 @@ class EnhancedReportBuilder:
                     title = n.get('title', '')
                     source = n.get('source', '')
                     url = n.get('url', '')
-                    title_html = ('<a href="' + url + '" target="_blank" style="color:#e0e6ed;text-decoration:none;">' + title + '</a>') if url else title
-                    items_html += '<div style="padding:4px 0;font-size:12px;border-bottom:1px solid #2a3f5f;">' + title_html + ' <span style="font-size:10px;color:#95a5a6;">' + source + '</span></div>'
+                    title_html = ('<a href="' + url + '" target="_blank" style="color:' + T['text'] + ';text-decoration:none;">' + title + '</a>') if url else title
+                    items_html += '<div style="padding:4px 0;font-size:12px;border-bottom:1px solid ' + T['border'] + ';">' + title_html + ' <span style="font-size:10px;color:' + T['muted'] + ';">' + source + '</span></div>'
                 blocks += (
-                    '<div style="margin:8px 0;padding:10px;background:#162447;border-radius:6px;">'
-                    '<div style="font-size:12px;font-weight:600;color:#b0c4de;margin-bottom:6px;">' + label + '</div>'
+                    '<div style="margin:8px 0;padding:10px;background:' + T['advice_bg'] + ';border-radius:6px;">'
+                    '<div style="font-size:12px;font-weight:600;color:' + T['sub'] + ';margin-bottom:6px;">' + label + '</div>'
                     + items_html + '</div>'
                 )
         # 新闻影响评估
@@ -515,10 +572,10 @@ class EnhancedReportBuilder:
                 aff_str = ""
                 if affected:
                     aff_str = ' <span style="font-size:10px;color:#3498db;">影响: ' + '、'.join(affected[:3]) + '</span>'
-                imp_items += '<div style="padding:4px 0;font-size:12px;border-bottom:1px solid #2a3f5f;">' + s_icon + ' ' + title + aff_str + '</div>'
+                imp_items += '<div style="padding:4px 0;font-size:12px;border-bottom:1px solid ' + T['border'] + ';">' + s_icon + ' ' + title + aff_str + '</div>'
             if imp_items:
                 blocks += (
-                    '<div style="margin:8px 0;padding:10px;background:#2d2618;border-radius:6px;border-left:3px solid #f39c12;">'
+                    '<div style="margin:8px 0;padding:10px;background:' + T['warn_bg'] + ';border-radius:6px;border-left:3px solid #f39c12;">'
                     '<div style="font-size:12px;font-weight:600;color:#f59e0b;margin-bottom:6px;">📰 新闻影响评估</div>'
                     + imp_items + '</div>'
                 )
@@ -528,17 +585,17 @@ class EnhancedReportBuilder:
             laggards = rotation.get('laggards', [])
             trend = rotation.get('trend', '')
             if leaders or laggards or trend:
-                rot_html = '<div style="font-size:12px;color:#95a5a6;margin-bottom:6px;">' + trend + '</div>'
+                rot_html = '<div style="font-size:12px;color:' + T['muted'] + ';margin-bottom:6px;">' + trend + '</div>'
                 if leaders:
-                    rot_html += '<div style="font-size:11px;color:#7f8c8d;margin-bottom:4px;">领涨:</div>'
+                    rot_html += '<div style="font-size:11px;color:' + T['gray'] + ';margin-bottom:4px;">领涨:</div>'
                     for l in leaders[:3]:
                         rot_html += '<span style="display:inline-block;margin-right:12px;font-size:12px;color:#27ae60;">' + l.get('name', '') + ' ' + f"{l.get('change_pct', 0):+.2f}" + '%</span>'
                 if laggards:
-                    rot_html += '<div style="font-size:11px;color:#7f8c8d;margin:4px 0;">领跌:</div>'
+                    rot_html += '<div style="font-size:11px;color:' + T['gray'] + ';margin:4px 0;">领跌:</div>'
                     for l in laggards[:3]:
                         rot_html += '<span style="display:inline-block;margin-right:12px;font-size:12px;color:#e74c3c;">' + l.get('name', '') + ' ' + f"{l.get('change_pct', 0):+.2f}" + '%</span>'
                 blocks += (
-                    '<div style="margin:8px 0;padding:10px;background:#162d1f;border-radius:6px;">'
+                    '<div style="margin:8px 0;padding:10px;background:' + T['risk_green'] + ';border-radius:6px;">'
                     '<div style="font-size:12px;font-weight:600;color:#27ae60;margin-bottom:6px;">🔄 行业轮动</div>'
                     + rot_html + '</div>'
                 )
@@ -555,7 +612,7 @@ class EnhancedReportBuilder:
                 outlook = get_risk_outlook(conn, self.db_path)
             finally:
                 conn.close()
-            return build_risk_outlook_html(outlook, theme="dark")
+            return build_risk_outlook_html(outlook, theme=getattr(self, '_theme', 'dark'))
         except Exception as exc:
             logger.warning("风险展望块生成失败: %s", exc)
             return ""
