@@ -347,11 +347,16 @@ def risk_walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
             auc = float(roc_auc_score(ys_cls, ps_cls))
         except ValueError:
             auc = None
+    # OOS 残差标准差（用于预测置信区间，口径同标签：日对数收益标准差）
+    res = np.asarray(ys, dtype=float) - np.asarray(ps, dtype=float)
+    res = res[np.isfinite(res)]
+    residual_std = float(np.std(res)) if len(res) >= 10 else None
     return {
         "r2": round(r2, 4) if np.isfinite(r2) else None,
         "ic_pearson": round(ic_p, 4) if np.isfinite(ic_p) else None,
         "auc": round(auc, 4) if auc is not None else None,
         "n_test": len(ys),
+        "residual_std": round(residual_std, 6) if residual_std is not None else None,
     }
 
 

@@ -491,6 +491,20 @@ class RebalanceEngine:
         if bond_under:
             warnings.append(f"债券实际 {bond_actual*100:.1f}% 低于目标 {bond_target*100:.1f}%"
                             f"（偏差超 {BOND_UNDER_TARGET_TOL*100:.0f}% 容差），波动率预算未落实")
+        # 波动率预警（联动预测底座 risk_lgb：预期年化波动率 >30% 的持仓）
+        try:
+            df_v = pd.read_sql_query(
+                "SELECT code, probability FROM etf_predictions "
+                "WHERE model='risk_lgb' AND forward_window=20 AND probability>=0.30 "
+                "ORDER BY probability DESC", self.db)
+            if not df_v.empty:
+                hi_names = [names.get(r.code, r.code) for r in df_v.itertuples()]
+                shown = "、".join(hi_names[:5]) + (" 等" if len(hi_names) > 5 else "")
+                warnings.append(
+                    f"波动率预警：{len(hi_names)} 只持仓预期年化波动率>30%（{shown}），"
+                    f"建议关注仓位与回撤风险（仅参考，不自动调仓）")
+        except Exception:
+            pass
         return {
             "hhi": round(hhi, 4),
             "top3_concentration": round(top3, 4),

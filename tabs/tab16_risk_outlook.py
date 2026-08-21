@@ -305,7 +305,7 @@ def _render_alert(df_w):
         "（仅风险参考，系统不自动调仓。）")
 
 
-def _render_window(df, window):
+def _render_window(df, window, interval_ann=None):
     n = len(df)
     hi = int((df["cls"] == "高波动").sum())
     md = int((df["cls"] == "中波动").sum())
@@ -323,6 +323,8 @@ def _render_window(df, window):
         x=df["pred_vol_ann"], y=df["name"], orientation="h",
         marker_color=[colors.get(v, "#888780") for v in df["cls"]],
         text=df["pred_vol_ann"].round(1).astype(str) + "%", textposition="outside",
+        error_x=(dict(type="data", array=[interval_ann] * n, visible=True,
+                      color="#8899aa", thickness=1.2) if interval_ann else None),
         hovertemplate="%{y}<br>预期年化波动率 %{x:.1f}%<br>截面分位 %{customdata[0]}%<br>趋势 %{customdata[1]}<extra></extra>",
         customdata=df[["pct_rank", "trend"]].values,
     ))
@@ -335,6 +337,10 @@ def _render_window(df, window):
     )
     render_chart(fig)
 
+    if interval_ann:
+        st.caption(f"误差棒为 95% 预测区间（±1.96σ，σ={interval_ann / 1.96:.1f}pp，"
+                   f"来自 walk-forward 样本外残差），区间越宽说明该预测不确定性越大。")
+
     # 筛选 + 导出
     csel, cexp = st.columns([1, 1])
     with csel:
@@ -344,6 +350,8 @@ def _render_window(df, window):
     disp.columns = ["名称", "代码", "预期年化波动率%", "历史年化波动率%", "变动方向", "截面分位%", "波动档位"]
     for c in ("预期年化波动率%", "历史年化波动率%"):
         disp[c] = disp[c].round(2)
+    if interval_ann:
+        disp.insert(3, "95%区间±pp", round(interval_ann, 1))
     if sel != "全部":
         disp = disp[disp["波动档位"] == sel]
     with cexp:
@@ -389,7 +397,11 @@ def render_tab16():
 
     _render_portfolio_agg(df_w, weights_df, window)
     _render_alert(df_w)
-    _render_window(df_w, window)
+    # 预测置信区间（walk-forward 样本外残差 std → 95% 区间半宽，年化 pp）
+    bt_win = (backtest.get("results", {}).get(window, {})).get("lgb", {})
+    res_std = bt_win.get("residual_std")
+    interval_ann = (res_std * (252 ** 0.5) * 100 * 1.96) if res_std else None
+    _render_window(df_w, window, interval_ann)
 
     # 历史最大回撤参照（回撤预测未达标，降级）
     st.markdown("---")
