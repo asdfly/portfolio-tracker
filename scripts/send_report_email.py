@@ -133,6 +133,21 @@ def _resolve_report(today_str: str):
 
 
 def main() -> int:
+    theme = "light"
+    args = sys.argv[1:]
+    if args:
+        a0 = args[0].lower()
+        if a0.startswith("--theme"):
+            if "=" in a0:
+                theme = a0.split("=", 1)[1]
+            elif len(args) > 1:
+                theme = args[1]
+        elif a0 in ("--dark", "dark"):
+            theme = "dark"
+        elif a0 in ("--light", "light"):
+            theme = "light"
+    theme = theme.lower()
+
     cfg = NOTIFICATION_CONFIG.get("email", {})
     if not cfg.get("enabled"):
         print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 未启用 (EMAIL_ENABLED != true)，跳过推送")
@@ -158,20 +173,22 @@ def main() -> int:
         print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 授权码(EMAIL_PASSWORD)未填，跳过推送")
         return 0
 
-    # 邮件正文用浅色主题现场生成（更贴合邮件客户端白底），不覆盖 dashboard 的 latest_report
+    # 邮件正文现场生成（默认浅色，贴合邮件客户端白底；--theme dark 可发深色版），不覆盖 dashboard 的 latest_report
+    theme_label = "浅色" if theme == "light" else "深色"
     try:
         from config.settings import DATABASE_PATH
         from src.utils.enhanced_report import EnhancedReportBuilder
-        builder = EnhancedReportBuilder(str(DATABASE_PATH), theme="light")
+        builder = EnhancedReportBuilder(str(DATABASE_PATH), theme=theme)
         html_body = builder.build_full_report(news_data=None)
-        light_name = f"enhanced_report_{report_date.replace('-', '')}_email.html"
+        # 邮件版用 email_report_ 前缀，避免干扰 find_latest("enhanced_report_*.html") 的日期解析
+        mail_name = f"email_report_{report_date.replace('-', '')}_{theme}.html"
         from pathlib import Path as _Path
-        light_path = _Path(ROOT) / "data" / "reports" / light_name
-        light_path.write_text(html_body, encoding="utf-8")
-        html_path = str(light_path)
-        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 已生成浅色邮件正文: {light_name}")
+        mail_path = _Path(ROOT) / "data" / "reports" / mail_name
+        mail_path.write_text(html_body, encoding="utf-8")
+        html_path = str(mail_path)
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 已生成{theme_label}邮件正文: {mail_name}")
     except Exception as exc:
-        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] 浅色正文生成失败({exc})，退回已有报告")
+        print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] {theme_label}正文生成失败({exc})，退回已有报告")
         with open(html_path, "r", encoding="utf-8") as f:
             html_body = f.read()
 
