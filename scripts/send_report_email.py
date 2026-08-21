@@ -45,13 +45,16 @@ def find_latest(pattern: str):
 
 
 def build_summary(md_path: str) -> str:
-    """取 smart_report 前若干行作为纯文本摘要（客户端不支持 HTML 时的兜底）。"""
+    """取 smart_report 全文作为纯文本正文（客户端不支持 HTML 时的兜底）。
+
+    原仅取前 40 行，导致纯文本客户端只看到「执行摘要 + 第 1 条建议」，观感"内容太少"。
+    改为全文，确保任何客户端都能看到完整建议、策略表现与市场分析。
+    """
     if not md_path or not os.path.exists(md_path):
         return "（无文字摘要）"
     try:
         with open(md_path, "r", encoding="utf-8") as f:
-            lines = [ln.rstrip() for ln in f if ln.strip()]
-        return "\n".join(lines[:40])
+            return f.read()
     except Exception as exc:  # 兜底，绝不让推送因摘要读取失败而崩
         return f"（摘要读取失败：{exc}）"
 
