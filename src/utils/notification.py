@@ -1,5 +1,13 @@
 """
-通知模块 - 支持邮件和企业微信通知
+【DEPRECATED / 未启用】通知模块 - 支持邮件和企业微信通知
+
+⚠️ 本模块（NotificationManager）已停止维护，且未挂钩任何实际推送链。
+当前组合系统的真实邮件推送为 scripts/send_report_email.py（由 scheduled_run.bat 调用，
+含时效守卫与报告重生，读取 config.NOTIFICATION_CONFIG['email'] 的 EMAIL_* 配置，免确认）。
+
+请勿在新代码中调用本模块。如需发送邮件：
+  - 收盘日报专用：scripts/send_report_email.py
+  - 通用 / 跨项目发信：scripts/send_generic_email.py
 """
 import smtplib
 import requests

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HTML邮件报告生成器 - 生成专业的投资组合日报HTML内容
+【DEPRECATED / 未启用】HTML邮件报告生成器
+
+⚠️ 本模块（EmailReportBuilder）已停止维护，且未挂钩任何实际推送链。
+当前收盘日报的 HTML 正文由 src/utils/enhanced_report.py 的 EnhancedReportBuilder 生成，
+真实发送由 scripts/send_report_email.py 完成。请勿在新代码中调用本模块。
 """
 import sqlite3
 import logging
