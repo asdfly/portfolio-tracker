@@ -83,6 +83,16 @@ class SmartAdvisor:
         if risk_budget_advice:
             advices.append(risk_budget_advice)
 
+        # 4d. 持仓盈亏分层建议（浮盈减仓 / 亏损风控 + 回本测算）
+        level_advice = self._analyze_position_levels(portfolio_data)
+        if level_advice:
+            advices.extend(level_advice)
+
+        # 4e. 估值分位分析（跟踪指数 PE 历史分位）
+        valuation_advice = self._analyze_valuation(portfolio_data)
+        if valuation_advice:
+            advices.extend(valuation_advice)
+
         # 5. 机会识别
         opportunity_advice = self._identify_opportunities(portfolio_data, technical_data)
         if opportunity_advice:
@@ -451,6 +461,120 @@ class SmartAdvisor:
                         confidence=0.5,
                         created_at=datetime.now()
                     ))
+
+        return advices
+
+    def _analyze_position_levels(self, portfolio_data):
+        """持仓盈亏分层建议：浮盈>15% 获利减仓、亏损>5% 关注风控（附回本测算）。
+
+        借鉴 fund-analysis 的操作建议分类（获利减仓/持仓观望/关注风控）与
+        回本测算公式 required_gain = |r| / (1 + r)，仅基于持仓 pnl_rate 纯计算。
+        """
+        advices = []
+        positions = portfolio_data.get('positions', [])
+        if not positions:
+            return advices
+
+        gainers = []  # (name, code, pnl_rate)
+        losers = []   # (name, code, pnl_rate, required_gain_pct)
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            pnl_rate = pos.get('pnl_rate', 0) or 0
+            code = str(pos.get('code', ''))
+            name = pos.get('name', code)
+            if pnl_rate > 15:
+                gainers.append((name, code, pnl_rate))
+            elif pnl_rate < -5:
+                r = pnl_rate / 100.0
+                # 回本所需涨幅 = -r / (1 + r)，如 -10% → 需涨 11.1%
+                required = -r / (1 + r) * 100
+                losers.append((name, code, pnl_rate, required))
+
+        if gainers:
+            lines = [f"- {n}({c}): 浮盈 {p:+.1f}%" for n, c, p in gainers]
+            advices.append(InvestmentAdvice(
+                type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                title=f"获利减仓建议（浮盈超15%，{len(gainers)}只）",
+                description="以下持仓浮盈已超15%，可考虑兑现部分收益控制回撤：\n" + "\n".join(lines),
+                action_items=["分批兑现部分收益", "保留底仓跟踪趋势", "设回撤止盈纪律"],
+                related_codes=[c for _, c, _ in gainers], confidence=0.7,
+                created_at=datetime.now()
+            ))
+
+        if losers:
+            lines = [f"- {n}({c}): 亏损 {p:.1f}%，回本需涨 {req:.1f}%" for n, c, p, req in losers]
+            advices.append(InvestmentAdvice(
+                type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.MEDIUM,
+                title=f"关注风控（亏损超5%，{len(losers)}只）",
+                description="以下持仓亏损超5%，附回本所需涨幅：\n" + "\n".join(lines),
+                action_items=["评估持仓逻辑是否破坏", "逻辑未破坏可考虑定投摊成本", "逻辑破坏则评估止损切换"],
+                related_codes=[c for _, c, _, _ in losers], confidence=0.65,
+                created_at=datetime.now()
+            ))
+
+        return advices
+
+    def _analyze_valuation(self, portfolio_data):
+        """估值分位分析：基于跟踪指数 PE 历史分位，标注持仓估值位置。
+
+        借鉴 fund-analysis 层级三（估值水平 PE/PB 分位）。数据来自 index_pe_history
+        （valuation_percentile 采集的中证指数 PE 历史）。
+        """
+        from src.data_sources.valuation_percentile import load_pe_percentile
+        advices = []
+        positions = portfolio_data.get('positions', [])
+        if not positions:
+            return advices
+
+        overvalued = []   # (name, code, percentile_5y)
+        undervalued = []
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            code = str(pos.get('code', ''))
+            name = pos.get('name', code)
+            try:
+                row = self.db.execute(
+                    "SELECT index_code FROM etf_fundamental WHERE code=? ORDER BY rowid DESC LIMIT 1",
+                    (code,)).fetchone()
+            except Exception:
+                continue
+            if not row or not row[0]:
+                continue
+            try:
+                pct = load_pe_percentile(self.db, str(row[0]))
+            except Exception:
+                continue
+            p5 = pct.get('percentile_5y', 50.0)
+            if p5 is None or pct.get('history_count', 0) < 100:
+                continue  # 历史数据不足，不强行下结论
+            if p5 >= 70:
+                overvalued.append((name, code, p5))
+            elif p5 <= 30:
+                undervalued.append((name, code, p5))
+
+        if overvalued:
+            lines = [f"- {n}({c}): PE 近5年分位 {p:.0f}%（偏高）" for n, c, p in overvalued]
+            advices.append(InvestmentAdvice(
+                type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
+                title=f"估值偏高提示（PE 分位>70%，{len(overvalued)}只）",
+                description="以下持仓跟踪指数 PE 处于近5年历史高位：\n" + "\n".join(lines),
+                action_items=["警惕估值回归风险", "考虑分批止盈或降低相关仓位"],
+                related_codes=[c for _, c, _ in overvalued], confidence=0.6,
+                created_at=datetime.now()
+            ))
+
+        if undervalued:
+            lines = [f"- {n}({c}): PE 近5年分位 {p:.0f}%（偏低）" for n, c, p in undervalued]
+            advices.append(InvestmentAdvice(
+                type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+                title=f"估值偏低机会（PE 分位<30%，{len(undervalued)}只）",
+                description="以下持仓跟踪指数 PE 处于近5年历史低位：\n" + "\n".join(lines),
+                action_items=["关注估值修复机会", "评估是否逢低布局"],
+                related_codes=[c for _, c, _ in undervalued], confidence=0.55,
+                created_at=datetime.now()
+            ))
 
         return advices
 
