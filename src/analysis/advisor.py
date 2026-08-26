@@ -88,10 +88,15 @@ class SmartAdvisor:
         if level_advice:
             advices.extend(level_advice)
 
-        # 4e. 估值分位分析（跟踪指数 PE 历史分位）
+        # 4e. 估值分位分析（跟踪指数 PE 历史分位 + 绝对 PB 兜底）
         valuation_advice = self._analyze_valuation(portfolio_data)
         if valuation_advice:
             advices.extend(valuation_advice)
+
+        # 4f. 低配加仓机会测算（分层战略基准 + 战术超配，仅机会测算不自动调仓）
+        add_advice = self._analyze_add_opportunity(portfolio_data)
+        if add_advice:
+            advices.extend(add_advice)
 
         # 5. 机会识别
         opportunity_advice = self._identify_opportunities(portfolio_data, technical_data)
@@ -468,67 +473,90 @@ class SmartAdvisor:
         """持仓盈亏分层建议：浮盈>15% 获利减仓、亏损>5% 关注风控（附回本测算）。
 
         借鉴 fund-analysis 的操作建议分类（获利减仓/持仓观望/关注风控）与
-        回本测算公式 required_gain = |r| / (1 + r)，仅基于持仓 pnl_rate 纯计算。
+        回本测算公式 required_gain = |r| / (1 + r)。获利减仓补充持仓市值与权重维度，
+        区分高权重标的（降集中度）与小仓位标的（灵活处理）。
         """
         advices = []
         positions = portfolio_data.get('positions', [])
         if not positions:
             return advices
 
-        gainers = []  # (name, code, pnl_rate)
-        losers = []   # (name, code, pnl_rate, required_gain_pct)
+        total_mv = sum((p.get('market_value', 0) or 0)
+                       for p in positions if isinstance(p, dict))
+        if total_mv <= 0:
+            total_mv = 0.0
+
+        gainers = []  # (name, code, pnl_rate, market_value, weight_pct)
+        losers = []   # (name, code, pnl_rate, required, market_value, weight_pct)
         for pos in positions:
             if not isinstance(pos, dict):
                 continue
             pnl_rate = pos.get('pnl_rate', 0) or 0
             code = str(pos.get('code', ''))
             name = pos.get('name', code)
+            mv = pos.get('market_value', 0) or 0
+            weight = (mv / total_mv * 100) if total_mv else 0.0
             if pnl_rate > 15:
-                gainers.append((name, code, pnl_rate))
+                gainers.append((name, code, pnl_rate, mv, weight))
             elif pnl_rate < -5:
                 r = pnl_rate / 100.0
                 # 回本所需涨幅 = -r / (1 + r)，如 -10% → 需涨 11.1%
                 required = -r / (1 + r) * 100
-                losers.append((name, code, pnl_rate, required))
+                losers.append((name, code, pnl_rate, required, mv, weight))
 
         if gainers:
-            lines = [f"- {n}({c}): 浮盈 {p:+.1f}%" for n, c, p in gainers]
+            gainers.sort(key=lambda x: -x[4])  # 权重高者优先提示
+            lines = []
+            for n, c, p, mv, w in gainers:
+                mv_str = f"{mv/10000:.1f}万" if mv >= 10000 else f"{mv:,.0f}元"
+                note = ""
+                if w >= 10:
+                    note = f" · 权重 {w:.1f}% 偏高，建议减至≤10%"
+                elif p >= 50:
+                    note = f" · 收益丰厚，建议兑现 1/3 约 {mv/3/10000:.1f}万"
+                lines.append(f"- {n}({c}): 浮盈 {p:+.1f}%，市值 {mv_str}，权重 {w:.1f}%{note}")
             advices.append(InvestmentAdvice(
                 type=AdviceType.CAUTION, priority=AdvicePriority.MEDIUM,
                 title=f"获利减仓建议（浮盈超15%，{len(gainers)}只）",
-                description="以下持仓浮盈已超15%，可考虑兑现部分收益控制回撤：\n" + "\n".join(lines),
-                action_items=["分批兑现部分收益", "保留底仓跟踪趋势", "设回撤止盈纪律"],
-                related_codes=[c for _, c, _ in gainers], confidence=0.7,
+                description="以下持仓浮盈已超15%，结合持仓市值与组合权重考虑兑现部分收益：\n" + "\n".join(lines),
+                action_items=["高权重标的优先降集中度", "分批兑现部分收益", "保留底仓跟踪趋势", "设回撤止盈纪律"],
+                related_codes=[c for _, c, _, _, _ in gainers], confidence=0.7,
                 created_at=datetime.now()
             ))
 
         if losers:
-            lines = [f"- {n}({c}): 亏损 {p:.1f}%，回本需涨 {req:.1f}%" for n, c, p, req in losers]
+            losers.sort(key=lambda x: -x[5])
+            lines = [f"- {n}({c}): 亏损 {p:.1f}%，回本需涨 {req:.1f}%，市值 {mv/10000:.1f}万"
+                     for n, c, p, req, mv, _ in losers]
             advices.append(InvestmentAdvice(
                 type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.MEDIUM,
                 title=f"关注风控（亏损超5%，{len(losers)}只）",
-                description="以下持仓亏损超5%，附回本所需涨幅：\n" + "\n".join(lines),
+                description="以下持仓亏损超5%，附回本所需涨幅与当前市值：\n" + "\n".join(lines),
                 action_items=["评估持仓逻辑是否破坏", "逻辑未破坏可考虑定投摊成本", "逻辑破坏则评估止损切换"],
-                related_codes=[c for _, c, _, _ in losers], confidence=0.65,
+                related_codes=[c for _, c, _, _, _, _ in losers], confidence=0.65,
                 created_at=datetime.now()
             ))
 
         return advices
 
     def _analyze_valuation(self, portfolio_data):
-        """估值分位分析：基于跟踪指数 PE 历史分位，标注持仓估值位置。
+        """估值分析：PE 历史分位（history≥100 天）+ 绝对 PB 水平双轨。
 
         借鉴 fund-analysis 层级三（估值水平 PE/PB 分位）。数据来自 index_pe_history
-        （valuation_percentile 采集的中证指数 PE 历史）。
+        （akshare 中证指数 + neodata 指数估值落库）。历史不足时用绝对 PB 兜底：
+        PB<1 破净低估、PB>8 估值偏高（宽基/红利/金融常态 PB 1-2，科创/科技 3-8）。
         """
         from src.data_sources.valuation_percentile import load_pe_percentile
+        from src.data_sources.neodata_valuation import load_latest_valuation
         advices = []
         positions = portfolio_data.get('positions', [])
         if not positions:
             return advices
 
-        overvalued = []   # (name, code, percentile_5y)
-        undervalued = []
+        overvalued = []   # (name, code, pct)  PE 分位偏高
+        undervalued = []  # (name, code, pct)  PE 分位偏低
+        pb_rich = []      # (name, code, pb)   绝对 PB 偏高
+        pb_cheap = []     # (name, code, pb)   绝对 PB 破净
         for pos in positions:
             if not isinstance(pos, dict):
                 continue
@@ -542,17 +570,29 @@ class SmartAdvisor:
                 continue
             if not row or not row[0]:
                 continue
+            idx = str(row[0])
             try:
-                pct = load_pe_percentile(self.db, str(row[0]))
+                pct = load_pe_percentile(self.db, idx)
             except Exception:
-                continue
-            p5 = pct.get('percentile_5y', 50.0)
-            if p5 is None or pct.get('history_count', 0) < 100:
-                continue  # 历史数据不足，不强行下结论
-            if p5 >= 70:
-                overvalued.append((name, code, p5))
-            elif p5 <= 30:
-                undervalued.append((name, code, p5))
+                pct = {}
+            try:
+                latest = load_latest_valuation(self.db, idx)
+            except Exception:
+                latest = {}
+            # 1) PE 历史分位（需足够历史）
+            p5 = pct.get('percentile_5y')
+            if p5 is not None and pct.get('history_count', 0) >= 100:
+                if p5 >= 70:
+                    overvalued.append((name, code, p5))
+                elif p5 <= 30:
+                    undervalued.append((name, code, p5))
+            # 2) 绝对 PB 兜底（无需长历史）
+            pb = latest.get('pb')
+            if pb is not None:
+                if pb < 1.0:
+                    pb_cheap.append((name, code, pb))
+                elif pb > 8.0:
+                    pb_rich.append((name, code, pb))
 
         if overvalued:
             lines = [f"- {n}({c}): PE 近5年分位 {p:.0f}%（偏高）" for n, c, p in overvalued]
@@ -573,6 +613,96 @@ class SmartAdvisor:
                 description="以下持仓跟踪指数 PE 处于近5年历史低位：\n" + "\n".join(lines),
                 action_items=["关注估值修复机会", "评估是否逢低布局"],
                 related_codes=[c for _, c, _ in undervalued], confidence=0.55,
+                created_at=datetime.now()
+            ))
+
+        if pb_rich:
+            lines = [f"- {n}({c}): PB {pb:.2f}（偏高）" for n, c, pb in pb_rich]
+            advices.append(InvestmentAdvice(
+                type=AdviceType.CAUTION, priority=AdvicePriority.LOW,
+                title=f"绝对估值偏高（PB>8，{len(pb_rich)}只）",
+                description="以下持仓跟踪指数市净率处于绝对高位：\n" + "\n".join(lines),
+                action_items=["警惕高估值回撤", "评估是否兑现部分收益"],
+                related_codes=[c for _, c, _ in pb_rich], confidence=0.5,
+                created_at=datetime.now()
+            ))
+
+        if pb_cheap:
+            lines = [f"- {n}({c}): PB {pb:.2f}（破净）" for n, c, pb in pb_cheap]
+            advices.append(InvestmentAdvice(
+                type=AdviceType.OPPORTUNITY, priority=AdvicePriority.LOW,
+                title=f"绝对估值偏低（PB<1 破净，{len(pb_cheap)}只）",
+                description="以下持仓跟踪指数市净率低于 1 倍（破净）：\n" + "\n".join(lines),
+                action_items=["关注估值修复机会", "评估是否逢低布局"],
+                related_codes=[c for _, c, _ in pb_cheap], confidence=0.5,
+                created_at=datetime.now()
+            ))
+
+        return advices
+
+    def _analyze_add_opportunity(self, portfolio_data):
+        """低配类别加仓机会测算：按分层战略基准（含战术超配）找低配板块，量化加仓缺口。
+
+        借鉴 fund-analysis 配置审查（资产均衡）+ 缺失/低配仓位识别。与 rebalance_engine
+        的 propose_layered 口径一致（SECTOR_TARGET_WEIGHTS 经 TACTICAL_OVERRIDES 替换、
+        受管控池按 keep_sum 归一化）。仅做「机会测算」，不生成实际调仓（不自动调仓红线）。
+        """
+        from config.settings import ETF_CATEGORIES, SECTOR_TARGET_WEIGHTS, TACTICAL_OVERRIDES
+        advices = []
+        positions = portfolio_data.get('positions', [])
+        if not positions:
+            return advices
+        total_mv = sum((p.get('market_value', 0) or 0) for p in positions if isinstance(p, dict))
+        if total_mv <= 0:
+            return advices
+
+        sector_cur: Dict[str, float] = {}
+        sector_etfs: Dict[str, list] = {}
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            code = str(pos.get('code', ''))
+            mv = pos.get('market_value', 0) or 0
+            w = mv / total_mv
+            sector = (ETF_CATEGORIES.get(code, {}) or {}).get('sector', '其他')
+            sector_cur[sector] = sector_cur.get(sector, 0.0) + w
+            sector_etfs.setdefault(sector, []).append(
+                (code, pos.get('name', code), w, pos.get('pnl_rate', 0) or 0))
+
+        # 战术留痕：TACTICAL_OVERRIDES 替换战略基准
+        effective = dict(SECTOR_TARGET_WEIGHTS)
+        for _s, _t in (TACTICAL_OVERRIDES or {}).items():
+            if _s in effective:
+                effective[_s] = _t
+
+        managed = {s: wt for s, wt in effective.items() if s in sector_cur}
+        keep_sum = sum(sector_cur.get(s, 0.0) for s in sector_cur if s not in managed)
+        msum = sum(managed.values())
+        if msum <= 0:
+            return advices
+        scale = (1.0 - keep_sum) / msum if keep_sum < 1.0 else 0.0
+
+        for s, tw in managed.items():
+            target_w = tw * scale
+            cur_w = sector_cur.get(s, 0.0)
+            gap = target_w - cur_w
+            if gap < 0.02:  # 低配不足 2pp，视为无需提示
+                continue
+            add_amt = gap * total_mv
+            etfs = sorted(sector_etfs.get(s, []), key=lambda x: -x[2])
+            lines = []
+            for c, n, w, pnl in etfs:
+                tag = "浮盈" if pnl > 0 else "亏损"
+                lines.append(f"- {n}({c}): 权重 {w*100:.1f}%（{tag} {pnl:+.1f}%）")
+            advices.append(InvestmentAdvice(
+                type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+                title=f"低配加仓机会：{s}（低配 {gap*100:.1f}pp）",
+                description=(
+                    f"「{s}」当前权重 {cur_w*100:.1f}%，低于战略目标 {target_w*100:.1f}%，"
+                    f"缺口 {gap*100:.1f}pp，加仓至目标约需 +{add_amt:,.0f} 元。候选标的：\n"
+                    + "\n".join(lines)),
+                action_items=["优先加仓估值低位/亏损待修复标的", "分步加仓避免单次冲击", "加仓后复核组合波动率与集中度"],
+                related_codes=[c for c, _, _, _ in etfs], confidence=0.6,
                 created_at=datetime.now()
             ))
 
