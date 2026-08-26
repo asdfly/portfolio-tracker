@@ -98,6 +98,11 @@ class SmartAdvisor:
         if add_advice:
             advices.extend(add_advice)
 
+        # 4g. 市场阶段定位（周线七阶段，情景取向）
+        stage_advice = self._analyze_market_stage()
+        if stage_advice:
+            advices.extend(stage_advice)
+
         # 5. 机会识别
         opportunity_advice = self._identify_opportunities(portfolio_data, technical_data)
         if opportunity_advice:
@@ -706,7 +711,96 @@ class SmartAdvisor:
                 created_at=datetime.now()
             ))
 
+        # 缺失核心仓位（战略基准里有、但当前无持仓的类别）
+        missing = [s for s in effective if s not in sector_cur and s != "其他"]
+        if missing:
+            lines = [f"- {s}：战略目标 {effective[s]*100:.0f}%，当前无持仓" for s in missing]
+            advices.append(InvestmentAdvice(
+                type=AdviceType.OPPORTUNITY, priority=AdvicePriority.LOW,
+                title=f"缺失核心仓位（{len(missing)}类）",
+                description="以下战略基准类别当前无任何持仓，配置存在缺口：\n" + "\n".join(lines),
+                action_items=["评估是否补入对应宽基/主题ETF", "避免为凑仓位而强配不了解的品种"],
+                related_codes=[], confidence=0.5,
+                created_at=datetime.now()
+            ))
+
         return advices
+
+    def _analyze_market_stage(self, portfolio_data=None):
+        """周线七阶段市场定位（market-trend-assessment 路径 B 的量化近似实现）。
+
+        用上证指数周线趋势 + 均线排列 + 距 52 周高低点位置，把大盘映射到七阶段，
+        输出「当前阶段 + 仓位取向（情景取向，非指令）+ 证据链」。数据来自 index_quotes
+        （本地已有，无需新采集）。红线：只作参考提示，不自动调仓。
+        """
+        import pandas as pd
+        try:
+            rows = self.db.execute(
+                "SELECT date, close FROM index_quotes WHERE code='sh000001' ORDER BY date"
+            ).fetchall()
+        except Exception as e:
+            logger.warning("市场阶段定位：读取上证指数失败 %s", e)
+            return []
+        if len(rows) < 60:
+            return []
+        df = pd.DataFrame(rows, columns=["date", "close"])
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        df = df.dropna(subset=["close"])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        weekly = df["close"].resample("W-FRI").last().dropna()
+        if len(weekly) < 25:
+            return []
+
+        last = float(weekly.iloc[-1])
+        ma5 = float(weekly.rolling(5).mean().iloc[-1])
+        ma20 = float(weekly.rolling(20).mean().iloc[-1])
+        ma5_prev = float(weekly.rolling(5).mean().iloc[-2])
+        high52 = float(weekly.iloc[-52:].max())
+        low52 = float(weekly.iloc[-52:].min())
+        pct_hi = (last / high52 - 1) * 100
+        pct_lo = (last / low52 - 1) * 100
+        ret4w = (last / float(weekly.iloc[-5]) - 1) * 100
+        ret2w = (last / float(weekly.iloc[-3]) - 1) * 100
+        uptrend = ma5 > ma20 and ma5 >= ma5_prev
+        downtrend = ma5 < ma20 and ma5 <= ma5_prev
+
+        # 七阶段映射（周线趋势 + 位置 + 近期动能）
+        if pct_hi <= -15 and downtrend and ret4w <= -6:
+            stage, pos = 7, "极低仓（约0-2成，情景取向）——防守为主，等阶段一再评估入场"
+        elif pct_hi <= -15 and ret4w > 0:
+            stage, pos = 2, "偏低仓（约3-5成）——超跌反弹参与，快进快出"
+        elif pct_hi <= -15:
+            stage, pos = 1, "轻仓观察——等主跌企稳，关注补跌的防御板块"
+        elif uptrend and pct_hi > -3:
+            stage, pos = 5, "偏高仓（约7-9成）——主线持有主升；设失效条件，非拿住不动"
+        elif uptrend:
+            stage, pos = 4, "中高仓（约5-7成）——主线确认后逐步提高敞口，重点观察"
+        elif pct_hi <= -5 and ret4w < -4:
+            stage, pos = 6, "中低仓（约3-5成）——降低高位主线敞口，转绩优防御"
+        else:
+            stage, pos = 3, "中低仓（约3-5成）——震荡观望，等方向"
+        stage_names = {1: "下跌到企稳", 2: "超跌反弹", 3: "真空期", 4: "主线初期",
+                       5: "主线中期", 6: "主线末期", 7: "进入下跌"}
+        name = stage_names[stage]
+
+        evidence = (
+            f"上证指数周线：收盘 {last:.0f}，5周均线 {ma5:.0f} / 20周均线 {ma20:.0f}"
+            f"（{'多头' if ma5 > ma20 else '空头'}排列），距52周高点 {pct_hi:+.1f}%、"
+            f"距52周低点 {pct_lo:+.1f}%，近4周 {ret4w:+.1f}%、近2周 {ret2w:+.1f}%。"
+        )
+        return [InvestmentAdvice(
+            type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+            title=f"市场阶段定位：阶段{stage}「{name}」",
+            description=evidence + f"\n仓位取向（情景参考，非指令）：{pos}",
+            action_items=[
+                "此为周线趋势的量化近似，未含涨停梯队/主线强度（项目未采集）",
+                "结合资金流、估值、情绪指标交叉验证后再定仓位",
+                "仓位取向为条件框架，非买卖指令，须自行决策",
+            ],
+            related_codes=[], confidence=0.55,
+            created_at=datetime.now()
+        )]
 
     def generate_strategy_advice(self, backtest_results: pd.DataFrame) -> InvestmentAdvice:
         """基于回测结果生成策略建议"""
