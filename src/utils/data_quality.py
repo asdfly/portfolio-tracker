@@ -51,10 +51,11 @@ class DataQualityChecker:
                 if row and row[0]:
                     latest = datetime.strptime(str(row[0]), "%Y-%m-%d").date()
                     lag = (today - latest).days
-                    # 周末自然会有1-2天延迟
+                    # 周末自然会有1-2天延迟；个别源(披露驱动/SGE)天然滞后，用 stale_days 放宽 STALE 阈值
+                    stale_days = info.get("stale_days", 3)
                     if lag <= 1:
                         status = "OK"
-                    elif lag <= 3:
+                    elif lag <= stale_days:
                         status = "WARN"
                     else:
                         status = "STALE"

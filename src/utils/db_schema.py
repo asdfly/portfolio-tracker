@@ -556,7 +556,8 @@ QUALITY_CHECK_TABLES = {
     "portfolio_summary": {"date_col": "date", "code_col": None, "label": "组合摘要"},
     "stock_lhb": {"date_col": "date", "code_col": "code", "label": "龙虎榜"},
     "stock_margin": {"date_col": "date", "code_col": "code", "label": "融资融券"},
-    "stock_holder_change": {"date_col": "date", "code_col": "code", "label": "股东增减持"},
+    "stock_holder_change": {"date_col": "date", "code_col": "code", "label": "股东增减持",
+                            "stale_days": 6},  # 披露驱动 T+1~T+3，天然滞后，放宽 STALE 阈值
     "stock_institution_research": {"date_col": "date", "code_col": "code", "label": "机构调研"},
     "trade_records": {"date_col": "date", "code_col": "code", "label": "交易流水",
                       "user_managed": True},  # 用户手动导入(招商证券对账单)，非自动采集源
@@ -564,7 +565,7 @@ QUALITY_CHECK_TABLES = {
     # 黄金相关指标 (存储在 macro_daily 中, 用 indicator_code 区分)
     # 使用虚拟表名, DataQualityChecker 中特殊处理
     "_gold_comex": {"date_col": "date", "code_col": None, "label": "COMEX黄金", "source_table": "macro_daily", "indicator_code": "COMEX_GOLD"},
-    "_gold_sge": {"date_col": "date", "code_col": None, "label": "上海金基准", "source_table": "macro_daily", "indicator_code": "SGE_GOLD"},
+    "_gold_sge": {"date_col": "date", "code_col": None, "label": "上海金基准", "source_table": "macro_daily", "indicator_code": "SGE_GOLD", "stale_days": 4},  # SGE 数据源滞后约2交易日，放宽阈值
     "gold_sge_hist": {"date_col": "date", "code_col": "symbol", "label": "SGE K线"},
     "gold_etf_holdings": {"date_col": "date", "code_col": None, "label": "全球ETF持仓"},
 }
