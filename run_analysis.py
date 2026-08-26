@@ -918,6 +918,24 @@ def main(argv=None):
             _reporter.stage("etf_fundamental", "error", note=str(e)[:160])
             _reporter.record_source("ETF_FUNDAMENTAL", fail=1, source_used="error")
 
+        # === 阶段三.七c: 市场广度采集（涨停池/跌停池，支撑情绪温度计）===
+        try:
+            from src.data_sources.market_breadth import collect_market_breadth
+            _mb_date = (_report_date.replace("-", "") if _report_date
+                        else datetime.now().strftime("%Y%m%d"))
+            _mb_conn = get_db_connection()
+            try:
+                _mb = collect_market_breadth(_mb_conn, _mb_date)
+            finally:
+                _mb_conn.close()
+            logger.info(f"市场广度采集完成: 涨停 {_mb['zt_count']} 跌停 {_mb['dt_count']} "
+                        f"最高 {_mb['max_lianban']} 板 主线 {_mb.get('top_industry')}")
+            _reporter.stage("market_breadth", "ok")
+            _reporter.record_source("MARKET_BREADTH", ok=1, source_used="em_zt_pool")
+        except Exception as e:
+            logger.warning(f"市场广度采集失败(不影响主流程): {e}")
+            _reporter.stage("market_breadth", "error", note=str(e)[:160])
+
         # === 阶段三.八: 市场事件信号分析 + 告警 ===
         try:
             import sqlite3 as _sqlite3

@@ -103,6 +103,11 @@ class SmartAdvisor:
         if stage_advice:
             advices.extend(stage_advice)
 
+        # 4h. 市场情绪温度计 + 极端情绪预警（涨停/跌停 + 连板 + 融资）
+        senti_advice = self._analyze_market_sentiment_extremes()
+        if senti_advice:
+            advices.extend(senti_advice)
+
         # 5. 机会识别
         opportunity_advice = self._identify_opportunities(portfolio_data, technical_data)
         if opportunity_advice:
@@ -801,6 +806,114 @@ class SmartAdvisor:
             related_codes=[], confidence=0.55,
             created_at=datetime.now()
         )]
+
+    def _analyze_market_sentiment_extremes(self, portfolio_data=None):
+        """市场情绪温度计 + 极端情绪检测（market-trend 路径 A/C 简化实现）。
+
+        用涨停/跌停家数、最高连板数（梯队高度）、涨停最集中行业（主线线索）、
+        融资余额近期变化（杠杆拥挤度）交叉判断市场情绪阶段，极端信号出预警。
+        数据来自 market_breadth（涨停池/跌停池）+ market_sentiment（两融）。
+        红线：情绪判断为情景参考，非买卖指令，不自动调仓。
+        """
+        from src.data_sources.market_breadth import load_latest_breadth
+        try:
+            b = load_latest_breadth(self.db)
+        except Exception as e:
+            logger.warning("市场情绪温度计：读取市场广度失败 %s", e)
+            return []
+        if not b or b.get("zt_count") is None:
+            return []
+
+        zt = int(b.get("zt_count") or 0)
+        dt = int(b.get("dt_count") or 0)
+        max_lb = int(b.get("max_lianban") or 0)
+        top_ind = b.get("top_industry")
+        top_ind_n = int(b.get("top_industry_count") or 0)
+        avg_to = b.get("zt_avg_turnover")
+
+        # 融资拥挤度（5 日变化率）
+        margin_note = ""
+        chg5 = None
+        try:
+            mrows = self.db.execute(
+                "SELECT date, value FROM market_sentiment "
+                "WHERE indicator_code='MARGIN_TOTAL' AND value IS NOT NULL "
+                "ORDER BY date DESC LIMIT 6").fetchall()
+            if len(mrows) >= 6:
+                cur = float(mrows[0][1]); prev = float(mrows[5][1])
+                if prev > 0:
+                    chg5 = (cur / prev - 1) * 100
+                    margin_note = f"两融余额近5日 {chg5:+.1f}%"
+        except Exception as e:
+            logger.debug("融资余额读取失败 %s", e)
+
+        # 情绪阶段
+        if dt >= 40:
+            phase = "退潮/恐慌"
+            pos = "防守取向——等跌停潮收敛、冰点信号出现再评估"
+        elif zt >= 60:
+            phase = "过热"
+            pos = "降风险敞口——涨停过密易见情绪顶，警惕高位分歧"
+        elif zt >= 40 and max_lb >= 5:
+            phase = "主升"
+            pos = "顺势持有主线（条件框架）——设失效条件，非拿住不动"
+        elif zt >= 20 or max_lb >= 3:
+            phase = "修复/升温"
+            pos = "低仓试错取向（条件满足时）——关注梯队能否走强"
+        else:
+            phase = "冰点"
+            pos = "观望取向——等右侧确认信号，勿逆势抄底"
+
+        # 涨停梯队高度
+        if max_lb >= 5:
+            ladder = f"高连板（最高 {max_lb} 板，主升梯队）"
+        elif max_lb >= 3:
+            ladder = f"中连板（最高 {max_lb} 板，梯队成形）"
+        else:
+            ladder = f"无梯队（最高 {max_lb} 板）"
+
+        # 主线线索
+        mainline = f"涨停最集中行业「{top_ind}」（{top_ind_n} 家）" if top_ind else "无明确主线"
+
+        desc_lines = [
+            f"情绪阶段：{phase}",
+            f"涨/跌停家数：{zt} / {dt}",
+            f"涨停梯队：{ladder}" + (f"，平均换手 {avg_to:.1f}%" if avg_to is not None else ""),
+            f"主线线索：{mainline}",
+        ]
+        if margin_note:
+            desc_lines.append(f"杠杆拥挤度：{margin_note}")
+
+        advices = [InvestmentAdvice(
+            type=AdviceType.OPPORTUNITY, priority=AdvicePriority.MEDIUM,
+            title=f"市场情绪温度计：{phase}",
+            description="\n".join(desc_lines) + f"\n仓位取向（情景参考，非指令）：{pos}",
+            action_items=[
+                "情绪判断为情景参考，须与价格结构/估值/资金流交叉验证",
+                "极端信号不单独作为交易依据",
+                "仓位取向为条件框架，非买卖指令，须自行决策",
+            ],
+            related_codes=[], confidence=0.55,
+            created_at=datetime.now()
+        )]
+
+        # 极端预警（交叉验证：情绪 + 杠杆）
+        if phase in ("过热", "退潮/恐慌"):
+            if phase == "过热":
+                risk = ("涨停过密 + 杠杆快速抬升，警惕情绪见顶" if (chg5 or 0) > 0
+                        else "涨停过密，警惕高位分歧与情绪见顶")
+            else:
+                risk = f"跌停 {dt} 家，退潮信号，防守为主"
+            advices.append(InvestmentAdvice(
+                type=AdviceType.RISK_MANAGEMENT, priority=AdvicePriority.HIGH,
+                title=f"极端情绪预警：{phase}",
+                description=f"市场情绪处于「{phase}」极端区（涨/跌停 {zt}/{dt}，{ladder}）。{risk}。",
+                action_items=["降低风险敞口/控制回撤", "避免追高或逆势重仓", "等情绪回归中性再评估"],
+                related_codes=[], confidence=0.6,
+                created_at=datetime.now()
+            ))
+
+        return advices
 
     def generate_strategy_advice(self, backtest_results: pd.DataFrame) -> InvestmentAdvice:
         """基于回测结果生成策略建议"""
