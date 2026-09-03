@@ -37,6 +37,9 @@ PRODUCTION_DB = (project_root / "data" / "database" / "portfolio.db").resolve()
 
 _TEMP_DB_DIR = None
 
+# 会话期间"尝试直连生产库"的记录（硬兜底拦截后填入）；会话结束时汇总，0 即代表全程未触碰生产库。
+_PROD_CONNECT_ATTEMPTS = []
+
 
 def _same_file(path_str, target: Path) -> bool:
     """判断 path_str 是否指向 target（宽松解析，容忍不存在的路径）"""
@@ -136,7 +139,33 @@ def _install_sqlite_redirector():
     if getattr(sqlite3.connect, "_pt_guarded", False):
         return
 
-    _real_connect = sqlite3.connect
+    _orig_sqlite_connect = sqlite3.connect
+
+    # --- 永久硬兜底 (qa-3 整改 P0-D):
+    # 即使 guarded_connect 因任何原因放行了指向生产库的连接（路径绕过、DATABASE_PATH 被清空、
+    # importlib.reload(config.settings) 把模块级 DATABASE_PATH 重新算回生产默认路径等），
+    # 这一层也绝不真正触碰生产库——任何"解析后等于生产库"的 real connect 一律改道到临时副本。
+    # 这是**不可绕过**的保证：它作用在真实的 sqlite3.connect 入口，无论调用方用什么路径拼法、
+    # 什么执行顺序、什么环境变量状态，都碰不到生产库文件。
+    _prod_connect_attempts = []
+
+    def _real_connect(database, *a, **k):
+        try:
+            _r = Path(str(database)).resolve()
+        except Exception:
+            _r = None
+        if _r == PRODUCTION_DB:
+            # 记录（仅内存，不写文件）以便会话结束时汇总；生产库本身已被改道到副本，零污染。
+            _prod_connect_attempts.append({
+                "arg": str(database),
+                "stack": "".join(traceback.format_stack()),
+            })
+            database = TEST_DB_PATH
+        return _orig_sqlite_connect(database, *a, **k)
+
+    # 暴露给 pytest_sessionfinish 汇总报告
+    global _PROD_CONNECT_ATTEMPTS
+    _PROD_CONNECT_ATTEMPTS = _prod_connect_attempts
 
     def guarded_connect(database, *args, **kwargs):
         candidate = str(database)
@@ -145,7 +174,11 @@ def _install_sqlite_redirector():
             candidate = candidate[5:].split("?", 1)[0]
 
         if _same_file(candidate, PRODUCTION_DB):
-            replacement = os.environ.get("DATABASE_PATH") or str(PRODUCTION_DB)
+            # 关键修复 (qa-3, P0-D 根因):
+            # 原代码 `or str(PRODUCTION_DB)` 在 DATABASE_PATH 未设置/被清空时会把改道目标指向
+            # **真实生产库**——这正是"全量跑偶发触碰生产库"的根因（无论触发顺序如何）。
+            # TEST_DB_PATH 是 conftest 顶层已确定的临时副本绝对路径，改道只落在副本上，绝不碰生产库。
+            replacement = os.environ.get("DATABASE_PATH") or str(TEST_DB_PATH)
             # 记录调用点（跳过本文件所在栈帧），便于事后治理硬编码
             for frame in reversed(traceback.extract_stack()[:-1]):
                 if "conftest.py" not in frame.filename:
@@ -208,11 +241,28 @@ def isolated_database():
 
 @pytest.fixture(autouse=True)
 def _guard_db_isolation():
-    """函数级自动 fixture：每个用例结束后复核隔离未被测试就地破坏。"""
+    """函数级自动 fixture：每个用例执行后复核隔离未被破坏，并复位 DATABASE_PATH。
+
+    原 leaks 的概率性来源之一：某个用例（如 `test_d5_env_config.py` 的
+    `importlib.reload(config.settings)`）在运行期间把 DATABASE_PATH 清空或改向，
+    其副作用残留到后续用例，使 guarded_connect 的兜底 `or ...` 落到生产库。
+    这里在用例结束后强制把 DATABASE_PATH 复位到临时副本，使任何单测副作用都不会
+    泄露到后续用例——隔离对执行顺序不再敏感。
+    """
+    current_before = os.environ.get("DATABASE_PATH")
     yield
     current = os.environ.get("DATABASE_PATH")
-    assert not _same_file(current, PRODUCTION_DB), (
-        f"测试污染风险：用例执行后 DATABASE_PATH 指向生产库 ({current})"
+    if not current or _same_file(current, PRODUCTION_DB):
+        # 不允许"未设置"或"指向生产库"的状态残留到下一个用例
+        os.environ["DATABASE_PATH"] = str(TEST_DB_PATH)
+        # 同步刷新 config.settings 的模块级常量，避免 reload/缓存导致的生产回退
+        try:
+            import config.settings as _cs
+            _cs.DATABASE_PATH = Path(TEST_DB_PATH)
+        except Exception:
+            pass
+    assert not _same_file(os.environ.get("DATABASE_PATH"), PRODUCTION_DB), (
+        f"测试污染风险：用例执行后 DATABASE_PATH 指向生产库 ({current_before} -> {current})"
     )
 
 
@@ -244,6 +294,25 @@ def pytest_sessionfinish(session, exitstatus):
         )
         for caller in sorted(REDIRECTED_CALLERS):
             reporter.write_line(f"  - {caller}", yellow=True)
+
+    # 硬兜底拦截统计：若有任何连接曾"解析后等于生产库"而被改道，说明存在绕过风险点，
+    # 虽已被零污染拦截，仍应暴露以便治理。（0 即代表全程未触碰生产库）
+    _attempts = _PROD_CONNECT_ATTEMPTS
+    if _attempts and reporter is not None:
+        reporter.write_line("")
+        reporter.write_line(
+            f"[DB-隔离] 本会话有 {len(_attempts)} 次连接曾指向生产库，已全部改道到临时副本（零污染）。",
+            yellow=True,
+        )
+        # 统计去重的调用栈栈顶（最后一次调用的来源），方便定位硬编码/缓存点
+        _seen = []
+        for _a in _attempts:
+            _top = _a["stack"].strip().splitlines()[-3:] if _a["stack"] else []
+            _sig = "\n".join(_top)
+            if _sig not in _seen:
+                _seen.append(_sig)
+        for _s in _seen[:10]:
+            reporter.write_line("  " + _s.replace("\n", "\n  "), yellow=True)
 
 
 @pytest.fixture

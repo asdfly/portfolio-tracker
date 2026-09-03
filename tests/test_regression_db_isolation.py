@@ -180,6 +180,40 @@ class TestWritesLandOnCopyNotProduction:
             before.st_size,
         ), "硬编码路径的写入落到了生产库上"
 
+    def test_fallback_never_points_at_production_when_env_cleared(self):
+        """回归 P0-D 根因：DATABASE_PATH 被清空时，guarded_connect 的兜底目标必须是临时副本，
+        绝不能指向真实生产库。
+
+        原代码 `replacement = os.environ.get("DATABASE_PATH") or str(PRODUCTION_DB)`
+        在 DATABASE_PATH 未设置/被清空时，把改道目标指向**真实生产库**——
+        这正是"全量跑偶发触碰生产库"的根因（触发顺序无关，只要 env 曾处于清空态）。
+        本用例复现该触发条件（清空 DATABASE_PATH），用生产库绝对路径直连，
+        断言 guarded_connect 的兜底分支仍把连接落点改到临时副本。
+        """
+        if not PRODUCTION_DB.exists():
+            pytest.skip("生产库不存在，无需校验")
+        before = PRODUCTION_DB.stat()
+        saved = os.environ.pop("DATABASE_PATH", None)
+        try:
+            # 触发 guarded_connect 的兜底分支（DATABASE_PATH 此刻为 None）
+            conn = sqlite3.connect(str(PRODUCTION_DB))
+            try:
+                landed_on = conn.execute("PRAGMA database_list").fetchall()[0][2]
+            finally:
+                conn.close()
+        finally:
+            if saved is not None:
+                os.environ["DATABASE_PATH"] = saved
+
+        assert _resolve(landed_on) != PRODUCTION_DB, (
+            f"DATABASE_PATH 清空后兜底仍落到生产库：{landed_on}（根因未修复）"
+        )
+        after = PRODUCTION_DB.stat()
+        assert (after.st_mtime_ns, after.st_size) == (
+            before.st_mtime_ns,
+            before.st_size,
+        ), "兜底改道仍穿透到了生产库（硬兜底未生效）"
+
     def test_readonly_uri_to_production_is_also_redirected(self):
         """URI 形式（file:...?mode=ro）同样必须被拦截改道"""
         if not PRODUCTION_DB.exists():

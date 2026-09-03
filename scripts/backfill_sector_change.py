@@ -22,8 +22,11 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, 'data', 'database', 'portfolio.db')
-QUERY_PY = r'C:/Users/HUAWEI/.workbuddy/skills/neodata-financial-search/scripts/query.py'
-PY = r'C:/Users/HUAWEI/.workbuddy/binaries/python/versions/3.13.12/python.exe'
+# neodata-financial-search skill 路径按当前用户主目录推导，避免硬编码用户名
+QUERY_PY = os.path.join(os.path.expanduser('~'), '.workbuddy', 'skills',
+                        'neodata-financial-search', 'scripts', 'query.py')
+# 使用当前解释器（项目 venv313），避免硬编码 WorkBuddy 私有 python 路径
+PY = sys.executable
 
 # 重仓相关板块观测池（名称须与 NeoData 返回一致；部分为「Ⅱ」后缀）
 WATCHLIST = [

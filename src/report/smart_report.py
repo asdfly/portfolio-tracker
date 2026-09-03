@@ -58,8 +58,11 @@ class SmartReportGenerator:
 
         # 闭环反馈: 记录建议到数据库
         try:
-            _db_path = 'data/database/portfolio.db'
-            _conn_fb = get_db_connection(_db_path)
+            # 不要硬编码库路径：get_db_connection() 传 None 时走 config 解析，
+            # 从而尊重 DATABASE_PATH 覆盖（测试隔离依赖这一点，见 tests/conftest.py）。
+            # 历史上这里写死 'data/database/portfolio.db'，导致全量跑测试时
+            # 闭环反馈会绕过隔离、真实写入生产库（P0-D 根因）。
+            _conn_fb = get_db_connection()
             _conn_fb.execute("""
                 CREATE TABLE IF NOT EXISTS advice_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -17,9 +17,13 @@ fetch_market_data.py
 import subprocess, json, re, os, sqlite3, sys
 from datetime import datetime
 
-ROOT = r'D:\HuaweiMoveData\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker'
-PY = r'C:\Users\HUAWEI\.workbuddy\binaries\python\versions\3.13.12\python.exe'
-QS = r'C:\Users\HUAWEI\.workbuddy\skills\neodata-financial-search\scripts\query.py'
+# 项目根目录按脚本位置推导，避免硬编码迁移前的绝对路径
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 使用当前解释器（项目 venv313），避免硬编码 WorkBuddy 私有 python 路径
+PY = sys.executable
+# neodata-financial-search skill 路径按当前用户主目录推导，避免硬编码用户名
+QS = os.path.join(os.path.expanduser('~'), '.workbuddy', 'skills',
+                  'neodata-financial-search', 'scripts', 'query.py')
 OUT = os.path.join(ROOT, 'data', '.neotmp', 'neodata_market.json')
 DB = os.path.join(ROOT, 'data', 'database', 'portfolio.db')
 

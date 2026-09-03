@@ -25,8 +25,8 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# neodata skill 的 query.py 路径（WorkBuddy 运行时环境）
-NEODATA_SKILL_DIR = Path("C:/Users/HUAWEI/.workbuddy/skills/neodata-financial-search")
+# neodata skill 的 query.py 路径按当前用户主目录推导，避免硬编码用户名
+NEODATA_SKILL_DIR = Path.home() / ".workbuddy" / "skills" / "neodata-financial-search"
 NEODATA_QUERY_PY = NEODATA_SKILL_DIR / "scripts" / "query.py"
 
 # 跟踪指数代码 -> 查询名称（16 个去重指数，来自 etf_fundamental.index_code）

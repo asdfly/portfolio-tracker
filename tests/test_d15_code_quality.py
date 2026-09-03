@@ -23,9 +23,36 @@ class TestAdvisorHelpers:
 
     def test_advisor_function_count(self):
         fns = _get_functions(ADVISOR_PATH.read_text(encoding="utf-8"))
-        # 2026-08-13: 移除遗留的 _check_rebalance_needs（等权目标，与分层引擎战略/战术
-        # 目标自相矛盾），再平衡统一由分层引擎(generate_rebalance_plan)作为唯一权威。
-        assert len(fns) == 23
+        names = [f[0] for f in fns]
+
+        # 旧断言 `assert len(fns) == 23` 是脆性数字断言：advisor 的核心分析能力以
+        # `_analyze_*` 系列方法承载，每新增一类分析（如 2026-08 新增 _analyze_market_stage、
+        # _analyze_news_sentiment 等）总函数数就会越过 23 而假红；且该断言并不保护任何
+        # 真实行为契约——它只数函数个数，与"advisor 能否给出建议"无关。
+        #
+        # 改为两类有意义的断言：
+        #   1) 关键分析函数白名单——这些方法是 advisor 行为契约的核心，缺一不可；
+        #      任一被改名/删除都会破坏下游建请逻辑，必须立即报错。
+        #   2) 总数下界——仅用于捕捉"重构时误删整片分析能力"的事故（数量骤降即报警），
+        #      不设上界：新增分析函数属正常扩展，不应误报。
+        REQUIRED_ANALYZERS = [
+            "_analyze_valuation",
+            "_analyze_add_opportunity",
+            "_analyze_position_levels",
+            "_analyze_position_score",
+            "_analyze_technical_signals",
+            "_analyze_fund_flows",
+            "_analyze_macro_environment",
+            "_analyze_news_sentiment",
+            "_analyze_margin_data",
+            "_analyze_institution_research",
+            "_analyze_block_trade",
+        ]
+        missing = [n for n in REQUIRED_ANALYZERS if n not in names]
+        assert not missing, f"advisor 缺失核心分析函数（行为契约破坏）: {missing}"
+
+        # 下界略低于当前实际规模（32），给正常精简留余量，但远低于正常规模即报警。
+        assert len(fns) >= 20, f"advisor 函数数量异常偏低（疑似误删整片逻辑）: {len(fns)}"
 
     def test_advisor_no_function_over_200(self):
         fns = _get_functions(ADVISOR_PATH.read_text(encoding="utf-8"))

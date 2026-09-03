@@ -2,7 +2,7 @@
 导入 2026年8月 交易数据 + 最新持仓快照
 
 数据源：
-  1) 招商证券对账单 PDF  (C:/Users/HUAWEI/Downloads/20260801-20260831.pdf)
+  1) 招商证券对账单 PDF  (~/Downloads/20260801-20260831.pdf)
      - 流水明细 (pages 3-8) -> trade_records
      - 证券余额 (pages 1-2) 仅用于交叉校验
   2) 通达信持仓导出      (c:/zd_zsone/T0002/export/持仓股20260831.xls)
@@ -38,7 +38,7 @@ from data_loader import get_db_connection
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("import_aug_2026")
 
-PDF_PATH = r"C:/Users/HUAWEI/Downloads/20260801-20260831.pdf"
+PDF_PATH = os.path.join(os.path.expanduser('~'), 'Downloads', '20260801-20260831.pdf')  # 按当前用户主目录推导
 XLS_PATH = r"c:/zd_zsone/T0002/export/持仓股20260831.xls"
 SNAP_DATE = "2026-08-31"
 

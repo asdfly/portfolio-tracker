@@ -88,3 +88,16 @@ htmlcov/
 
 # WorkBuddy 自动化/会话状态（不入版本控制）
 .workbuddy/
+
+# --- P0 历史清理补充 (devops-3, 2026-09-03)：封堵数据/生成物重新入库的口子 ---
+# 历史清理（git filter-repo 移除 data/database/portfolio.db）完成前必须保证以下规则已生效，
+# 否则同名数据文件会被再次提交，等于白做。
+# 每日数据库备份目录（其内 *.db 已被 *.db 覆盖；显式列出以防御非 .db 备份如 .sql/.json）
+data/backups/
+# 自动化/临时产物目录（email_body / market json / wrapper 脚本等）
+data/.neotmp/
+# 回测结果（生成物，非源码）
+data/risk_backtest.json
+# SQLite 其他扩展名兜底
+*.sqlite
+*.sqlite3
