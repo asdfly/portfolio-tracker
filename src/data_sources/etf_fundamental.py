@@ -50,6 +50,14 @@ ETF_TO_INDEX = {
 }
 
 
+# 已知"主源(fund_etf_spot_em)结构性不覆盖、永久走新浪 P3 兜底"的持仓代码。
+# 分两类: ①债券类ETF(511520政金债/159650国开债/511380可转债)东方财富ETF
+#   行情页结构性不覆盖; ②001323/002152 根本不是ETF(开放式混合基金),
+#   fund_etf_spot_em 只覆盖交易型ETF。这些走新浪兜底(基金历史K线)属设计性
+#   永久行为, 不应作为数据质量异常报警, 列入白名单以消除监控噪声。
+SINA_FALLBACK_ALLOWLIST = {"511520", "159650", "511380", "001323", "002152"}
+
+
 def fetch_etf_spot_batch(codes: List[str]):
     """批量获取ETF实时行情(含份额/折价率/资金流)。
 
@@ -436,16 +444,28 @@ def run_etf_fundamental_collection(
                     flag_spot_stale(df_spot, target_date, "etf_fundamental", conn=conn)
                     stats["spot"] = save_to_db(conn, "etf_fundamental", df_spot, ["date","code"])
                     # ---- P3 诚实标注: 新浪兜底行的 iopv 实为收盘价代理 ----
-                    if sina_codes:
+                    # 区分"已知白名单(债券ETF/非ETF, 主源结构性不覆盖, 属预期)"
+                    # 与"意外缺失(可能主源临时故障或代码变更, 需关注)"。
+                    known_sina = [c for c in sina_codes
+                                  if c in SINA_FALLBACK_ALLOWLIST]
+                    unexpected_sina = [c for c in sina_codes
+                                       if c not in SINA_FALLBACK_ALLOWLIST]
+                    stats["sina_fallback_known"] = len(known_sina)
+                    stats["sina_fallback_unexpected"] = len(unexpected_sina)
+                    if known_sina:
+                        logger.info(
+                            f"  [P3已知兜底] {len(known_sina)} 只(主源结构性不覆盖, 预期): "
+                            f"{known_sina}")
+                    if unexpected_sina:
                         record_quality_issue(
                             conn, target_date, target_date, "etf_fundamental", [{
                                 "issue_type": "sina_iopv_proxy",
-                                "detail": (f"{len(sina_codes)} 只ETF(如债券ETF)EM主源缺漏，"
+                                "detail": (f"{len(unexpected_sina)} 只ETF EM主源缺漏(非白名单),"
                                            f"iopv采用新浪收盘价代理(非真实IOPV): "
-                                           f"{','.join(sina_codes)}"),
-                                "n_affected": len(sina_codes),
+                                           f"{','.join(unexpected_sina)}"),
+                                "n_affected": len(unexpected_sina),
                                 "action": "stored_as_target",
-                                "sample": ",".join(sina_codes[:5]),
+                                "sample": ",".join(unexpected_sina[:5]),
                             }])
                 logger.info(f'  ETF行情: {stats["spot"]}条, 估值: {stats["valuation"]}条')
         except (KeyError, ValueError, TypeError) as e:

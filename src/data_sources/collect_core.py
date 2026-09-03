@@ -15,6 +15,7 @@ import logging
 import multiprocessing as mp
 import os
 import random
+import sqlite3
 import sys
 import threading
 import time
@@ -390,13 +391,56 @@ def ensure_retry_queue_table(conn):
     conn.commit()
 
 
+def is_confirmed_non_trading_day(conn, target_date):
+    """判断 target_date 是否**确定**为非交易日(用于阻止假缺口入队)。
+
+    治 2026-08-08(周六)被登记为两融待补采、retry 3 次耗尽后永久残留
+    exhausted 的僵尸项问题 —— 非交易日本就无数据, 补采永远不会成功。
+
+    判定策略(保守, 宁可放过不可误杀):
+      - 周六/周日 -> 确定非交易日(无需查库)。
+      - 工作日    -> 仅当 index_quotes 交易日历已覆盖到「晚于 target_date」
+                    的日期(说明日历在该日之后仍有数据), 而 target_date
+                    自身无行时, 才判定为节假日。日历尚未覆盖(如当日数据
+                    还没落库)则返回 False, 正常入队, 避免漏掉真实缺口。
+
+    Returns:
+        True 表示确定非交易日, 应跳过入队。
+    """
+    try:
+        dt = datetime.strptime(str(target_date).strip(), "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return False  # 日期格式异常, 不拦截
+
+    if dt.weekday() >= 5:
+        return True
+
+    try:
+        row = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM index_quotes WHERE date = ?),"
+            "       (SELECT COUNT(*) FROM index_quotes WHERE date > ?)",
+            (target_date, target_date)).fetchone()
+    except sqlite3.Error:
+        return False  # 无 index_quotes 表(如单测内存库), 不拦截
+
+    if not row:
+        return False
+    have_self, have_after = row[0] or 0, row[1] or 0
+    return have_self == 0 and have_after > 0
+
+
 def enqueue_retry(conn, target_date, source, reason="", max_attempts=3):
     """将一项待补采任务加入队列。
 
     幂等: 同 (target_date, source) 已存在 pending 时不重复插入。
     max_attempts 仅作占位, 实际次数上限由消费函数控制。
+    非交易日(周末/已确认节假日)直接跳过, 不产生永远补不到的假缺口。
     """
     ensure_retry_queue_table(conn)
+    if is_confirmed_non_trading_day(conn, target_date):
+        logger.info(
+            f"[补采队列] 跳过入队 {source}@{target_date}: 非交易日, 本无数据")
+        return
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT OR IGNORE INTO collection_retry_queue "

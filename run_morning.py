@@ -55,11 +55,52 @@ def previous_trading_day(d=None):
 
 def summarize_queue(conn):
     counts = {}
-    for s in ("pending", "done", "exhausted"):
+    for s in ("pending", "done", "exhausted", "skipped_non_trading"):
         counts[s] = conn.execute(
             "SELECT COUNT(*) FROM collection_retry_queue WHERE status=?",
             (s,)).fetchone()[0]
     return counts
+
+
+# 报告核对的表 -> 日期列。etf_industry_alloc 无日期列(按 code+industry 覆盖写)，故不列入。
+DB_LATEST_TABLES = {
+    "stock_lhb": "date",
+    "stock_margin": "date",
+    "stock_holder_change": "date",
+    "stock_institution_research": "date",
+    "stock_block_trade": "date",
+    "etf_fundamental": "date",
+    "etf_top_holdings": "quarter",
+}
+
+
+def collect_db_latest(conn, target):
+    """核对各表**实际落库最新日期**与滞后天数。
+
+    治报告口径不一致: 采集统计按"目标日期"计数, 但落库按事件真实日期
+    (如机构调研的披露窗口会把 09-01/09-02 的事件归到 08-31 的查询批次)。
+    只看采集数量无法判断数据是否真的追上了目标日期, 故显式给出落库最新日期。
+    """
+    out = {}
+    for table, date_col in DB_LATEST_TABLES.items():
+        try:
+            row = conn.execute(
+                f"SELECT MAX({date_col}), COUNT(*) FROM {table}").fetchone()
+        except Exception as e:                      # 表不存在/列缺失
+            out[table] = {"error": str(e)[:80]}
+            continue
+        latest, total = (row[0] if row else None), (row[1] if row else 0)
+        item = {"latest": latest, "rows": total}
+        # 季度列(如重仓股)不做日历滞后计算
+        if latest and date_col == "date":
+            try:
+                item["stale_days"] = (
+                    datetime.strptime(target, "%Y-%m-%d")
+                    - datetime.strptime(latest, "%Y-%m-%d")).days
+            except (ValueError, TypeError):
+                pass
+        out[table] = item
+    return out
 
 
 def main(argv=None):
@@ -121,6 +162,11 @@ def main(argv=None):
         logger.info("[次日补采] 队列无该日待重试项")
     queue = summarize_queue(conn)
     pending_after = list_pending_retries(conn, source="stock_margin")
+    db_latest = collect_db_latest(conn, target)
+    logger.info(f"[次日补采] 落库最新日期核对: "
+                + ", ".join(f"{t}={v.get('latest')}"
+                            f"{'(滞后%d天)' % v['stale_days'] if v.get('stale_days') else ''}"
+                            for t, v in db_latest.items()))
     conn.close()
 
     # ---- 5. 摘要落盘 ----
@@ -133,6 +179,23 @@ def main(argv=None):
         "margin_retry": retry,
         "queue": queue,
         "pending_after": [list(p) for p in pending_after],
+        # 各表实际落库最新日期 + 滞后天数(区别于上方按目标日期的采集计数)
+        "db_latest": db_latest,
+        # 字段口径说明, 避免把"闸门按预期拒绝"误读为采集失败
+        "_notes": {
+            "etf_fundamental.spot": (
+                "P2_GATE_REJECTED_HISTORICAL_SNAPSHOT: spot 为实时快照, 无法回溯"
+                "历史日期。请求前一交易日时被真实性闸门整体拒绝属**预期行为**, "
+                "非采集失败; 真实前一日净值由 15:30 主分析 + 新浪兜底负责。"),
+            "market_events.counts": (
+                "各源计数为本次**尝试写入**行数, 按目标日期归集; 数据实际落库"
+                "按事件真实日期(披露窗口类源可能晚于目标日)。是否追上目标日期"
+                "请看 db_latest 的 latest / stale_days。"),
+            "market_events.institution_research": (
+                "机构调研走披露窗口语义, 已列入 DATE_GATE_EXEMPT_TABLES 豁免日期"
+                "闸门, 按实际调研日期落库; 主采集当日返回 0 条不等于无数据, "
+                "可能由健康检查回填以其他查询日批次补入。"),
+        },
     }
     out = PROJECT_DIR / "data" / "reports" / f"morning_{target}.json"
     try:

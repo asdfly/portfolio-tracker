@@ -273,7 +273,8 @@ def save_market_events(conn: sqlite3.Connection, df: pd.DataFrame, table_name: s
                        unique_columns: List[str],
                        target_date: Optional[str] = None,
                        source_date_col: str = "date",
-                       run_date: Optional[str] = None) -> int:
+                       run_date: Optional[str] = None,
+                       stats_out: Optional[Dict[str, int]] = None) -> int:
     """通用保存函数：INSERT OR REPLACE 写入市场事件表。
 
     Args:
@@ -285,9 +286,15 @@ def save_market_events(conn: sqlite3.Connection, df: pd.DataFrame, table_name: s
             仅保留 `source_date_col` == target_date 的行，其余记为质量事件并排除。
         source_date_col: 源自带真实日期的列名（默认 'date'）。
         run_date: 闸门运行日期（默认今天），仅用于质量事件记录。
+        stats_out: 可选统计回填字典。传入时写入
+            {"attempted": 尝试写入行数, "inserted": 净新增行数,
+             "replaced": 覆盖既有行数}。
+            用于区分"尝试"与"净增"——INSERT OR REPLACE 覆盖重复行时总行数
+            不变，仅看尝试数会虚高（如披露窗口重叠导致同批行被两个查询日
+            各返回一次，日志报 1316 条但 DB 实际只净增 1002 条）。
 
     Returns:
-        写入/更新行数
+        尝试写入行数（保持既有语义不变；净增请用 stats_out）
     """
     if df is None or df.empty:
         return 0
@@ -322,7 +329,17 @@ def save_market_events(conn: sqlite3.Connection, df: pd.DataFrame, table_name: s
     if not cols:
         return 0
     df = df[cols]
-    
+
+    # 净增统计基线: INSERT OR REPLACE 覆盖重复行时总行数不变,
+    # 故用前后行数差额区分"净新增"与"覆盖"
+    n_before = None
+    if stats_out is not None:
+        try:
+            n_before = cursor.execute(
+                f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+        except sqlite3.Error:
+            n_before = None
+
     for _, row in df.iterrows():
         values = {col: row[col] for col in cols}
         placeholders = ', '.join(['?' for _ in cols])
@@ -338,6 +355,22 @@ def save_market_events(conn: sqlite3.Connection, df: pd.DataFrame, table_name: s
             logger.debug(f"写入 {table_name} 失败: {e}")
     
     conn.commit()
+
+    if stats_out is not None:
+        inserted = None
+        if n_before is not None:
+            try:
+                n_after = cursor.execute(
+                    f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                inserted = max(0, n_after - n_before)
+            except sqlite3.Error:
+                inserted = None
+        stats_out["attempted"] = stats_out.get("attempted", 0) + count
+        if inserted is not None:
+            stats_out["inserted"] = stats_out.get("inserted", 0) + inserted
+            stats_out["replaced"] = (stats_out.get("replaced", 0)
+                                     + max(0, count - inserted))
+
     return count
 
 
@@ -415,9 +448,10 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
             df = fetch_institution_research_data(date_param)
             # 关闭严格"日期==查询日"闸门: 该接口按披露窗口返回, 调研日期常晚于查询日,
             # 真实调研日期已在 fetch 内保留并过滤未来日期, 故按实际调研日期落库。
+            # 豁免规则统一由 DATE_GATE_EXEMPT_TABLES 定义。
             stats["institution_research"] = save_market_events(
                 conn, df, "stock_institution_research", ["date", "code", "institution"],
-                target_date=None)
+                target_date=gate_target_for("stock_institution_research", target_date))
             logger.info(f"  机构调研: {stats['institution_research']} 条")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"机构调研: {e}")
@@ -590,7 +624,8 @@ def backfill_market_events(start_date: str, end_date: Optional[str] = None,
                     df = fetch_institution_research_data(date_str)
                     n = save_market_events(conn, df, "stock_institution_research",
                                           ["date", "code", "institution"],
-                                          target_date=None)
+                                          target_date=gate_target_for(
+                                              "stock_institution_research", date_display))
                     totals["institution_research"] += n
                 except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
                     logger.warning(f"  机构调研失败: {e}")
@@ -634,6 +669,30 @@ SOURCE_CONFIG = [
 
 # 每日采集最大回填天数(防止无限回填)
 MAX_BACKFILL_DAYS = 5
+
+# ------------------------------------------------------------------
+#  P2 真实性闸门豁免表(单一事实来源)
+# ------------------------------------------------------------------
+# 这些源的接口按"披露窗口"返回，事件的真实发生日期合法地晚于查询日
+# (查 08-31 会返回 09-01/09-02 的调研事件)。对其套用严格
+# "date == target_date" 闸门会导致全部行被排除、缺口永远补不回来。
+# 真实事件日期已在各 fetch_* 内解析并过滤未来日期，故按实际日期落库。
+#
+# 注意: 三条落库路径(主采集 / backfill_market_events / _check_and_backfill_stale)
+# 必须统一引用本常量。历史上健康检查回填漏了豁免，导致 2026-08-31~09-02
+# 机构调研回填 821+313 行被闸门全量拒绝、缺口静默扩大。
+DATE_GATE_EXEMPT_TABLES = {"stock_institution_research"}
+
+# 披露窗口类源(机构调研)的 API(stock_jgdy_detail_em)只服务近期披露批次:
+# 经验实测, 查询日距今超过约 7~9 天前的日期一律返回空(即便该日确有数据,
+# 在"新鲜"时已被采集入库)。因此超出此窗口的历史缺口**永远无法经回填补齐**,
+# 反复重试只是浪费 API 调用。健康检查回填对超窗日期直接跳过, 标记为永久空洞。
+DISCLOSURE_WINDOW_MAX_AGE_DAYS = 12
+
+
+def gate_target_for(table: str, target_date: Optional[str]) -> Optional[str]:
+    """返回该表落库时应使用的闸门目标日期; 豁免表返回 None(关闭日期闸门)。"""
+    return None if table in DATE_GATE_EXEMPT_TABLES else target_date
 
 
 def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
@@ -708,11 +767,28 @@ def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
 
         # 逐日回填
         backfill_total = 0
+        write_stats: Dict[str, int] = {}
         for d in missing:
+            # 披露窗口类源: 跳过已超出 API 可服务窗口的历史日期(永久空洞,
+            # 回填必为空且纯属浪费 API 调用)。见 DISCLOSURE_WINDOW_MAX_AGE_DAYS。
+            if table in DATE_GATE_EXEMPT_TABLES:
+                try:
+                    age = (datetime.strptime(target_date, "%Y-%m-%d")
+                           - datetime.strptime(d, "%Y-%m-%d")).days
+                    if age > DISCLOSURE_WINDOW_MAX_AGE_DAYS:
+                        logger.debug(
+                            f"  {table} {d}: 超出披露窗口可回溯天数(>{DISCLOSURE_WINDOW_MAX_AGE_DAYS}), "
+                            f"跳过(永久空洞)")
+                        continue
+                except (ValueError, TypeError):
+                    pass
             try:
                 df = fetch_fn(d.replace("-", ""))
+                # 披露窗口类源(见 DATE_GATE_EXEMPT_TABLES)按实际事件日期落库,
+                # 否则回填会被 P2 日期闸门全量拒绝、缺口永远补不回来。
                 n = save_market_events(conn, df, table, unique_cols,
-                                       target_date=d)
+                                       target_date=gate_target_for(table, d),
+                                       stats_out=write_stats)
                 backfill_total += n
                 if n > 0:
                     logger.info(f"  {table} {d}: 回填 {n} 条")
@@ -721,5 +797,13 @@ def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
             time.sleep(0.5)
 
         if backfill_total > 0:
-            stats[f"{table}_backfill"] = backfill_total
-            logger.info(f"[健康检查] {table}: 回填完成, 共{backfill_total}条")
+            # 报净增而非尝试数: 披露窗口重叠会让同批行被多个查询日各返回一次,
+            # 仅报尝试数会虚高(曾出现日志 1316 条 / DB 实际净增 1002 条)
+            net = write_stats.get("inserted")
+            stats[f"{table}_backfill"] = net if net is not None else backfill_total
+            if net is not None and net != backfill_total:
+                logger.info(
+                    f"[健康检查] {table}: 回填完成, 净新增{net}条 "
+                    f"(尝试{backfill_total}条, 覆盖重复{backfill_total - net}条)")
+            else:
+                logger.info(f"[健康检查] {table}: 回填完成, 共{backfill_total}条")
