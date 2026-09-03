@@ -4,6 +4,7 @@ archive/
 # 环境变量
 .env
 .env.local
+.env.QA_RESIDUE*
 
 # Python
 __pycache__/
