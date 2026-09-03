@@ -20,11 +20,23 @@ from .price_history import backfill_etf_price_history
 logger = logging.getLogger(__name__)
 
 
-_ETF_CODE_RE = re.compile(r"^(5\d{5}|1[56]\d{4})$")
+# 场内 ETF 代码段：沪市 5 系（5xxxxx，如 510300/512810/511380）+ 深市 1[56] 系
+# （15xxxx/16xxxx，如 159915）。并用负向前瞻排除已知场外代码段：
+#   - 166xxx 是 LOF / 分级基金（如 166301 华商新趋势优选混合 LOF）
+#   - 519xxx 是场外开放式基金（如 519770 交银优择回报混合A）
+# 名称含 'ETF' 仍是主信号（覆盖无 ETF 字样的真 ETF，如 512810 国防军工）。
+# 场外基金（001194/007994/100032 等）首段非 5/1[56]，不会被此正则命中。
+# 详见 docs/handover/07_known_data_issues.md。
+_ETF_CODE_RE = re.compile(r"^(?!166|519)(5\d{5}|1[56]\d{4})$")
 
 
 def _is_etf(code: str, name: str) -> bool:
-    """判定持仓记录是否为 ETF：name 含 'ETF' 或代码符合 ETF 模式。"""
+    """判定持仓记录是否为 ETF：name 含 'ETF' 或代码符合场内 ETF 模式。
+
+    主信号是 name 含 'ETF' 字样（可覆盖无 ETF 字样的真 ETF，如 '国防军工' 512810）；
+    代码正则仅作防御兜底，且已收紧为场内 ETF 前缀白名单，避免把场外基金
+    （166xxx LOF / 519xxx 场外）误判为 ETF。详见 docs/handover/07_known_data_issues.md。
+    """
     if name and "ETF" in str(name).upper():
         return True
     if code and _ETF_CODE_RE.match(code):

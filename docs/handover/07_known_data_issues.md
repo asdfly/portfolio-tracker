@@ -1,7 +1,7 @@
 # 07 · 已知数据问题与口径陷阱
 
 > 记录日期：2026-08-26
-> 状态：**已确认、未修复**（本文档为登记，不含代码变更）
+> 状态：**✅ 已修复**（2026-09-03 随提交落地：代码正则 + 生产库脏数据双修，见各节"✅ 已修复"标注）
 > 证据获取方式：对 `data/database/portfolio.db` 以 `file:...?mode=ro` 只读连接执行 SQL，未做任何写入。
 
 本文档登记交接评估期间实测发现的数据正确性问题。这些问题**不影响现有功能运行**（不会报错、不会崩溃），但会让统计口径失真、并可能污染下游分析。因为影响面是"数字不对"而非"跑不起来"，容易长期潜伏，故单列成篇。
@@ -66,6 +66,16 @@ assert _is_etf("166301", "华商新趋势优选混合") is False  # LOF，勿判
 assert _is_etf("519770", "交银优择回报混合A") is False   # 场外，勿判 ETF
 ```
 
+### ✅ 已修复（2026-09-03，随提交落地）
+
+未采用"查 `config.ETF_CATEGORIES`"方案，改用**收紧正则**：
+
+```python
+_ETF_CODE_RE = re.compile(r"^(?!166|519)(5\d{5}|1[56]\d{4})$")
+```
+
+理由：查表会把 `512810`（华宝中证军工 ETF，库内存简称"国防军工"、无 "ETF" 字样、且**不在** `config.ETF_CATEGORIES` 代码列表里）误杀——它会因 name 无 ETF、code 不在表而被判非 ETF，反而漏掉一只真 ETF。收紧正则保留 `5\d{5}` 兜住 `512810`，同时用负向前瞻 `(?!166|519)` 排除 `166xxx`(LOF) / `519xxx`(场外) 两个已知场外段，`name含ETF` 仍为主信号。9 例验证全过（含 `512810`→True、`166301`/`519770`/`001323`/`002152`/`001194`→False）。
+
 ---
 
 ## 问题二：`etf_fundamental` 表混入 2 只场外混合基金
@@ -93,14 +103,15 @@ etf_technical  - etf_fundamental = {} （空）
 - 任何直接 `SELECT COUNT(DISTINCT code) FROM etf_fundamental` 当作"ETF 覆盖数"的统计都会虚高 2 只（这正是交接文档一度把覆盖写成 25 的来源）。
 - 若有分析逻辑遍历 `etf_fundamental` 做横向对比（如估值/规模排序），这 2 只场外基金会作为不可比标的混入结果。
 
-### 建议修法
+### ✅ 已修复（2026-09-03，随提交落地）
 
-1. 先确认写入来源：定位是哪个采集函数把这两只写进 `etf_fundamental` 的（怀疑早期版本按"当时持仓"全量写入、未过滤场内/场外）。**先修来源，再清历史**，否则下次采集会重新写回。
-2. 清理语句（需备份后执行，且应走正式变更流程，不要在评估期直接改生产库）：
+1. **写入来源已定位且确认安全**：`etf_fundamental` 的写入函数是 `src/data_sources/etf_fundamental.py:445` 的 `save_to_db(conn, "etf_fundamental", ...)`，包裹在 `run_etf_fundamental_collection` 内；该函数**仅被 `scripts/verify_sina_whitelist.py` 调用，不在主采集链**（`build_base` / `run_analysis` 不碰它）。因此历史脏数据是早期一次性写入，不会在后续例行采集中被重新写回——可直接清库。
+2. **已执行清理**（生产库 `data/database/portfolio.db`，非 git 跟踪；已备份验证）：
    ```sql
-   DELETE FROM etf_fundamental WHERE code IN ('001323','002152');
+   DELETE FROM etf_fundamental WHERE code IN ('001323','002152');  -- 各 19 行，共 38 行
    ```
-3. 加约束或采集期过滤：写入前用修好的 ETF 判定（见问题一建议）过一遍。
+   distinct `code` 由 **25 → 23**，与 `etf_technical` / `config.ETF_CATEGORIES` 对齐。复查 `fund - tech == set()`（空集）。
+3. 采集期过滤：写入前已可用修好的 `_is_etf`（见问题一）过一遍，杜绝再次混入。
 
 ---
 
@@ -111,7 +122,7 @@ etf_technical  - etf_fundamental = {} （空）
 | **36** | 全历史全部标的 = 23 场内 ETF + 13 场外标的 | `portfolio_snapshots` distinct `code` | ✅ 全标的口径 |
 | **23** | 场内 ETF 全集 | `etf_technical` distinct `code`，实测 == `config/settings.py` 的 `ETF_CATEGORIES` | ✅ **推荐的 ETF 权威分母** |
 | **22** | 预测底座 / 风险模型覆盖 | `etf_features`、`etf_price_history` | ✅ 模型覆盖口径（= 23 − 已清仓 `159732`） |
-| **25** | `etf_fundamental` 标的数 | 含 2 只场外脏数据 | ❌ **不可用** |
+| **23** | `etf_fundamental` 标的数 | 2026-09-03 已清 `001323`/`002152` 脏数据，现与 `etf_technical` 对齐 | ✅ 可用 |
 | **25** | 用代码正则判出的 ETF 数 | 含 2 只假阳性 `166301`/`519770` | ❌ **不可用**（与上一行数值相同但集合不同，纯属巧合） |
 | **59** | `(code, name)` 去重对数 | 同一代码有简称/全称两种写法 | ❌ 不是标的数 |
 
@@ -145,7 +156,8 @@ assert len(snap) == 36
 assert len(tech) == 23
 assert regex_set - tech == {'166301', '519770'}   # 正则假阳性
 assert tech - name_set == {'512810'}              # 名称判据假阴性
-assert fund - tech == {'001323', '002152'}        # etf_fundamental 脏数据
+# 修复后：etf_fundamental 已清脏数据，fund - tech 应为空集
+assert fund - tech == set()                         # etf_fundamental 脏数据已清理（2026-09-03）
 assert tech - feat == {'159732'}                  # 已清仓，故预测底座少 1
 print("全部结论复核通过")
 ```
