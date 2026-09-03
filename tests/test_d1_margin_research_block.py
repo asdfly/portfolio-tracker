@@ -5,8 +5,10 @@ import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock, patch
 from datetime import datetime
+from pathlib import Path
 
-DB_PATH = r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\data\database\portfolio.db"
+# 生产库路径由仓库根推导：项目已从 C: 迁移到 D:，硬编码绝对路径会导致真实库集成用例全红
+DB_PATH = str(Path(__file__).resolve().parents[1] / "data" / "database" / "portfolio.db")
 
 @pytest.fixture
 def advisor():

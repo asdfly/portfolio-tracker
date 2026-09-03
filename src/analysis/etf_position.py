@@ -57,6 +57,17 @@ def _conn(db_path: str) -> sqlite3.Connection:
     return sqlite3.connect(db_path)
 
 
+def default_db_path() -> str:
+    """项目默认生产库路径 (config.settings.DATABASE_PATH, 失败时回退相对路径)。"""
+    try:
+        from config.settings import DATABASE_PATH
+        return str(DATABASE_PATH)
+    except Exception:
+        import os
+        return os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "..", "data", "database", "portfolio.db"))
+
+
 def load_price_series(conn, code: str) -> pd.Series:
     """返回按日期升序的 adj_close 序列 (含分红复权, 价格定位的正确基准)。"""
     df = pd.read_sql_query(
@@ -96,6 +107,23 @@ def load_index_price_series(conn, idx_code: str) -> pd.Series:
         return pd.Series(dtype=float)
     df["date"] = pd.to_datetime(df["date"])
     return df.set_index("date")["close"].astype(float)
+
+
+def price_basis_series(conn, code: str) -> Tuple[pd.Series, str]:
+    """返回 (序列, 基准标识) —— 与打分口径完全一致的价格定位基准。
+
+    宽基 ETF 若 index_quotes 存在 >=1260 交易日(≈5年)长历史, 改用指数长历史,
+    以修正「ETF 成立日恰在历史低位」造成的百分位系统性偏高 (实测 159300: 8年窗口
+    判偏高 +33.6, 24年指数窗口判中性 +0.9)。前端下钻需与打分同源, 故抽成公共函数。
+    """
+    series = load_price_series(conn, code)
+    basis = "etf_adj_close"
+    idxq = ETF_TO_INDEX_QUOTES.get(code)
+    if idxq:
+        idx_series = load_index_price_series(conn, idxq)
+        if len(idx_series) >= 1260:
+            series, basis = idx_series, f"index_close({idxq})"
+    return series, basis
 
 
 # --------------------------------------------------------------------------- #
@@ -244,18 +272,19 @@ def _label(p: float) -> str:
     return "极高(警惕区)"
 
 
-def evaluate(code: str, db_path: str) -> Dict:
-    """对单一 ETF 做完整高低位评估。"""
-    conn = _conn(db_path)
+def evaluate(code: str, db_path: Optional[str] = None, conn=None) -> Dict:
+    """对单一 ETF 做完整高低位评估。
+
+    conn 可传入既有连接(前端/advisor 复用 get_db_connection, 避免重复开库);
+    未传则用 db_path 或项目默认生产库自开自关。
+    """
+    own = conn is None
+    if own:
+        conn = _conn(db_path or default_db_path())
     try:
-        p_price, c_price, d_price = price_position(load_price_series(conn, code))
-        # 宽基 ETF: 若 index_quotes 有 >=1260 交易日长历史, 用它作价格定位基准(置信更高)
-        idxq = ETF_TO_INDEX_QUOTES.get(code)
-        if idxq:
-            idx_series = load_index_price_series(conn, idxq)
-            if len(idx_series) >= 1260:
-                p_price, c_price, d_price = price_position(idx_series)
-                d_price["basis"] = f"index_close({idxq})"
+        series, basis = price_basis_series(conn, code)
+        p_price, c_price, d_price = price_position(series)
+        d_price["basis"] = basis
 
         # 债券 ETF: 估值/价格定位逻辑不同, 仅给价格定位 + 标注
         if code in BOND_ETFS:
@@ -304,25 +333,47 @@ def evaluate(code: str, db_path: str) -> Dict:
             "n_factors": len(factors),
         }
     finally:
-        conn.close()
+        if own:
+            conn.close()
 
 
-def evaluate_all(db_path: str, codes: Optional[List[str]] = None) -> List[Dict]:
-    if codes is None:
-        conn = _conn(db_path)
-        try:
+def evaluate_all(db_path: Optional[str] = None, codes: Optional[List[str]] = None,
+                 conn=None) -> List[Dict]:
+    """批量评估。codes 为 None 时取 etf_price_history 全部标的。"""
+    own = conn is None
+    if own:
+        conn = _conn(db_path or default_db_path())
+    try:
+        if codes is None:
             codes = [r[0] for r in conn.execute(
                 "SELECT DISTINCT code FROM etf_price_history ORDER BY code")]
-        finally:
+        return [evaluate(c, conn=conn) for c in codes]
+    finally:
+        if own:
             conn.close()
-    return [evaluate(c, db_path) for c in codes]
+
+
+def portfolio_position(results: List[Dict], weights: Dict[str, float]) -> Optional[Dict]:
+    """组合层面加权位置: P_pf = Σ(w_i·P_i)/Σw_i, 置信度同权重加权。
+
+    weights 为 {code: 市值权重}; 仅计入既有权重又评估成功的标的。
+    用途: 回答「整个组合当前站在历史什么位置」, 供仓位总量决策参考(不自动调仓)。
+    """
+    pairs = [(weights.get(r["code"], 0.0), r) for r in results
+             if r.get("P") is not None and weights.get(r["code"], 0.0) > 0]
+    wsum = sum(w for w, _ in pairs)
+    if wsum <= 0:
+        return None
+    P = sum(w * r["P"] for w, r in pairs) / wsum
+    C = sum(w * r["C"] for w, r in pairs) / wsum
+    return {
+        "P": round(P, 1), "C": round(C, 3), "label": _label(P),
+        "coverage": round(wsum, 4), "n": len(pairs),
+    }
 
 
 if __name__ == "__main__":
-    import os
-    DB = os.path.join(os.path.dirname(__file__), "..", "..", "data", "database", "portfolio.db")
-    DB = os.path.abspath(DB)
-    results = evaluate_all(DB)
+    results = evaluate_all(default_db_path())
     print(f"{'code':<8}{'P':>8}{'C':>7}  {'label':<12}{'nF':>3}  factors")
     print("-" * 78)
     for r in results:

@@ -1,4 +1,5 @@
 """P2 tests: report modules and utils."""
+from pathlib import Path
 import pytest
 import os
 import tempfile
@@ -60,7 +61,10 @@ class TestEmailReportBuilder:
 
     def test_save_report(self):
         from src.utils.email_report import EmailReportBuilder
-        eb = EmailReportBuilder(db_path=r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\data\database\portfolio.db")
+        # 路径由仓库根推导（项目已从 C: 迁移到 D:，禁止硬编码绝对路径）
+        from pathlib import Path
+        eb = EmailReportBuilder(db_path=str(
+            Path(__file__).resolve().parents[1] / "data" / "database" / "portfolio.db"))
         result = eb.save_report("<h1>Test</h1>", "test_p2_report.html")
         assert result is not None and len(result) > 0
 

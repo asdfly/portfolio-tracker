@@ -93,6 +93,11 @@ class SmartAdvisor:
         if valuation_advice:
             advices.extend(valuation_advice)
 
+        # 4e-2. 高低位定位（三因子集成引擎：价格分布 + 资金流 +（就绪后）估值分位）
+        position_advice = self._analyze_position_score(portfolio_data)
+        if position_advice:
+            advices.extend(position_advice)
+
         # 4f. 低配加仓机会测算（分层战略基准 + 战术超配，仅机会测算不自动调仓）
         add_advice = self._analyze_add_opportunity(portfolio_data)
         if add_advice:
@@ -646,6 +651,137 @@ class SmartAdvisor:
                 action_items=["关注估值修复机会", "评估是否逢低布局"],
                 related_codes=[c for _, c, _ in pb_cheap], confidence=0.5,
                 created_at=datetime.now()
+            ))
+
+        return advices
+
+    def _analyze_position_score(self, portfolio_data):
+        """ETF 高低位定位（三因子集成引擎, Phase A）。
+
+        引擎见 src/analysis/etf_position.py：输出位置分数 P∈[-100,+100]
+        （-100 极低/便宜，+100 极高/昂贵）+ 置信度 C = 数据充分度 × 因子一致性。
+        与 _analyze_valuation 的分工：后者依赖跟踪指数 PE/PB（当前 index_pe_history
+        仅约 1 个月，5 年分位不可信，引擎已自动禁用估值因子）；本方法以「价格分布
+        （多周期百分位/稳健 z/52周高低距）+ 资金流（反向）」为主力因子，数据现成、
+        置信可量化，是 PE 数据补齐前高低位判断的主要依据。
+
+        定位 ≠ 预测：项目已用 walk-forward 证伪 ETF 短期方向可预测性（Tier1 IC<0.02
+        全线 VETO），故此处只给「现在处在什么位置」，不给涨跌判断，且不自动调仓。
+        """
+        advices = []
+        positions = portfolio_data.get('positions', [])
+        if not positions:
+            return advices
+        try:
+            from src.analysis.etf_position import evaluate_all, portfolio_position
+        except Exception:
+            return advices
+
+        codes, names, mv_map = [], {}, {}
+        total_mv = 0.0
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            code = str(pos.get('code', '')).strip()
+            if not code:
+                continue
+            try:
+                mv = float(pos.get('market_value') or 0)
+            except (TypeError, ValueError):
+                mv = 0.0
+            codes.append(code)
+            names[code] = pos.get('name', code)
+            mv_map[code] = mv
+            total_mv += mv
+        if not codes:
+            return advices
+        weights = {k: (v / total_mv if total_mv > 0 else 0.0) for k, v in mv_map.items()}
+
+        try:
+            results = evaluate_all(conn=self.db, codes=codes)
+        except Exception as e:
+            logger.warning("高低位定位评估失败: %s", e)
+            return advices
+        results = [r for r in results if r.get('P') is not None]
+        if not results:
+            return advices
+
+        # 极端位置阈值：|P|>=60 且 C>=0.5 才提示（避免低置信噪声骚扰）
+        P_TH, C_TH = 60.0, 0.50
+        hot = [r for r in results if r['P'] >= P_TH and r['C'] >= C_TH]
+        cold = [r for r in results if r['P'] <= -P_TH and r['C'] >= C_TH]
+
+        def _fmt(r):
+            f = r.get('factors', {})
+            pct = f.get('price', {}).get('pct_score')
+            zf = f.get('flow', {}).get('z_inflow')
+            bits = [f"P={r['P']:+.0f}", f"C={r['C']:.2f}"]
+            if pct is not None:
+                bits.append(f"价格分位 {pct:+.0f}")
+            if zf is not None:
+                bits.append(f"资金流z {zf:+.1f}")
+            return f"- {names.get(r['code'], r['code'])}({r['code']}): " + "，".join(bits)
+
+        def _split(rs):
+            """债券 ETF 与权益 ETF 分流：债券高低位由利率/久期驱动，
+            「基本面业绩支撑」类行动项对其无意义，必须分开给结论。"""
+            return ([r for r in rs if r.get('type') != 'bond'],
+                    [r for r in rs if r.get('type') == 'bond'])
+
+        def _emit(rs, *, high, bond):
+            if not rs:
+                return
+            side = "高位" if high else "低位"
+            if bond:
+                note = ("\n注：债券 ETF 价格高低位由利率/久期驱动"
+                        "（价格新高≈收益率新低），权益估值口径不适用。")
+                items = (["利率处于低位时债券价格偏贵，票息保护变薄",
+                          "可考虑缩短久期或降低利率敏感度",
+                          "不建议在此位置继续追加长久期品种"] if high else
+                         ["利率处于高位时债券价格偏便宜，票息保护较厚",
+                          "可评估拉长久期以锁定较高票息"])
+            else:
+                note = ("\n注：定位为描述性结论，不含涨跌预测。" if high else
+                        "\n注：低位不等于必然反弹，需先确认持仓逻辑未破坏。")
+                items = (["放缓该标的加仓节奏", "可考虑分批止盈锁定部分收益",
+                          "结合基本面确认高位是否由业绩支撑"] if high else
+                         ["核实基本面逻辑是否仍成立", "逻辑未破坏可考虑分批布局",
+                          "逻辑破坏则视为价值陷阱，不宜摊平"])
+            advices.append(InvestmentAdvice(
+                type=AdviceType.CAUTION if high else AdviceType.OPPORTUNITY,
+                priority=AdvicePriority.LOW if bond else AdvicePriority.MEDIUM,
+                title=(f"高低位定位{'（债券）' if bond else ''}："
+                       f"{len(rs)}只处于历史{side}"
+                       f"（P{'≥' if high else '≤-'}{P_TH:.0f}）"),
+                description=(f"以下持仓价格处于历史{side}区间（位置分数与置信度）：\n"
+                             + "\n".join(_fmt(r) for r in rs) + note),
+                action_items=items,
+                related_codes=[r['code'] for r in rs],
+                confidence=round(sum(r['C'] for r in rs) / len(rs), 2),
+                created_at=datetime.now()
+            ))
+
+        hot_eq, hot_bond = _split(hot)
+        cold_eq, cold_bond = _split(cold)
+        _emit(hot_eq, high=True, bond=False)
+        _emit(hot_bond, high=True, bond=True)
+        _emit(cold_eq, high=False, bond=False)
+        _emit(cold_bond, high=False, bond=True)
+
+        # 组合层面整体站位：仅统计权益 ETF（债券由利率驱动，口径不同不可混算）
+        pf = portfolio_position([r for r in results if r.get('type') != 'bond'], weights)
+        if pf and abs(pf['P']) >= 40 and pf['C'] >= C_TH:
+            high = pf['P'] > 0
+            advices.append(InvestmentAdvice(
+                type=AdviceType.CAUTION if high else AdviceType.OPPORTUNITY,
+                priority=AdvicePriority.LOW,
+                title=f"权益仓位整体站位{'偏高' if high else '偏低'}（加权 P={pf['P']:+.0f}）",
+                description=(f"按市值加权（仅权益 ETF），整体位置 P={pf['P']:+.1f}"
+                             f"（{pf['label']}），置信度 {pf['C']:.2f}，"
+                             f"覆盖 {pf['coverage']*100:.0f}% 组合市值。"),
+                action_items=(["总仓位不宜追高，优先保留现金弹性"] if high
+                              else ["整体位置偏低，可评估提升总仓位的空间"]),
+                related_codes=[], confidence=pf['C'], created_at=datetime.now()
             ))
 
         return advices

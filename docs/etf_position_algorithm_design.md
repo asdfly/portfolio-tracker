@@ -156,11 +156,23 @@ etf_position_history (新表)        # code,date,P,C,因子拆解 — 支撑回�
 
 | 阶段 | 内容 | 置信水平 | 前置 |
 |------|------|---------|------|
-| **Phase A (现在)** | F1 价格 + F3 资金流 集成; 宽基用 24年指数史 | 中–高 (0.4–0.75) | 已有数据 ✅ |
+| **Phase A (已落地 2026-09-03)** | F1 价格 + F3 资金流 集成; 宽基用 24年指数史 | 中–高 (0.4–0.75) | 已有数据 ✅ |
 | **Phase B (PE 积累 ≥1年, 目标 5年)** | 启用 F2 估值, 权重升至 0.55; 三路互证 | 高 (0.75–0.95) | 需持续采集 `index_pe_history` (当前仅 1月, 硬约束) |
 | **Phase C** | 跑 §7 回溯校验, 用实证结果精化权重与闸门 | 实证量化置信 | Phase A/B 运行一段时间 |
 
-**Phase B 的前置是硬约束**: 估值因子需要时间积累 (每次约 10 天窗口的 neodata 采集, 需持续约 1–5 年)。在此之前强行用 1 月 PE 分位 = 伪造高置信, 本方案明确拒绝。
+**Phase B 的前置是硬约束**: 估值因子需要时间积累 (每次约 10 天窗口的 neodata 采集, 需持续约 1–5 年)。在此之前强行用 1 月 PE 分位 = 伪造高置信, 本方案明确拒绝。§12 给出了绕开该约束的备选数据源实测。
+
+### 8.1 Phase A 落地清单 (2026-09-03 已完成)
+
+| 落点 | 文件 | 说明 |
+|------|------|------|
+| 引擎 | `src/analysis/etf_position.py` | 新增 `default_db_path()` / `price_basis_series()` / `portfolio_position()`; `evaluate()`/`evaluate_all()` 支持传入既有连接 (`conn=`), 前端与 advisor 复用同一连接 |
+| 前端 | `tabs/tab17_etf_position.py` | 「🎯 高低位定位」Tab: 位置排序条形图 + 极端位置清单 + 因子明细表(可筛选/导出 CSV) + 单标的分位带下钻 + 方法论诚实声明 |
+| 注册 | `dashboard.py` TAB_REGISTRY | 第 17 项, 沿用动态 `__import__` 懒加载 |
+| 建议引擎 | `src/analysis/advisor.py::_analyze_position_score` | 极端位置 (|P|≥60 且 C≥0.5) 产出 CAUTION/OPPORTUNITY 建议; 权益/债券分流(债券给久期口径行动项); 组合层面仅统计权益 ETF |
+| 测试 | `tests/test_etf_position.py` | 27 个用例: 方向性/数据不足守卫/资金流反向/估值闸门/标签边界/组合加权/连接复用端到端/宽基基准替换/债券分支 |
+
+**组合层聚合口径**: 债券 ETF 与权益 ETF 不可混算 (前者由利率驱动)。故 `portfolio_position` 在 advisor/tab 中只喂入权益标的, 输出标注为「权益加权位置」。实测 2026-08-26 快照: 权益加权 P=**-7.7** (中性), C=0.507, 覆盖 87.0% 市值。
 
 ---
 
@@ -215,3 +227,41 @@ code     P      C    label          factors (price子分/flow z/估值状态)
 - 设计文档: `docs/etf_position_algorithm_design.md` (本文件)
 - 参考实现: `src/analysis/etf_position.py` (可运行, `python -m src.analysis.etf_position`)
 - 下一步建议: Phase A 已可并入 advisor/tab16; Phase B 需先排期 `index_pe_history` 持续采集。
+
+---
+
+## 12. PE 备选数据源实测 (Phase B 前置约束的绕行评估)
+
+### 12.1 约束回顾
+F2 估值因子需要 `index_pe_history` 中**追踪指数 PE 的 5 年历史百分位** (闸门: PE 历史 `<250` 日 → `available=False`; `≥1250` 日 → 置信 1.0)。当前 `index_pe_history` 仅 ~1 个月 (16–36 行), 故 F2 **自动禁用并显式标注** (§2, §9)。Phase B 的前置是**时间**而非**代码** —— 需要持续采集约 1–5 年才能解锁。
+
+### 12.2 广泛搜索结论: 单只跟踪指数 PE 历史无可用开放源
+为绕开时间约束, 本方案对开放数据源做了系统实测, 目标是找到「可直接填充某 ETF 追踪指数 PE 历史分位」的接口:
+
+| 候选源 | 调用方式 | 实测结果 | 结论 |
+|--------|----------|----------|------|
+| akshare `index_value_name_funddb` | `ak.index_value_name_funddb(...)` | `AttributeError` (该接口不存在于 akshare 1.18.81) | ❌ 死路 |
+| akshare `stock_zh_valuation_baidu` | `ak.stock_zh_valuation_baidu(symbol='sh000300'/'000300'/'399989')` | `KeyError: 'chartInfo'` (百度估值接口对指数不支持) | ❌ 死路 |
+| 中证指数官网 csindex | 官方估值接口 | 仅返回 **20 个交易日** | ❌ 窗口太短 |
+| 乐咕乐股 legu | `stock_index_pe_lg` / `stock_index_pb_lg` | SSL 永久不通 (无限挂起) | ❌ 死路 |
+| Tushare | 指数 PE 相关接口 | 无对应接口 / 凭证未配置 | ❌ 不可用 |
+| 东方财富 RPT_* / 韭圈儿 | 非公开/无稳定源 | 无稳定开放入口 | ❌ 死路 |
+
+**核心障碍**: A 股**单只指数**的逐日 PE/PB 历史是稀缺数据 —— 交易所/指数公司不免费开放, 第三方聚合源 (legu/csindex) 要么限流要么窗口极短。这与「全市场/行业静态 PE」有本质区别 (见 12.3)。
+
+### 12.3 新发现 (部分可行): 全A/行业静态 PE —— `ak.stock_industry_pe_ratio_cninfo`
+```
+ak.stock_industry_pe_ratio_cninfo(symbol='证监会行业分类', date='YYYYMMDD')
+```
+- **返回内容**: 按证监会行业分类的**静态市盈率** (含 `总市值-静态` / `净利润-静态` / `静态市盈率-加权平均` 等列)。
+- **聚合可得**: L1 聚合 → **全A静态 PE**, 作为**市场估值背景**佐证。
+- **限频实测**: 需 **8–9s 间隔**, 否则 `JSONDecodeError` / `ValueError`; 连续 10 个交易日 (2026-08 区间) **10/10 成功**; 个别近期日因限频仍偶发 JSON 失败。
+- **老历史不可靠**: 2021/2019 等老日期因 CNINFO API 响应 schema 变化报 `ValueError` (非数据缺失, 是接口结构变更), 故**不适合做 5 年回溯填充**。
+- **关键局限**: 这是**行业/全市场口径, 非单只跟踪指数 PE**。例如无法回答「沪深300指数当前 PE 处于其自身 5 年历史第几分位」, 只能回答「全A 当前静态 PE 处于什么水平」。
+
+### 12.4 结论与 Phase B 路线
+1. **唯一能直接解锁 F2 的路径仍是 `index_pe_history` 时间积累** (neodata 指数估值采集, 每次约 10 天窗口, 需持续约 1–5 年)。这是「单指数 PE 分位」的权威来源, 无可替代。
+2. **cninfo 全A PE 可作为 Phase B 加速器 / 辅助护栏**: 当个指 PE 因数据短无法判位时, 用「全A PE 历史分位」提供一层市场级估值背景 (例如全A 处历史极高 + 个指价格处高位 → 双重确认警惕区)。但其权重应远低于直接个指 PE, 且**不能**填充 `index_pe_history` 的「某 ETF 追踪指数 PE 分位」字段。
+3. **在 F2 成熟前, 方案坚持「禁用 + 显式标注」, 绝不伪造分位** —— 这是高置信度前提 (§4, §9)。
+
+> 一句话: 单指数 PE 历史无解 (开放源全死路), 全A/行业 PE 有解但只够做市场背景; Phase B 只能靠时间积累, 急不得。

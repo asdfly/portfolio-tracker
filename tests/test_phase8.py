@@ -3,10 +3,15 @@ Phase 8A/8B/8C unit tests
 Tests alert trend visualizations, gauge health scoring,
 and investment review logic extracted from tabs/tab3_risk.py.
 """
+from pathlib import Path
+
 import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+
+# 仓库根目录（避免硬编码绝对路径：项目已从 C: 迁移到 D:）
+_ROOT = Path(__file__).resolve().parents[1]
 
 
 # ============================================================
@@ -372,7 +377,7 @@ class TestGaugeIndicatorStructure:
 class TestPhase8ASTIntegrity:
     """Verify tab3 sub-modules contain Phase 8A/8B markers (after modular split)."""
 
-    TAB3_ALERTS_PATH = r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs\tab3_risk_alerts.py"
+    TAB3_ALERTS_PATH = _ROOT / "tabs" / "tab3_risk_alerts.py"
 
     def test_8a_timeline_marker(self):
         """8A alert timeline code present in alerts sub-module."""
@@ -402,7 +407,7 @@ class TestPhase8ASTIntegrity:
     def test_8c_review_marker(self):
         """8C investment review code present."""
         source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab5_advanced.py",
+            _ROOT / "tabs" / "tab5_advanced.py",
             encoding="utf-8",
         ).read()
         assert "投资复盘" in source
@@ -410,7 +415,7 @@ class TestPhase8ASTIntegrity:
     def test_8c_yearly_bar(self):
         """8C yearly return bar chart code present."""
         source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab5_advanced.py",
+            _ROOT / "tabs" / "tab5_advanced.py",
             encoding="utf-8",
         ).read()
         assert "年度收益对比" in source
@@ -418,7 +423,7 @@ class TestPhase8ASTIntegrity:
     def test_8c_monthly_heatmap(self):
         """8C monthly heatmap code present."""
         source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab5_advanced.py",
+            _ROOT / "tabs" / "tab5_advanced.py",
             encoding="utf-8",
         ).read()
         assert "月度收益热力图" in source
@@ -426,7 +431,7 @@ class TestPhase8ASTIntegrity:
     def test_8c_sector_attribution(self):
         """8C sector attribution code present."""
         source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab5_advanced.py",
+            _ROOT / "tabs" / "tab5_advanced.py",
             encoding="utf-8",
         ).read()
         assert "行业收益归因" in source
@@ -434,7 +439,7 @@ class TestPhase8ASTIntegrity:
     def test_8c_signal_winrate(self):
         """8C signal win rate code present."""
         source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab5_advanced.py",
+            _ROOT / "tabs" / "tab5_advanced.py",
             encoding="utf-8",
         ).read()
         assert "技术信号胜率复盘" in source
@@ -443,7 +448,7 @@ class TestPhase8ASTIntegrity:
         """Full tabs/tab3_risk.py passes AST parse."""
         import ast
         source = open(
-            r"C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\tabs/tab3_risk.py",
+            _ROOT / "tabs" / "tab3_risk.py",
             encoding="utf-8",
         ).read()
         ast.parse(source)

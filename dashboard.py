@@ -1092,6 +1092,7 @@ def main():
         ("📋 市场事件",   "tabs.tab14_market_events",   "render_tab14"),
         ("🔁 交易复盘",   "tabs.tab15_trade_review",   "render_tab15"),
         ("🔮 ETF 风险展望", "tabs.tab16_risk_outlook",   "render_tab16"),
+        ("🎯 高低位定位",   "tabs.tab17_etf_position",   "render_tab17"),
     ]
     _render_quick_stats(positions, profit_count, loss_count, technical)
 
