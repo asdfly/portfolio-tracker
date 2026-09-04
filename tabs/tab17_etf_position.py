@@ -108,6 +108,7 @@ def _render_header(pf, latest, results):
 
     n_val = sum(1 for r in results
                 if r.get("factors", {}).get("valuation", {}).get("available"))
+    n_equity = sum(1 for r in results if r.get("type") != "bond")
     c1, c2, c3, c4 = st.columns(4)
     if pf:
         c1.metric("权益加权位置", f"{pf['P']:+.1f}", pf["label"])
@@ -118,8 +119,8 @@ def _render_header(pf, latest, results):
     extreme = [r for r in results
                if abs(r["P"]) >= _EXTREME_P and r["C"] >= _EXTREME_C]
     c3.metric("极端位置标的", f"{len(extreme)} 只", f"|P|≥{_EXTREME_P:.0f} 且 C≥{_EXTREME_C:.2f}")
-    c4.metric("估值因子可用", f"{n_val}/{len(results)}",
-              "PE 历史不足已禁用" if n_val == 0 else "部分启用")
+    c4.metric("估值因子可用", f"{n_val}/{n_equity}",
+              "PE 历史不足已禁用" if n_val < n_equity else "全部启用")
     st.caption(f"持仓基准日：{latest}；价格数据来自 etf_price_history / index_quotes。")
 
 
@@ -283,10 +284,11 @@ def render_tab17():
             "- **定位 ≠ 预测**：本模块只回答「现在处于历史什么位置」。项目已用 "
             "walk-forward（embargo 60 + HAC t）证明 ETF 短期**方向**不可预测"
             "（Tier1 六窗口 IC<0.02 全线 VETO），因此本模块刻意不给涨跌判断。\n"
-            "- **估值因子当前禁用**：`index_pe_history` 仅积累约 1 个月"
-            "（<250 交易日闸门），任何 5 年 PE 分位都会是伪精度，故引擎自动剔除该因子"
-            "并重新归一化权重。待历史积累满 1 年后自动启用（250 日给 0.6 置信，"
-            "1250 日给满置信）。\n"
+            "- **估值因子已启用（19/20 权益 ETF）**：2026-09-04 已用 akshare csindex 长历史回填"
+            "`index_pe_history`（2018→至今，约 2.8 万行，单指数 PE 历史 1500~2045 日），"
+            "引擎 ≥250 日闸门通过即自动纳入（250 日给 0.6 置信，1250 日给满置信）。"
+            "仅 159949/399673 创业板50 仍禁用——其跟踪指数为国证指数，中证/国证官方"
+            "均无免费可采集的单指数 PE 接口（国证仅有行业板块级 PE）。\n"
             "- **宽基基准修正**：宽基 ETF 用 `index_quotes` 长历史（部分回溯至 2002 年）"
             "替代 ETF 自身成立后窗口，修正「成立日恰在低位」造成的百分位系统性偏高。\n"
             "- **资金流反向解读**：20 日滚动净流入的稳健 z 越高，说明情绪越热、"
