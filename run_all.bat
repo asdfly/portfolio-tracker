@@ -4,7 +4,7 @@ title 投资组合智能分析系统 v2.0
 
 set PROJECT_DIR=%~dp0
 set "PYTHON_ENV=%PROJECT_DIR%venv313\Scripts\python.exe"
-set "VENV_ACTIVATE=%PROJECT_DIR%venv\Scripts\activate.bat"
+set "VENV_ACTIVATE=%PROJECT_DIR%venv313\Scripts\activate.bat"
 set "PYTHON=%PYTHON_ENV%"
 
 echo.
@@ -136,7 +136,7 @@ if exist "%VENV_ACTIVATE%" (
     streamlit run dashboard.py --server.port 8501
 ) else (
     echo [ERROR] venv not found: %VENV_ACTIVATE%
-    echo Please run: python -m venv venv
+    echo Please run: python -m venv venv313
 )
 echo.
 pause
