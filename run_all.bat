@@ -125,19 +125,20 @@ goto :eof
 
 :dashboard_venv
 echo.
-if exist "%VENV_ACTIVATE%" (
-    echo 激活虚拟环境...
-    call "%VENV_ACTIVATE%"
-    echo 启动可视化Dashboard (venv)...
-    echo 访问地址: http://localhost:8501
-    echo 按 Ctrl+C 停止服务
-    echo.
-    cd /d "%PROJECT_DIR%"
-    streamlit run dashboard.py --server.port 8501
-) else (
+if not exist "%VENV_ACTIVATE%" (
     echo [ERROR] venv not found: %VENV_ACTIVATE%
     echo Please run: python -m venv venv313
+    pause
+    goto :eof
 )
+echo 激活虚拟环境...
+call "%VENV_ACTIVATE%"
+echo 启动可视化Dashboard (venv313)...
+echo 访问地址: http://localhost:8501
+echo 按 Ctrl+C 停止服务
+echo.
+cd /d "%PROJECT_DIR%"
+"%PYTHON%" -m streamlit run dashboard.py --server.port 8501
 echo.
 pause
 goto :eof
