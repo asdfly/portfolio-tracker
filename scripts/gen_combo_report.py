@@ -165,8 +165,8 @@ CROSS_DEF = [
   lambda: f"化学制药 {HP['化学制药']:+.2f}%｜生物制品 {HP['生物制品']:+.2f}%｜医疗服务 {HP['医疗服务']:+.2f}%｜中证医疗 {idx['中证医疗'][1]:+.2f}%",
   lambda: f"化学制药 {fy(sec_yi('化学制药'))}｜生物制品 {fy(sec_yi('生物制品'))}｜医疗服务 {fy(sec_yi('医疗服务'))}；组合创新药ETF {fy(etf_yi('159992'))}/{fy(etf_yi('515120'))}｜医药ETF {fy(etf_yi('512010'))}"),
  ('军工系', ind_sum.get('军工系', 0),
-  ['航天装备Ⅱ', '军工电子Ⅱ', '地面兵装Ⅱ', '航空装备Ⅱ'],
-  lambda: f"地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}%｜航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%｜航天装备Ⅱ {HP['航天装备Ⅱ']:+.2f}%｜军工电子Ⅱ {HP['军工电子Ⅱ']:+.2f}%",
+  ['航天装备Ⅱ', '军工电子Ⅱ', '地面兵装Ⅱ', '航空装备Ⅱ', '航海装备Ⅱ'],
+  lambda: f"地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}%｜航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%｜航天装备Ⅱ {HP['航天装备Ⅱ']:+.2f}%｜军工电子Ⅱ {HP['军工电子Ⅱ']:+.2f}%｜航海装备Ⅱ {HP['航海装备Ⅱ']:+.2f}%",
   lambda: f"军工装备 {fy(sec_yi('军工装备'))}｜军工电子 {fy(sec_yi('军工电子'))}；组合航天/军工ETF {fy(etf_yi('159267'))}/{fy(etf_yi('512810'))}"),
  ('证券', ind_sum.get('证券', 0),
   ['证券Ⅱ'],
@@ -296,7 +296,7 @@ signal_state = {
 }
 
 # ④ 军工主线延续性（读 sector_daily_change 历史表，跨日信号；不依赖报告 HTML 文本）
-MIL_SECTORS = ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ']
+MIL_SECTORS = ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ', '航海装备Ⅱ']
 WATCH12 = MIL_SECTORS + ['化学制药', '生物制品', '医疗服务', '证券Ⅱ', '电池', '光伏设备',
                         '半导体', '通信设备', '种植业']
 
@@ -331,9 +331,10 @@ def _dtobj(s):
 _mil_recent, _prev, mil_up_streak = [], None, 0
 for d in reversed(_complete):                       # 从最近交易日倒推
     _vals = [_d[d].get(s) for s in MIL_SECTORS]
-    if None in _vals:
+    _avail = [v for v in _vals if v is not None]    # 历史日缺航海装备Ⅱ时不中断连续计数
+    if not _avail:
         break
-    _best = max(_vals)
+    _best = max(_avail)
     if _prev is not None and (_dtobj(_prev) - _dtobj(d)).days > 4:
         break                                       # 跨真实缺口（>4 日历日），连续中断
     if _best > 0:
@@ -362,10 +363,11 @@ try:
         try:
             with open(_p, encoding='utf-8') as _sf:
                 _j = json.load(_sf)
-            if _j.get('date') != DATA_DATE:
-                _prev_state = _j; break
         except Exception:
             continue
+        # 取最近一期"非本期运行"的 sidecar 作为上期（即便其数据日与本日相同，
+        # 如周末运行两期同指最近交易日，仍按"较上期"连续性对比，避免回退到更早日期造成跳日误读）
+        _prev_state = _j; break
 except Exception:
     _prev_state = None
 
@@ -390,6 +392,26 @@ amt_txt = f"两市量能 {amt_yi/10000:.2f} 万亿，处{amt_zone}"
 stage_prev = _prev_state.get('stage', '—') if _prev_state else '—'
 stage_changed = bool(_prev_state and _prev_state.get('stage') != STAGE)
 
+# 跨期连续性提示（进化项 #21）：上期待续接数据日与本期相同或间隔>1 交易日时显式标注，避免误读
+_prev_date = _prev_state.get('date') if _prev_state else None
+if _prev_date is None:
+    _prev_gap_note = '首期运行，无上期对照基准。'
+elif _prev_date == DATA_DATE:
+    _prev_gap_note = (f'本期数据日 {DATA_DATE} 与上期相同：周末/非交易日运行，两期同指最近交易日，'
+                      f'下方"较上期"为同日连续性对比，非新交易日变化。')
+else:
+    try:
+        from datetime import date as _dt
+        _cal_gap = (_dt.fromisoformat(DATA_DATE) - _dt.fromisoformat(_prev_date)).days
+    except Exception:
+        _cal_gap = None
+    if _cal_gap is not None and _cal_gap > 1:
+        _prev_gap_note = (f'跨期提示：上期待续接数据日为 {_prev_date}，与本期 {DATA_DATE} 间隔 {_cal_gap} 日历日，'
+                          f'中间无运行日，跨日对比已跳过。')
+    else:
+        _prev_gap_note = ''
+_prev_gap_html = f'<li><span class="cond">跨期对照</span>：{_prev_gap_note}</li>' if _prev_gap_note else ''
+
 now = datetime.now().strftime('%Y-%m-%d %H:%M')
 E = html.escape
 def chg(v, suffix='%'):
@@ -403,7 +425,7 @@ def money(v):
 
 # 军工近 N 日表现串（需 chg()，故置于 def chg/money 之后）
 mil_recent_txt = '；'.join(
-    f"{d[5:]}:地兵{chg(dv.get('地面兵装Ⅱ'))}/航装{chg(dv.get('航空装备Ⅱ'))}/军工电{chg(dv.get('军工电子Ⅱ'))}"
+    f"{d[5:]}:地兵{chg(dv.get('地面兵装Ⅱ'))}/航装{chg(dv.get('航空装备Ⅱ'))}/军工电{chg(dv.get('军工电子Ⅱ'))}/航海{chg(dv.get('航海装备Ⅱ'))}"
     for d, dv in _mil_recent) or '—'
 
 # ================= HTML =================
@@ -502,6 +524,55 @@ amt_chg_txt = f"{amt_chg:+,.0f} 亿" if amt_chg is not None else '—'
 # 主力资金方向
 main_dir = '净流出' if (main_in_yi and main_in_yi < 0) else '净流入'
 
+# ---- 数据驱动叙事辅助（修复硬编码下行日措辞，避免与当日行情背离，落实数据纪律）----
+_idx4 = {k: idx[k][1] for k in idx_keys if k in idx}
+if REGIME == '普涨':
+    _idx_desc = (f"主要指数全线收红（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），"
+                 f"涨跌家数 {BR['up']}:{BR['down']}（上涨占比 {BR['up_pct']}%），呈<b>指数与个股同步走强</b>的普涨格局")
+elif REGIME == '普跌回调':
+    _idx_desc = (f"主要指数全线收绿（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），"
+                 f"涨跌家数 {BR['up']}:{BR['down']}（上涨占比 {BR['up_pct']}%），呈<b>指数与个股同步走弱</b>的普跌格局")
+elif REGIME == '指数回调·个股分化':
+    _idx_desc = (f"指数回调（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%）但上涨个股占比 {BR['up_pct']}%，呈<b>指数弱、个股分化</b>格局")
+else:
+    _idx_desc = (f"主要指数涨跌互现（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），上涨占比 {BR['up_pct']}%，呈<b>震荡分化</b>格局")
+_main_line_sectors = '、'.join(n for n, v in sec_in[:2]) if sec_in else (top_ind if top_ind else '—')
+_main_line_txt = f"当日主线为<b>{_main_line_sectors}</b>（涨幅居前 {top_gain_names}；资金净流入 {money_in_txt}）"
+_mil = next((x for x in CROSS if x[0] == '军工系'), None)
+_mil_wind = _mil[4] if _mil else '—'
+_mil_av = _mil[5] if _mil else 0.0
+_mil_against = (avg_idx > 0.5) and (_mil_av < 0)
+if _mil_against:
+    _mil_txt = (f"；军工系逆市走弱（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，"
+                f"军工装备 {fy(sec_yi('军工装备'))}），与大盘背离")
+else:
+    _mil_txt = (f"；军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，"
+                f"军工装备 {fy(sec_yi('军工装备'))}）")
+_perf_word = '跑赢' if vs300 > 0 else '跑输'
+_hw = [x[0] for x in CROSS if x[4] in ('逆风', '强逆风')]
+_hw_names = '、'.join(_hw) if _hw else '无'
+_tech_w = pct(ind_sum.get('科技系', 0))
+if vs300 >= 0:
+    _perf_reason = (f"超配的{'军工系（当日顺风）' if _mil_av > 0 else '防御端（债券+红利）'}对冲了{_hw_names}逆风")
+else:
+    _perf_reason = (f"超配的军工/医药/证券/红利当日普遍逆风（军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%），"
+                    f"而领涨的科技系组合权重仅 {_tech_w:.1f}%、对组合拉动有限，故组合跑输宽基")
+_amt_note = (f"{REGIME}中资金{'净流入' if (main_in_yi and main_in_yi > 0) else '净流出'}、量能{amt_dir}"
+             if REGIME in ('普涨', '普跌回调') else f"量能{amt_dir}、资金{'净流入' if (main_in_yi and main_in_yi>0) else '净流出'}")
+_mil_against_txt = f"军工系逆市走弱（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}%）" if _mil_against else f"军工系{_mil_wind}"
+_oper_hold_txt = (f"军工系（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%）领涨且资金净流入，超配逻辑成立"
+                  if _mil_av > 0 else
+                  f"防御端（债券+红利）与超配方向提供缓冲，但军工系{_mil_wind} {_mil_av:+.2f}%、超配逻辑阶段性弱化，需关注")
+_cross_map = {x[0]: x[5] for x in CROSS}
+_weak_sectors = '、'.join(x[0] for x in sorted(CROSS, key=lambda x: x[5])[:3] if x[5] < 0) or '无'
+_strong_sectors = '、'.join(x[0] for x in sorted(CROSS, key=lambda x: -x[5])[:3] if x[5] > 0) or '无'
+_weak_body = '、'.join(f"{n} {_cross_map.get(n,0):+.2f}%" for n in _weak_sectors.split('、')) or '无'
+_strong_body = '、'.join(f"{n} {_cross_map.get(n,0):+.2f}%" for n in _strong_sectors.split('、')) or '无'
+
 HTML = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>组合+大盘综合视角 {RUN_DATE}</title>
@@ -572,11 +643,12 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <br>数据源：项目本地数据层（东方财富/新浪）+ NeoData 金融搜索 <span class="ok">✓ 均可用</span>　|　NeoData 查询时间 {MKT_NEO['query_time']}</div>
 
 <div class="tldr">
-<div class="lead">大盘今日<b>{regime_txt}</b>：主要指数全线收绿（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），涨跌家数 {BR['up']}:{BR['down']}（上涨占比仅 {BR['up_pct']}%），呈<b>指数与个股同步走弱</b>的普跌格局。但<b>军工（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%）逆势走强</b>，成为今日唯一清晰主线且资金净流入（军工装备 {fy(sec_yi('军工装备'))}）。组合当日回报 <b>{chg(d_ret)}</b>、<b>跑赢沪深300 {vs300:+.2f}pct</b>：超配的军工系（当日顺风）+ 防御端（债券+红利 {def_w:.1f}%）对冲了医药系微逆风与证券/新能源/科技系的全线回调。</div>
+<div class="lead">大盘今日<b>{regime_txt}</b>：{_idx_desc}。{_main_line_txt}{_mil_txt}。组合当日回报 <b>{chg(d_ret)}</b>、<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>：{_perf_reason}。</div>
 <ul>
-<li><b>核心矛盾</b>：主力资金今日<b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），普跌中量能未放大。</li>
-<li><b>组合最大集中度风险</b>：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（已超 10% 审慎线）；军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 <b style="color:#e3a33c">{top3_w:.1f}%</b>。军工系当日顺风（地面兵装领涨+资金流入），暂未共振拖累。</li>
-<li><b>亮点/抗跌</b>：军工主线逆势领涨且资金净流入，验证超配逻辑；红利+债券防御底仓（{def_w:.1f}%）稳定；医药系微逆风（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）拖累有限。</li>
+{f'<li><b>⚠ 锚定提示</b>：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% <b>方向相反</b>，代理法在本组合结构下方向亦不可信，<b>本报告一律以真值为准</b>。</li>' if (est < 0) != (d_ret < 0) else ''}
+<li><b>核心矛盾</b>：主力资金今日<b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。</li>
+<li><b>组合最大集中度风险</b>：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（已超 10% 审慎线）；军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 <b style="color:#e3a33c">{top3_w:.1f}%</b>。军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。</li>
+<li><b>亮点/风险</b>：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；红利+债券防御底仓（{def_w:.1f}%）稳定；{_mil_against_txt}；医药系微逆风（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）拖累有限。</li>
 <li><b>宏观逆风未解</b>：制造业 PMI 整体值经 NeoData 查询仍未直接返回（标「—」）；仅返回综合PMI产出 {PMI['composite']}%、非制造业 {PMI['nonmfg']}%（收缩区）、服务业 {PMI['service']}%、建筑业 {PMI['construction']}%。</li>
 </ul>
 </div>
@@ -599,23 +671,23 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <h3>1.2 日频情绪四段式</h3>
 <div class="four">
-<div class="fbox"><div class="h">① 量能 —— {amt_dir}回调</div><div class="b">
+<div class="fbox"><div class="h">① 量能 —— {amt_dir}</div><div class="b">
 两市 <b>{amt2:.2f} 万亿</b>，较昨日 <span class="down">{amt_chg_txt}</span>（{amt_dir}）。<br>
 主力资金 <b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}。<br>
-<span class="mid">→ 普跌中量能未放大、资金净流出，属存量博弈下的风险释放，非增量突破。</span></div></div>
-<div class="fbox"><div class="h">② 催化 —— 军工主线</div><div class="b">
+<span class="mid">→ {_amt_note}，{'属增量温和延续（风险偏好回升）' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '属存量博弈' if (main_in_yi and main_in_yi<0) else '观望'}。</span></div></div>
+<div class="fbox"><div class="h">② 催化 —— {_main_line_sectors}主线</div><div class="b">
 涨幅榜前 3：{top_gain_names}（本地广度 top 行业：{top_ind}）。<br>
 资金印证（净流入）：{money_in_txt}；净流出：{money_out_txt}。<br>
-<span class="mid">→ 主线偏事件/防御驱动（军工+玻璃玻纤+教育/旅游/银行轮动），广度不足、非广谱风险偏好回升。</span></div></div>
-<div class="fbox"><div class="h">③ 结构 —— 普跌、个股同步走弱</div><div class="b">
+<span class="mid">→ 主线 {_main_line_sectors}（{top_gain_names}），{'资金净流入、广度扩散，风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '偏防御/事件驱动，广度有限'}。</span></div></div>
+<div class="fbox"><div class="h">③ 结构 —— {REGIME}、个股{'同步走强' if REGIME=='普涨' else '同步走弱' if REGIME=='普跌回调' else '分化'}</div><div class="b">
 上涨 {BR['up']} : 下跌 {BR['down']}，涨停 {zt_show}、跌停 {dt_show}。<br>
-地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% 领涨 vs 半导体 {HP['半导体']:+.2f}%、电池 {HP['电池']:+.2f}% 领跌。<br>
+{_weak_body} 领跌 vs {_strong_body} 领涨。<br>
 红利指数 {chg(idx['红利指数'][1])}、证券Ⅱ {HP['证券Ⅱ']:+.2f}% 同步回落。<br>
-<span class="mid">→ 指数与个股同步下行（上涨占比 {BR['up_pct']}%），与「指数跌、个股分化」格局相反。</span></div></div>
-<div class="fbox"><div class="h">④ 风控 —— 证券/科技/新能源回撤 + 宏观收缩</div><div class="b">
-证券Ⅱ <span class="down">{HP['证券Ⅱ']:+.2f}%</span>、半导体 <span class="down">{HP['半导体']:+.2f}%</span>、通信设备 <span class="down">{HP['通信设备']:+.2f}%</span>、电池 <span class="down">{HP['电池']:+.2f}%</span>。<br>
+<span class="mid">→ 指数与个股{'同步上行' if REGIME=='普涨' else '同步下行'}（上涨占比 {BR['up_pct']}%），{'与普涨格局一致' if REGIME=='普涨' else '与「指数跌、个股分化」格局相反'}。</span></div></div>
+<div class="fbox"><div class="h">④ 风控 —— {_weak_sectors}逆风 + 宏观收缩</div><div class="b">
+{_weak_body}（逆风）；{_strong_body}（顺风）。<br>
 宏观：综合PMI产出 {PMI['composite']}%、非制造业 {PMI['nonmfg']}%（收缩区）。<br>
-<span class="mid">→ 风险在权重板块普跌与 4000 关阻力；跌停 {dt_show} 家，无系统性恐慌。</span></div></div>
+<span class="mid">→ 风险集中在{_weak_sectors}逆风与 4000 关阻力；跌停 {dt_show} 家，无系统性恐慌。</span></div></div>
 </div>
 </div>
 
@@ -625,13 +697,13 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="st">① 底部蓄势</div><div class="st">② 放量启动</div><div class="st">③ 主升加速</div>
 <div class="st on">④ 高位震荡</div><div class="st">⑤ 局部派发</div><div class="st">⑥ 破位下行</div><div class="st">⑦ 探底重构</div>
 </div>
-<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 ④ 阶段（高位震荡）—— 今日为箱内普跌回调，箱体（3900–4000）未被有效跌破</b></p>
+<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 ④ 阶段（高位震荡）—— 今日为箱内{REGIME}，箱体（3900–4000）未被有效跌破</b></p>
 <h3>证据链</h3>
 <table><thead><tr><th>维度</th><th>观察值</th><th>指向</th></tr></thead>
 <tbody>
 <tr><td>点位位置</td><td>上证 {idx['上证指数'][0]:,.0f}（{idx['上证指数'][1]:+.2f}%），仍在 3900–4000 箱体、关前徘徊；近 20 日区间位置约 {_pos*100:.0f}%（{_hist_dates}）</td><td class="mid">箱体上沿、关前震荡</td></tr>
-<tr><td>量能</td><td>两市 {amt2:.2f} 万亿，较昨日 {amt_chg_txt}（{amt_dir}回调）</td><td class="mid">回调缺增量确认</td></tr>
-<tr><td>主线广度</td><td>仅军工（地面兵装/航空装备）单主线领涨，资源/周期/红利/证券无共振，上涨占比仅 {BR['up_pct']}%</td><td class="mid">轮动非普涨</td></tr>
+<tr><td>量能</td><td>两市 {amt2:.2f} 万亿，较昨日 {amt_chg_txt}（{amt_dir}）</td><td class="mid">{'普涨增量温和' if REGIME=='普涨' else '回调缺增量确认'}</td></tr>
+<tr><td>主线广度</td><td>{_main_line_sectors}（{top_gain_names}）领涨，资源/周期/红利/证券{'共振' if (not _mil_against and REGIME=='普涨') else '无共振'}，上涨占比 {BR['up_pct']}%</td><td class="mid">轮动非普涨</td></tr>
 <tr><td>资金</td><td>主力 {main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；资金净流入集中于军工（军工装备 {fy(sec_yi('军工装备'))}/军工电子 {fy(sec_yi('军工电子'))}）</td><td class="mid">流出、结构分化</td></tr>
 <tr><td>宏观</td><td>综合PMI产出 {PMI['composite']}%、非制造业 {PMI['nonmfg']}%（收缩区）</td><td class="mid">需求弱、结构强</td></tr>
 <tr><td>个股情绪</td><td>涨停 {zt_show}、上涨占比 {BR['up_pct']}%、跌停 {dt_show}</td><td class="ok">未系统性转冷 → 未入第 ⑥ 阶段</td></tr>
@@ -652,7 +724,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <h3>1.4 板块资金流全景（{DATA_DATE}，东方财富，90 个申万二级板块）</h3>
 <table><thead><tr><th class="num">#</th><th>净流入 TOP10</th><th class="num">金额</th><th>净流出 TOP10</th><th class="num">金额</th></tr></thead>
 <tbody>{rows_flow}</tbody></table>
-<div class="note">主力资金合计 <span class="down">{main_dir} {main_in_yi:+,.0f} 亿</span>{main_proxy_txt}，由净流入转为净流出。流入集中于「军工装备（{fy(sec_yi('军工装备'))}）/ 军工电子（{fy(sec_yi('军工电子'))}）/ 医疗服务（{fy(sec_yi('医疗服务'))}）」等方向；流出集中于「通信设备（{fy(sec_yi('通信设备'))}）/ 证券（{fy(sec_yi('证券'))}）/ 半导体（{fy(sec_yi('半导体'))}）/ 文化传媒 / 软件开发」等。</div>
+<div class="note">主力资金合计 <span class="down">{main_dir} {main_in_yi:+,.0f} 亿</span>{main_proxy_txt}，流入集中于「{money_in_txt}」等方向；流出集中于「{money_out_txt}」等。</div>
 </div>
 
 <div class="card">
@@ -669,11 +741,11 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="kpi"><div class="k">总市值</div><div class="v">¥{tot_val:,.0f}</div><div class="n">成本 ¥{tot_cost:,.0f}</div></div>
 <div class="kpi"><div class="k">累计盈亏</div><div class="v"><span class="up">+¥{tot_pnl:,.0f}</span></div><div class="n">{chg(tot_pnl/tot_cost*100)}（含失真数据，见2.4）</div></div>
 <div class="kpi"><div class="k">当日回报（真值）</div><div class="v">{chg(d_ret)}</div><div class="n"><span class="down">{d_pnl:+,.0f} 元</span></div></div>
-<div class="kpi"><div class="k">相对沪深300</div><div class="v">{chg(vs300, 'pct')}</div><div class="n">跑赢（军工+防御对冲）</div></div>
+<div class="kpi"><div class="k">相对沪深300</div><div class="v">{chg(vs300, 'pct')}</div><div class="n">{_perf_word}（{'军工顺风+防御对冲' if _mil_av>0 else '防御端缓冲'}）</div></div>
 <div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 22 只</div></div>
 <div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{sharpe:.2f} / {mdd:.2f}% / {vol:.2f}%</div><div class="n">滚动统计口径</div></div>
 </div>
-<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {d_ret}%，跑赢沪深300 {vs300:+.2f}pct）。项目 etf_price_history 最新仅至 2026-08-19（滞后），<b>禁止</b>用其估算当日逐 ETF 损益。</div>
+<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {d_ret}%，{('跑赢' if vs300>=0 else '跑输')}沪深300 {abs(vs300):.2f}pct）。项目 etf_price_history 最新仅至 2026-08-19（滞后），<b>禁止</b>用其估算当日逐 ETF 损益。</div>
 </div>
 
 <div class="card">
@@ -725,7 +797,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <h3>3.1 净风向结论</h3>
 <p style="font-size:13.2px;color:#c9d1d9">组合 <b>8 个方向中 {n_up} 个顺风/微顺风、{n_dn} 个逆风/强逆风、{n_mid} 个弱逆风</b>。顺风权重合计约 <b class="up">{up_w:.1f}%</b>（红利+债券+军工+科技+宽基），逆风（医药+新能源+证券）合计约 <b class="down">{inv_w:.1f}%</b>。</p>
-<p style="font-size:13.2px;color:#c9d1d9;margin-top:8px">真实当日回报 <b>{d_ret}%</b>、且<b>跑赢沪深300 {vs300:+.2f}pct</b>。原因有二：① 超配的军工系（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% 领涨、军工装备资金净流入）为当日最强方向，叠加防御端（债券 {pct(cls_sum.get('债券',0)):.1f}% + 红利 {pct(cls_sum.get('红利',0)):.1f}% + 证券 {sec_w:.1f}%）当日合计权重约 {def_w+sec_w:.1f}% 提供缓冲；② 逆风方向中新能源/科技/医药系虽回调，但证券当日 -2.13% 为最大单一拖累，由军工顺风部分抵消。</p>
+<p style="font-size:13.2px;color:#c9d1d9;margin-top:8px">真实当日回报 <b>{d_ret}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。当日领涨方向为{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%；超配的军工/医药/证券/红利普遍逆风（军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%），防御端（债券+红利 {def_w:.1f}%）提供缓冲，组合与大盘呈现「指数涨、组合跌」的结构性背离。</p>
 <h3>3.2 代理加权估算 vs 真值（方法学诊断）</h3>
 <table><thead><tr><th>口径</th><th class="num">数值</th><th>说明</th></tr></thead>
 <tbody>
@@ -740,7 +812,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 
 <div class="op"><div class="t">① 持有（维持现状）—— 军工超配 + 红利/债券防御底仓 {def_w+sec_w:.1f}%</div>
 <ul>
-<li>当日已验证其价值：全组合 {d_ret}%、跑赢沪深300 {vs300:+.2f}pct；军工主线（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%）领涨且资金净流入，超配逻辑成立。</li>
+<li>当日已验证其价值：全组合 {d_ret}%、{_perf_word}沪深300 {abs(vs300):+.2f}pct；{_oper_hold_txt}。</li>
 <li><span class="cond">维持条件</span>：市场停留在路径 A（箱体震荡）—— 上证守住 MA20 3921、量能 1.7–2.0 万亿。</li>
 <li><span class="cond">加码触发</span>：若出现路径 C 的两条确认信号（破 MA20 + 量能萎缩至 1.5 万亿以下），防御仓位的战略价值上升。</li>
 </ul></div>
@@ -756,7 +828,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="op"><div class="t">③ 对冲 / 减压（针对集中度）—— 关注单一持仓与三方向集中</div>
 <ul>
 <li><b>航天ETF华安 {aero_w:.2f}%</b> 为单一最大持仓，已超 10% 审慎线。<span class="cond">观察条件</span>：地面兵装板块若冲高回落且 ETF 资金流由正转负，则集中度风险实质化。</li>
-<li><b>军工系 {mil_w:.1f}%</b> 当日顺风（地面兵装领涨+资金流入）；<b>医药系 {med_w:.1f}%</b> 微逆风、<b>证券 {sec_w:.1f}%</b> 当日 {HP['证券Ⅱ']:+.2f}% 且资金净流出 {fy(sec_today_yi)} 为最大单一拖累。<span class="cond">观察条件</span>：证券若连续 3 日净流出（当前已连续 {sec_out_streak} 日，见⑤跨日跟踪），则该方向逆风从单日事件升级为趋势。</li>
+<li><b>军工系 {mil_w:.1f}%</b> {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）；<b>医药系 {med_w:.1f}%</b> 微逆风、<b>证券 {sec_w:.1f}%</b> 当日 {HP['证券Ⅱ']:+.2f}% 且资金净流出 {fy(sec_today_yi)} 为最大单一拖累。<span class="cond">观察条件</span>：证券若连续 3 日净流出（当前已连续 {sec_out_streak} 日，见⑤跨日跟踪），则该方向逆风从单日事件升级为趋势。</li>
 <li><b>宽基核心仅 {core300_w:.2f}%</b>：组合缺少市场平均收益压舱石，风格暴露过重。<span class="cond">改善方向</span>：去重释放的额度可考虑向核心宽基倾斜，而非新增行业主题。</li>
 </ul></div>
 
@@ -769,11 +841,12 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 
 <div class="op"><div class="t">⑤ 跨日跟踪（读结构化历史库，非买卖指令）</div>
 <ul>
+{_prev_gap_html}
 <li><span class="cond">证券净流出连续</span>：当前 <b>{sec_out_streak} 日</b>{sec_delta_txt}；今日 {fy(sec_today_yi)}（昨日 {fy(sec_prev_yi)}）。<b>距"连续 3 日趋势"阈值尚差 {sec_thresh_remain} 日</b>{'；已触发趋势确认' if sec_triggered else ''}。</li>
 <li><span class="cond">航天ETF(159267) 资金流</span>：今日 {aero_sign}（{fy(aero_today_yi)}）{aero_trend}。单一最大持仓集中度观察的"由正转负"触发条件{'已满足' if aero_flip else '未满足'}。</li>
 <li><span class="cond">上证位置 / 量能</span>：{ma20_txt}；{amt_txt}。与路径 A 维持条件（守住 MA20 + 量能 1.7–2.0 万亿）{'吻合' if ma20_ok else '出现偏离'}。</li>
 <li><span class="cond">周线阶段</span>：{STAGE}（{REGIME}），较上期（{stage_prev}）{'未变' if not stage_changed else '有变化'}。</li>
-<li><span class="cond">军工主线延续性</span>：连续 <b>{mil_up_streak} 日</b>军工三板块（地面兵装/航空装备/军工电子）最优涨跌幅为正（主线未熄火）{mil_delta_txt}；今日军工最优 {chg(_today_best)}，<b>12板块观测池</b>内严格领涨{'✔' if mil_top_today else '✘'}（{'是' if mil_top_today else '非'}当日观测池第一）。<br>&nbsp;&nbsp;近{mil_up_streak if mil_up_streak else len(_mil_recent)}日：{mil_recent_txt}。<br>&nbsp;&nbsp;<span class="note">（数据源自 sector_daily_change 历史表，回溯窗口 {signal_state['mil_complete_days']} 个完整交易日；"观测池"为我方重仓相关 12 板块，非全市场 90 板块；NeoData 宽区间查询为采样返回，更深日度历史由每日运行自动累积）</span></li>
+<li><span class="cond">军工主线延续性</span>：连续 <b>{mil_up_streak} 日</b>军工板块（地面兵装/航空装备/军工电子/航海装备）最优涨跌幅为正（主线未熄火）{mil_delta_txt}；今日军工最优 {chg(_today_best)}，<b>12板块观测池</b>内严格领涨{'✔' if mil_top_today else '✘'}（{'是' if mil_top_today else '非'}当日观测池第一）。<br>&nbsp;&nbsp;近{mil_up_streak if mil_up_streak else len(_mil_recent)}日：{mil_recent_txt}。<br>&nbsp;&nbsp;<span class="note">（数据源自 sector_daily_change 历史表，回溯窗口 {signal_state['mil_complete_days']} 个完整交易日；"观测池"为我方重仓相关 12 板块，非全市场 90 板块；NeoData 宽区间查询为采样返回，更深日度历史由每日运行自动累积）</span></li>
 </ul></div>
 
 <h2>五、数据源与可用性</h2>
@@ -783,11 +856,11 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 &nbsp;&nbsp;· index_quotes：{DATA_DATE}（11 个指数收盘/涨跌/成交额）<br>
 &nbsp;&nbsp;· fund_flows：{DATA_DATE}（90 个申万板块 + 23 只 ETF；main_fund 行缺失，主资金以 90 板块合计代理）<br>
 &nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币，PMI 仍缺）<br>
-&nbsp;&nbsp;· market_breadth：20260902（zt={loc_zt}/dt={loc_dt} 已采集）<br>
+&nbsp;&nbsp;· market_breadth：{BL.get('date','—')}（zt={loc_zt}/dt={loc_dt} 已采集）<br>
 &nbsp;&nbsp;· <span class="mid">⚠ etf_price_history 滞后至 2026-08-19，未使用</span><br>
 <b>✓ NeoData 金融搜索</b> —— 本次可用（查询时间 {MKT_NEO['query_time']}，凭证经 connect_cloud_service 重取）<br>
 &nbsp;&nbsp;· 三大指数统一行情（与本地交叉核对一致）、大盘市场宽度（涨跌 {BR['up']}:{BR['down']}）<br>
-&nbsp;&nbsp;· 板块涨跌排行（军工主线：地面兵装+6.48%/航空装备+0.93%）+ 申万板块当日涨跌幅（航天装备/生物制品/半导体 等完整召回）<br>
+&nbsp;&nbsp;· 板块涨跌排行（{top_gain_names} 等）+ 申万板块当日涨跌幅（航天装备/生物制品/半导体 等完整召回）<br>
 &nbsp;&nbsp;· 宏观 PMI（综合PMI产出 {PMI['composite']}/非制造业 {PMI['nonmfg']}/服务业 {PMI['service']}/建筑业 {PMI['construction']}；制造业整体值未返回标「—」）<br>
 <b>无法核实项一律以「—」标注，未做任何推算填充。</b>
 </div>

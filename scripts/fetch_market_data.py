@@ -28,7 +28,7 @@ OUT = os.path.join(ROOT, 'data', '.neotmp', 'neodata_market.json')
 DB = os.path.join(ROOT, 'data', 'database', 'portfolio.db')
 
 # 重仓相关板块（与 gen_combo_report.py 交叉验证键名保持一致）
-HEAVY = ['航天装备Ⅱ', '军工电子Ⅱ', '地面兵装Ⅱ', '航空装备Ⅱ',
+HEAVY = ['航天装备Ⅱ', '军工电子Ⅱ', '地面兵装Ⅱ', '航空装备Ⅱ', '航海装备Ⅱ',
          '化学制药', '生物制品', '医疗服务', '证券Ⅱ',
          '电池', '光伏设备', '半导体', '通信设备']
 
@@ -47,6 +47,9 @@ def run_query(q):
     out = r.stdout
     if 'TOKEN_MISSING' in out or 'TOKEN_EXPIRED' in out:
         raise TokenExpired(out[:160])
+    # NeoData 凭证过期信息有时落在 stderr，需一并检测
+    if 'TOKEN_MISSING' in r.stderr or 'TOKEN_EXPIRED' in r.stderr:
+        raise TokenExpired(r.stderr[:160])
     if r.returncode != 0:
         raise RuntimeError(f'query rc={r.returncode}: {r.stderr[:160]}')
     # 容错：stdout 可能夹带日志，截取首个 JSON 对象
@@ -249,15 +252,17 @@ def main():
     # 主线文本（基于真实数据，不做主观判断）
     top3 = gainers[:3]
     top3_txt = '、'.join(f"{n}{p:+.2f}%" for n, p in top3)
-    mil_vals = [heavy.get('地面兵装Ⅱ'), heavy.get('航空装备Ⅱ'), heavy.get('军工电子Ⅱ')]
+    mil_vals = [heavy.get('地面兵装Ⅱ'), heavy.get('航空装备Ⅱ'), heavy.get('军工电子Ⅱ'),
+                heavy.get('航海装备Ⅱ')]
     mil_vals = [v for v in mil_vals if v is not None]
     if mil_vals:
         mil_best = max(mil_vals)
-        mil_names = {'地面兵装Ⅱ': '地面兵装', '航空装备Ⅱ': '航空装备', '军工电子Ⅱ': '军工电子'}
-        best_name = next((mil_names[k] for k in ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ']
+        mil_names = {'地面兵装Ⅱ': '地面兵装', '航空装备Ⅱ': '航空装备',
+                     '军工电子Ⅱ': '军工电子', '航海装备Ⅱ': '航海装备'}
+        best_name = next((mil_names[k] for k in ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ', '航海装备Ⅱ']
                           if heavy.get(k) == mil_best), '')
         main_line = (f"板块涨幅居前：{top3_txt}。"
-                     f"重仓相关板块中军工系（地面兵装Ⅱ/航空装备Ⅱ/军工电子Ⅱ）最优涨跌幅 "
+                     f"重仓相关板块中军工系（地面兵装Ⅱ/航空装备Ⅱ/军工电子Ⅱ/航海装备Ⅱ）最优涨跌幅 "
                      f"{mil_best:+.2f}%（{best_name}），为当日主线方向。")
     else:
         main_line = f"板块涨幅居前：{top3_txt}。军工系涨跌幅数据缺失。"
