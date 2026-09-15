@@ -1444,15 +1444,47 @@ def _render_rebalance_engine_panel():
                 c2.metric("换手率", f"{plan.turnover*100:.1f}%")
                 c3.metric("预估成本", f"{plan.estimated_cost:,.0f}")
                 c4.metric("T+1 执行日", plan.execution_date)
+                # 场内 1 手 = 100 份：展示真实手数（lots），并同时给出份额；
+                # 场外按金额申购无「手」概念，展示份额并标注。
                 rows = [{
                     "方向": t.direction, "代码": t.code, "名称": t.name,
                     "当前权重": f"{t.current_weight*100:.1f}%",
                     "目标权重": f"{t.target_weight*100:.1f}%",
                     "金额(元)": f"{t.trade_value:,.0f}",
-                    "手数": t.shares,
+                    "下单量": f"{t.lots:,}手" if getattr(t, "lot_traded", True) else f"{t.shares:,}份",
+                    "份额(份)": f"{t.shares:,}",
+                    "快照日期": plan.snapshot_dates.get(t.code, "-"),
                 } for t in plan.trades]
                 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True,
                              height=min(200 + len(rows) * 28, 600))
+                suspects = [s for s in plan.stale_snapshots if s.get("level") == "疑似失效"]
+                normals = [s for s in plan.stale_snapshots if s.get("level") != "疑似失效"]
+                if suspects:
+                    # 停更 >30 天：可能已清仓/份额变动，用 error 级强提示，但**不静默丢弃**
+                    st.error(
+                        "🔴 疑似失效（快照停更 >30 天，可能已清仓或份额变动，下单前务必核对）："
+                        + "；".join(
+                            f"{s['name']}({s['code']}) {s['days']}天（最新 {s['snapshot_date']}）"
+                            for s in suspects
+                        )
+                    )
+                if normals:
+                    st.warning(
+                        "⚠️ 以下标的快照已停更，其权重与调仓量按陈旧快照计算："
+                        + "；".join(
+                            f"{s['name']}({s['code']}) {s['days']}天（最新 {s['snapshot_date']}）"
+                            for s in normals
+                        )
+                    )
+                if plan.dropped_legs:
+                    st.info(
+                        "ℹ️ 以下调仓腿金额不足最小交易单位，已丢弃："
+                        + "；".join(
+                            f"{d['name']}({d['code']}) {d['trade_value']:,.0f}元 "
+                            f"< {d['min_value']:,.0f}元"
+                            for d in plan.dropped_legs
+                        )
+                    )
         finally:
             conn.close()
     except Exception as e:

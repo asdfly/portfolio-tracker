@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from config.settings import ETF_CATEGORIES, SECTOR_COLORS, PROJECT_ROOT
+from config.settings import ETF_CATEGORIES, ETF_LOT_SIZE, SECTOR_COLORS, PROJECT_ROOT
 from tabs._helpers import _generate_oneclick_report
 from src.utils.database import get_db_connection
 from src.utils.chart_utils import _cleanse_daily_returns
@@ -734,7 +734,13 @@ def _render_rebalance_advice():
                                 "目标权重": f"{s['target_weight']*100:.1f}%",
                                 "偏离": f"{s['diff']*100:+.1f}%",
                                 "调仓金额": f"¥{s['trade_value']:+,.0f}",
-                                "预估股数": f"{s['shares']:+,}",
+                                # 场内 1 手 = 100 份：显示手数（lot_traded=False 的场外基金显示份额）
+                                "下单量": (
+                                    f"{s['shares'] // ETF_LOT_SIZE:+,}手"
+                                    if s.get("lot_traded", True)
+                                    else f"{s['shares']:+,}份"
+                                ),
+                                "份额(份)": f"{s['shares']:+,}",
                                 "现价": f"¥{s['price']:.3f}",
                             }
                         )

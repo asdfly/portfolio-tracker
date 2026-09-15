@@ -57,6 +57,24 @@ def fetch_index_pe_history(index_code: str) -> pd.DataFrame:
     return df[["date", "pe"]].reset_index(drop=True)
 
 
+def _norm_date(d) -> str:
+    """'YYYYMMDD' -> 'YYYY-MM-DD'（date 列为 TEXT，两种格式混存会破坏 ORDER BY 语义）。"""
+    d = str(d).strip()
+    if len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    return d
+
+
+def _ensure_source_column(conn) -> None:
+    """幂等：index_pe_history 增加 source 列（区分 csindex / neodata 口径）。"""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(index_pe_history)").fetchall()}
+    except Exception:
+        return
+    if "source" not in cols:
+        conn.execute("ALTER TABLE index_pe_history ADD COLUMN source TEXT DEFAULT 'unknown'")
+
+
 def save_pe_history(conn, index_code: str, df: pd.DataFrame) -> int:
     """将PE历史数据存入 index_pe_history 表。
 
@@ -78,18 +96,20 @@ def save_pe_history(conn, index_code: str, df: pd.DataFrame) -> int:
             index_code TEXT NOT NULL,
             date TEXT NOT NULL,
             pe REAL,
+            source TEXT DEFAULT 'unknown',
             UNIQUE(index_code, date)
         )
     """)
+    _ensure_source_column(conn)
     conn.commit()
+
+    from src.data_sources.etf_pe_backfill import upsert_pe
 
     count = 0
     for _, row in df.iterrows():
         try:
-            cursor.execute(
-                "INSERT OR REPLACE INTO index_pe_history (index_code, date, pe) VALUES (?, ?, ?)",
-                (index_code, str(row["date"]), float(row["pe"])))
-            count += 1
+            if upsert_pe(cursor.connection, index_code, row["date"], float(row["pe"])):
+                count += 1
         except Exception as e:
             logger.debug(f"写入PE历史失败: {index_code}/{row['date']}: {e}")
     conn.commit()
@@ -145,9 +165,21 @@ def load_pe_percentile(conn, index_code: str, current_pe: float = None) -> Dict[
     Returns:
         分位数结果 dict
     """
-    rows = conn.execute(
-        "SELECT pe FROM index_pe_history WHERE index_code=? ORDER BY date",
-        (index_code,)).fetchall()
+    # 口径修正 (P0): ORDER BY date(date) 强制日期语义 + 单源取数。
+    # 源表曾混存 'YYYY-MM-DD'(csindex) 与 'YYYYMMDD'(neodata), 字符串序
+    # 使 '2026-09-03' < '20260911', history[-1] 永远取到 neodata 的错误口径 PE。
+    has_source = "source" in {
+        r[1] for r in conn.execute(
+            "PRAGMA table_info(index_pe_history)").fetchall()}
+    rows: List = []
+    if has_source:
+        rows = conn.execute(
+            "SELECT pe FROM index_pe_history WHERE index_code=? AND source='csindex' "
+            "AND pe>0 ORDER BY date(date)", (index_code,)).fetchall()
+    if not rows:
+        rows = conn.execute(
+            "SELECT pe FROM index_pe_history WHERE index_code=? AND pe>0 "
+            "ORDER BY date(date)", (index_code,)).fetchall()
 
     history = [r[0] for r in rows if r[0] is not None and r[0] > 0]
 

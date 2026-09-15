@@ -316,7 +316,14 @@ ETF_CATEGORIES = {
     # 科技/AI
     "159819": {"name": "人工智能ETF易方达", "sector": "科技", "color": "#a855f7"},
     "159770": {"name": "机器人ETF天弘", "sector": "科技", "color": "#a855f7"},
-    "159732": {"name": "消费电子ETF华夏", "sector": "科技", "color": "#a855f7"},
+    # 已清仓：2026-07-30 后连续 46 天无快照，而同批其余 22 只场内标的每日均有快照；
+    # 与 docs/handover/07_known_data_issues.md「已清仓」记载一致。
+    # 组合口径一律排除（35 只 = 22 场内 + 13 场外）。
+    # 注意：此处保留条目不删除（ETF_CATEGORIES 被当作 ETF 权威分母，删除会改变分母口径）；
+    # 采集/再平衡侧如需过滤，请判断 info.get("delisted")，不要依赖 key 是否存在。
+    "159732": {"name": "消费电子ETF华夏", "sector": "科技", "color": "#a855f7",
+               "delisted": True, "delisted_date": "2026-07-30",
+               "delisted_note": "已清仓：末次快照 2026-07-30，此后 46 天连续缺席，组合口径排除"},
     # 宽基
     "510300": {"name": "沪深300ETF华泰柏瑞", "sector": "宽基", "color": "#8b949e"},
     "159300": {"name": "沪深300ETF富国", "sector": "宽基", "color": "#8b949e"},
@@ -350,6 +357,90 @@ ETF_CATEGORIES = {
     "002152": {"name": "华宝核心优势混合", "sector": "混合/灵活配置", "color": "#f472b6"},
     "001765": {"name": "前海开源嘉鑫混合A类", "sector": "混合/灵活配置", "color": "#f472b6"},
 }
+
+# ==================== 交易单位 ====================
+# 场内 ETF 最小交易单位：1 手 = 100 份
+ETF_LOT_SIZE = 100
+
+# 场外基金代码集合（按金额申购/赎回，无「手」概念，不受 100 份/手 约束）
+# 口径来源：portfolio_snapshots 全历史 36 只标的 − etf_technical 的 23 只场内 ETF
+# 复核见 docs/handover/07_known_data_issues.md「场外标的清单（13 只，供核对）」
+OTC_FUND_CODES = frozenset({
+    "001194",  # 景顺长城稳健回报灵活配置混合A
+    "001323",  # 东吴移动互联混合A
+    "001407",  # 景顺长城稳健回报灵活配置混合C
+    "001437",  # 易方达瑞享灵活配置混合I
+    "001765",  # 前海开源嘉鑫混合A类
+    "002152",  # 华宝核心优势混合
+    "007994",  # 华夏中证500指数增强A
+    "008269",  # 大成睿享混合A
+    "027293",  # 东吴产业趋势混合A
+    "100032",  # 富国中证红利指数增强前端
+    "166301",  # 华商新趋势优选灵活配置混合（LOF）
+    "519770",  # 交银优择回报灵活配置混合A
+    "880013",  # 天添利（现金管理类）
+})
+
+
+def is_otc_fund(code: str) -> bool:
+    """场外基金（按金额申赎）→ True；场内 ETF（按手交易）→ False。"""
+    return str(code) in OTC_FUND_CODES
+
+
+# ==================== 已清仓 / 退市标的 ====================
+# 这些标的在 portfolio_snapshots 里仍有历史残留快照，但**实际已清仓**，
+# 不能进入当前持仓集合，否则会被当成真实持仓生成调仓建议（159732 曾因此凭空
+# 多出一笔 35,783 元的买入建议）。
+#
+# 判定硬证据（data-engineer 提供）：159732 自 2026-07-31 起连续 46 天未出现在
+# 任何快照中，而同批 22 只场内标的每天都在；另见
+# docs/handover/07_known_data_issues.md「159732 已清仓」。
+DELISTED_CODES = frozenset({
+    "159732",  # 消费电子ETF华夏，2026-07-30 后清仓
+})
+
+
+def is_delisted(code: str) -> bool:
+    """已清仓/退市标的 → True，不进入当前持仓集合。
+
+    两处来源取并集：
+    1. DELISTED_CODES 常量（当前唯一生效来源）；
+    2. ETF_CATEGORIES 条目上带 {"delisted": True} 的标记（data-engineer 后续会补，
+       补上后无需再改本函数）。
+    """
+    c = str(code)
+    if c in DELISTED_CODES:
+        return True
+    entry = ETF_CATEGORIES.get(c)
+    return bool(isinstance(entry, dict) and entry.get("delisted"))
+
+
+# ==================== 快照披露节奏（决定「陈旧告警」阈值） ====================
+# 不能对所有标的用同一个阈值：场外基金**没有日更链路**，只在每月最后一天导入一次
+# （data-engineer 2026-09-15 确认：13 只场外全部只出现在 01-31/02-28/…/07-31 等月末）。
+# 用场内那套 7 天阈值，场外会整月误报，把正常披露节奏当成采集故障。
+#
+# 35 = 最长月 31 天 + 4 天导入延迟宽限。若场外日后接上日更链路，请把这个值收紧到 7~10。
+SNAPSHOT_STALE_DAYS_OTC = 35
+
+# 按产品实际披露频率的显式覆盖（覆盖上面的分类默认值）
+SNAPSHOT_STALE_DAYS_OVERRIDE = {
+    # 东吴产业趋势混合A：净值每周五更新，天然比日更标的晚 ≤7 天，不是采集失败
+    "027293": 14,
+}
+
+
+def stale_threshold_days(code: str, default: int = 7) -> int:
+    """按标的披露节奏返回「快照陈旧」告警阈值（自然日）。
+
+    default 为场内 ETF 的日更阈值，由调用方传入（rebalance_engine.STALE_SNAPSHOT_DAYS）。
+    """
+    c = str(code)
+    if c in SNAPSHOT_STALE_DAYS_OVERRIDE:
+        return SNAPSHOT_STALE_DAYS_OVERRIDE[c]
+    if is_otc_fund(c):
+        return SNAPSHOT_STALE_DAYS_OTC
+    return default
 
 # 行业颜色映射（用于图表）
 SECTOR_COLORS = {

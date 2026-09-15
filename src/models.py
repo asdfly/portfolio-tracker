@@ -187,9 +187,19 @@ class RebalanceTrade:
     target_weight: float = 0.0
     diff: float = 0.0             # current - target (正=超配)
     trade_value: float = 0.0       # 交易金额 (正=买入)
-    shares: int = 0
+    shares: int = 0               # 份额（份），场内标的已向下取整到整手
     direction: str = ""            # "买入" or "卖出"
     price: float = 0.0
+    lot_traded: bool = True        # 是否场内标的（True=受 100 份/手 约束；False=场外按金额申赎）
+    lots: int = 0                  # 手数 = shares // 100（仅场内有效；由 __post_init__ 派生）
+
+    def __post_init__(self) -> None:
+        """lots 始终由 shares 派生，避免 shares/lots 不同步导致下错单。
+
+        场外标的不受「手」约束，lots 置 0（展示时应改用份额/金额）。
+        """
+        from config.settings import ETF_LOT_SIZE
+        self.lots = int(self.shares) // int(ETF_LOT_SIZE) if self.lot_traded else 0
 
     # --- 兼容 dict 风格访问 ---
     def __getitem__(self, key: str):

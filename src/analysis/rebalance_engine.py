@@ -24,7 +24,8 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import sqlite3
 
-from config.settings import SMART_ANALYSIS_CONFIG
+from config.settings import (SMART_ANALYSIS_CONFIG, ETF_LOT_SIZE,
+                             is_otc_fund, is_delisted, stale_threshold_days)
 from src.models import RebalanceTrade
 from src.utils.trading_calendar import (
     next_trading_day,
@@ -34,6 +35,34 @@ from src.utils.trading_calendar import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 快照陈旧告警阈值（自然日）：标的最新快照早于目标日期超过该天数即告警
+STALE_SNAPSHOT_DAYS = 7
+# 快照停更超过该天数 → 升级为「疑似失效」（权重可能已失真，但仍保留在组合里）
+STALE_SNAPSHOT_SUSPECT_DAYS = 30
+# 年化已实现波动率预警阈值（%），与 Tab16 / risk_report 三档口径一致
+VOL_ANN_WARN_PCT = 30.0
+
+
+def calc_trade_shares(trade_value: float, price: float, code: str = "") -> int:
+    """按交易金额与价格折算建议**份额**（份）。
+
+    - 场内 ETF：1 手 = 100 份，向下取整到 100 的整数倍（整手），避免下出零股单。
+    - 场外基金：按金额申购，无「手」概念，仅向下取整到 1 份，不做整手取整。
+    """
+    if not price or price <= 0 or not trade_value:
+        return 0
+    raw = int(abs(trade_value) / price)
+    if is_otc_fund(code):
+        return raw
+    return (raw // ETF_LOT_SIZE) * ETF_LOT_SIZE
+
+
+def format_share_display(shares: int, code: str = "") -> str:
+    """把份额格式化成给人看的下单量：场内显示「N 手」，场外显示「N 份」。"""
+    if is_otc_fund(code):
+        return f"{int(shares):,}份"
+    return f"{int(shares) // ETF_LOT_SIZE:,}手"
 
 
 @dataclass
@@ -51,6 +80,9 @@ class RebalancePlan:
     estimated_cost: float = 0.0           # 预估交易成本（双边）
     execution_date: str = ""              # T+1 执行日（交易日）
     total_value: float = 0.0
+    snapshot_dates: Dict[str, str] = field(default_factory=dict)  # code -> 所用快照日期
+    stale_snapshots: List[Dict[str, object]] = field(default_factory=list)  # 停更>7天的标的
+    dropped_legs: List[Dict[str, object]] = field(default_factory=list)     # 不足最小交易单位被丢弃的腿
 
     def to_dict(self) -> dict:
         return {
@@ -65,6 +97,9 @@ class RebalancePlan:
             "current_weights": {k: round(v, 4) for k, v in self.current_weights.items()},
             "target_weights": {k: round(v, 4) for k, v in self.target_weights.items()},
             "trades": [t.__dict__ for t in self.trades],
+            "snapshot_dates": self.snapshot_dates,
+            "stale_snapshots": self.stale_snapshots,
+            "dropped_legs": self.dropped_legs,
         }
 
 
@@ -78,50 +113,162 @@ class RebalanceEngine:
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
         self.cost_rate = commission_rate + slippage_rate  # 单边成本率
+        # 最近一次 get_current_holdings 的附加信息（兼容旧调用方的旁路通道）
+        self.last_snapshot_dates: Dict[str, str] = {}
+        self.last_stale: List[Dict[str, object]] = []
+        self.last_betas: Dict[str, float] = {}
+        self._holdings_cache: Dict[str, tuple] = {}  # 解析后日期 -> 6 元组结果
 
     # ------------------------------------------------------------------
     # 当前持仓 / 权重
     # ------------------------------------------------------------------
-    def get_current_holdings(self, as_of_date: str):
+    # 按 code 各取「date <= ? 的最新一条」（等价 GROUP BY code MAX(date)）。
+    # 这是 P0-1 的核心修复：旧版取「全局最新快照日期」那一批行，导致 13 只 45 天未
+    # 更新的场外基金整批从组合里消失（35 只 → 22 只，总市值蒸发 37.8%）。
+    _PER_CODE_LATEST_SQL = """
+        SELECT ps.code, ps.name, ps.market_value, ps.current_price, ps.date, ps.beta
+        FROM portfolio_snapshots ps
+        JOIN (SELECT code, MAX(date) AS md
+              FROM portfolio_snapshots
+              WHERE date <= ? AND market_value IS NOT NULL
+              GROUP BY code) t
+          ON ps.code = t.code AND ps.date = t.md
+        WHERE ps.id = (SELECT MAX(p2.id) FROM portfolio_snapshots p2
+                       WHERE p2.code = ps.code AND p2.date = t.md
+                         AND p2.market_value IS NOT NULL)
+    """
+
+    def get_current_holdings(self, as_of_date: str, with_meta: bool = False):
         """取 as_of_date 或之前最近交易日的持仓快照。
-        返回 (code->market_value, total_value, code->name, code->current_price)。"""
+
+        **按 code 各自取 `date <= 目标日期` 的最新一条**，而非「全局最新快照日期」
+        那一批行——后者会让长期未更新快照的标的（如场外基金）凭空消失。
+
+        已清仓标的（config.DELISTED_CODES / ETF_CATEGORIES 的 delisted 标记）
+        即使还有残留快照也被排除，不作为当前持仓。
+
+        返回 (code->market_value, total_value, code->name, code->current_price)；
+        with_meta=True 时额外返回 (…, code->snapshot_date, stale_list)，
+        stale_list = [{"code","name","snapshot_date","days"}]，days > 7 天即入列。
+        """
         d = last_trading_day_on_or_before(as_of_date)
-        df = pd.read_sql_query(
-            "SELECT code, name, market_value, current_price "
-            "FROM portfolio_snapshots WHERE date=?",
-            self.db, params=[str(d)],
-        )
+        cached = self._holdings_cache.get(str(d))
+        if cached is not None:
+            return (cached + ()) if with_meta else cached[:4]
+        df = pd.read_sql_query(self._PER_CODE_LATEST_SQL, self.db, params=[str(d)])
         if df.empty:
-            # 退一步：取 <= d 最近一个有快照的交易日
+            # 退一步：目标日期之前完全没有快照 → 取全局最早可用的 <= d 日期
             row = pd.read_sql_query(
                 "SELECT DISTINCT date FROM portfolio_snapshots WHERE date<=? "
                 "ORDER BY date DESC LIMIT 1",
                 self.db, params=[str(d)],
             )
             if row.empty:
-                return {}, 0.0, {}, {}
+                return ({}, 0.0, {}, {}, {}, []) if with_meta else ({}, 0.0, {}, {})
             d2 = row.iloc[0, 0]
-            df = pd.read_sql_query(
-                "SELECT code, name, market_value, current_price "
-                "FROM portfolio_snapshots WHERE date=?",
-                self.db, params=[str(d2)],
-            )
+            df = pd.read_sql_query(self._PER_CODE_LATEST_SQL, self.db, params=[str(d2)])
         df = df.dropna(subset=["market_value"])
         if df.empty:
-            return {}, 0.0, {}, {}
-        total = float(df["market_value"].sum())
-        mv = {r.code: float(r.market_value) for r in df.itertuples()}
-        names = {r.code: (r.name or "") for r in df.itertuples()}
-        prices = {
-            r.code: (float(r.current_price) if pd.notna(r.current_price) else None)
-            for r in df.itertuples()
-        }
-        return mv, total, names, prices
+            return ({}, 0.0, {}, {}, {}, []) if with_meta else ({}, 0.0, {}, {})
 
-    def get_current_weights(self, as_of_date: str) -> Tuple[Dict[str, float], float, Dict[str, str], Dict[str, float]]:
-        """返回 (code->weight, total_value, code->name, code->price)。"""
-        mv, total, names, prices = self.get_current_holdings(as_of_date)
+        mv, names, prices, snap_dates, betas = {}, {}, {}, {}, {}
+        for r in df.itertuples():
+            if is_delisted(r.code):
+                # 已清仓标的仍有历史残留快照（159732 停在 2026-07-30），
+                # 必须排除，否则会被当成真实持仓生成调仓建议。
+                logger.warning(
+                    "已清仓标的 %s(%s) 在快照中有残留记录（%s，市值 %.2f），"
+                    "已从当前持仓集合排除",
+                    r.code, r.name or "", r.date, float(r.market_value),
+                )
+                continue
+            mv[r.code] = float(r.market_value)
+            names[r.code] = (r.name or "")
+            prices[r.code] = (float(r.current_price) if pd.notna(r.current_price) else None)
+            snap_dates[r.code] = str(r.date)
+            if pd.notna(getattr(r, "beta", None)):
+                betas[r.code] = float(r.beta)
+
+        if not mv:      # 全部是已清仓标的的残留快照
+            return ({}, 0.0, {}, {}, {}, []) if with_meta else ({}, 0.0, {}, {})
+        total = float(sum(mv.values()))
+        stale = self._build_stale_list(snap_dates, names, str(d))
+        self.last_snapshot_dates = snap_dates
+        self.last_stale = stale
+        self.last_betas = betas
+
+        full = (mv, total, names, prices, snap_dates, stale)
+        self._holdings_cache[str(d)] = full
+        return full if with_meta else full[:4]
+
+    @staticmethod
+    def _build_stale_list(snap_dates: Dict[str, str], names: Dict[str, str],
+                          target_date: str) -> List[Dict[str, object]]:
+        """挑出快照超期的标的并显式告警。
+
+        阈值按标的披露节奏逐只取（见 config.stale_threshold_days），不是一刀切。
+        """
+        try:
+            tgt = datetime.strptime(target_date, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return []
+        stale = []
+        for code, sd in snap_dates.items():
+            try:
+                sdt = datetime.strptime(str(sd), "%Y-%m-%d").date()
+            except (TypeError, ValueError):
+                continue
+            days = (tgt - sdt).days
+            # 阈值按标的披露节奏取：场外只有月末导入链路（35 天），
+            # 周更净值产品（027293）用显式覆盖值，场内为日更（7 天）。
+            # 用统一 7 天阈值会把场外的正常披露节奏整月误报成采集故障。
+            thr = stale_threshold_days(code, STALE_SNAPSHOT_DAYS)
+            if days > thr:
+                # 升级为「疑似失效」：可能已清仓或份额已变，但**不静默丢弃**
+                # （静默丢弃正是 P0-1 的病根），只是把告警级别抬高。
+                suspect_thr = max(thr, STALE_SNAPSHOT_SUSPECT_DAYS)
+                level = "疑似失效" if days > suspect_thr else "陈旧"
+                stale.append({"code": code, "name": names.get(code, ""),
+                              "snapshot_date": str(sd), "days": days,
+                              "level": level, "threshold": thr})
+                logger.warning(
+                    "持仓快照%s：%s(%s) 最新快照 %s，距目标日期 %s 已 %d 天"
+                    "（该标的阈值 %d 天），权重按陈旧快照计算",
+                    level, code, names.get(code, ""), sd, target_date, days, thr,
+                )
+        stale.sort(key=lambda x: -int(x["days"]))
+        return stale
+
+    @staticmethod
+    def _format_stale_note(stale: List[Dict[str, object]]) -> str:
+        """把陈旧快照列表压成一句可展示的提示（疑似失效的优先点名）。"""
+        if not stale:
+            return ""
+        suspect = [s for s in stale if s.get("level") == "疑似失效"]
+        normal = [s for s in stale if s.get("level") != "疑似失效"]
+        parts = []
+        for label, group in (("疑似失效", suspect), ("陈旧", normal)):
+            if not group:
+                continue
+            shown = "、".join(f"{s['code']}({s['days']}天)" for s in group[:5])
+            more = f" 等 {len(group)} 只" if len(group) > 5 else ""
+            parts.append(f"{label} {len(group)} 只：{shown}{more}")
+        return f"；⚠️ 快照停更（{'；'.join(parts)}），其权重按陈旧快照计入"
+
+    def get_current_weights(self, as_of_date: str, with_meta: bool = False):
+        """返回 (code->weight, total_value, code->name, code->price)。
+
+        with_meta=True 时额外返回 (…, code->snapshot_date, stale_list)。
+        """
+        if with_meta:
+            mv, total, names, prices, snap_dates, stale = self.get_current_holdings(
+                as_of_date, with_meta=True)
+        else:
+            mv, total, names, prices = self.get_current_holdings(as_of_date)
+            snap_dates, stale = {}, []
         weights = {c: (m / total if total > 0 else 0.0) for c, m in mv.items()}
+        if with_meta:
+            return weights, total, names, prices, snap_dates, stale
         return weights, total, names, prices
 
     # ------------------------------------------------------------------
@@ -135,7 +282,8 @@ class RebalanceEngine:
         """若当前与目标的最大权重偏离 > 阈值，生成调仓方案；否则返回 action_needed=False。"""
         if threshold is None:
             threshold = SMART_ANALYSIS_CONFIG.get("rebalance_threshold", 0.05)
-        weights, total, names, prices = self.get_current_weights(as_of_date)
+        (weights, total, names, prices,
+         snap_dates, stale) = self.get_current_weights(as_of_date, with_meta=True)
         if not weights:
             return RebalancePlan(
                 as_of_date=as_of_date, strategy=strategy, action_needed=False,
@@ -145,15 +293,19 @@ class RebalanceEngine:
         all_codes = set(weights) | set(target_weights)
         max_dev = max(abs(weights.get(c, 0.0) - target_weights.get(c, 0.0)) for c in all_codes)
         exec_date = str(next_trading_day(as_of_date))
+        stale_note = self._format_stale_note(stale)
         if max_dev <= threshold and not force:
             return RebalancePlan(
                 as_of_date=as_of_date, strategy=strategy, action_needed=False,
-                reason=f"最大偏离 {max_dev*100:.1f}% ≤ 阈值 {threshold*100:.1f}%，无需再平衡",
+                reason=f"最大偏离 {max_dev*100:.1f}% ≤ 阈值 {threshold*100:.1f}%，无需再平衡"
+                       f"{stale_note}",
                 current_weights=weights, target_weights=target_weights,
                 execution_date=exec_date, total_value=total,
+                snapshot_dates=snap_dates, stale_snapshots=stale,
             )
         # 生成逐标的交易
         trades: List[RebalanceTrade] = []
+        dropped: List[Dict[str, object]] = []   # 不足最小交易单位被丢弃的腿
         turnover = 0.0
         for c in all_codes:
             cw = weights.get(c, 0.0)
@@ -163,24 +315,48 @@ class RebalanceEngine:
                 continue
             trade_value = abs(diff) * total
             price = prices.get(c)
-            shares = int(trade_value / price) if (price and price > 0) else 0
+            lot_traded = not is_otc_fund(c)
+            # 场内向下取整到整手（1 手 = 100 份）；场外按金额申购，不取整手
+            shares = calc_trade_shares(trade_value, price, c)
+            if shares <= 0:
+                # 金额不足 1 手（场内 100×price）时整手取整必然归零，
+                # 这类腿留在方案里会变成「有金额无份额」的错误下单，直接丢弃并告警。
+                min_value = (ETF_LOT_SIZE * price) if (lot_traded and price) else (price or 0)
+                logger.warning(
+                    "调仓腿已丢弃：%s(%s) 金额 %.2f 元 < 最小交易单位 %.2f 元"
+                    "（价 %.4f%s），整手取整后为 0 份",
+                    c, names.get(c, ""), trade_value, min_value, price or 0.0,
+                    "，1 手=100 份" if lot_traded else "，场外按金额申购",
+                )
+                dropped.append({"code": c, "name": names.get(c, ""),
+                                "trade_value": round(trade_value, 2),
+                                "min_value": round(min_value, 2)})
+                continue
             trades.append(RebalanceTrade(
                 code=c, name=names.get(c, ""),
                 current_weight=round(cw, 4), target_weight=round(tw, 4),
                 diff=round(diff, 4), trade_value=round(trade_value, 2),
                 shares=shares, direction="卖出" if diff > 0 else "买入",
                 price=round(price, 4) if price else 0.0,
+                lot_traded=lot_traded,
             ))
             turnover += abs(diff)
         turnover = turnover / 2.0               # 换手率 = 单边变动之和 / 2
         est_cost = 2 * self.cost_rate * turnover * total
+        if dropped:
+            codes = "、".join(f"{d['code']}({d['trade_value']:,.0f}元<{d['min_value']:,.0f}元)"
+                              for d in dropped[:3])
+            stale_note += (f"；已丢弃 {len(dropped)} 笔不足最小交易单位的调仓腿：{codes}"
+                           + (" 等" if len(dropped) > 3 else ""))
         return RebalancePlan(
             as_of_date=as_of_date, strategy=strategy, action_needed=True,
-            reason=f"最大偏离 {max_dev*100:.1f}% > 阈值 {threshold*100:.1f}%，建议再平衡",
+            reason=f"最大偏离 {max_dev*100:.1f}% > 阈值 {threshold*100:.1f}%，建议再平衡"
+                   f"{stale_note}",
             current_weights=weights, target_weights=target_weights,
             trades=trades, turnover=round(turnover, 4),
             estimated_cost=round(est_cost, 2), execution_date=exec_date,
-            total_value=total,
+            total_value=total, snapshot_dates=snap_dates, stale_snapshots=stale,
+            dropped_legs=dropped,
         )
 
     # ------------------------------------------------------------------
@@ -457,18 +633,9 @@ class RebalanceEngine:
         weights, _, names, _ = self.get_current_weights(as_of_date)
         if not weights:
             return {}
-        d = last_trading_day_on_or_before(as_of_date)
-        betas = {}
-        try:
-            df = pd.read_sql_query(
-                "SELECT code, beta FROM portfolio_snapshots WHERE date=?",
-                self.db, params=[str(d)],
-            )
-            for r in df.itertuples():
-                if pd.notna(r.beta):
-                    betas[r.code] = float(r.beta)
-        except Exception:
-            betas = {}
+        # beta 与各标的所用快照对齐（同样按 code 取最新一条），
+        # 避免「权重含 36 只、beta 只有当天 22 只」的口径错配。
+        betas = dict(self.last_betas)
         sectors = {c: self.classify_sector(c, names.get(c, "")) for c in weights}
 
         hhi = sum(w * w for w in weights.values())
@@ -491,18 +658,31 @@ class RebalanceEngine:
         if bond_under:
             warnings.append(f"债券实际 {bond_actual*100:.1f}% 低于目标 {bond_target*100:.1f}%"
                             f"（偏差超 {BOND_UNDER_TARGET_TOL*100:.0f}% 容差），波动率预算未落实")
-        # 波动率预警（联动预测底座 risk_lgb：预期年化波动率 >30% 的持仓）
+        # 波动率预警：纯历史统计，读 etf_features 最新特征日的 vol_20d 并年化
+        # （口径与 Tab16 / src/utils/risk_report.py 一致：日波动率 × √252 × 100）。
+        # risk_lgb 模型已因样本外排序能力未跑赢零成本 vol_20d 基线
+        # （Spearman IC 0.613 vs 0.743，ΔIC 的 HAC t=−4.51，6/6 全 VETO）而下线，
+        # 故不再读 etf_predictions(model='risk_lgb')。
         try:
-            df_v = pd.read_sql_query(
-                "SELECT code, probability FROM etf_predictions "
-                "WHERE model='risk_lgb' AND forward_window=20 AND probability>=0.30 "
-                "ORDER BY probability DESC", self.db)
+            row = self.db.execute("SELECT MAX(date) FROM etf_features").fetchone()
+            latest_feat = row[0] if row else None
+            df_v = pd.DataFrame()
+            if latest_feat:
+                df_v = pd.read_sql_query(
+                    "SELECT code, vol_20d FROM etf_features WHERE date=?",
+                    self.db, params=[latest_feat])
             if not df_v.empty:
-                hi_names = [names.get(r.code, r.code) for r in df_v.itertuples()]
-                shown = "、".join(hi_names[:5]) + (" 等" if len(hi_names) > 5 else "")
-                warnings.append(
-                    f"波动率预警：{len(hi_names)} 只持仓预期年化波动率>30%（{shown}），"
-                    f"建议关注仓位与回撤风险（仅参考，不自动调仓）")
+                df_v = df_v.dropna(subset=["vol_20d"])
+                df_v["vol_ann"] = df_v["vol_20d"] * (252 ** 0.5) * 100.0
+                hi = df_v[df_v["vol_ann"] > VOL_ANN_WARN_PCT].sort_values(
+                    "vol_ann", ascending=False)
+                if not hi.empty:
+                    hi_names = [names.get(r.code, r.code) for r in hi.itertuples()]
+                    shown = "、".join(hi_names[:5]) + (" 等" if len(hi_names) > 5 else "")
+                    warnings.append(
+                        f"波动率预警：{len(hi_names)} 只持仓近20日已实现年化波动率"
+                        f">{VOL_ANN_WARN_PCT:.0f}%（{shown}），"
+                        f"建议关注仓位与回撤风险（纯历史统计，不自动调仓）")
         except Exception:
             pass
         return {
@@ -566,7 +746,11 @@ if __name__ == "__main__":
             print(f"  原因: {plan.reason}")
             print(f"  总市值={plan.total_value:.2f} 换手={plan.turnover:.4f} 预估成本={plan.estimated_cost:.2f}")
             for t in plan.trades[:10]:
+                qty = format_share_display(t.shares, t.code)
+                extra = "" if is_otc_fund(t.code) else f"（={t.shares:,}份）"
                 print(f"  {t.direction} {t.code} {t.name} 当前{t.current_weight*100:.1f}%→目标{t.target_weight*100:.1f}% "
-                      f"金额={t.trade_value:.0f} 手数={t.shares}")
+                      f"金额={t.trade_value:.0f} {qty}{extra}")
+            if plan.stale_snapshots:
+                print(f"  ⚠️ 快照停更标的：{plan.stale_snapshots}")
         finally:
             conn.close()

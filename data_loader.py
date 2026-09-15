@@ -20,10 +20,13 @@ from config.settings import (
     CHART_DAYS,
     DATABASE_PATH,
     ETF_CATEGORIES,
+    ETF_LOT_SIZE,
     INDEX_CODES,
     RISK_FREE_RATE,
     SECTOR_COLORS,
     TRADING_DAYS_PER_YEAR,
+    is_otc_fund,
+    is_delisted,
 )
 
 from src.models import (
@@ -949,15 +952,28 @@ def compute_rebalance_suggestion(target_weights=None, threshold=0.05):
         }
 
     conn = get_db_connection()
+    # 按 code 各取最新一条快照（而非「全局最新日期」那一批行），
+    # 否则长期未更新快照的场外基金会被整批漏掉（22 只 vs 36 只）。
     query = """
-        SELECT code, name, market_value, current_price, quantity, cost_price
-        FROM portfolio_snapshots 
-        WHERE date = (SELECT MAX(date) FROM portfolio_snapshots)
-        AND market_value > 0
+        SELECT ps.code, ps.name, ps.market_value, ps.current_price,
+               ps.quantity, ps.cost_price
+        FROM portfolio_snapshots ps
+        JOIN (SELECT code, MAX(date) AS md
+              FROM portfolio_snapshots
+              WHERE market_value IS NOT NULL AND market_value > 0
+              GROUP BY code) t
+          ON ps.code = t.code AND ps.date = t.md
+        WHERE ps.id = (SELECT MAX(p2.id) FROM portfolio_snapshots p2
+                       WHERE p2.code = ps.code AND p2.date = t.md
+                         AND p2.market_value IS NOT NULL AND p2.market_value > 0)
     """
     df = pd.read_sql(query, conn)
     conn.close()
 
+    if df.empty:
+        return None
+    # 已清仓标的（如 159732）即使有残留快照也不作为当前持仓
+    df = df[~df["code"].astype(str).map(is_delisted)]
     if df.empty:
         return None
 
@@ -1003,7 +1019,14 @@ def compute_rebalance_suggestion(target_weights=None, threshold=0.05):
         for _, etf in etfs.iterrows():
             if abs(per_etf_value) < 100:  # 忽略小额
                 continue
-            shares = int(per_etf_value / etf["current_price"]) if etf["current_price"] > 0 else 0
+            price = float(etf["current_price"] or 0)
+            lot_traded = not is_otc_fund(etf["code"])
+            # 场内向下取整到整手（1 手 = 100 份）；场外按金额申购，不取整手
+            if price <= 0:
+                continue
+            shares = int(abs(per_etf_value) / price)
+            if lot_traded:
+                shares = (shares // ETF_LOT_SIZE) * ETF_LOT_SIZE
             if shares == 0:
                 continue
             suggestions.append(
@@ -1017,7 +1040,8 @@ def compute_rebalance_suggestion(target_weights=None, threshold=0.05):
                     trade_value=per_etf_value,
                     shares=shares,
                     direction="买入" if per_etf_value > 0 else "卖出",
-                    price=etf["current_price"],
+                    price=price,
+                    lot_traded=lot_traded,
                 )
             )
 

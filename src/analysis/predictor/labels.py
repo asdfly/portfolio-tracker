@@ -4,7 +4,7 @@
     fwd_ret_n = close[t+n] / close[t] - 1
     is_up_n   = (fwd_ret_n > 0)
 窗口 (5, 20, 60) 对应 1 周 / 1 月 / 1 季（交易日）。
-标签只用未来收盘价，绝不参与特征构造（无未来函数）。
+标签只用未来收盘价，绝不参与特征构造；风险标签窗口严格为 [t+1..t+n]，无未来函数。
 """
 from typing import Iterable, Optional
 
@@ -34,7 +34,11 @@ def compute_forward_returns(close: pd.Series, windows=FORWARD_WINDOWS) -> pd.Dat
     for n in windows:
         fwd = s.shift(-n) / s - 1.0
         out[f"fwd_ret_{n}"] = fwd
-        out[f"is_up_{n}"] = (fwd > 0).astype("Int64")
+        # NaN > 0 得 False，直接 astype 会把它写成 0（伪"下跌"样本）。
+        # 末段无未来数据的行必须保持缺失（pd.NA），不得参与训练/评估。
+        is_up = (fwd > 0).astype("Int64")
+        is_up[fwd.isna()] = pd.NA
+        out[f"is_up_{n}"] = is_up
     return out
 
 
@@ -43,17 +47,27 @@ def compute_forward_volatility(close: pd.Series, windows=FORWARD_WINDOWS) -> pd.
 
     - fwd_vol_n[t]   = 未来 n 日日对数收益的标准差（已实现波动率，信噪比高于方向）。
     - fwd_max_dd_n[t] = 未来 n 日窗口内最大回撤（负值，越负越差）。
-    标签只用未来收盘，绝不参与特征构造（无未来函数）。
+    标签窗口严格取 [t+1 .. t+n]，不含 t 及之前的任何已实现信息；标签只用于监督目标，
+    绝不参与特征构造。
     """
     s = close.sort_index()
     out = pd.DataFrame(index=s.index)
     log_ret = np.log(s / s.shift(1))
     vals = s.values
+    lr_vals = log_ret.to_numpy(dtype=float)
     N = len(vals)
     for n in windows:
-        # 未来 n 日已实现波动率：std(log_ret[t+1..t+n])
-        lr_f = log_ret.shift(-1)  # t 位置 = t+1 日收益
-        out[f"fwd_vol_{n}"] = lr_f.rolling(n).std()
+        # 未来 n 日已实现波动率：std(log_ret[t+1..t+n])，窗口严格不含 t 及之前。
+        # 原写法 log_ret.shift(-1).rolling(n).std() 的窗口是 log_ret[t-n+2..t+1]，
+        # 即 n-1 个已实现值 + 1 个未来值 —— 标签可被 t 及之前的收益解释，属未来函数。
+        # 这里显式取窗，避免 rolling 在位移域上出现口径歧义 / 静默丢行。
+        fv = np.full(N, np.nan)
+        for t in range(N):
+            seg = lr_vals[t + 1:t + 1 + n]
+            if len(seg) < n or not np.isfinite(seg).all():
+                continue
+            fv[t] = seg.std(ddof=1)
+        out[f"fwd_vol_{n}"] = pd.Series(fv, index=s.index)
         # 未来 n 日窗口最大回撤
         dd = np.full(N, np.nan)
         for t in range(N):

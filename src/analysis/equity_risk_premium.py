@@ -107,10 +107,22 @@ def load_index_pe_from_db(index_code, days=365*3):
     from src.utils.database import get_db_connection
     conn = get_db_connection()
     try:
-        df = pd.read_sql_query(
-            "SELECT date, pe FROM index_pe_history WHERE index_code=? AND date >= date('now', ?) ORDER BY date",
-            conn, params=[index_code, f"-{days} days"]
-        )
+        # 口径修正 (P0): ① date(date) 强制日期语义, 不依赖字符串序
+        # ('2026-09-03' < '20260911' 会把 csindex 全排到前面);
+        # ② 优先中证官方 csindex 单源取数, 无 csindex 才回退全量——
+        #    neodata 的 PE 口径与中证官方不一致, 混用会污染 ERP。
+        has_source = "source" in {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(index_pe_history)").fetchall()}
+        base = ("SELECT date, pe FROM index_pe_history WHERE index_code=? "
+                "AND date(date) >= date('now', ?)")
+        params = [index_code, f"-{days} days"]
+        df = pd.DataFrame()
+        if has_source:
+            df = pd.read_sql_query(base + " AND source='csindex' ORDER BY date(date)",
+                                   conn, params=params)
+        if df.empty:
+            df = pd.read_sql_query(base + " ORDER BY date(date)", conn, params=params)
     except (sqlite3.OperationalError, pd.errors.DatabaseError, KeyError) as e:
         logger.warning(f"PE history query error: {e}")
         df = pd.DataFrame()

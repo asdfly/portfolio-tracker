@@ -91,11 +91,60 @@ def load_flow_series(conn, code: str) -> pd.Series:
     return df.set_index("date")["net_inflow"].astype(float)
 
 
+#: index_pe_history 的数据源可信度。csindex = 中证官方口径(权威);
+#: neodata 的 PE 口径与中证官方不一致 (同日实测最大偏离 ~2.7 倍),
+#: 与 csindex 历史分布混算会让估值分位严重失真。
+PE_SOURCE_PRIORITY = ("csindex", "neodata")
+#: 未标注来源(unknown) 只出现在迁移前的旧库或调用方直接传入裸序列的场景,
+#: 不据此扣置信; 只有已知口径有问题的 neodata 才压低置信。
+PE_SOURCE_CONFIDENCE = {"csindex": 1.0, "neodata": 0.4, "unknown": 1.0}
+
+
+def _pe_table_has_source(conn) -> bool:
+    """index_pe_history 是否已带 source 列(兼容迁移前的旧库/测试内存库)。"""
+    try:
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(index_pe_history)").fetchall()}
+    except Exception:
+        return False
+    return "source" in cols
+
+
+def load_pe_history_with_source(conn, index_code: str) -> Tuple[List[float], str, Optional[float]]:
+    """返回 (按日期升序的 PE 序列, 数据源, 最大日期那条的 PE)。
+
+    两点关键修正:
+    1. ORDER BY date(date) —— 用 SQLite date() 强制日期语义, 不再依赖字符串序
+       (历史 bug: '2026-09-03' < '20260911', 字符串序把全部 csindex 行排到前面);
+    2. 单源取数 —— 优先 csindex, 无 csindex 才回退 neodata。绝不用 neodata 的
+       当前 PE 去比 csindex 的历史分布 (实测 399959 军工 89.6 vs 官方口径 16.1)。
+    """
+    if _pe_table_has_source(conn):
+        for src in PE_SOURCE_PRIORITY:
+            rows = conn.execute(
+                "SELECT pe, date FROM index_pe_history "
+                "WHERE index_code=? AND pe>0 AND source=? "
+                "ORDER BY date(date) ASC", (index_code, src)).fetchall()
+            if rows:
+                hist = [r[0] for r in rows]
+                return hist, src, float(rows[-1][0])
+        # 极端情况: source 列存在但全部为 unknown
+        rows = conn.execute(
+            "SELECT pe, date FROM index_pe_history WHERE index_code=? AND pe>0 "
+            "ORDER BY date(date) ASC", (index_code,)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT pe, date FROM index_pe_history WHERE index_code=? AND pe>0 "
+            "ORDER BY date(date) ASC", (index_code,)).fetchall()
+    if not rows:
+        return [], "unknown", None
+    return [r[0] for r in rows], "unknown", float(rows[-1][0])
+
+
 def load_pe_history(conn, index_code: str) -> List[float]:
-    rows = conn.execute(
-        "SELECT pe FROM index_pe_history WHERE index_code=? AND pe>0 ORDER BY date",
-        (index_code,)).fetchall()
-    return [r[0] for r in rows]
+    """返回按日期升序、单一数据源的 PE 序列 (默认优先中证官方口径)。"""
+    hist, _src, _latest = load_pe_history_with_source(conn, index_code)
+    return hist
 
 
 def load_index_price_series(conn, idx_code: str) -> pd.Series:
@@ -239,25 +288,34 @@ VAL_MIN_DAYS = 250      # ≈1 年, 低于此直接不可用
 VAL_FULL_DAYS = 1250    # ≈5 年, 达到此给满置信
 
 
-def valuation_position(pe_hist: List[float], current_pe: Optional[float] = None
-                       ) -> Tuple[Optional[float], float, Dict]:
+def valuation_position(pe_hist: List[float], current_pe: Optional[float] = None,
+                       source: str = "unknown") -> Tuple[Optional[float], float, Dict]:
     if len(pe_hist) < VAL_MIN_DAYS:
         return None, 0.0, {
             "available": False,
             "reason": f"PE 历史仅 {len(pe_hist)} 日(<{VAL_MIN_DAYS} 闸门), 估值分位不可信",
-            "n_pe": len(pe_hist),
+            "n_pe": len(pe_hist), "pe_source": source,
         }
     hist = np.array([x for x in pe_hist if x > 0], dtype=float)
+    # current_pe 由 load_pe_history_with_source 显式给出「最大日期那条」的 PE,
+    # 不再隐式取 hist[-1] (后者依赖排序, 曾因日期格式混存取到错误口径的值)。
     cur = float(hist[-1]) if current_pe is None else float(current_pe)
     pr = _pct_rank(hist, cur)
     if pr is None:
-        return None, 0.0, {"available": False, "reason": "分位计算失败"}
+        return None, 0.0, {"available": False, "reason": "分位计算失败",
+                           "pe_source": source}
     P_val = (pr - 0.5) * 200.0
     # 置信随历史长度爬升: 250->0.6, 1250->1.0
     C_val = _clip(0.6 + 0.4 * (len(hist) - VAL_MIN_DAYS) / (VAL_FULL_DAYS - VAL_MIN_DAYS), 0.6, 1.0)
+    # 非中证官方口径: 显式压低置信并标记, 不静默使用可疑数据
+    src_conf = PE_SOURCE_CONFIDENCE.get(source, 0.6)
+    low_conf = src_conf < 1.0
+    if low_conf:
+        C_val = _clip(C_val * src_conf, 0.0, 1.0)
     return float(P_val), float(C_val), {
         "available": True, "pe_percentile": round(pr * 100, 1),
         "current_pe": round(cur, 2), "n_pe": int(len(hist)),
+        "pe_source": source, "low_confidence": low_conf,
     }
 
 
@@ -306,7 +364,8 @@ def evaluate(code: str, db_path: Optional[str] = None, conn=None) -> Dict:
 
         idx = ETF_TO_INDEX.get(code)
         if idx:
-            p_val, c_val, d_val = valuation_position(load_pe_history(conn, idx))
+            pe_hist, pe_src, pe_latest = load_pe_history_with_source(conn, idx)
+            p_val, c_val, d_val = valuation_position(pe_hist, pe_latest, source=pe_src)
             if p_val is not None:
                 factors["valuation"] = (p_val, c_val)
             detail["valuation"] = d_val

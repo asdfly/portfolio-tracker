@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -52,10 +53,14 @@ logger = logging.getLogger(__name__)
 # csindex 该接口最早数据约 2018-05；回溯起点固定。
 CSINDEX_START = "20180526"
 # 默认取到“今天”，保证写入的 PE 是最新的（含当前值）。
-DEFAULT_END = "20260904"
+# 原为硬编码 "20260904"，会随日期推移把回补窗口卡死在过去，故改为运行日动态计算。
+DEFAULT_END = datetime.now().strftime("%Y%m%d")
 
 # csindex 未发布 PE 历史的上游缺口指数（供覆盖率报告标注）。
-UNAVAILABLE_INDICES = {"399673", "930006", "h11118"}
+# 930006 / h11118 已从该集合移除：二者不是"上游缺口"，而是早期 ETF→指数映射
+# 填错的产物（930006=中证A50美元指数、h11118=中证两岸三地500美元指数），
+# 正确映射为 H30590(159770) / 930914(159220)，这两个 csindex 均可取，见模块文档。
+UNAVAILABLE_INDICES = {"399673"}
 
 
 def _target_indices() -> List[str]:
@@ -65,9 +70,10 @@ def _target_indices() -> List[str]:
         return sorted(set(ETF_TO_INDEX.values()))
     except Exception:
         # 兜底硬编码（与 etf_position.ETF_TO_INDEX 保持一致）
+        # 注: 早期兜底表把 159770/159220 误填成 930006/h11118, 已按正确映射更正
         return ["000300", "000905", "000852", "000688", "399673", "399959",
-                "399975", "930713", "930006", "931743", "931152", "399989",
-                "399808", "931157", "h11118", "H30269"]
+                "399975", "930713", "H30590", "931743", "931152", "399989",
+                "399808", "931157", "930914", "H30269"]
 
 
 def fetch_csindex_pe(index_code: str, end_date: str = DEFAULT_END,
@@ -111,6 +117,45 @@ def fetch_csindex_pe(index_code: str, end_date: str = DEFAULT_END,
     return []
 
 
+def _ensure_source_column(conn) -> None:
+    """幂等：index_pe_history 增加 source 列（区分 csindex / neodata 口径）。"""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(index_pe_history)").fetchall()}
+    except Exception:
+        return
+    if "source" not in cols:
+        conn.execute("ALTER TABLE index_pe_history ADD COLUMN source TEXT DEFAULT 'unknown'")
+        conn.commit()
+
+
+#: 条件 upsert：csindex 写入遇到已存在的 (index_code, date) 时，
+#: 仅当现存行不是 csindex（即被 neodata 占位）才覆盖 pe/source，
+#: 并**不动 pb / div_yield** —— neodata 的富字段由 advisor 的 PB 兜底依赖，
+#: 用 REPLACE 整行覆盖会把它们清空。现存行已是 csindex 则整条跳过。
+UPSERT_PE_SQL = """
+INSERT INTO index_pe_history (index_code, date, pe, source)
+VALUES (?, ?, ?, 'csindex')
+ON CONFLICT(index_code, date) DO UPDATE SET
+    pe = excluded.pe,
+    source = excluded.source
+WHERE index_pe_history.source IS NULL OR index_pe_history.source <> 'csindex'
+"""
+
+
+def upsert_pe(conn, index_code: str, date: str, pe: float) -> bool:
+    """写入一条 csindex PE（条件 upsert）。返回是否实际改动了行。"""
+    cur = conn.execute(UPSERT_PE_SQL, (index_code, _norm_date(date), pe))
+    return cur.rowcount > 0
+
+
+def _norm_date(d) -> str:
+    """'YYYYMMDD' -> 'YYYY-MM-DD'（表内 date 为 TEXT，混用两种格式会破坏排序语义）。"""
+    d = str(d).strip()
+    if len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    return d
+
+
 def _count(conn, index_code: str) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM index_pe_history WHERE index_code=?",
@@ -131,13 +176,12 @@ def backfill(conn, end_date: str = DEFAULT_END,
     """
     codes = indices or _target_indices()
     result: Dict[str, int] = {}
+    _ensure_source_column(conn)
     for code in codes:
         rows = fetch_csindex_pe(code, end_date=end_date)
         for ds, pe in rows:
             try:
-                conn.execute(
-                    "INSERT OR IGNORE INTO index_pe_history (index_code, date, pe) "
-                    "VALUES (?, ?, ?)", (code, ds, pe))
+                upsert_pe(conn, code, ds, pe)
             except Exception as e:
                 logger.debug("写入 %s/%s 失败: %s", code, ds, e)
         conn.commit()

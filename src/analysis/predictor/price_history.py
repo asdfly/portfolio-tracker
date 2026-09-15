@@ -93,28 +93,52 @@ FETCHERS = {
 }
 
 
+def _last_date_for_code(conn, code: str) -> Optional[str]:
+    """该标的在 etf_price_history 中已有的最新日期（YYYY-MM-DD），无为 None。"""
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(date) FROM etf_price_history WHERE code=?", (code,))
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
+
 def backfill_etf_price_history(conn, codes: Iterable[str], start: str = "20180101",
                                 end: Optional[str] = None, force: bool = False,
                                 sources: Iterable[str] = ("em", "sina"), log=print) -> int:
-    """补采并写入 etf_price_history。已存在则跳过（除非 force）。返回写入行数。
+    """把 etf_price_history 增量追到 end（或今日）。返回写入行数。
 
-    sources 依次尝试，第一个成功的源作为该代码的数据源（默认 EM 优先、新浪兜底，
-    实现双源容灾：东方财富不可用时自动降级到新浪）。
+    增量口径（force=False，默认值）：
+      - 标的在库中已有数据 → 从 MAX(date) 当天开始拉取（含当天，以覆盖未收盘的半日行），
+        只补缺口部分；
+      - 已覆盖到 end 的标的直接跳过，零网络请求；
+      - 库中无数据的标的 → 从 start 起全量拉取。
+    force=True 时忽略库中进度，按 start 全量重拉并覆盖（用于标签/口径变更后重刷）。
+
+    写入为 INSERT OR REPLACE，重复运行幂等。sources 依次尝试，第一个成功的源作为
+    该次补数的数据源（默认 EM 优先、新浪兜底）——注：同一标的历史行可能来自不同源，
+    source 列逐行记录实际来源。
     """
     total = 0
     for code in codes:
         try:
-            if not force:
-                cur = conn.cursor()
-                cur.execute("SELECT COUNT(*) FROM etf_price_history WHERE code=?", (code,))
-                if cur.fetchone()[0] > 0:
-                    log(f"[OHLCV] {code} 已存在，跳过")
-                    continue
+            if force:
+                start_i = start
+            else:
+                last = _last_date_for_code(conn, code)
+                if last:
+                    end_norm = (pd.to_datetime(end).strftime("%Y-%m-%d")
+                                if end else dt.date.today().strftime("%Y-%m-%d"))
+                    if last >= end_norm:
+                        log(f"[OHLCV] {code} 已覆盖至 {last}，跳过")
+                        continue
+                    # 含末日重取：抹掉最后一次跑批可能落库的未收盘半日行
+                    start_i = last.replace("-", "")
+                else:
+                    start_i = start
             df = None
             used = None
             for src in sources:
                 try:
-                    cand = FETCHERS[src](code, start=start, end=end)
+                    cand = FETCHERS[src](code, start=start_i, end=end)
                     if cand is not None and not cand.empty:
                         df, used = cand, src
                         break

@@ -7,7 +7,7 @@
 - 所有定性叙事（TLDR、四段式、周线阶段、交叉验证风向、操作取向）均由当日真实数据经规则推导，
   不写死任何某日专属措辞；数字与定性结论一一对应，杜绝"旧叙事套新数字"。
 """
-import sqlite3, os, html, json, statistics, glob
+import sqlite3, os, html, json, statistics, glob, re
 from datetime import datetime, date as _date
 
 DB = r'data/database/portfolio.db'
@@ -26,6 +26,12 @@ except Exception as _e:
 con = sqlite3.connect(DB); cur = con.cursor()
 cur.execute('SELECT MAX(date) FROM portfolio_snapshots'); SNAP = cur.fetchone()[0]
 cur.execute('SELECT MAX(date) FROM portfolio_summary'); DATA_DATE = cur.fetchone()[0]
+
+# 运行日是否为交易日：DATA_DATE 为本地库最新交易日；若 RUN_DATE 与之不同（周末/节假日，
+# 本地库尚未更新当日数据），则本次为"休市日运行"，免责声明须如实标注，不得硬编码"交易日（盘后）"。
+RUN_DATE_IS_TRADING = (RUN_DATE == DATA_DATE)
+_RUN_DAY_LABEL = ('为交易日（盘后）' if RUN_DATE_IS_TRADING
+                  else f'为休市日运行（数据基准为最近交易日 {DATA_DATE}）')
 
 # ---------- 1. 组合持仓 ----------
 cur.execute('''SELECT code,name,market_value,pnl_rate,cost_price,pnl
@@ -246,7 +252,21 @@ try:
     _hist_dates = f"{_hist[0][0]}~{_hist[-1][0]}"
 except Exception:
     _pos = 0.5; _hist_dates = '—'
-STAGE = '④ 高位震荡' if _pos >= 0.5 else '③ 主升加速' if _pos >= 0.66 else '② 放量启动'
+# 阶段映射：低位→②放量启动、中位→③主升加速、高位→④高位震荡（原 elif _pos>=0.66 不可达死代码，已按阈值重排）
+STAGE = '④ 高位震荡' if _pos >= 0.66 else '③ 主升加速' if _pos >= 0.33 else '② 放量启动'
+# 阶段编号（中文圈码）→ 整数，供 1.3 进度条动态高亮（承接 evolution #29）
+_STAGE_CIRCLED = {'①': 1, '②': 2, '③': 3, '④': 4, '⑤': 5, '⑥': 6, '⑦': 7}
+_stage_num = 0
+for _k, _v in _STAGE_CIRCLED.items():
+    if _k in STAGE:
+        _stage_num = _v
+        break
+_stage_bar = ''.join(
+    f'<div class="st{" on" if i == _stage_num else ""}">{c} {name}</div>'
+    for i, (c, name) in enumerate(
+        [('①', '底部蓄势'), ('②', '放量启动'), ('③', '主升加速'), ('④', '高位震荡'),
+         ('⑤', '局部派发'), ('⑥', '破位下行'), ('⑦', '探底重构')], start=1)
+)
 
 # ============ 跨日信号（读结构化本地历史库，不爬报告 HTML 文本）============
 def _sign(yi):
@@ -694,10 +714,9 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <h3>1.3 周线七阶段定位</h3>
 <div class="stage">
-<div class="st">① 底部蓄势</div><div class="st">② 放量启动</div><div class="st">③ 主升加速</div>
-<div class="st on">④ 高位震荡</div><div class="st">⑤ 局部派发</div><div class="st">⑥ 破位下行</div><div class="st">⑦ 探底重构</div>
+{_stage_bar}
 </div>
-<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 ④ 阶段（高位震荡）—— 今日为箱内{REGIME}，箱体（3900–4000）未被有效跌破</b></p>
+<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 {STAGE} —— 今日为箱内{REGIME}，箱体（3900–4000）位置见下方点位观察</b></p>
 <h3>证据链</h3>
 <table><thead><tr><th>维度</th><th>观察值</th><th>指向</th></tr></thead>
 <tbody>
@@ -759,7 +778,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <table><thead><tr><th>行业族</th><th class="num">市值</th><th class="num">占比</th><th style="width:38%">集中度</th></tr></thead><tbody>{rows_ind}</tbody></table>
 <div class="note">
 <b>集中度诊断</b>：医药系 {med_w:.2f}% + 军工系 {mil_w:.2f}% + 证券 {sec_w:.2f}% = <b style="color:#e3a33c">{top3_w:.2f}%</b> 集中在三个方向。
-单一持仓最高为航天ETF华安 {aero_w:.2f}%，已超单票 10% 的常规审慎线。<br>
+单一持仓最高为航天ETF华安 {aero_w:.2f}%，已超单票 10% 的常规审慎线。{('<b style="color:#f85149">⚠ 单只超 15% 升级预警：集中度已达 {:.2f}%，建议审视再平衡与分批减压。</b>'.format(aero_w)) if aero_w > 15 else ''}<br>
 <b>宽基核心薄弱</b>：宽基类合计 {pct(cls_sum.get('宽基',0)):.2f}%，但其中真正的核心宽基（沪深300 两只）仅 <b>{core300_w:.2f}%</b>，其余为科创50 / 创业板50 / 中证500 / 中证1000 等风格暴露型宽基——组合缺少「市场平均收益」压舱石。</div>
 </div>
 
@@ -866,7 +885,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 </div>
 
 <div class="dis">
-<b>免责声明</b>　本报告由 WorkBuddy 自动化任务于 {now} 生成，全部数据来自上述公开数据源，交易数据基准日为 {DATA_DATE}（最近交易日收盘），报告生成日 {RUN_DATE} 为交易日（盘后）。<br>
+<b>免责声明</b>　本报告由 WorkBuddy 自动化任务于 {now} 生成，全部数据来自上述公开数据源，交易数据基准日为 {DATA_DATE}（最近交易日收盘），报告生成日 {RUN_DATE} {_RUN_DAY_LABEL}。<br>
 报告中的「操作取向」为基于当日数据的<b>条件观察框架</b>，描述的是「在何种信号出现时该方向的风险/机会属性发生变化」，<b>不构成任何买入、卖出或持有的投资建议</b>，亦不构成对未来市场走势的预测。<br>
 组合内 {len(bad)} 只标的成本数据存在明确错误（{pct(bad_mv):.2f}% 权重），其盈亏率及组合累计收益率不可采信，已在报告中逐一标注「待核对」。<br>
 市场有风险，投资需谨慎。任何投资决策应基于投资者自身的风险承受能力、投资目标与独立判断，并在必要时咨询持牌专业人士。
@@ -878,6 +897,46 @@ os.makedirs('data/reports', exist_ok=True)
 with open(OUT, 'w', encoding='utf-8') as fp:
     fp.write(HTML)
 print('OK', OUT, os.path.getsize(OUT), 'bytes')
+
+# 落盘纯文本 TLDR（evolution #27）：供邮件 --body 直读，消除 agent 人工复述漂移。
+# 复用本脚本已派生的全部变量，与 HTML TLDR 同源、不会二次失真。
+_tldr_lines = [f"【组合+大盘综合视角】{RUN_DATE}（交易数据基准 {DATA_DATE}）", ""]
+_tldr_lines.append(
+    f"大盘今日{regime_txt}：{_idx_desc}。{_main_line_txt}{_mil_txt}。"
+    f"组合当日回报 {chg(d_ret)}、{_perf_word}沪深300 {abs(vs300):+.2f}pct：{_perf_reason}。")
+_tldr_lines.append("")
+if (est < 0) != (d_ret < 0):
+    _tldr_lines.append(
+        f"⚠ 锚定提示：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% 方向相反，"
+        f"代理法在本组合结构下方向亦不可信，本报告一律以真值为准。")
+_tldr_lines.append(
+    f"核心矛盾：主力资金今日{main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；"
+    f"两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。")
+_tldr_lines.append(
+    f"组合最大集中度风险：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（已超 10% 审慎线）；"
+    f"军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 {top3_w:.1f}%。"
+    f"军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，"
+    f"军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。")
+_tldr_lines.append(
+    f"亮点/风险：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），"
+    f"{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；"
+    f"红利+债券防御底仓（{def_w:.1f}%）稳定；{_mil_against_txt}；"
+    f"医药系微逆风（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）拖累有限。")
+_tldr_lines.append(
+    f"宏观逆风未解：制造业 PMI 整体值经 NeoData 查询仍未直接返回（标「—」）；"
+    f"仅返回综合PMI产出 {PMI['composite']}%、非制造业 {PMI['nonmfg']}%（收缩区）、"
+    f"服务业 {PMI['service']}%、建筑业 {PMI['construction']}%。")
+_tldr_lines.append("")
+_tldr_lines.append(
+    f"数据来源：项目本地数据层（东方财富/新浪）+ NeoData 金融搜索（查询时间 {MKT_NEO['query_time']}）。"
+    f"NeoData 仅增强，主力以本地为准。不构成投资建议。")
+TLDR_PATH = f'data/reports/组合大盘综合视角_{RUN_DATE}.tldr.txt'
+# TLDR 为纯文本（邮件 --body 直读），需剥离因复用 HTML 片段而混入的标签与实体
+_tldr_clean = '\n'.join(html.unescape(re.sub(r'<[^>]+>', '', ln)) for ln in _tldr_lines)
+with open(TLDR_PATH, 'w', encoding='utf-8') as _tp:
+    _tp.write(_tldr_clean)
+print('TLDR', TLDR_PATH, os.path.getsize(TLDR_PATH), 'bytes')
+
 SIGNAL_PATH = f'data/reports/组合大盘综合视角_{RUN_DATE}.signals.json'
 with open(SIGNAL_PATH, 'w', encoding='utf-8') as _sp:
     json.dump(signal_state, _sp, ensure_ascii=False, indent=2)

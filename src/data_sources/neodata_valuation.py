@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from src.utils.trading_calendar import is_trading_day
+
 logger = logging.getLogger(__name__)
 
 # neodata skill 的 query.py 路径按当前用户主目录推导，避免硬编码用户名
@@ -45,9 +47,23 @@ INDEX_NAME_MAP: Dict[str, str] = {
     "399989": "医药指数",
     "399808": "新能源指数",
     "931157": "中证电池主题指数",
-    "h11118": "恒生港股通高股息低波动指数",
+    # h11118(中证两岸三地500美元指数) 是早期 159220 的误填映射, 已替换为正确代码 930914
+    "930914": "港股通高股息低波动指数",
     "H30269": "中证红利低波动指数",
 }
+
+
+def _norm_date(d: str) -> str:
+    """'YYYYMMDD' -> 'YYYY-MM-DD'。
+
+    统一日期格式是 index_pe_history 的硬要求：列是 TEXT，SQLite 按字符串排序，
+    '-'(0x2D) < '0'(0x30) 会让 '2026-09-03' 排在 '20260911' 之前，
+    `ORDER BY date` 取末行时永远拿到紧凑格式的 neodata 值（P0 缺陷根因）。
+    """
+    d = str(d).strip()
+    if len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    return d
 
 
 def _ensure_valuation_columns(conn) -> None:
@@ -57,6 +73,9 @@ def _ensure_valuation_columns(conn) -> None:
         conn.execute("ALTER TABLE index_pe_history ADD COLUMN pb REAL")
     if "div_yield" not in cols:
         conn.execute("ALTER TABLE index_pe_history ADD COLUMN div_yield REAL")
+    # source: 区分数据口径 (csindex 中证官方 / neodata), 供下游按源取数
+    if "source" not in cols:
+        conn.execute("ALTER TABLE index_pe_history ADD COLUMN source TEXT DEFAULT 'unknown'")
     conn.commit()
 
 
@@ -173,17 +192,32 @@ def fetch_index_valuation(index_code: str) -> List[Dict]:
 
 
 def save_valuation(conn, index_code: str, rows: List[Dict]) -> int:
-    """将估值时间序列幂等写入 index_pe_history（含 pe/pb/div_yield）。"""
+    """将估值时间序列幂等写入 index_pe_history（含 pe/pb/div_yield）。
+
+    落库前用 A 股交易日历过滤非交易日：neodata 的「日期」不是交易日历口径
+    （实证 2026-09-12 周六仍吐值），混入会污染 MAX(date) 与分位计算。
+    """
     if not rows:
         return 0
     _ensure_valuation_columns(conn)
     n = 0
     for r in rows:
+        ds = _norm_date(r["date"])
+        try:
+            if not is_trading_day(ds):
+                logger.warning(
+                    "[NeoData] %s 跳过非交易日 %s（neodata 日期非交易日历口径）",
+                    index_code, ds)
+                continue
+        except Exception as e:
+            logger.warning("[NeoData] %s 日期无法判定 %s: %s，跳过", index_code, ds, e)
+            continue
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO index_pe_history (index_code, date, pe, pb, div_yield) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (index_code, r["date"], float(r["pe"]),
+                "INSERT OR REPLACE INTO index_pe_history "
+                "(index_code, date, pe, pb, div_yield, source) "
+                "VALUES (?, ?, ?, ?, ?, 'neodata')",
+                (index_code, ds, float(r["pe"]),
                  r.get("pb"), r.get("div_yield")),
             )
             n += 1

@@ -389,6 +389,41 @@ def run_stage_fund_flow(date_str=None):
 
     return stats
 
+def run_stage_prediction_base(date_str=None):
+    """阶段3.25: 预测底座三表增量维护（etf_price_history / etf_features / etf_forward_returns）。
+
+    背景：这三张表此前从未接进日常跑批，只能靠手工 `python -m src.analysis.predictor.build_base`
+    追平，因此在 P0-5 修复前相对技术面/资金流落后十几个交易日，Tab16 / risk_report 的
+    波动率统计基准日（= MAX(etf_features.date)）被拖死在同一个陈旧日期。
+
+    接线口径：
+     - 特征/标签按 (date, code) upsert，OHLCV 按每标的 MAX(date) 增量拉取，重复运行幂等，
+       可安全天天跑；
+     - date_str 为 None（普通每日模式）时截止到最新快照日；为 YYYY-MM-DD（回填模式）时
+       只补到该日，不会写入未来数据；
+     - 网络不可用时 OHLCV 逐标的降级/跳过，特征与标签仍从 portfolio_snapshots 正常产出。
+
+    Args:
+        date_str: 回填模式下的目标日期（来自 --date），None 表示普通每日运行。
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("[阶段3.25/5] 预测底座增量维护 (OHLCV / 特征 / 前瞻标签)")
+    logger.info("-" * 50)
+
+    from src.analysis.predictor.build_base import build_prediction_base
+    conn = get_db_connection()
+    try:
+        summary = build_prediction_base(conn=conn, backfill_ohlcv=True,
+                                        as_of=date_str, log=logger.info)
+        logger.info(
+            f"  底座三表: 特征 {summary['feature_rows']} 行 {summary['feature_date_range']}, "
+            f"标签 {summary['label_rows']} 行, OHLCV 补采 {summary['ohlcv_rows']} 行, "
+            f"标的域 {len(summary['target_codes'])} 只")
+        return summary
+    finally:
+        conn.close()
+
+
 def run_stage_news(positions, summary, index_quotes=None, date_str=None):
     """阶段3.5: 行业新闻抓取与分析
 
@@ -862,6 +897,16 @@ def main(argv=None):
         except Exception as e:
             logger.warning(f"资金流数据采集失败(不影响主流程): {e}")
             _reporter.stage("fund_flow", "error", note=str(e)[:160])
+
+        # === 阶段3.25: 预测底座增量维护（Tab16 / risk_report 的波动率基准源）===
+        # 排在资金流之后：特征含 ff_net_inflow_*，需先有当日资金流才不会缺列。
+        # 报错仅降级为 warning，不阻断日报。
+        try:
+            run_stage_prediction_base(backfill_date)
+            _reporter.stage("prediction_base", "ok")
+        except Exception as e:
+            logger.warning(f"预测底座增量维护失败(不影响主流程): {e}")
+            _reporter.stage("prediction_base", "error", note=str(e)[:160])
 
         # === 阶段三.五: 行业资讯与新闻分析 ===
         # 预置 None: 新闻阶段抛错时该变量仍需可用,

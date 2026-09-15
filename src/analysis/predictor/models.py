@@ -360,8 +360,32 @@ def risk_walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
     }
 
 
-def run_risk_prediction(conn, log=print) -> dict:
-    """风险预测主流程：walk-forward 评估波动率预测（lgb/ridge × 三窗口）。"""
+_DEPRECATED_RISK_MSG = (
+    "risk_lgb 已于 2026-09-15 下线：修正标签后样本外截面 IC 0.613 未跑赢 vol_20d 基线 "
+    "0.743，ΔIC 的 HAC t = −4.51，3 窗口 × 2 模型共 6/6 VETO。 "
+    "下游已改读 etf_features.vol_20d/vol_60d（见 tabs/tab16_risk_outlook.py、"
+    "src/utils/risk_report.py）。etf_predictions 中 model='risk_lgb' 的 44 行按留档封存，"
+    "不再刷新。"
+)
+
+
+def _guard_deprecated(name: str, allow: bool) -> None:
+    """已下线函数的运行时护栏：防止有人顺手 import 后重写 etf_predictions。"""
+    if allow:
+        return
+    raise NotImplementedError(
+        f"{name} 已停用（能力已移除），禁止调用。{_DEPRECATED_RISK_MSG}"
+        " 确需重跑审计时显式传 allow_deprecated=True。"
+    )
+
+
+def run_risk_prediction(conn, log=print, allow_deprecated: bool = False) -> dict:
+    """风险预测主流程：walk-forward 评估波动率预测（lgb/ridge × 三窗口）。
+
+    DEPRECATED 2026-09-15 —— 详见 _DEPRECATED_RISK_MSG。零调用方，
+    调用会抛 RuntimeError，除非显式传 allow_deprecated=True。
+    """
+    _guard_deprecated("run_risk_prediction", allow_deprecated)
     df = load_panel(conn)
     if df.empty:
         log("[Risk] 面板数据为空")
@@ -415,13 +439,25 @@ def predict_risk_latest(conn, model: str = "lgb", as_of: Optional[str] = None,
     return pd.DataFrame(rows, columns=["date", "code", "forward_window", "pred_vol", "model"])
 
 
-def run_risk_predict_latest(conn, model: str = "lgb", log=print) -> int:
-    """预测最新日波动率并落表 etf_predictions（model='risk_lgb'）。
+def run_risk_predict_latest(conn, model: str = "lgb", log=print,
+                            allow_deprecated: bool = False) -> int:
+    """DEPRECATED: risk_lgb 已于 2026-09-15 下线（未跑赢 vol_20d 基线），
+    本函数无调用方，仅留档。调用会抛 NotImplementedError，除非显式传
+    allow_deprecated=True —— 因为它会重写 etf_predictions 中已封存的 risk_lgb 44 行。
+
+    预测最新日波动率并落表 etf_predictions（model='risk_lgb'）。
 
     字段复用：score=日波动率预测(fwd_vol)，probability=年化波动率，
     direction=高/低波动分类(1/-1，以该窗口截面中位数为界)，
     confidence=截面分位(0-100)。供日报/前端复用，避免重复重训。
+
+    下线依据：修正标签（窗口 [t+1..t+n]，消除未来函数）后，walk-forward 样本外验证中
+    截面 Spearman IC 0.613 未跑赢零成本的 vol_20d 基线 0.743，ΔIC 的 HAC t = −4.51，
+    3 窗口 × 2 模型共 6/6 全部 VETO（BH-FDR q < 0.0001）。
+    替代口径：直接读 etf_features 的 vol_20d / vol_60d 年化（日波动率 × √252 × 100），
+    见 tabs/tab16_risk_outlook.py 与 src/utils/risk_report.py。
     """
+    _guard_deprecated("run_risk_predict_latest", allow_deprecated)
     pred = predict_risk_latest(conn, model=model)
     if pred.empty:
         log("[Risk] 无最新波动率预测")

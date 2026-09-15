@@ -3,29 +3,25 @@
 """风险展望块：为日报(enhanced_report / email_report)准备数据并生成主题化 HTML。
 
 设计原则：
-- 只读已落表的 etf_predictions(model='risk_lgb')，避免日报构建时重训模型（耗时）。
-- 若预测日落后于最新特征日，自动刷新落表（run_risk_predict_latest）。
-- 回测指标(AUC/R²)缓存到 data/risk_backtest.json（30天），避免每日重算 walk-forward。
+- 纯历史统计：只读 etf_features 最新特征日的 vol_20d / vol_60d 已实现波动率并年化。
+- 不再依赖 etf_predictions(model='risk_lgb')。该模型已下线：walk-forward 样本外验证中
+  其截面排序能力（Spearman IC 0.613）未跑赢零成本的 vol_20d 基线（IC 0.743），
+  ΔIC 的 HAC t = −4.51（BH-FDR q < 0.0001），未通过上线门禁。
+  注意下线依据是 IC（排序能力）而非 R² —— 模型 OOS R²(−0.244) 实际优于基线(−2.696)，
+  但两者皆为负，且 R² 转正也不构成上线理由，门槛是必须显著超越免费基线。
 - 任何异常都被吞掉并返回 ok=False，绝不让风险块拖垮整份日报。
 """
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 WINDOWS = (20, 60)
-CACHE_MAX_AGE_DAYS = 30
-
-
-def _root(db_path: str) -> Path:
-    return Path(db_path).resolve().parents[2]
+_ANN = 252 ** 0.5 * 100.0  # 日波动率 → 年化百分比
 
 
 def _name_map(conn) -> Dict[str, str]:
@@ -43,63 +39,18 @@ def _name_map(conn) -> Dict[str, str]:
         return {}
 
 
-def _read_preds(conn) -> pd.DataFrame:
+def _read_hist_vol(conn) -> pd.DataFrame:
+    """读最新特征日的已实现波动率（vol_20d / vol_60d），无需任何模型。"""
     try:
+        latest = conn.execute("SELECT MAX(date) FROM etf_features").fetchone()[0]
+        if not latest:
+            return pd.DataFrame()
         return pd.read_sql_query(
-            "SELECT date, code, forward_window, direction, score, probability, confidence "
-            "FROM etf_predictions WHERE model='risk_lgb'", conn)
+            "SELECT date, code, vol_20d, vol_60d FROM etf_features WHERE date=?",
+            conn, params=[latest])
     except Exception as exc:
-        logger.warning("读取 etf_predictions 失败: %s", exc)
+        logger.warning("读取 etf_features 失败: %s", exc)
         return pd.DataFrame()
-
-
-def _ensure_preds(conn) -> pd.DataFrame:
-    preds = _read_preds(conn)
-    if preds.empty:
-        try:
-            from src.analysis.predictor import models
-            models.run_risk_predict_latest(conn, model="lgb")
-            preds = _read_preds(conn)
-        except Exception as exc:
-            logger.warning("风险预测落表失败: %s", exc)
-            return preds
-    # 与最新特征日对齐：若预测日早于最新特征日，刷新
-    try:
-        feat = pd.read_sql_query("SELECT MAX(date) m FROM etf_features", conn)["m"].iloc[0]
-        pd_date = preds["date"].max()
-        if feat and pd_date and str(feat)[:10] > str(pd_date)[:10]:
-            from src.analysis.predictor import models
-            models.run_risk_predict_latest(conn, model="lgb")
-            preds = _read_preds(conn)
-    except Exception as exc:
-        logger.warning("风险预测刷新检查失败: %s", exc)
-    return preds
-
-
-def _backtest(conn, root: Path) -> Optional[Dict]:
-    cache = root / "data" / "risk_backtest.json"
-    if cache.exists():
-        try:
-            age = (datetime.now() - datetime.fromtimestamp(cache.stat().st_mtime)).days
-            if age <= CACHE_MAX_AGE_DAYS:
-                data = json.loads(cache.read_text(encoding="utf-8"))
-                if all(str(w) in data for w in WINDOWS):
-                    return data
-        except Exception:
-            pass
-    try:
-        from src.analysis.predictor import models
-        bt = models.run_risk_prediction(conn)
-        data = {}
-        for w, by_m in bt.get("results", {}).items():
-            data[str(w)] = {m: {k: by_m[m].get(k) for k in ("r2", "ic_pearson", "auc", "n_test")}
-                            for m in by_m}
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        return data
-    except Exception as exc:
-        logger.warning("风险回测计算失败: %s", exc)
-        return None
 
 
 def _cls3(vol_ann):
@@ -144,40 +95,41 @@ def _read_hist_drawdown(conn, window: int = 60) -> Dict[str, float]:
     return out
 
 
-def get_risk_outlook(conn, db_path: str) -> Dict:
-    """返回风险展望结构化数据，供 HTML 生成使用。永不抛异常（失败时 ok=False）。"""
-    out = {"ok": False, "note": "", "pred_date": "", "windows": {},
-           "backtest": None, "high_count": 0, "mid_count": 0, "low_count": 0,
+def get_risk_outlook(conn, db_path: str = "") -> Dict:
+    """返回风险展望结构化数据，供 HTML 生成使用。永不抛异常（失败时 ok=False）。
+
+    db_path 仅为兼容既有调用方（enhanced_report / email_report）保留，本函数已不读缓存文件。
+    """
+    out = {"ok": False, "note": "", "stat_date": "", "windows": {},
+           "high_count": 0, "mid_count": 0, "low_count": 0,
            "port_vol": None, "hi_w": None, "high_list": [], "hist_dd": {}}
     try:
-        preds = _ensure_preds(conn)
-        if preds.empty:
-            out["note"] = "风险预测数据暂不可用（etf_predictions 无 risk_lgb 记录）。"
+        feat = _read_hist_vol(conn)
+        if feat.empty:
+            out["note"] = "风险统计暂不可用（etf_features 无最新特征日数据）。"
             return out
-        preds = preds.copy()
-        preds["vol_ann"] = pd.to_numeric(preds["probability"], errors="coerce") * 100.0
-        preds["pct"] = pd.to_numeric(preds["confidence"], errors="coerce")
-        preds["cls"] = preds["vol_ann"].apply(_cls3)  # 绝对阈值三档（与前端口径一致）
         nm = _name_map(conn)
-        preds["name"] = preds["code"].map(lambda c: nm.get(c, c))
         windows: Dict[int, List[Dict]] = {}
         for w in WINDOWS:
-            g = preds[preds["forward_window"] == w]
+            col = "vol_20d" if w == 20 else "vol_60d"
+            g = feat[["code", col]].dropna(subset=[col]).copy()
             if g.empty:
                 continue
+            g["vol_ann"] = pd.to_numeric(g[col], errors="coerce") * _ANN
+            g["pct"] = g["vol_ann"].rank(pct=True) * 100.0
             recs = []
             for r in g.to_dict("records"):
+                code = str(r["code"])
                 recs.append({
-                    "name": r.get("name") or r["code"],
-                    "code": r["code"],
+                    "name": nm.get(code, code),
+                    "code": code,
                     "vol_ann": round(float(r["vol_ann"]), 1) if pd.notna(r["vol_ann"]) else None,
                     "pct": round(float(r["pct"]), 1) if pd.notna(r["pct"]) else None,
-                    "cls": r["cls"],
+                    "cls": _cls3(r["vol_ann"]),  # 绝对阈值三档（与前端口径一致）
                 })
             windows[w] = sorted(recs, key=lambda x: (x["vol_ann"] is None, -(x["vol_ann"] or 0)))
         out["windows"] = windows
-        out["pred_date"] = str(preds["date"].max())[:10]
-        out["backtest"] = _backtest(conn, _root(db_path))
+        out["stat_date"] = str(feat["date"].max())[:10]
         out["ok"] = bool(windows)
         if 20 in windows:
             out["high_count"] = sum(1 for x in windows[20] if x["cls"] == "高波动")
@@ -211,15 +163,6 @@ def get_risk_outlook(conn, db_path: str) -> Dict:
     return out
 
 
-def _fmt(v):
-    if v is None:
-        return "N/A"
-    try:
-        return f"{float(v):.3f}"
-    except (TypeError, ValueError):
-        return "N/A"
-
-
 def build_risk_outlook_html(outlook: Dict, theme: str = "dark") -> str:
     """生成风险展望区块 HTML。theme: 'dark'(enhanced_report) / 'light'(email_report)。"""
     if not outlook.get("ok"):
@@ -235,21 +178,12 @@ def build_risk_outlook_html(outlook: Dict, theme: str = "dark") -> str:
     hi_c = "#e74c3c"
     md_c = "#f39c12"
     lo_c = "#27ae60"
-    pred_date = outlook.get("pred_date", "")
-    bt = outlook.get("backtest") or {}
-    bt20 = (bt.get("20") or {}).get("lgb", {})
-    bt60 = (bt.get("60") or {}).get("lgb", {})
+    stat_date = outlook.get("stat_date", "")
 
     intro = ('<p style="font-size:11px;color:' + sub + ';margin:4px 0 8px;">'
-             '基于 LightGBM 波动率预测模型（walk-forward 样本外回测）对持仓 ETF 未来波动率预判。'
-             '预测基准日: <b>' + pred_date + '</b>。</p>')
-
-    bt_line = ""
-    if bt20 and bt60:
-        bt_line = ('<p style="font-size:11px;color:' + sub + ';margin:0 0 8px;">'
-                   '回测(样本外): 1月 AUC ' + _fmt(bt20.get("auc")) + ' / R² ' + _fmt(bt20.get("r2"))
-                   + '；1季 AUC ' + _fmt(bt60.get("auc")) + ' / R² ' + _fmt(bt60.get("r2"))
-                   + '（模型: LightGBM，波动率越高越易识别）</p>')
+             '持仓 ETF 的<b>历史已实现波动率</b>统计（取自 etf_features 的 vol_20d / vol_60d 并年化），'
+             '<b>不含模型预测</b>。原波动率预测模型已因样本外排序能力未跑赢零成本的 vol_20d 基线而下线。'
+             '统计基准日: <b>' + stat_date + '</b>。</p>')
 
     w20 = {x["code"]: x for x in outlook["windows"].get(20, [])}
     w60 = {x["code"]: x for x in outlook["windows"].get(60, [])}
@@ -290,7 +224,7 @@ def build_risk_outlook_html(outlook: Dict, theme: str = "dark") -> str:
     port_line = ""
     if port_vol is not None:
         port_line = ('<p style="font-size:12px;color:' + txt + ';margin:8px 0 4px;">'
-                     '组合预期年化波动率(1月,市值加权): <b style="color:' + hi_c + ';">'
+                     '组合年化波动率(1月,市值加权,已实现): <b style="color:' + hi_c + ';">'
                      + f'{port_vol:.1f}' + '%</b>'
                      + ('　高波动ETF权重占比: <b>' + f'{hi_w:.1f}' + '%</b>' if hi_w is not None else '')
                      + '</p>')
@@ -312,17 +246,18 @@ def build_risk_outlook_html(outlook: Dict, theme: str = "dark") -> str:
     if high_list:
         alert = ('<p style="font-size:11px;color:' + hi_c + ';margin:0 0 8px;">'
                  '高波动预警：' + '、'.join(str(x) for x in high_list) +
-                 ' 预期年化波动率 >30%，建议关注仓位与回撤风险（仅参考，不自动调仓）。</p>')
+                 ' 近端已实现年化波动率 >30%，建议关注仓位与回撤风险（仅参考，不自动调仓）。</p>')
 
     return (
         '<div class="sec"><div class="st">🔮 ETF 风险展望</div>'
-        + intro + bt_line + port_line + alert + badges
+        + intro + port_line + alert + badges
         + '<table><thead><tr>'
         '<th>名称</th><th>代码</th><th>1月年化波动</th><th>1月分位</th>'
         '<th>1季年化波动</th><th>1季分位</th><th>历史回撤</th><th>波动档位</th>'
         '</tr></thead><tbody>' + rows_html + '</tbody></table>'
         '<p style="font-size:10px;color:' + sub + ';margin:6px 0 0;">'
-        '年化波动率 = 日波动率预测 ×√252；分位为同截面 22 只相对排名(0–100)；'
+        '年化波动率 = 日已实现波动率 ×√252（1月取 vol_20d、1季取 vol_60d）；'
+        '分位为同截面 22 只相对排名(0–100)；'
         '档位按绝对阈值（低 <18% / 中 18-30% / 高 >30%）；历史回撤为近 60 日已实现最大回撤。'
         '仅供风险预警参考，非买卖建议。</p>'
         '</div>'

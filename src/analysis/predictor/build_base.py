@@ -11,7 +11,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from config.settings import MAJOR_ETFS, DATABASE_PATH
+from config.settings import MAJOR_ETFS, DATABASE_PATH, ETF_CATEGORIES
 from src.utils.db_schema import init_all_tables
 from .features import build_feature_matrix, upsert_features, _norm_code
 from .labels import build_labels, upsert_labels
@@ -44,12 +44,26 @@ def _is_etf(code: str, name: str) -> bool:
     return False
 
 
+def _is_delisted(c6: str) -> bool:
+    """ETF_CATEGORIES 中被显式标记 delisted（已退市/已清仓）的场外/历史标的。
+
+    159732 消费电子ETF华夏 已于 2026-07-30 前后清仓：自 2026-07-31 起不再出现在任何
+    持仓快照中（同批 22 只场内标的每日都在），见 docs/handover/07_known_data_issues.md。
+    一旦有人在 ETF_CATEGORIES 给它打上 delisted 标记，这里即时生效；即便没有标记，
+    resolve_target_codes 以「最新快照日」为口径，159732 也不会回到标的域。
+    """
+    return bool((ETF_CATEGORIES.get(c6) or {}).get("delisted"))
+
+
 def resolve_target_codes(conn) -> List[str]:
     """目标域 = 最新快照中属于 ETF 类的当前持仓（自动跟随真实持仓）。
 
     根治历史白名单过窄问题：不再死守固定 MAJOR_ETFS 白名单，而是直接以
     portfolio_snapshots 最新日期的 ETF 类持仓为目标域，确保新增持仓自动纳入、
     不会漏覆盖。防御：若从持仓推导为空（异常），回退 MAJOR_ETFS。
+
+    口径说明：这里取「最新快照日」而非「每只标的最新快照」，因此已清仓标的
+    （如 159732，快照只到 2026-07-30）不会复辟；再叠加 delisted 显式过滤做双保险。
     """
     cur = conn.execute("SELECT MAX(date) FROM portfolio_snapshots")
     latest = cur.fetchone()[0]
@@ -62,16 +76,22 @@ def resolve_target_codes(conn) -> List[str]:
         for code, name in cur.fetchall():
             if _is_etf(code, name or ""):
                 c6 = _norm_code(code)
-                if c6:
+                if c6 and not _is_delisted(c6):
                     codes.append(c6)
     if not codes:
-        codes = [_norm_code(c) for c in MAJOR_ETFS]
+        codes = [c for c in (_norm_code(x) for x in MAJOR_ETFS) if c and not _is_delisted(c)]
     return sorted(set(codes))
 
 
 def build_prediction_base(conn=None, backfill_ohlcv: bool = True,
-                          as_of: Optional[str] = None, log=print) -> dict:
-    """在给定连接上构建预测底座三表，返回汇总字典。"""
+                          as_of: Optional[str] = None, log=print,
+                          full_refresh_ohlcv: bool = False) -> dict:
+    """在给定连接上构建/增量维护预测底座三表，返回汇总字典。
+
+    幂等：etf_features / etf_forward_returns 按 (date, code) upsert，重复运行结果一致；
+    etf_price_history 按每标的 MAX(date) 增量补到 as_of（full_refresh_ohlcv=True 时全量重拉）。
+    as_of 为 None 时追到最新可得交易日。
+    """
     own_conn = False
     if conn is None:
         from src.utils.database import get_db_connection
@@ -82,15 +102,20 @@ def build_prediction_base(conn=None, backfill_ohlcv: bool = True,
         codes = resolve_target_codes(conn)
         log(f"[Base] 目标域 {len(codes)} 只 ETF: {codes}")
 
+        target = as_of or conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()[0]
         ohlcv_rows = 0
         if backfill_ohlcv:
-            ohlcv_rows = backfill_etf_price_history(conn, codes, log=log)
-            log(f"[Base] OHLCV 补采合计 {ohlcv_rows} 行")
+            # 三表统一以 target 为截止日：避免 OHLCV 落半日未收盘行造成底座内部错位
+            ohlcv_rows = backfill_etf_price_history(
+                conn, codes, end=target, force=full_refresh_ohlcv, log=log)
+            log(f"[Base] OHLCV 补采合计 {ohlcv_rows} 行 (截止 {target})")
 
-        feat = build_feature_matrix(conn, codes, as_of=as_of)
+        feat = build_feature_matrix(conn, codes, as_of=target)
         n_feat = upsert_features(conn, feat)
 
         lab = build_labels(conn, codes)
+        if target and not lab.empty:
+            lab = lab[lab["date"] <= target]
         n_lab = upsert_labels(conn, lab)
 
         summary = {

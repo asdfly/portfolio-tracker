@@ -191,12 +191,29 @@ class SmartAdvisor:
         """将 RebalancePlan 转为 InvestmentAdvice（兼容现有建议渲染/序列化）。"""
         items = []
         for t in plan.trades[:12]:
+            # 场内按「手」展示（1 手 = 100 份），场外按「份」展示，避免 100 倍误读
+            qty = f"{t.lots:,}手" if getattr(t, "lot_traded", True) else f"{t.shares:,}份"
             items.append(
-                f"{t.direction} {t.name}({t.code}) {t.trade_value:,.0f}元 / {t.shares}手 "
+                f"{t.direction} {t.name}({t.code}) {t.trade_value:,.0f}元 / {qty}"
+                f"（={t.shares:,}份）"
                 f"（{t.current_weight*100:.1f}%→{t.target_weight*100:.1f}%）"
             )
         if len(plan.trades) > 12:
             items.append(f"…其余 {len(plan.trades) - 12} 笔")
+        for s in getattr(plan, "stale_snapshots", []) or []:
+            suspect = s.get("level") == "疑似失效"
+            mark = "🔴 疑似失效" if suspect else "⚠️ 陈旧"
+            items.append(
+                f"{mark}｜{s['name']}({s['code']}) 快照已停更 {s['days']} 天"
+                f"（最新 {s['snapshot_date']}），"
+                + ("可能已清仓或份额变动，" if suspect else "")
+                + "其权重与调仓量按陈旧快照计算，下单前请核对"
+            )
+        for d in getattr(plan, "dropped_legs", []) or []:
+            items.append(
+                f"ℹ️ {d['name']}({d['code']}) 调仓金额 {d['trade_value']:,.0f} 元 "
+                f"< 最小交易单位 {d['min_value']:,.0f} 元，该腿已丢弃（不足 1 手）"
+            )
         items.append(
             f"预估交易成本 ≈ {plan.estimated_cost:,.0f}元，T+1 执行日 {plan.execution_date}"
         )
@@ -208,6 +225,8 @@ class SmartAdvisor:
                 f"基于真实持仓快照，最大权重偏离触发再平衡。总市值 {plan.total_value:,.0f}元，"
                 f"换手率 {plan.turnover*100:.1f}%，预估成本 {plan.estimated_cost:,.0f}元，"
                 f"T+1 执行日 {plan.execution_date}。"
+                f"（{len(plan.current_weights)} 只标的，其中 "
+                f"{len(plan.stale_snapshots)} 只快照停更 >7 天）"
             ),
             action_items=items,
             related_codes=[t.code for t in plan.trades[:10]],

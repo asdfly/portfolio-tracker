@@ -166,10 +166,12 @@ def parse_heavy(content, today):
         d = parts[0]
         if not re.match(r'\d{4}-\d{2}-\d{2}', d):
             continue
-        if parts[1] in ('-', '未开盘') or parts[7] in ('-', ''):
+        if parts[1] in ('-', '未开盘') or parts[7] in ('-', '', '—'):
             continue
         try:
-            chg = float(parts[7])
+            # 涨跌幅列可能带 % 后缀（NeoData 格式变动），需先剥离
+            chg_str = parts[7].replace('%', '').replace(',', '').strip()
+            chg = float(chg_str)
         except Exception:
             continue
         rows.append((d, chg))
@@ -246,6 +248,14 @@ def main():
         except Exception as e:
             heavy[s] = None
             print(f"WARN heavy parse {s}: {e}")
+
+    # 2026-09-10 进化落地：heavy 板块全 None 自愈告警
+    # 若 13 个重仓板块涨跌幅解析结果全为 None，疑似 NeoData 字段格式再次变动导致静默
+    # 缺失（2026-09-09 曾因涨跌幅带 % 后缀被 float() 静默吞掉）。打印显式 WARN（不中止），
+    # 报告将按数据纪律以「—」呈现，待人工核对，避免未来格式再变时无感知。
+    if heavy and all(v is None for v in heavy.values()):
+        print("WARN heavy_all_none: 13 个重仓板块涨跌幅解析结果全为 None，"
+              "疑似 NeoData 字段格式再次变动导致静默缺失；报告将标「—」，请人工核对。")
 
     main_fund_yi = local_main_fund_proxy(TODAY)
 

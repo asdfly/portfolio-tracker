@@ -1,14 +1,15 @@
-"""Tab16: ETF 风险展望 — 基于预测底座的波动率 + 回撤预测可视化。
+"""Tab16: ETF 风险展望 — 历史已实现波动率统计（纯描述，不含模型预测）。
 
-展示 22 只持仓 ETF 的未来风险：
-- 1月（20日）/ 1季（60日）窗口的预期年化波动率 + 预期最大回撤
-- 预测 vs 历史已实现波动率对比（升波/降波/平稳）
+展示 22 只持仓 ETF 的历史风险：
+- 1月（20日）/ 1季（60日）窗口的历史已实现年化波动率
+- 短中期对比（20日 vs 60日 → 升波/降波/平稳）
 - 三档分类（绝对阈值：低 <18% / 中 18-30% / 高 >30%）+ 绝对阈值预警
 - 组合层面：加权组合波动率、风险贡献、高波动权重占比
+- 历史最大回撤参照（近 60 日已实现）
 - 单 ETF 下钻：历史波动率轨迹 + 历史分位
-- 模型回测表现（OOS R² / IC / 分类 AUC）
 
-数据来自 src.analysis.predictor（etf_features → LightGBM 波动率/回撤模型）。
+数据来源：etf_features 的 vol_20d / vol_60d（滚动已实现波动率），直接年化展示，
+不再依赖 etf_predictions 中 model='risk_lgb' 的预测结果（该模型已下线，见 _DOWNGRADE_NOTE）。
 仅作风险参考，不自动调仓。
 """
 from components.ui import render_chart
@@ -19,24 +20,21 @@ from src.utils.database import get_db_connection
 import plotly.graph_objects as go
 
 _WINDOW_LABELS = {5: "1周", 20: "1月", 60: "1季"}
-# 绝对阈值（预期年化波动率 %）：三档分类
+# 绝对阈值（已实现年化波动率 %）：三档分类
 _VOL_LO = 18.0
 _VOL_HI = 30.0
-# 变动方向阈值（预测 - 历史，年化波动率 pp）
+# 变动方向阈值（20日 - 60日，年化波动率 pp）
 _DELTA_PP = 1.0
 
-
-@st.cache_data(ttl=7200, show_spinner="正在训练波动率预测模型（LightGBM）…")
-def _compute_risk_outlook():
-    """训练波动率模型并产出最新预测 + 回测指标（缓存，避免重复重训）。"""
-    from src.analysis.predictor.models import predict_risk_latest, run_risk_prediction
-    conn = get_db_connection()
-    try:
-        pred = predict_risk_latest(conn, model="lgb")
-        backtest = run_risk_prediction(conn)
-    finally:
-        conn.close()
-    return pred, backtest
+# 模型下线说明（页面上显式展示，避免读者误以为本页仍含模型预测）
+_DOWNGRADE_NOTE = (
+    "**本页为历史已实现波动率统计，不含模型预测。** "
+    "原波动率预测模型（`etf_predictions` model='risk_lgb'）已下线：walk-forward 样本外验证中，"
+    "其截面排序能力（Spearman IC 0.613）未跑赢零成本的 vol_20d 基线（IC 0.743），"
+    "ΔIC 的 HAC t = −4.51（BH-FDR q < 0.0001），未通过上线门禁。"
+    "注意：下线依据是 **IC（排序能力）而非 R²** —— 模型 OOS R²（−0.244）实际优于基线（−2.696），"
+    "但两者皆为负，且 R² 转正也不构成上线理由，门槛是必须显著超越免费基线。"
+)
 
 
 @st.cache_data(ttl=7200)
@@ -99,6 +97,28 @@ def _load_hist_features():
 
 
 @st.cache_data(ttl=7200)
+def _load_data_lag(stat_date: str):
+    """返回 (最新市场日, 相对 stat_date 滞后的交易日数)。
+
+    用 portfolio_snapshots 作为"当前市场日"参照：特征/价格/标签三表停更时，
+    etf_features 的 MAX(date) 会停在过去的某一天，需要显式告知用户本页数字截至哪天。
+    三表补数后滞后自动归零、提示自动消失。
+    """
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()
+        mkt = str(row[0])[:10] if row and row[0] else ""
+        if not mkt or not stat_date or mkt <= stat_date:
+            return mkt, 0
+        n = conn.execute(
+            "SELECT COUNT(DISTINCT date) FROM portfolio_snapshots WHERE date>?",
+            [stat_date]).fetchone()[0]
+        return mkt, int(n)
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=7200)
 def _load_weights():
     """读最新快照 market_value（后续与预测覆盖的 ETF 交集归一化为权重）。"""
     conn = get_db_connection()
@@ -127,90 +147,66 @@ def _cls3(vol_ann):
     return "高波动"
 
 
-def _build_window_df(pred, window, name_map, hist_latest):
-    """取指定窗口预测，join 历史波动率，计算变动方向与三档分类。"""
-    df = pred[pred["forward_window"] == window].copy()
+def _build_window_df(hist_latest, window, name_map):
+    """取最新特征日的已实现波动率，计算短中期方向与三档分类。
+
+    纯历史统计：window=20 用 vol_20d（主）/ vol_60d（参照），window=60 反之。
+    """
+    if hist_latest is None or hist_latest.empty:
+        return pd.DataFrame()
+    main_col = "vol_20d" if window == 20 else "vol_60d"
+    ref_col = "vol_60d" if window == 20 else "vol_20d"
+    df = hist_latest[["code", main_col, ref_col]].copy()
+    df = df.dropna(subset=[main_col])
     if df.empty:
         return df
     df["name"] = df["code"].astype(str).map(name_map).fillna(df["code"].astype(str))
-    df["pred_vol_ann"] = _ann(df["pred_vol"])
-    # join 历史已实现波动率（最新特征日）
-    hist_col = "vol_20d" if window == 20 else "vol_60d"
-    if hist_latest is not None and not hist_latest.empty:
-        h = hist_latest[["code", hist_col]].copy()
-        h["hist_vol_ann"] = _ann(h[hist_col])
-        df = df.merge(h[["code", "hist_vol_ann"]], on="code", how="left")
-    else:
-        df["hist_vol_ann"] = np.nan
-    # 变动方向：预测 vs 当前历史
-    diff = df["pred_vol_ann"] - df["hist_vol_ann"]
+    df["vol_ann"] = _ann(df[main_col])
+    df["ref_vol_ann"] = _ann(df[ref_col])
+    # 变动方向：短期(20日) vs 中期(60日) 已实现波动率，衡量波动率是在抬升还是回落
+    diff = df["vol_ann"] - df["ref_vol_ann"]
     df["trend"] = np.select(
         [diff > _DELTA_PP, diff < -_DELTA_PP],
         ["升波", "降波"], default="平稳")
-    df["trend"] = df["trend"].where(df["hist_vol_ann"].notna(), "—")
-    # 三档分类（绝对阈值，用预测值）
-    df["cls"] = df["pred_vol_ann"].apply(_cls3)
-    df["pct_rank"] = (df["pred_vol"].rank(pct=True) * 100).round(1)
-    df = df.sort_values("pred_vol").reset_index(drop=True)
+    df["trend"] = df["trend"].where(df["ref_vol_ann"].notna(), "—")
+    # 三档分类（绝对阈值，用已实现波动率）
+    df["cls"] = df["vol_ann"].apply(_cls3)
+    df["pct_rank"] = (df[main_col].rank(pct=True) * 100).round(1)
+    df = df.sort_values(main_col).reset_index(drop=True)
     return df
-
-
-def _render_backtest(backtest):
-    st.markdown("#### 模型回测表现（walk-forward · LightGBM）")
-    st.caption("样本外（OOS）验证，衡量模型对未来已实现波动率的预测能力。"
-               "R²/IC 越高、分类 AUC 越接近 1 越好。")
-    rows = []
-    for w, by_m in backtest.get("results", {}).items():
-        for m, r in by_m.items():
-            rows.append({
-                "窗口": _WINDOW_LABELS.get(w, w),
-                "模型": m,
-                "OOS R²": r.get("r2"),
-                "IC": r.get("ic_pearson"),
-                "分类AUC": r.get("auc"),
-                "样本数": r.get("n_test"),
-            })
-    bt = pd.DataFrame(rows)
-    st.dataframe(bt, width="stretch", hide_index=True)
-
-    lgb = {w: backtest["results"][w]["lgb"]
-           for w in (20, 60) if w in backtest.get("results", {})}
-    if lgb:
-        parts = [f"{_WINDOW_LABELS.get(w, w)} AUC={r.get('auc')} / R²={r.get('r2')}"
-                 for w, r in lgb.items()]
-        st.success("结论：" + "；".join(parts) + "。波动率预测显著有效，可作仓位/回撤预警参考。")
 
 
 def _render_portfolio_agg(df_w, weights_df, window):
     """组合层面：加权组合波动率、风险贡献 Top、高波动权重占比。"""
     if df_w.empty or weights_df is None or weights_df.empty:
         return
-    wd = weights_df.merge(df_w[["code", "pred_vol_ann", "cls"]].astype({"code": str}),
+    wd = weights_df.merge(df_w[["code", "vol_ann", "cls"]].astype({"code": str}),
                           left_on="code", right_on="code", how="inner")
     if wd.empty or wd["market_value"].sum() <= 0:
         return
     wd["w"] = wd["market_value"] / wd["market_value"].sum()
-    port_vol = float((wd["w"] * wd["pred_vol_ann"]).sum())
+    port_vol = float((wd["w"] * wd["vol_ann"]).sum())
     # 简化风险贡献 = w_i × σ_i / Σ(w_j × σ_j)
-    wd["contrib"] = wd["w"] * wd["pred_vol_ann"]
+    wd["contrib"] = wd["w"] * wd["vol_ann"]
     wd["contrib_pct"] = wd["contrib"] / wd["contrib"].sum() * 100
     hi_w = float(wd.loc[wd["cls"] == "高波动", "w"].sum() * 100)
 
     st.markdown("#### 组合风险概览（ETF 子组合，按市值加权）")
     c1, c2, c3 = st.columns(3)
-    c1.metric("组合预期年化波动率", f"{port_vol:.1f}%",
-              help=f"窗口：{_WINDOW_LABELS.get(window, window)}，Σ 权重×个股预期波动率（简化，未计相关性）")
+    c1.metric("组合年化波动率", f"{port_vol:.1f}%",
+              help=f"窗口：{_WINDOW_LABELS.get(window, window)}，"
+                   f"Σ 权重×个券已实现波动率（简化，未计相关性）")
     c2.metric("高波动 ETF 权重占比", f"{hi_w:.1f}%",
-              help="预期波动率 >30% 的持仓占 ETF 子组合市值比例，衡量尾部风险集中度")
+              help="已实现波动率 >30% 的持仓占 ETF 子组合市值比例，衡量尾部风险集中度")
     c3.metric("覆盖 ETF 市值占比", f"{wd['w'].sum() * 100:.0f}%",
-              help="预测底座覆盖的 ETF 占最新快照市值比例")
+              help="有特征数据的 ETF 占最新快照市值比例")
 
     top = wd.sort_values("contrib_pct", ascending=False).head(5)
     top = top.assign(name=top["code"].map(_load_name_map()).fillna(top["code"]))
-    st.caption("风险贡献 Top 5（占组合预期波动的比例）")
+    st.caption("风险贡献 Top 5（占组合已实现波动的比例）")
     st.dataframe(
-        top[["name", "code", "pred_vol_ann", "w", "contrib_pct"]]
-        .rename(columns={"name": "名称", "code": "代码", "pred_vol_ann": "预期波动率%",
+        top[["name", "code", "vol_ann", "w", "contrib_pct"]]
+        .rename(columns={"name": "名称", "code": "代码", "vol_ann": "已实现波动率%",
                          "w": "权重%", "contrib_pct": "风险贡献%"}),
         width="stretch", hide_index=True)
 
@@ -296,16 +292,16 @@ def _render_alert(df_w):
     """绝对阈值高波动预警清单 + 择时参考文案（不自动调仓）。"""
     hi = df_w[df_w["cls"] == "高波动"]
     if hi.empty:
-        st.info("当前无预期波动率 >30% 的持仓，风险整体可控。")
+        st.info("当前无已实现波动率 >30% 的持仓，风险整体可控。")
         return
     names = "、".join(hi["name"].astype(str).tolist())
     st.warning(
-        f"**高波动预警**：{len(hi)} 只持仓预期年化波动率 >30%（{names}）。"
+        f"**高波动预警**：{len(hi)} 只持仓近端已实现年化波动率 >30%（{names}）。"
         "建议关注仓位与回撤风险；如需控制风险，可考虑降低相关持仓权重或分散至低波动标的。"
         "（仅风险参考，系统不自动调仓。）")
 
 
-def _render_window(df, window, interval_ann=None):
+def _render_window(df, window):
     n = len(df)
     hi = int((df["cls"] == "高波动").sum())
     md = int((df["cls"] == "中波动").sum())
@@ -315,43 +311,35 @@ def _render_window(df, window, interval_ann=None):
     c2.metric("高波动(>30%)", hi)
     c3.metric("中/低波动", f"{md} / {lo}")
 
-    st.markdown(f"**预测窗口：{_WINDOW_LABELS.get(window, window)}（未来 {window} 个交易日）**")
+    st.markdown(f"**统计窗口：{_WINDOW_LABELS.get(window, window)}（近 {window} 个交易日，已实现）**")
 
     colors = {"低波动": "#22c55e", "中波动": "#f59e0b", "高波动": "#ef4444"}
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=df["pred_vol_ann"], y=df["name"], orientation="h",
+        x=df["vol_ann"], y=df["name"], orientation="h",
         marker_color=[colors.get(v, "#888780") for v in df["cls"]],
-        text=df["pred_vol_ann"].round(1).astype(str) + "%", textposition="outside",
-        error_x=(dict(type="data", array=[interval_ann] * n, visible=True,
-                      color="#8899aa", thickness=1.2) if interval_ann else None),
-        hovertemplate="%{y}<br>预期年化波动率 %{x:.1f}%<br>截面分位 %{customdata[0]}%<br>趋势 %{customdata[1]}<extra></extra>",
+        text=df["vol_ann"].round(1).astype(str) + "%", textposition="outside",
+        hovertemplate="%{y}<br>已实现年化波动率 %{x:.1f}%<br>截面分位 %{customdata[0]}%<br>趋势 %{customdata[1]}<extra></extra>",
         customdata=df[["pct_rank", "trend"]].values,
     ))
     fig.update_layout(
         height=max(360, 26 * n), plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
         font=dict(color="#c9d1d9", size=11),
         margin=dict(l=130, r=45, t=10, b=30),
-        xaxis=dict(title="预期年化波动率 %", showgrid=True, gridcolor="#21262d"),
+        xaxis=dict(title="已实现年化波动率 %", showgrid=True, gridcolor="#21262d"),
         yaxis=dict(autorange="reversed"),
     )
     render_chart(fig)
-
-    if interval_ann:
-        st.caption(f"误差棒为 95% 预测区间（±1.96σ，σ={interval_ann / 1.96:.1f}pp，"
-                   f"来自 walk-forward 样本外残差），区间越宽说明该预测不确定性越大。")
 
     # 筛选 + 导出
     csel, cexp = st.columns([1, 1])
     with csel:
         cats = ["全部", "高波动", "中波动", "低波动"]
         sel = st.selectbox("按波动档位筛选", cats, key=f"risk_cls_{window}")
-    disp = df[["name", "code", "pred_vol_ann", "hist_vol_ann", "trend", "pct_rank", "cls"]].copy()
-    disp.columns = ["名称", "代码", "预期年化波动率%", "历史年化波动率%", "变动方向", "截面分位%", "波动档位"]
-    for c in ("预期年化波动率%", "历史年化波动率%"):
+    disp = df[["name", "code", "vol_ann", "ref_vol_ann", "trend", "pct_rank", "cls"]].copy()
+    disp.columns = ["名称", "代码", "已实现波动率%", "对照波动率%", "变动方向", "截面分位%", "波动档位"]
+    for c in ("已实现波动率%", "对照波动率%"):
         disp[c] = disp[c].round(2)
-    if interval_ann:
-        disp.insert(3, "95%区间±pp", round(interval_ann, 1))
     if sel != "全部":
         disp = disp[disp["波动档位"] == sel]
     with cexp:
@@ -366,42 +354,40 @@ def render_tab16():
     """渲染 Tab16: ETF 风险展望。"""
     st.markdown('<div style="font-size:18px;font-weight:bold;padding:4px 0 6px;">'
                 '🔮 ETF 风险展望</div>', unsafe_allow_html=True)
-    st.caption("基于预测底座（etf_features → LightGBM）对 22 只持仓 ETF 的未来已实现波动率与最大回撤预测。"
-               "波动档位按绝对阈值（低 <18% / 中 18-30% / 高 >30%）；变动方向 = 预测 vs 当前历史波动率。"
-               "仅作风险参考，不自动调仓。")
+    st.caption("对 22 只持仓 ETF 的**历史已实现波动率**统计（直接取自 etf_features 的 "
+               "vol_20d / vol_60d 并年化）。波动档位按绝对阈值（低 <18% / 中 18-30% / 高 >30%）；"
+               "变动方向 = 20日 vs 60日已实现波动率。仅作风险参考，不自动调仓。")
+    st.info(_DOWNGRADE_NOTE)
 
-    with st.spinner("正在计算风险预测…"):
-        pred, backtest = _compute_risk_outlook()
     name_map = _load_name_map()
     hist_latest, hist = _load_hist_features()
     weights_df = _load_weights()
 
-    if pred.empty:
-        st.info("暂无波动率预测数据，请先运行预测底座补采"
+    if hist_latest is None or hist_latest.empty:
+        st.info("暂无特征数据，请先运行特征底座补采"
                  "（`python -m src.analysis.predictor.build_base`）。")
         return
 
-    pred_date = str(pred["date"].max())[:10]
-    st.caption(f"预测基准日：**{pred_date}**。若当日部分 ETF 特征未更新（T+1 数据滞后），"
-               "预测基于最近可用特征日，次日重跑自动补齐。")
+    stat_date = str(hist_latest["date"].max())[:10]
+    mkt_date, lag = _load_data_lag(stat_date)
+    st.caption(f"统计基准日：**{stat_date}**（最新特征日，T+1 数据滞后属正常）。")
+    if lag > 0:
+        st.warning(f"⚠️ **数据日期提示**：本页数字截至 **{stat_date}**，落后最新市场日 "
+                   f"**{mkt_date}** 共 **{lag} 个交易日**"
+                   f"（etf_features / etf_price_history / etf_forward_returns 三表停更）。"
+                   f"三表补数后本提示自动消失。")
 
-    _render_backtest(backtest)
-
-    wlabel = st.radio("预测窗口", ["1月（20日）", "1季（60日）"],
+    wlabel = st.radio("统计窗口", ["1月（20日）", "1季（60日）"],
                       horizontal=True, key="risk_outlook_win")
     window = 20 if wlabel.startswith("1月") else 60
-    df_w = _build_window_df(pred, window, name_map, hist_latest)
+    df_w = _build_window_df(hist_latest, window, name_map)
     if df_w.empty:
-        st.warning(f"窗口 {window} 暂无预测数据。")
+        st.warning(f"窗口 {window} 暂无已实现波动率数据。")
         return
 
     _render_portfolio_agg(df_w, weights_df, window)
     _render_alert(df_w)
-    # 预测置信区间（walk-forward 样本外残差 std → 95% 区间半宽，年化 pp）
-    bt_win = (backtest.get("results", {}).get(window, {})).get("lgb", {})
-    res_std = bt_win.get("residual_std")
-    interval_ann = (res_std * (252 ** 0.5) * 100 * 1.96) if res_std else None
-    _render_window(df_w, window, interval_ann)
+    _render_window(df_w, window)
 
     # 历史最大回撤参照（回撤预测未达标，降级）
     st.markdown("---")

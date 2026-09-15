@@ -22,6 +22,27 @@ from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
+# 建议优先级归一化表。
+# 背景：邮件正文里的建议是用正则从 Markdown 的 "### 1. [高] 标题" 抓出来的（见 _load_advice），
+# priority 是中文单字 '高'/'中'/'低'；而下面的展示映射表 pm 用英文键 'high'/'medium'/'low'。
+# 两者对不上会导致 pm.get() 全部 miss，所有建议（含高优先级）都被渲染成兜底的「⚪ 低」。
+_PRIORITY_ALIASES = {
+    'high': 'high', 'h': 'high', '高': 'high', '高优先级': 'high',
+    'medium': 'medium', 'mid': 'medium', 'm': 'medium', '中': 'medium', '中优先级': 'medium',
+    'low': 'low', 'l': 'low', '低': 'low', '低优先级': 'low',
+}
+
+
+def _norm_priority(p):
+    """把中英文混用 / AdvicePriority 枚举的优先级统一成 'high'|'medium'|'low'。
+
+    无法识别时归为 'low'，但调用方仍需保留兜底标签，避免把未知值粉饰成「低」。
+    """
+    if p is None:
+        return 'low'
+    v = getattr(p, 'value', p)  # 兼容直接传入 AdvicePriority 枚举对象的情况
+    return _PRIORITY_ALIASES.get(str(v).strip().lower(), 'low')
+
 # 主题颜色映射（深色 dashboard 版 / 浅色邮件版）。语义色（涨跌/优先级）不在此处，
 # 两主题共用 #27ae60(绿) #e74c3c(红) #f39c12(琥珀) #1a73e8(蓝) #3498db(蓝) 等。
 THEMES = {
@@ -42,6 +63,24 @@ THEMES = {
         "card_bg": "#ffffff", "body_bg": "#f5f7fa",
     },
 }
+
+
+def _pick(d, *keys, default=None):
+    """按优先级尝试多个键名，返回第一个非 None 的值。
+
+    报告层的数据来源键名并不统一：DB 落表用英文键（total_value / market_value /
+    sharpe_ratio ...），而券商导出（见 src/utils/position_reader.py 的列名映射）与
+    smart_report 落盘的建议优先级用中文键（最新市值 / 持仓盈亏 / 盈亏率% / 高 / 中 / 低）。
+    统一走本函数可以避免散落的 `a.get(x) or a.get(y) or z`，也避免漏掉某一侧别名
+    导致有值却取不到、渲染成 N/A 或占位符。
+    """
+    if not isinstance(d, dict):
+        return default
+    for k in keys:
+        v = d.get(k)
+        if v is not None:
+            return v
+    return default
 
 _CSS_DARK = (
     "body{margin:0;padding:0;background:#0a1628;font-family:-apple-system,BlinkMacSystemFont,"
@@ -128,20 +167,20 @@ class EnhancedReportBuilder:
         wd_map = {0:'周一',1:'周二',2:'周三',3:'周四',4:'周五',5:'周六',6:'周日'}
         weekday = wd_map.get(now.weekday(), '')
 
-        dr = summary.get('daily_return', 0) or 0
-        tp = summary.get('total_pnl', 0) or 0
-        tc = summary.get('total_cost', 1) or 1
+        dr = _pick(summary, 'daily_return', '日收益率', default=0) or 0
+        tp = _pick(summary, 'total_pnl', '总盈亏', default=0) or 0
+        tc = _pick(summary, 'total_cost', '总成本', default=1) or 1
         total_ret = tp / tc * 100 if tc > 0 else 0
-        dp = summary.get('daily_pnl', 0) or 0
+        dp = _pick(summary, 'daily_pnl', '当日盈亏', default=0) or 0
 
         def sign(v):
             return '+' if v >= 0 else ''
         def clr(v):
             return '#27ae60' if v >= 0 else '#e74c3c'
 
-        sharpe = summary.get('sharpe_ratio')
-        max_dd = summary.get('max_drawdown')
-        vol = summary.get('volatility')
+        sharpe = _pick(summary, 'sharpe_ratio', '夏普比率')
+        max_dd = _pick(summary, 'max_drawdown', '最大回撤')
+        vol = _pick(summary, 'volatility', '波动率')
 
         def sf(v, fmt='.2f'):
             if v is None:
@@ -163,23 +202,28 @@ class EnhancedReportBuilder:
         vbg = T['risk_amber'] if vol and float(vol) > 15 else T['risk_green']
 
         # 持仓表格
-        tv = summary.get('total_value', 1) or 1
+        tv = _pick(summary, 'total_value', '总市值', default=1) or 1
         pos_rows = ''
         for i, p in enumerate(positions):
-            pnl = p.get('pnl', 0) or 0
-            pnl_rate = p.get('pnl_rate', 0) or 0
-            mv = p.get('market_value', 0) or 0
+            pnl = _pick(p, 'pnl', '持仓盈亏', default=0) or 0
+            pnl_rate = _pick(p, 'pnl_rate', '盈亏率%', default=0) or 0
+            mv = _pick(p, 'market_value', '最新市值', default=0) or 0
             wt = mv / tv * 100
             pc = clr(pnl)
             ps = sign(pnl)
             bg = T['row1'] if i % 2 == 0 else T['row2']
+            p_name = _pick(p, 'name', '名称', default='')
+            p_code = _pick(p, 'code', '代码', default='')
+            p_qty = _pick(p, 'quantity', '证券数量', default=0) or 0
+            p_cost = _pick(p, 'cost_price', '成本价', default=0) or 0
+            p_last = _pick(p, 'current_price', '现价', default=0) or 0
             pos_rows += (
                 '<tr style="background:' + bg + ';">'
-                '<td style="padding:7px 10px;font-size:12px;font-weight:500;">' + p['name'] + '</td>'
-                '<td style="padding:7px 10px;font-size:12px;color:' + T['gray'] + ';">' + p['code'] + '</td>'
-                '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + f"{p['quantity']:,.0f}" + '</td>'
-                '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + f"{p['cost_price']:.3f}" + '</td>'
-                '<td style="padding:7px 10px;font-size:12px;text-align:right;font-weight:500;">' + f"{p['current_price']:.3f}" + '</td>'
+                '<td style="padding:7px 10px;font-size:12px;font-weight:500;">' + p_name + '</td>'
+                '<td style="padding:7px 10px;font-size:12px;color:' + T['gray'] + ';">' + p_code + '</td>'
+                '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + f"{p_qty:,.0f}" + '</td>'
+                '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + f"{p_cost:.3f}" + '</td>'
+                '<td style="padding:7px 10px;font-size:12px;text-align:right;font-weight:500;">' + f"{p_last:.3f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;">' + ps + '¥' + f"{mv:,.0f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;color:' + pc + ';font-weight:500;">' + ps + '¥' + f"{pnl:,.0f}" + '</td>'
                 '<td style="padding:7px 10px;font-size:12px;text-align:right;color:' + pc + ';">' + ps + f"{pnl_rate:.2f}" + '%</td>'
@@ -204,7 +248,7 @@ class EnhancedReportBuilder:
             pm = {'high': ('🔴 高优先级', '#e74c3c'), 'medium': ('🟡 中优先级', '#f39c12'), 'low': ('🟢 低优先级', '#27ae60')}
             items = ''
             for a in advice[:6]:
-                pl, pcolor = pm.get(a.get('priority', 'low'), ('⚪ 低', '#95a5a6'))
+                pl, pcolor = pm.get(_norm_priority(a.get('priority')), ('⚪ 未分级', '#95a5a6'))
                 items += '<div style="padding:6px 0;border-bottom:1px solid ' + T['border'] + ';font-size:12px;"><span style="font-weight:600;color:' + pcolor + ';">' + pl + '</span> ' + a.get('title', '') + '</div>'
             adv_block = '<div style="margin:14px 0;padding:14px;background:' + T['advice_bg'] + ';border-radius:8px;"><div style="font-size:13px;font-weight:600;color:' + T['text'] + ';margin-bottom:8px;">💡 智能建议 (' + str(len(advice)) + ')</div>' + items + '</div>'
 
@@ -436,19 +480,21 @@ class EnhancedReportBuilder:
         T = getattr(self, '_T', THEMES['dark'])
         if not index_today:
             return ""
-        dr = summary.get('daily_return', 0) or 0
+        dr = _pick(summary, 'daily_return', '日收益率', default=0) or 0
         rows_html = ""
-        for idx in index_today:
-            chg = idx.get('change_pct', 0) or 0
+        for i, idx in enumerate(index_today):
+            chg = _pick(idx, 'change_pct', '涨跌幅', default=0) or 0
             c = clr(chg)
             s = sign(chg)
-            name = idx.get('name', idx.get('code', ''))
-            close = idx.get('close', 0)
+            name = _pick(idx, 'name', '名称', 'code', '代码', default='')
+            close = _pick(idx, 'close', '收盘价', default=0)
             close_str = f"{close:,.2f}" if close > 100 else f"{close:.4f}"
-            bg = T['row1'] if len(rows_html) == 0 else T['row2']
+            # 原写法用 len(rows_html)==0 判断，累加字符串首次之后恒为非空，
+            # 导致第 3 行起全部落 row2、斑马纹失效。改用行号奇偶（与其余表格一致）。
+            bg = T['row1'] if i % 2 == 0 else T['row2']
             # 标记组合表现
             compare = ""
-            if idx.get('code') == 'sh000300' and dr != 0:
+            if _pick(idx, 'code', '代码') == 'sh000300' and dr != 0:
                 diff = dr - chg
                 if abs(diff) > 0.1:
                     tag = "跑赢" if diff > 0 else "跑输"
@@ -475,13 +521,13 @@ class EnhancedReportBuilder:
         rows_html = ""
         for i, t in enumerate(technical):
             bg = T['row1'] if i % 2 == 0 else T['row2']
-            name = t.get('name') or t.get('code', '未知')
+            name = _pick(t, 'name', '名称', 'code', '代码', default='未知')
             # 30日涨跌幅
             chg30_cell = '<span style="color:' + T['gray'] + ';">--</span>'
             if price_30d and isinstance(price_30d, dict):
-                code = t.get('code', '')
+                code = _pick(t, 'code', '代码', default='')
                 old_price = price_30d.get(code)
-                cur_price = t.get('current_price') or 0
+                cur_price = _pick(t, 'current_price', '现价', default=0) or 0
                 if old_price and old_price > 0 and cur_price > 0:
                     pct = (cur_price - old_price) / old_price * 100
                     chg30_c = '#27ae60' if pct >= 0 else '#e74c3c'
@@ -492,7 +538,9 @@ class EnhancedReportBuilder:
             # RSI颜色
             rsi = t.get('rsi_value', 0) or 0
             rsi_s = t.get('rsi_status', '--')
-            rsi_c = '#e74c3c' if rsi_s == '严重超买' else '#f39c12' if rsi_s == '超买' else '#27ae60' if rsi_s == '超卖' else '#7f8c8d'
+            # 用子串匹配覆盖「超买/严重超买」「超卖/严重超卖」四个状态。
+            # 原写法只判了相等，漏掉 DB 中实际存在的 '严重超卖'（479 行），把它渲染成了中性灰。
+            rsi_c = '#e74c3c' if '超买' in str(rsi_s) else '#27ae60' if '超卖' in str(rsi_s) else '#7f8c8d'
             # MACD信号
             macd = t.get('macd_signal', '--')
             macd_c = '#27ae60' if '买入' in str(macd) else '#e74c3c' if '卖出' in str(macd) else '#7f8c8d'
@@ -515,7 +563,8 @@ class EnhancedReportBuilder:
                 '<td style="padding:5px 8px;font-size:11px;font-weight:500;">' + name + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + ma_c + ';">' + str(ma) + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + macd_c + ';">' + str(macd) + '</td>'
-                '<td style="padding:5px 8px;font-size:11px;"><span style="color:' + rsi_c + ';">' + f"{rsi:.1f}" + '</span> <span style="font-size:10px;color:' + T['gray'] + ';">' + str(rsi_s) + '</span></td>' + chg30_cell +
+                '<td style="padding:5px 8px;font-size:11px;"><span style="color:' + rsi_c + ';">' + f"{rsi:.1f}" + '</span> <span style="font-size:10px;color:' + T['gray'] + ';">' + str(rsi_s) + '</span></td>'
+                '<td style="padding:5px 8px;font-size:11px;">' + chg30_cell + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;">' + bp_bar + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + kdj_c + ';">' + str(kdj) + '</td>'
                 '<td style="padding:5px 8px;font-size:11px;color:' + trend_c + ';">' + str(trend) + '</td>'
@@ -604,7 +653,11 @@ class EnhancedReportBuilder:
         return '<div class="sec"><div class="st">📰 行业资讯与影响分析</div>' + blocks + '</div>'
 
     def _build_risk_outlook(self):
-        """ETF 风险展望区块（从 etf_predictions 读取已落表的波动率预测）。"""
+        """ETF 风险展望区块（纯历史已实现波动率，读 etf_features 的 vol_20d/vol_60d）。
+
+        2026-09-15 起不再读取或触发 etf_predictions 的波动率预测：原 risk_lgb 模型
+        已因样本外截面 IC 未跑赢免费的 vol_20d 基线而下线，此处改为纯历史统计。
+        """
         try:
             from src.utils.risk_report import build_risk_outlook_html, get_risk_outlook
             conn = get_db_connection(self.db_path)

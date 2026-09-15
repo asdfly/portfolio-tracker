@@ -16,6 +16,23 @@ from data_loader import get_db_connection
 
 logger = logging.getLogger(__name__)
 
+# 建议优先级归一化表。邮件正文的建议是用正则从 Markdown 的 "### 1. [高] 标题" 抓出来的
+# （见本文件末尾的解析逻辑），priority 是中文单字 '高'/'中'/'低'；而展示映射表用英文键。
+# 两者对不上会导致所有建议都被渲染成兜底的「⚪ 低」。与 enhanced_report.py 保持同一口径。
+_PRIORITY_ALIASES = {
+    'high': 'high', 'h': 'high', '高': 'high', '高优先级': 'high',
+    'medium': 'medium', 'mid': 'medium', 'm': 'medium', '中': 'medium', '中优先级': 'medium',
+    'low': 'low', 'l': 'low', '低': 'low', '低优先级': 'low',
+}
+
+
+def _norm_priority(p):
+    """把中英文混用 / AdvicePriority 枚举的优先级统一成 'high'|'medium'|'low'。"""
+    if p is None:
+        return 'low'
+    v = getattr(p, 'value', p)  # 兼容直接传入 AdvicePriority 枚举对象的情况
+    return _PRIORITY_ALIASES.get(str(v).strip().lower(), 'low')
+
 
 class EmailReportBuilder:
     """HTML邮件报告构建器"""
@@ -143,7 +160,7 @@ class EmailReportBuilder:
             advice_items = ''
             priority_map = {'high': ('🔴 高', '#e74c3c'), 'medium': ('🟡 中', '#f39c12'), 'low': ('🟢 低', '#27ae60')}
             for a in advice[:5]:
-                p_label, p_color = priority_map.get(a.get('priority', 'low'), ('⚪ 低', '#95a5a6'))
+                p_label, p_color = priority_map.get(_norm_priority(a.get('priority')), ('⚪ 未分级', '#95a5a6'))
                 advice_items += (
                     '<div style="padding:8px 0;border-bottom:1px solid #ecf0f1;">'
                     '<span style="font-size:13px;font-weight:600;color:{color};">{label}</span> '
