@@ -65,29 +65,67 @@ class StrategyBacktester:
     def __init__(self, db_connection,
                  commission_rate: float = 0.0003,   # 单边佣金率 0.03%
                  slippage_rate: float = 0.0005,     # 单边滑点率 0.05%
-                 tplus1: bool = True):              # A股T+1: 再平衡次日执行
+                 tplus1: bool = True,               # A股T+1: 再平衡次日执行
+                 min_commission: float = 5.0):      # P1-2: 每笔最低佣金(元)
         self.db = db_connection
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
         self.cost_rate = commission_rate + slippage_rate
+        self.min_commission = min_commission
         self.tplus1 = tplus1
 
     def get_historical_data(self, codes: List[str], start_date: str, end_date: str) -> pd.DataFrame:
-        """获取历史价格数据"""
-        query = """
-            SELECT date, code, current_price as close
-            FROM portfolio_snapshots
-            WHERE code IN ({}) AND date BETWEEN ? AND ?
-            ORDER BY date, code
-        """.format(','.join(['?' for _ in codes]))
+        """获取历史价格数据（优先 qfq 复权价，缺失回退未复权快照价）。
 
-        df = pd.read_sql_query(query, self.db, params=codes + [start_date, end_date])
+        P1-2 复权修正：原实现直接读 portfolio_snapshots.current_price（未复权），
+        分红/派息事件被当成真实收益。改为优先用 etf_price_history.adj_close
+        （qfq 复权，已含分红再投资）；某标的无复权数据（如场外基金）则回退
+        current_price 并告警，不因此中断回测。缺口价格向前/向后填充，
+        避免复权源稀疏导致收益序列出现 NaN。
+        """
+        if not codes:
+            return pd.DataFrame()
+        placeholders = ",".join("?" for _ in codes)
+        q_adj = f"""
+            SELECT date, code, adj_close as close
+            FROM etf_price_history
+            WHERE code IN ({placeholders}) AND date BETWEEN ? AND ?
+            ORDER BY date, code
+        """
+        try:
+            df = pd.read_sql_query(q_adj, self.db, params=codes + [start_date, end_date])
+        except Exception:
+            df = pd.DataFrame()
+
+        # 统计已覆盖的 code；未覆盖的（如场外基金）从 portfolio_snapshots 回退
+        if not df.empty:
+            covered = set(df["code"].unique())
+            missing = [c for c in codes if c not in covered]
+        else:
+            missing = list(codes)
+
+        if missing:
+            mp = ",".join("?" for _ in missing)
+            q_snap = f"""
+                SELECT date, code, current_price as close
+                FROM portfolio_snapshots
+                WHERE code IN ({mp}) AND date BETWEEN ? AND ?
+                ORDER BY date, code
+            """
+            df2 = pd.read_sql_query(q_snap, self.db, params=missing + [start_date, end_date])
+            if not df.empty:
+                df = pd.concat([df, df2], ignore_index=True)
+            else:
+                df = df2
+            logger.warning("etf_price_history 无复权价、回退未复权快照价: %s", missing)
 
         if df.empty:
             return pd.DataFrame()
 
         df = df.pivot(index='date', columns='code', values='close')
         df.index = pd.to_datetime(df.index)
+        # 缺口填充：避免复权源稀疏导致收益序列出现 NaN（不中断回测）
+        df = df.sort_index().ffill().bfill()
         return df
 
     def calculate_returns(self, prices: pd.DataFrame) -> pd.DataFrame:
@@ -124,8 +162,9 @@ class StrategyBacktester:
 
             # T+1: 执行上一日挂起的再平衡（扣成本 + 生效新权重）
             if pending is not None:
-                new_weights, tinc = pending
-                cost = 2 * self.cost_rate * tinc * value
+                new_weights, tinc, orders = pending
+                # P1-2: 含最低佣金下限 (每腿5元, 双边=2×); orders=本次换仓交易腿数
+                cost = 2 * self.cost_rate * tinc * value + 2 * self.min_commission * orders
                 value = value - cost
                 cost_paid += cost
                 current_weights = dict(new_weights)
@@ -158,13 +197,18 @@ class StrategyBacktester:
                 rebalance_dates.append(date)
                 if not self.tplus1:
                     # 无T+1: 当日立即执行
-                    cost = 2 * self.cost_rate * tinc * value
+                    orders = sum(1 for c in codes
+                                 if abs(current_weights.get(c, 0) - new_weights.get(c, 0)) > 0.01)
+                    # P1-2: 含最低佣金下限 (每腿5元, 双边=2×)
+                    cost = 2 * self.cost_rate * tinc * value + 2 * self.min_commission * orders
                     value = value - cost
                     cost_paid += cost
                     current_weights = dict(new_weights)
                     portfolio_values[-1] = value
                 else:
-                    pending = (dict(new_weights), tinc)
+                    orders = sum(1 for c in codes
+                                 if abs(current_weights.get(c, 0) - new_weights.get(c, 0)) > 0.01)
+                    pending = (dict(new_weights), tinc, orders)
 
         portfolio_values = pd.Series(portfolio_values[1:], index=returns.index)
         metrics = self._compute_metrics(portfolio_values, returns, initial_value)
@@ -193,8 +237,8 @@ class StrategyBacktester:
         returns = self.calculate_returns(prices)
         weights = pd.Series(initial_weights)
 
-        # 建仓成本（单边: 买入佣金+滑点）
-        entry_cost = initial_value * self.cost_rate
+        # 建仓成本（单边: 买入佣金+滑点；P1-2: 含最低佣金下限）
+        entry_cost = max(initial_value * self.cost_rate, self.min_commission)
         start_value = initial_value - entry_cost
 
         portfolio_returns = (returns * weights).sum(axis=1)
@@ -334,7 +378,10 @@ class StrategyBacktester:
         total_return = (portfolio_values.iloc[-1] / initial_value - 1) * 100
         days = len(portfolio_values)
         annualized_return = ((1 + total_return / 100) ** (TRADING_DAYS_PER_YEAR / days) - 1) * 100 if days > 0 else 0
-        volatility = returns.mean(axis=1).std(ddof=1) * np.sqrt(TRADING_DAYS_PER_YEAR) * 100
+        # P1-2: Sharpe 分母必须用组合自身净值波动(按权重加权)，而非各标的等权收益均值。
+        # 原实现 returns.mean(axis=1).std() 把组合当成各标的等权平均，使不同权重结构的
+        # 策略波动率被强制拉平、Sharpe 失真。改为组合净值日收益序列的标准差。
+        volatility = portfolio_values.pct_change().std(ddof=1) * np.sqrt(TRADING_DAYS_PER_YEAR) * 100
         # P0-1 统一来源: RISK_FREE_RATE=0.025(小数) -> 本函数口径为百分比(×100=2.5%)
         risk_free_annual = RISK_FREE_RATE * 100
         sharpe = (annualized_return - risk_free_annual) / volatility if volatility > 0 else 0
