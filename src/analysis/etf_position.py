@@ -94,10 +94,10 @@ def load_flow_series(conn, code: str) -> pd.Series:
 #: index_pe_history 的数据源可信度。csindex = 中证官方口径(权威);
 #: neodata 的 PE 口径与中证官方不一致 (同日实测最大偏离 ~2.7 倍),
 #: 与 csindex 历史分布混算会让估值分位严重失真。
-PE_SOURCE_PRIORITY = ("csindex", "neodata")
+PE_SOURCE_PRIORITY = ("csindex", "legulegu", "neodata")
 #: 未标注来源(unknown) 只出现在迁移前的旧库或调用方直接传入裸序列的场景,
 #: 不据此扣置信; 只有已知口径有问题的 neodata 才压低置信。
-PE_SOURCE_CONFIDENCE = {"csindex": 1.0, "neodata": 0.4, "unknown": 1.0}
+PE_SOURCE_CONFIDENCE = {"csindex": 1.0, "legulegu": 1.0, "neodata": 0.4, "unknown": 1.0}
 
 
 def _pe_table_has_source(conn) -> bool:
@@ -284,16 +284,21 @@ def flow_position(series: pd.Series) -> Tuple[Optional[float], float, Dict]:
 # --------------------------------------------------------------------------- #
 # 因子 F2: 估值定位 (带数据就绪闸门)
 # --------------------------------------------------------------------------- #
-VAL_MIN_DAYS = 250      # ≈1 年, 低于此直接不可用
-VAL_FULL_DAYS = 1250    # ≈5 年, 达到此给满置信
+VAL_MIN_DAYS = 250      # ≈1 年(日频), 低于此直接不可用
+VAL_FULL_DAYS = 1250    # ≈5 年(日频), 达到此给满置信
+VAL_MIN_MONTHS = 120    # ≈10 年(月频, 乐咕等月频源); 月频点跨度远大于同数日频点
+# 月频源集合: 其"历史点数"实为月数, 日历跨度远大于同数日频点,
+# 故闸门用 VAL_MIN_MONTHS 而非 VAL_MIN_DAYS (否则乐咕 204 月会被误判不足)。
+MONTHLY_SOURCES = {"legulegu"}
 
 
 def valuation_position(pe_hist: List[float], current_pe: Optional[float] = None,
                        source: str = "unknown") -> Tuple[Optional[float], float, Dict]:
-    if len(pe_hist) < VAL_MIN_DAYS:
+    _min_n = VAL_MIN_MONTHS if source in MONTHLY_SOURCES else VAL_MIN_DAYS
+    if len(pe_hist) < _min_n:
         return None, 0.0, {
             "available": False,
-            "reason": f"PE 历史仅 {len(pe_hist)} 日(<{VAL_MIN_DAYS} 闸门), 估值分位不可信",
+            "reason": f"PE 历史仅 {len(pe_hist)} 点(<{_min_n} 闸门), 估值分位不可信",
             "n_pe": len(pe_hist), "pe_source": source,
         }
     hist = np.array([x for x in pe_hist if x > 0], dtype=float)

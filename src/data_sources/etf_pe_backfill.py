@@ -38,8 +38,10 @@
 - `930914` 港股通高股息低波（原误填 `h11118`=中证两岸三地500美元）→ `159220` 港股通红利低波ETF华宝
 - `931743` 中证消费电子 → `159732` 消费电子ETF华夏（原 etf_position 误填 `930006`，本次一并纠正并回补）
 
-如需补齐创业板50(399673) 的 PE，需改用 eastmoney / wind 等付费源，本报告环境内
-csindex + 乐咕均不可得。
+创业板50(399673) 的 PE 已由乐咕(legulegu) 经 `fetch_legulegu_pe` 补齐：
+`ak.stock_index_pe_lg(symbol="创业板50")` 可稳定取得 2009 至今月度 PE-TTM（整体法），
+与 neodata 同日偏离 <3.1%，是国证/深交所体系的最佳可用源。
+（早期文档称「乐咕 SSL 失败 / csindex+乐咕均不可得」已过时，实测乐咕可用。）
 """
 from __future__ import annotations
 
@@ -60,7 +62,15 @@ DEFAULT_END = datetime.now().strftime("%Y%m%d")
 # 930006 / h11118 已从该集合移除：二者不是"上游缺口"，而是早期 ETF→指数映射
 # 填错的产物（930006=中证A50美元指数、h11118=中证两岸三地500美元指数），
 # 正确映射为 H30590(159770) / 930914(159220)，这两个 csindex 均可取，见模块文档。
-UNAVAILABLE_INDICES = {"399673"}
+# csindex 未发布 PE 历史的上游缺口指数（仅 csindex 分支；乐咕分支独立覆盖 399673）。
+# 注：399673 创业板50 属国证/深交所体系，csindex 确实不发布其 PE，但乐咕(legulegu)
+# 经 ak.stock_index_pe_lg 可稳定取得 2009 至今月度 PE-TTM，故已从本集合移除，改由
+# LEGULEGU_NAME_MAP + fetch_legulegu_pe 在 backfill 中补齐。
+CSINDEX_UNAVAILABLE_INDICES = set()
+
+# 乐咕(legulegu) 指数名映射：代码 -> 乐咕使用的指数名（非代码）。
+# 仅收录 csindex 不发布、但乐咕可取的国证/深交所体系指数。
+LEGULEGU_NAME_MAP = {"399673": "创业板50"}
 
 
 def _target_indices() -> List[str]:
@@ -117,6 +127,50 @@ def fetch_csindex_pe(index_code: str, end_date: str = DEFAULT_END,
     return []
 
 
+def fetch_legulegu_pe(index_code: str, end_date: str = DEFAULT_END,
+                      retries: int = 3) -> List[Tuple[str, float]]:
+    """从乐咕(legulegu) 取指数 PE-TTM 长历史（月度）。
+
+    乐咕用指数名而非代码；399673 创业板50 属国证/深交所体系，csindex 不发布其 PE，
+    乐咕是最佳可用源（ak.stock_index_pe_lg）。返回 [(date 'YYYY-MM-DD', pe), ...]
+    （整体法 滚动市盈率）。与 neodata 同日偏离 <3.1%，口径与 csindex 一致。
+
+    Returns:
+        [(date_str 'YYYY-MM-DD', pe), ...]；失败返回空列表。
+    """
+    import akshare as ak
+    import pandas as pd
+
+    name = LEGULEGU_NAME_MAP.get(index_code)
+    if not name:
+        return []
+    last_err: Optional[str] = None
+    for _ in range(retries):
+        try:
+            df = ak.stock_index_pe_lg(symbol=name)
+            if df is None or df.empty or "滚动市盈率" not in df.columns:
+                last_err = "empty/no-pe-col"
+                time.sleep(1.2)
+                continue
+            out: List[Tuple[str, float]] = []
+            for d, pe in zip(df["日期"], df["滚动市盈率"]):
+                try:
+                    pe_f = float(pe)
+                except (TypeError, ValueError):
+                    continue
+                if pe_f is None or pe_f != pe_f or pe_f <= 0:  # NaN/非正
+                    continue
+                out.append((pd.to_datetime(d).strftime("%Y-%m-%d"), round(pe_f, 4)))
+            if out:
+                return out
+            last_err = "no-valid-pe"
+        except Exception as e:  # 限频 / 网络抖动 / 列重命名崩
+            last_err = f"{type(e).__name__}: {e}"
+        time.sleep(1.5)
+    logger.warning("[PE回补] %s 乐咕取数失败: %s", index_code, last_err)
+    return []
+
+
 def _ensure_source_column(conn) -> None:
     """幂等：index_pe_history 增加 source 列（区分 csindex / neodata 口径）。"""
     try:
@@ -128,23 +182,28 @@ def _ensure_source_column(conn) -> None:
         conn.commit()
 
 
-#: 条件 upsert：csindex 写入遇到已存在的 (index_code, date) 时，
-#: 仅当现存行不是 csindex（即被 neodata 占位）才覆盖 pe/source，
-#: 并**不动 pb / div_yield** —— neodata 的富字段由 advisor 的 PB 兜底依赖，
-#: 用 REPLACE 整行覆盖会把它们清空。现存行已是 csindex 则整条跳过。
-UPSERT_PE_SQL = """
+#: 多源优先级 upsert：按 source 优先级写入，高优先级源不被低优先级覆盖。
+#: 优先级 csindex(3) > legulegu(2) > neodata(1)，用 CASE 内联 rank 实现
+#: （SQLite 无自定义函数）。高优先级(或同优先级)写入时覆盖 pe/source；
+#: 低优先级遇到高优先级现存行则整条跳过（不动 pb / div_yield，避免清空 neodata 富字段）。
+SRC_RANK = {"csindex": 3, "legulegu": 2, "neodata": 1, "unknown": 0}
+_RANK_SQL = ("CASE source WHEN 'csindex' THEN 3 WHEN 'legulegu' THEN 2 "
+             "WHEN 'neodata' THEN 1 ELSE 0 END")
+UPSERT_PE_SQL = f"""
 INSERT INTO index_pe_history (index_code, date, pe, source)
-VALUES (?, ?, ?, 'csindex')
+VALUES (?, ?, ?, ?)
 ON CONFLICT(index_code, date) DO UPDATE SET
     pe = excluded.pe,
     source = excluded.source
-WHERE index_pe_history.source IS NULL OR index_pe_history.source <> 'csindex'
+WHERE ({_RANK_SQL.replace('source', 'excluded.source')}) >= ({_RANK_SQL})
 """
 
 
-def upsert_pe(conn, index_code: str, date: str, pe: float) -> bool:
-    """写入一条 csindex PE（条件 upsert）。返回是否实际改动了行。"""
-    cur = conn.execute(UPSERT_PE_SQL, (index_code, _norm_date(date), pe))
+def upsert_pe(conn, index_code: str, date: str, pe: float,
+              source: str = "csindex") -> bool:
+    """条件 upsert 一条 PE（按 source 优先级）。返回是否实际改动了行。"""
+    cur = conn.execute(UPSERT_PE_SQL,
+                       (index_code, _norm_date(date), pe, source))
     return cur.rowcount > 0
 
 
@@ -179,22 +238,33 @@ def backfill(conn, end_date: str = DEFAULT_END,
     _ensure_source_column(conn)
     for code in codes:
         rows = fetch_csindex_pe(code, end_date=end_date)
+        src = "csindex"
+        if not rows and code in LEGULEGU_NAME_MAP:
+            rows = fetch_legulegu_pe(code, end_date=end_date)
+            src = "legulegu"
         for ds, pe in rows:
             try:
-                upsert_pe(conn, code, ds, pe)
+                upsert_pe(conn, code, ds, pe, source=src)
             except Exception as e:
                 logger.debug("写入 %s/%s 失败: %s", code, ds, e)
         conn.commit()
         final = _count(conn, code)
         result[code] = final
-        logger.info("[PE回补] %s 尝试 %d 行, 回补后表内共 %d 行%s",
-                    code, len(rows), final,
-                    "（上游无PE，未补）" if not rows and code in UNAVAILABLE_INDICES else "")
+        note = ""
+        if not rows and code in CSINDEX_UNAVAILABLE_INDICES:
+            note = "（csindex无PE，乐咕亦未配置，未补）"
+        elif not rows and code in LEGULEGU_NAME_MAP:
+            note = "（乐咕取数失败，未补）"
+        logger.info("[PE回补] %s 源=%s 尝试 %d 行, 回补后表内共 %d 行%s",
+                    code, src, len(rows), final, note)
     return result
 
 
 def coverage_report(conn) -> Dict[str, dict]:
-    """逐 ETF 报告估值因子可用性（PE 历史是否达到估值闸门 250 日）。
+    """逐 ETF 报告估值因子可用性（PE 历史是否达到估值闸门）。
+
+    闸门按源区分：月频源(legulegu) 用 120 月 ≈ 10 年；日频源用 250 日 ≈ 1 年。
+    与 etf_position.valuation_position 的闸门口径保持一致。
 
     Returns: {etf_code: {"index":.., "pe_n":.., "valuation_ready":bool, "note":..}}
     """
@@ -212,12 +282,18 @@ def coverage_report(conn) -> Dict[str, dict]:
         n = conn.execute(
             "SELECT COUNT(*) FROM index_pe_history WHERE index_code=? AND pe>0",
             (idx,)).fetchone()[0]
-        ready = n >= 250
+        has_legulegu = conn.execute(
+            "SELECT 1 FROM index_pe_history WHERE index_code=? AND source='legulegu' LIMIT 1",
+            (idx,)).fetchone() is not None
+        min_n = 120 if has_legulegu else 250  # 月频点跨度远大于同数日频点
+        ready = n >= min_n
         note = ""
-        if idx in UNAVAILABLE_INDICES:
-            note = "上游无PE历史(csindex未发布)，估值因子禁用"
+        if idx in CSINDEX_UNAVAILABLE_INDICES and not has_legulegu:
+            note = "csindex未发布PE，且乐咕未配置，估值因子禁用"
+        elif idx in CSINDEX_UNAVAILABLE_INDICES and has_legulegu:
+            note = "csindex未发布PE，已用乐咕(legulegu)月度源补齐"
         elif not ready:
-            note = f"PE历史仅{n}日(<250闸门)"
+            note = f"PE历史仅{n}点(<{min_n}闸门)"
         rep[etf] = {"index": idx, "pe_n": n,
                     "valuation_ready": ready, "note": note}
     return rep
@@ -245,7 +321,7 @@ if __name__ == "__main__":
         stats = backfill(_conn)
         print("\n=== 各指数回补后行数 ===")
         for k, v in sorted(stats.items()):
-            tag = "  (上游无PE)" if k in UNAVAILABLE_INDICES else ""
+            tag = "  (csindex上游无PE)" if k in CSINDEX_UNAVAILABLE_INDICES else ""
             print(f"  {k}: {v}{tag}")
         rep = coverage_report(_conn)
         _print_coverage(rep)

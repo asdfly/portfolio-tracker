@@ -2,7 +2,8 @@
 
 背景（P0-3 估值分位分析的数据源补强）：
   - akshare `stock_zh_index_value_csindex` 仅返回最近 ~20 个交易日 PE，不足以算 5 年分位；
-  - 乐咕乐股 `stock_index_pe_lg/pb_lg` 长期 SSL 连接失败；
+  - 乐咕乐股 `stock_index_pe_lg/pb_lg` 现已可用（环境修复后），399673 创业板50 的
+    长历史 PE-TTM 改由 `etf_pe_backfill.fetch_legulegu_pe` 经乐咕补齐，本模块专注日频当前值；
   - neodata-financial-search 的「指数估值」接口可返回每日 PE/PB/股息率/风险溢价等
     丰富字段（实时，约近 10 个交易日），是可靠的估值数据源。
 
