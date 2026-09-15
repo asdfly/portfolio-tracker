@@ -35,6 +35,15 @@ _SELL_ACTIONS = {"证券卖出", "卖出", "SELL", "卖"}
 # 交叉校验阈值：Modified Dietz 与 daily_return 差异超过此值视为 total_value 失真
 _SUSPECT_DIVERGENCE = 0.30
 
+# MWR（资金加权收益）合理性区间 —— 超出即判定 IRR 求解器发散，返回 None。
+# 下界 -0.99：组合亏到接近清零的物理下限（二分法搜索下界亦为此值）。
+# 上界 5.0（+500%）：超过此量级的解几乎必然是现金流符号错误/多根导致的伪根。
+#   实测 2026-09-15 重建时解出 10.444292（+1044%），而同期 TWR 仅 +162.62%，
+#   差 882pp，明显发散。注意不要用 mwr < 10 这类宽区间——+900% 同样是错的。
+# 修复 IRR 算法本身是另一个专项（可能涉及现金流符号或多根），此处只做"不产出错误数字"。
+_MWR_MIN = -0.99
+_MWR_MAX = 5.0
+
 
 def get_db_connection() -> sqlite3.Connection:
     """复用项目统一的数据库路径建立连接"""
@@ -121,6 +130,10 @@ def _solve_period_irr(df: pd.DataFrame, cf: Dict[str, float],
       转换为投资者视角入金(正)参与 IRR 方程。
     - 分红 div：视为已分配收益，加到终点价值。
     用二分法解 NPV(R)=0。无外部现金流或 IRR 无实根时返回 None（此时 TWR 即足够）。
+
+    护栏：解出的 mwr 若非有限值或超出 [_MWR_MIN, _MWR_MAX]（默认 -0.99 ~ +5），
+    判定为 IRR 发散，返回 None 并 logger.warning 打印输入摘要。
+    （2026-09-15 加：此前无此护栏，曾把 10.444292 即 +1044% 的伪根写入全表。）
     """
     n = len(df)
     if n < 2:
@@ -140,6 +153,28 @@ def _solve_period_irr(df: pd.DataFrame, cf: Dict[str, float],
         return None  # 无外部现金流，MWR 退化为 TWR
     vt_adj = vt + div_total
 
+    # 输入摘要（IRR 发散时打印，便于定位是现金流符号还是多根问题）
+    net_in = sum(d for d, _ in flows)
+    _summary = (
+        f"MWR 输入摘要: 期间 {dates[0]}~{dates[-1]} ({n} 天), "
+        f"现金流 {len(flows)} 笔, 净流入 {net_in:,.2f}, "
+        f"首笔 {flows[0][0]:,.2f}@{dates[1] if n > 1 else '-'}, "
+        f"末笔 {flows[-1][0]:,.2f}, 分红合计 {div_total:,.2f}, "
+        f"期初市值 {values[0]:,.2f}, 期末市值 {vt:,.2f}"
+    )
+
+    def _guard(r: Optional[float], reason: str) -> Optional[float]:
+        """护栏：越界/非有限值一律返回 None，并记录输入摘要。"""
+        if r is None:
+            return None
+        if not np.isfinite(r) or not (_MWR_MIN <= r <= _MWR_MAX):
+            logger.warning(
+                "MWR 求解结果 %.6f 超出合理区间 [%.2f, %.2f]，判定 IRR 发散，本次不产出 MWR。"
+                "（%s）原因: %s", r, _MWR_MIN, _MWR_MAX, _summary, reason,
+            )
+            return None
+        return r
+
     def npv(r: float) -> float:
         s = vt_adj
         for dep, frac in flows:
@@ -149,17 +184,18 @@ def _solve_period_irr(df: pd.DataFrame, cf: Dict[str, float],
     lo, hi = -0.99, 100.0
     f_lo, f_hi = npv(lo), npv(hi)
     if f_lo * f_hi > 0:
+        logger.warning("MWR 无实根（NPV 在区间两端同号），本次不产出 MWR。（%s）", _summary)
         return None
     for _ in range(200):
         mid = (lo + hi) / 2
         f_mid = npv(mid)
         if abs(f_mid) < 1e-9:
-            return mid
+            return _guard(mid, "精确解")
         if f_lo * f_mid < 0:
             hi, f_hi = mid, f_mid
         else:
             lo, f_lo = mid, f_mid
-    return (lo + hi) / 2
+    return _guard((lo + hi) / 2, "二分未收敛到 1e-9，返回区间中点")
 
 
 def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
@@ -285,7 +321,14 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
 
 
 def get_nav_series(conn: Optional[sqlite3.Connection] = None) -> pd.DataFrame:
-    """读取 portfolio_nav 序列，便于下游（基准对比/回撤/归因）消费。"""
+    """读取 portfolio_nav 序列，便于下游（基准对比/回撤/归因）消费。
+
+    ⚠️ `mwr_return` 可能为 NULL（读出来是 NaN）——MWR 的 IRR 求解器会发散，
+    已加护栏（`_MWR_MIN` ~ `_MWR_MAX`），越界即不产出。下游展示前必须判空：
+    `None` / `NaN` 请显示"暂不可用"，**不要**渲染成 nan / None / 0，
+    也不要用 0 参与任何运算（会被当成"收益为零"）。
+    另见 docs/handover/07_known_data_issues.md「问题四」。
+    """
     own = conn is None
     if own:
         conn = get_db_connection()
