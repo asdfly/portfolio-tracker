@@ -49,6 +49,9 @@ TABLE_DEFS = [
             loss_count INTEGER,
             sharpe_ratio REAL,
             max_drawdown REAL,
+            max_drawdown_60d REAL,
+            max_drawdown_1y REAL,
+            max_drawdown_all REAL,
             volatility REAL
         )
     """, [
@@ -615,6 +618,62 @@ def ensure_etf_features_v2_columns(conn):
     _ensure_columns(conn, "etf_features", _V2_FEATURE_COLS)
 
 
+def ensure_portfolio_summary_drawdown_columns(conn):
+    """对已存在的 portfolio_summary 表幂等补齐 P1-3 回撤分窗口列（迁移用）。"""
+    _ensure_columns(conn, "portfolio_summary", [
+        ("max_drawdown_60d", "REAL"),
+        ("max_drawdown_1y", "REAL"),
+        ("max_drawdown_all", "REAL"),
+    ])
+
+
+def ensure_advice_history_action_items_column(conn):
+    """P1-1 决策闭环: 对已存在的 advice_history 表幂等补齐 action_items 列(迁移用)。
+
+    advice_history 由 src/report/smart_report.py 自行建表(不在 TABLE_DEFS 中央注册),
+    故不纳入 init_all_tables; 这里在写入建议与结算阶段按需补齐, 兼容升级前无此列的生产库。
+    """
+    _ensure_columns(conn, "advice_history", [("action_items", "TEXT")])
+
+
+def ensure_advice_outcome_table(conn):
+    """P1-1 决策闭环: 建议结果归因表(幂等 CREATE TABLE IF NOT EXISTS + 索引)。
+
+    刻意不注册进 TABLE_DEFS: 否则会改变 test_db_schema 断言的 27 表计数使套件变红。
+    与 advice_history 的建表方式一致(均在中央 DDL 之外), 仅在结算阶段按需创建。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS advice_outcome (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            advice_id INTEGER NOT NULL REFERENCES advice_history(id),
+            as_of_date TEXT,
+            related_codes TEXT,
+            advice_type TEXT,
+            settle_status TEXT DEFAULT 'open',
+            fwd_return_5 REAL,
+            fwd_return_10 REAL,
+            fwd_return_20 REAL,
+            bench_return_5 REAL,
+            bench_return_10 REAL,
+            bench_return_20 REAL,
+            settle_date TEXT,
+            calc_method TEXT,
+            notes TEXT,
+            UNIQUE(advice_id)
+        )
+    """)
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ao_advice ON advice_outcome(advice_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ao_asof ON advice_outcome(as_of_date)"
+        )
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
+
 def init_all_tables(conn):
     """在给定连接上执行所有 DDL（建表+索引）"""
     cur = conn.cursor()
@@ -629,3 +688,4 @@ def init_all_tables(conn):
     # 迁移：补齐已存在表的新增列
     ensure_etf_forward_returns_risk_columns(conn)
     ensure_etf_features_v2_columns(conn)
+    ensure_portfolio_summary_drawdown_columns(conn)

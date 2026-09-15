@@ -9,6 +9,7 @@ from src.analysis.backtest import StrategyBacktester
 from src.analysis.advisor import SmartAdvisor
 from data_loader import get_db_connection
 import sqlite3
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -74,20 +75,25 @@ class SmartReportGenerator:
                     confidence REAL,
                     related_codes TEXT,
                     source TEXT DEFAULT 'auto',
-                    status TEXT DEFAULT 'pending'
+                    status TEXT DEFAULT 'pending',
+                    action_items TEXT
                 )
             """)
             _conn_fb.commit()
+            # 幂等补齐 action_items 列(已存在则跳过): 兼容升级前已建、无此列的生产库
+            from src.utils.db_schema import ensure_advice_history_action_items_column
+            ensure_advice_history_action_items_column(_conn_fb)
             for advice in advices:
                 _conn_fb.execute(
-                    "INSERT INTO advice_history (created_at, advice_type, priority, title, description, confidence, related_codes, source, status) VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO advice_history (created_at, advice_type, priority, title, description, confidence, related_codes, source, status, action_items) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (advice.created_at.strftime('%Y-%m-%d %H:%M:%S'),
                      advice.type.value, advice.priority.value,
                      advice.title, advice.description,
                      advice.confidence,
                      ','.join(advice.related_codes),
                      'smart_report',
-                     'pending')
+                     'pending',
+                     json.dumps(advice.action_items or [], ensure_ascii=False))
                 )
             _conn_fb.commit()
             logger.info(f'建议历史已记录: {len(advices)}条')

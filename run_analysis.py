@@ -636,6 +636,156 @@ def run_stage4_smart(results, summary, risk_data):
         return None
 
 
+def _calc_legs_forward_return(cur, codes, entry_date, exit_date):
+    """leg 口径: related_codes 等权均值的前向收益。
+
+    入场价 = 各 code 在 entry_date(含)前最近快照 current_price;
+    出场价 = 各 code 在 exit_date(含)前最近快照 current_price。
+    等权平均各 code 的 (exit/entry - 1)。无可用数据返回 None(不臆造)。
+    """
+    if not codes:
+        return None
+    rets = []
+    for code in codes:
+        row_e = cur.execute(
+            "SELECT current_price FROM portfolio_snapshots "
+            "WHERE code=? AND date<=? ORDER BY date DESC LIMIT 1",
+            (code, entry_date),
+        ).fetchone()
+        if not row_e or row_e[0] in (None, 0):
+            continue
+        row_x = cur.execute(
+            "SELECT current_price FROM portfolio_snapshots "
+            "WHERE code=? AND date<=? ORDER BY date DESC LIMIT 1",
+            (code, exit_date),
+        ).fetchone()
+        if not row_x or row_x[0] in (None, 0):
+            continue
+        rets.append(row_x[0] / row_e[0] - 1.0)
+    if not rets:
+        return None
+    return sum(rets) / len(rets)
+
+
+def _calc_nav_forward_return(cur, entry_date, exit_date):
+    """portfolio NAV 口径: 组合总市值(portfolio_summary.total_value)同期变化。
+
+    作为 bench_return 基准对照, 衡量"建议后组合整体表现"。无可用数据返回 None。
+    """
+    row_e = cur.execute(
+        "SELECT total_value FROM portfolio_summary "
+        "WHERE date<=? ORDER BY date DESC LIMIT 1", (entry_date,)
+    ).fetchone()
+    if not row_e or row_e[0] in (None, 0):
+        return None
+    row_x = cur.execute(
+        "SELECT total_value FROM portfolio_summary "
+        "WHERE date<=? ORDER BY date DESC LIMIT 1", (exit_date,)
+    ).fetchone()
+    if not row_x or row_x[0] in (None, 0):
+        return None
+    return row_x[0] / row_e[0] - 1.0
+
+
+def run_stage_advice_settle(conn, as_of_date):
+    """P1-1 决策闭环: 建议结果归因结算。
+
+    对 advice_history 中尚未归因(或曾因未来函数被 skip)的建议, 按 T+5/10/20
+    计算"建议后表现"(forward return), 写入 advice_outcome。
+
+    两条口径:
+      - fwd_return_*: related_codes 等权均值(leg 口径, calc_method='equal_weight_legs')
+      - bench_return_*: 组合总市值同期变化(portfolio NAV 口径, 基准对照)
+
+    未来函数红线: exit_date(= advice_date 后第 h 个交易日) 若晚于本次运行日 as_of_date,
+    则该 horizon 不计算、forward return=NULL, 绝不回看未来价。
+    只有全部 horizon 均已过去才置 settle_status='settled'; 否则保持 'skipped' 待下轮重试。
+
+    不伪造执行: 仅记录"建议后组合/标的表现", 不自动置 advice_history.status='executed'。
+    口径诚实: 这是"建议后"表现, 不等于"用户实际收益"(用户未必按建议操作)。
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        from src.utils.db_schema import (
+            ensure_advice_history_action_items_column,
+            ensure_advice_outcome_table,
+        )
+        ensure_advice_history_action_items_column(conn)
+        ensure_advice_outcome_table(conn)
+        cur = conn.cursor()
+
+        # 1) 为每条尚无归因记录的 advice_history 建 open 归因行(幂等: 已存在则跳过)
+        adv_rows = cur.execute(
+            "SELECT id, created_at, related_codes, advice_type FROM advice_history"
+        ).fetchall()
+        for aid, created_at, related_codes, advice_type in adv_rows:
+            if cur.execute(
+                "SELECT 1 FROM advice_outcome WHERE advice_id=?", (aid,)
+            ).fetchone():
+                continue
+            advice_date = (created_at or "")[:10]
+            cur.execute(
+                "INSERT INTO advice_outcome "
+                "(advice_id, as_of_date, related_codes, advice_type, settle_status) "
+                "VALUES (?,?,?,?,'open')",
+                (aid, advice_date, related_codes or "", advice_type or ""),
+            )
+        conn.commit()
+
+        # 2) 结算所有未完成的归因行(open 或曾 skipped)
+        HORIZONS = (5, 10, 20)
+        open_rows = cur.execute(
+            "SELECT id, advice_id, as_of_date, related_codes "
+            "FROM advice_outcome WHERE settle_status IN ('open','skipped')"
+        ).fetchall()
+        settled_n = skipped_n = 0
+        for oid, advice_id, advice_date, related_codes in open_rows:
+            codes = [c.strip() for c in (related_codes or "").split(',') if c.strip()]
+            # 严格晚于 advice_date 的交易日序列(来自 portfolio_snapshots 实际存在的日期)
+            fd = [r[0] for r in cur.execute(
+                "SELECT DISTINCT date FROM portfolio_snapshots "
+                "WHERE date>? ORDER BY date ASC", (advice_date,)
+            ).fetchall()]
+
+            fwd, bench = {}, {}
+            all_elapsed = True
+            for h in HORIZONS:
+                exit_date = fd[h - 1] if len(fd) >= h else None
+                if exit_date is None or exit_date > as_of_date:
+                    # 未来函数红线: 该 horizon 尚未到来, 不回看未来价
+                    fwd[h] = None
+                    bench[h] = None
+                    all_elapsed = False
+                    continue
+                fwd[h] = _calc_legs_forward_return(cur, codes, advice_date, exit_date)
+                bench[h] = _calc_nav_forward_return(cur, advice_date, exit_date)
+
+            settle_status = 'settled' if all_elapsed else 'skipped'
+            if all_elapsed:
+                settled_n += 1
+            else:
+                skipped_n += 1
+            cur.execute(
+                "UPDATE advice_outcome SET "
+                "fwd_return_5=?, fwd_return_10=?, fwd_return_20=?, "
+                "bench_return_5=?, bench_return_10=?, bench_return_20=?, "
+                "settle_status=?, settle_date=?, calc_method=?, notes=? "
+                "WHERE id=?",
+                (
+                    fwd.get(5), fwd.get(10), fwd.get(20),
+                    bench.get(5), bench.get(10), bench.get(20),
+                    settle_status, as_of_date, 'equal_weight_legs',
+                    '建议后表现归因(非实际收益); bench=组合NAV同期变化',
+                    oid,
+                ),
+            )
+        conn.commit()
+        logger.info(f"[P1-1 归因结算] 待结算 {len(open_rows)} 条: "
+                    f"settled={settled_n}, skipped={skipped_n}")
+    except Exception as e:
+        logger.warning(f"[P1-1 归因结算] 失败(不影响主流程): {e}", exc_info=True)
+
+
 def send_daily_report(results, alerts, advice_summary, news_result=None):
     """阶段五: 发送HTML邮件报告
 
@@ -1127,6 +1277,18 @@ def main(argv=None):
         else:
             advice_summary = run_stage4_smart(results, summary, risk_data)
             _reporter.stage("smart", "ok")
+
+        # === 阶段四b: P1-1 决策闭环 — 建议结果归因结算 ===
+        # 独立于阶段四是否生成新建议: 只要库里有 open/skipped 建议就结算历史。
+        # 包在 try/except 中, 任何异常仅记 warning, 绝不阻断日报生成。
+        try:
+            _settle_conn = get_db_connection()
+            run_stage_advice_settle(_settle_conn, _report_date)
+            _settle_conn.close()
+            _reporter.stage("advice_settle", "ok")
+        except Exception as e:
+            logger.warning(f"[P1-1 归因结算] 阶段异常(不影响主流程): {e}")
+            _reporter.stage("advice_settle", "error", note=str(e)[:160])
 
 
         # === 阶段六: 数据质量巡检 ===
