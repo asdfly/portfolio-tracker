@@ -247,6 +247,98 @@ def portfolio_view(latest_rows, otc_new_latest, exclude_codes):
 
 
 # --------------------------------------------------------------------------
+# 编程入口（供 run_analysis.py 日常管线调用）
+# --------------------------------------------------------------------------
+def run_otc_nav(start_date=None, codes=None, apply=True, log=print):
+    """采集场外基金净值并写入 portfolio_snapshots（只 INSERT，幂等）。
+
+    与 CLI main() 的区别：不打印、不读 argv、返回结构化结果供调用方上报。
+    单只标的失败只记 warning 并继续，不中断整批；调用方据 ok/failed 决定阶段状态。
+
+    Parameters
+    ----------
+    start_date : str | None  起始日期(含)，None 则用 CLI 默认 2026-08-01
+    codes      : list | None 指定 code 子集，None 则用 OTC_FUND_CODES 全集
+    apply      : bool        False 则只采集不写库（dry-run）
+    log        : callable    日志函数，默认 print
+
+    Returns
+    -------
+    dict: {"ok": int, "failed": int, "skipped": int, "inserted": int,
+           "error": str|None, "per_code": list[dict]}
+    """
+    start_date = start_date or "2026-08-01"
+    target = sorted(OTC_FUND_CODES)
+    if codes:
+        only = {str(c).strip() for c in codes if str(c).strip()}
+        target = [c for c in target if c in only]
+
+    result = {"ok": 0, "failed": 0, "skipped": 0, "inserted": 0,
+              "error": None, "per_code": []}
+
+    con = sqlite3.connect(str(DATABASE_PATH))
+    con.execute("PRAGMA busy_timeout=15000")
+    all_rows = []
+    try:
+        for code in target:
+            if code in NO_NAV_SOURCE:
+                log(f"  [{code}] 跳过：{NO_NAV_SOURCE[code]}")
+                result["skipped"] += 1
+                result["per_code"].append({"code": code, "status": "无净值源-跳过", "rows": 0})
+                continue
+
+            baseline = load_baseline(con, code)
+            if not baseline:
+                log(f"  [{code}] 跳过：无历史快照基线")
+                result["skipped"] += 1
+                result["per_code"].append({"code": code, "status": "无基线-跳过", "rows": 0})
+                continue
+
+            try:
+                nav_hist = fetch_nav_history(code)
+            except Exception as e:
+                log(f"  [{code}] 净值获取失败：{type(e).__name__}: {e}")
+                result["failed"] += 1
+                result["per_code"].append(
+                    {"code": code, "status": f"抓取失败-{type(e).__name__}", "rows": 0})
+                continue
+
+            if not nav_hist:
+                log(f"  [{code}] 净值序列为空")
+                result["failed"] += 1
+                result["per_code"].append({"code": code, "status": "空序列", "rows": 0})
+                continue
+
+            existing = load_existing_dates(con, code)
+            rows, meta = build_rows(code, nav_hist, baseline, existing, start_date)
+            all_rows.extend(rows)
+            result["ok"] += 1
+            result["per_code"].append({
+                "code": code, "status": "OK", "rows": len(rows),
+                "nav_latest_date": meta["nav_latest"][0],
+                "row_range": (rows[0][0], rows[-1][0]) if rows else None,
+            })
+            log(f"  [{code}] 最新净值 {meta['nav_latest'][0]} | 待插入 {len(rows)} 行")
+
+        if not apply:
+            log(f"  [dry-run] 共 {len(all_rows)} 行待插入，未写库")
+            return result
+
+        if all_rows:
+            try:
+                con.execute("BEGIN")
+                result["inserted"] = insert_rows(con, all_rows)
+                con.commit()
+            except Exception as e:
+                con.rollback()
+                result["error"] = f"写库失败已回滚: {type(e).__name__}: {e}"
+                log(f"  {result['error']}")
+    finally:
+        con.close()
+    return result
+
+
+# --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
 def main():

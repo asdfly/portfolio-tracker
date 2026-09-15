@@ -76,6 +76,43 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 
+def run_stage0_otc_nav(date_str=None):
+    """阶段0: 场外基金净值采集 —— 必须在阶段一之前跑。
+
+    背景（P0-1 根治）：场外基金不产生交易所行情，日常链路只覆盖场内 ETF，
+    导致 13 只场外基金的 portfolio_snapshots 长期停在 2026-07-31（约 45 天），
+    合计 571,642.83 元（占组合 37.8%）在用陈旧估值参与再平衡权重计算。
+    scripts/fetch_otc_fund_nav.py 此前只是一次性手工脚本，未进日常管线 ——
+    不接进来的话，补到 09-14 的净值从次日起又开始空窗，一个月后原样复发。
+
+    为什么排在阶段一之前：run_stage1_basic 会读持仓快照算市值，
+    场外净值必须先落库，否则当天日报仍用昨天的场外净值，接了等于白接。
+
+    口径与安全性：
+     - 只 INSERT OR IGNORE，靠 UNIQUE(date, code) 兜底，重复运行幂等、绝不覆盖已有行
+       （nav_engine 用本表算 TWR，重写历史会改写净值曲线）；
+     - 880013（天添利，券商资管现金管理产品）无公开净值源，按设计跳过；
+     - 单只抓取失败只记 warning 并继续，只有全部失败才向上抛错。
+
+    Returns:
+        dict: run_otc_nav 的结构化结果（ok/failed/skipped/inserted/per_code）。
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("[阶段0/5] 场外基金净值采集")
+    logger.info("-" * 50)
+
+    from scripts.fetch_otc_fund_nav import run_otc_nav
+    res = run_otc_nav(start_date=None, apply=True, log=logger.info)
+    logger.info(
+        f"  场外净值: 成功 {res['ok']} 只, 失败 {res['failed']} 只, "
+        f"跳过(无净值源) {res['skipped']} 只, 新增 {res['inserted']} 行")
+    if res["error"]:
+        raise RuntimeError(res["error"])
+    if res["ok"] == 0 and res["skipped"] == 0:
+        raise RuntimeError("场外净值采集全部失败")
+    return res
+
+
 def run_stage1_basic(analyzer):
     """阶段一: 基础分析 - 持仓数据获取、技术指标计算"""
     logger = logging.getLogger(__name__)
@@ -876,6 +913,14 @@ def main(argv=None):
         except Exception as e:
             logger.warning(f"数据源健康检测失败(不影响主流程): {e}")
 
+
+        # === 阶段0: 场外基金净值采集（必须先于阶段一，否则当天日报仍用昨日净值）===
+        try:
+            run_stage0_otc_nav(backfill_date)
+            _reporter.stage("otc_nav", "ok")
+        except Exception as e:
+            logger.warning(f"场外基金净值采集失败(不影响主流程): {e}")
+            _reporter.stage("otc_nav", "error", note=str(e)[:160])
 
         # === 阶段一: 基础分析 ===
         results = run_stage1_basic(analyzer)
