@@ -40,7 +40,10 @@ _SUSPECT_DIVERGENCE = 0.30
 # 上界 5.0（+500%）：超过此量级的解几乎必然是现金流符号错误/多根导致的伪根。
 #   实测 2026-09-15 重建时解出 10.444292（+1044%），而同期 TWR 仅 +162.62%，
 #   差 882pp，明显发散。注意不要用 mwr < 10 这类宽区间——+900% 同样是错的。
-# 修复 IRR 算法本身是另一个专项（可能涉及现金流符号或多根），此处只做"不产出错误数字"。
+# 修复 IRR 算法本身是另一个专项（2026-09-15 已完成）：根因为 NPV 方程漏掉 v0 项，
+# 已补回（见 _solve_period_irr）；但全周期 IRR 对 14 年长历史仍病态（补 v0 后仍 +680%），
+# 故 mwr_return 列改用滚动 1 年（年化）Modified Dietz（见 _trailing_mwr_annualized），
+# 本函数仅保留作诊断用途，不再填充列。
 _MWR_MIN = -0.99
 _MWR_MAX = 5.0
 
@@ -134,6 +137,10 @@ def _solve_period_irr(df: pd.DataFrame, cf: Dict[str, float],
     护栏：解出的 mwr 若非有限值或超出 [_MWR_MIN, _MWR_MAX]（默认 -0.99 ~ +5），
     判定为 IRR 发散，返回 None 并 logger.warning 打印输入摘要。
     （2026-09-15 加：此前无此护栏，曾把 10.444292 即 +1044% 的伪根写入全表。）
+
+    ⚠️ 2026-09-15 起本函数**仅保留作诊断**：mwr_return 列改由
+    `_trailing_mwr_annualized` 填充。全周期 IRR 对 14 年长历史病态（补 v0 后仍 +680%），
+    单期 Modified Dietz 年化才是稳健口径。
     """
     n = len(df)
     if n < 2:
@@ -141,6 +148,11 @@ def _solve_period_irr(df: pd.DataFrame, cf: Dict[str, float],
     dates = [d.strftime("%Y-%m-%d") for d in df["date"]]
     values = df["total_value"].astype(float).tolist()
     vt = values[-1]
+    v0 = values[0]   # 期初持仓市值：必须作为 t=0 的投资进入 NPV 方程，否则会把
+                     # 「初始本金 + 历史收益」全算到中途入金头上，解出差一个数量级的伪根。
+                     # 实测缺该项时解出 +1044%（10.444292），补回后仍 +680%——
+                     # 说明全周期 IRR 对 14 年长历史本身不可靠（见 _trailing_mwr_annualized）。
+                     # 补 v0 是必要正确性修复，但本函数仅作诊断保留，不再用于填充 mwr_return 列。
     t = n - 1
     flows = []  # (投资者入金额>0, 时间权重指数 (T-i)/T)
     div_total = 0.0
@@ -177,6 +189,7 @@ def _solve_period_irr(df: pd.DataFrame, cf: Dict[str, float],
 
     def npv(r: float) -> float:
         s = vt_adj
+        s -= v0 * (1 + r) ** 1.0   # 初始持仓视为 t=0 投资（2026-09-15 补，原缺此项）
         for dep, frac in flows:
             s -= dep * (1 + r) ** frac
         return s
@@ -196,6 +209,74 @@ def _solve_period_irr(df: pd.DataFrame, cf: Dict[str, float],
         else:
             lo, f_lo = mid, f_mid
     return _guard((lo + hi) / 2, "二分未收敛到 1e-9，返回区间中点")
+
+
+def _trailing_mwr_annualized(df: pd.DataFrame, cf: Dict[str, float], div: Dict[str, float],
+                             window: int = 365) -> list:
+    """滚动 `window` 个交易日的**年化**资金加权收益（单期 Modified Dietz）。
+
+    逐行填充到 portfolio_nav.mwr_return，这是经纪商口径的「近 1 年收益（资金加权）」。
+
+    **为什么不用全周期 IRR（`_solve_period_irr`）：**
+    对 14 年、3477 行、现金流相对早期市值巨大的序列，全周期 IRR 病态：
+    早期市值小 + 现金流相对大 + 月末 `total_value` 失真，解出的伪根实测可达
+    +680%（补 v0 项后）甚至 +1044%（缺 v0 项时）；链式逐日 MD 更爆炸到 ~+4325%。
+    根因不是方程 bug，而是「单期 IRR 对超长历史不可靠」。
+
+    **改用滚动 1 年单期 Modified Dietz 年化：**
+    窗口短 → 现金流相对市值小 → 月末失真被摊销 → 稳定可用。
+    实测最近数个交易日连续给出 ~+43% 的稳定值（同数据下链式法 ~+270%，故只用单期 MD，不链式）。
+
+    公式（窗口 [start, idx]，投资视角入金为正）：
+        md_window = (vt_adj - v_begin - net_in) / (v_begin + net_in * 0.5)
+        mwr_annualized = (1 + md_window) ** (365 / days) - 1
+
+    护栏（任一条命中 → 该行 None，不产出错误数字）：
+        v_begin <= 0 或分母 <= 0（早期低市值 + 大额出入金导致）
+        md / mwr 非有限值
+        mwr 年化超出 [_MWR_MIN, _MWR_MAX]
+    """
+    n = len(df)
+    if n < 2:
+        return [None] * n
+    dates = [d.strftime("%Y-%m-%d") for d in df["date"]]
+    values = df["total_value"].astype(float).tolist()
+    # 逐日投资者入金（dep = -cf，入金为正）与分红，0-indexed 累计
+    dep_arr = np.zeros(n)
+    div_arr = np.zeros(n)
+    for i in range(1, n):
+        dep_arr[i] = -float(cf.get(dates[i], 0.0))
+        div_arr[i] = float(div.get(dates[i], 0.0))
+    net_in_cum = np.cumsum(dep_arr)
+    div_cum = np.cumsum(div_arr)
+
+    out = []
+    for idx in range(n):
+        start = max(0, idx - window)
+        v_begin = values[start]
+        vt = values[idx]
+        net_in = float(net_in_cum[idx] - net_in_cum[start])
+        div_win = float(div_cum[idx] - div_cum[start])
+        vt_adj = vt + div_win
+        denom = v_begin + net_in * 0.5
+        if v_begin <= 0 or denom <= 0:
+            out.append(None)
+            continue
+        md = (vt_adj - v_begin - net_in) / denom
+        days = idx - start
+        if days <= 0 or not np.isfinite(md):
+            out.append(None)
+            continue
+        try:
+            mwr = (1.0 + md) ** (365.0 / days) - 1.0
+        except (ValueError, OverflowError):
+            out.append(None)
+            continue
+        if not np.isfinite(mwr) or not (_MWR_MIN <= mwr <= _MWR_MAX):
+            out.append(None)
+            continue
+        out.append(float(mwr))
+    return out
 
 
 def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
@@ -270,11 +351,13 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
             prev_v = v
             prev_nav = unit_nav
 
-        # 全周期资金加权收益（IRR，含分红），写入每行便于任意行读取
-        mwr = _solve_period_irr(df, cf, div)
-        if mwr is not None:
-            for row in rows:
-                row["mwr_return"] = round(mwr, 6)
+        # 资金加权收益（MWR）：滚动 1 年（年化）单期 Modified Dietz。
+        # 全周期 IRR 对 14 年长历史病态（见 _solve_period_irr / docs 问题四），
+        # 改用逐行滚动口径，结果稳定且接近经纪商「近 1 年收益」语义。
+        mwr_list = _trailing_mwr_annualized(df, cf, div)
+        for i, row in enumerate(rows):
+            v = mwr_list[i]
+            row["mwr_return"] = round(v, 6) if v is not None else None
 
         cur = conn.cursor()
         cur.execute(
@@ -323,10 +406,11 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
 def get_nav_series(conn: Optional[sqlite3.Connection] = None) -> pd.DataFrame:
     """读取 portfolio_nav 序列，便于下游（基准对比/回撤/归因）消费。
 
-    ⚠️ `mwr_return` 可能为 NULL（读出来是 NaN）——MWR 的 IRR 求解器会发散，
-    已加护栏（`_MWR_MIN` ~ `_MWR_MAX`），越界即不产出。下游展示前必须判空：
-    `None` / `NaN` 请显示"暂不可用"，**不要**渲染成 nan / None / 0，
-    也不要用 0 参与任何运算（会被当成"收益为零"）。
+    ⚠️ `mwr_return` 现为**滚动 1 年（年化）单期 Modified Dietz**口径
+    （见 `_trailing_mwr_annualized`），替代原全周期 IRR（对 14 年长历史病态，
+    见 `_solve_period_irr` / docs 问题四）。逐行填入，**早期低市值 + 大额出入金
+    时点仍为 NULL**。下游展示前**仍须判空**：`None` / `NaN` 显示"暂不可用"，
+    **不要**渲染成 nan / None / 0，也不要用 0 参与任何运算（会被当成"收益为零"）。
     另见 docs/handover/07_known_data_issues.md「问题四」。
     """
     own = conn is None

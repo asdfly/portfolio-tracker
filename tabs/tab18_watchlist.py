@@ -63,8 +63,7 @@ def _load_watch_data(code):
     return price_df, tech_row
 
 
-@st.cache_data(ttl=3600, show_spinner="正在加载估值数据…")
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner="正在加载观察名单…")
 def _load_watch_items():
     """观察名单的元信息，全部从配置/数据推导，不在本文件写死标的。
 
@@ -227,6 +226,10 @@ def render_tab18():
             # 技术面
             if tech_row:
                 st.markdown("**技术面（最新）**")
+                st.caption(
+                    "指标基于观察名单补采行情（与持仓 Tab 同算法，行日期 = K 线末日；"
+                    "清仓前的存量行曾滞后一个交易日，不影响此处最新值）。"
+                )
                 tc1, tc2, tc3, tc4 = st.columns(4)
                 tc1.metric("MA", tech_row.get("ma_signal") or "—")
                 tc2.metric("MACD", tech_row.get("macd_signal") or "—")
