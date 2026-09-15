@@ -25,7 +25,8 @@ import sqlite3
 
 from PIL import Image
 
-from config.settings import CACHE_TTL, DATABASE_PATH, DOWNSAMPLE_MAX_POINTS, ETF_CATEGORIES, INDEX_CODES, SECTOR_COLORS
+from config.settings import (CACHE_TTL, DATABASE_PATH, DOWNSAMPLE_MAX_POINTS, ETF_CATEGORIES,
+                             INDEX_CODES, RISK_FREE_RATE, SECTOR_COLORS)
 from src.utils.database import get_db_connection
 from data_loader import (
     _ensure_indexes, get_db_connection,
@@ -745,9 +746,10 @@ def _generate_oneclick_report(positions, summary, technical, selected_date, sele
     port_daily = (summary["daily_return"] / 100).dropna() if "daily_return" in summary.columns else summary["total_value"].pct_change().dropna()
     ann_ret = port_daily.mean() * 252 * 100 if len(port_daily) > 0 else 0
     ann_vol = port_daily.std() * math.sqrt(252) * 100 if len(port_daily) > 1 else 0
-    sharpe = (port_daily.mean() / port_daily.std() * math.sqrt(252)) if port_daily.std() > 0 else 0
-    # 使用预存的 max_drawdown（基于 corrected daily_return 累积序列）
-    max_dd = summary["max_drawdown"].min() if "max_drawdown" in summary.columns else ((summary["total_value"] - summary["total_value"].cummax()) / summary["total_value"].cummax() * 100).min()
+    # P1-3: 与 risk.py 一致口径——算术年化收益、减无风险利率
+    sharpe = ((port_daily.mean() * 252 - RISK_FREE_RATE) / (port_daily.std() * math.sqrt(252))) if port_daily.std() > 0 else 0
+    # 使用预存的 max_drawdown（基于 corrected daily_return 累积序列，headline 为 ALL 档）
+    max_dd = summary["max_drawdown"].max() if "max_drawdown" in summary.columns else ((summary["total_value"] - summary["total_value"].cummax()) / summary["total_value"].cummax() * 100).max()
 
     pc = len(positions[positions["pnl"] > 0])
     lc = len(positions[positions["pnl"] < 0])

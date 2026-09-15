@@ -461,6 +461,10 @@ class PortfolioAnalyzer:
         if 'drawdown_metrics' in portfolio_metrics:
             dm = portfolio_metrics['drawdown_metrics']
             risk_summary['max_drawdown'] = dm.get('max_drawdown')
+            # P1-3: 回撤分窗口（headline 已用 ALL 档）
+            risk_summary['max_drawdown_60d'] = dm.get('max_drawdown_60d')
+            risk_summary['max_drawdown_1y'] = dm.get('max_drawdown_1y')
+            risk_summary['max_drawdown_all'] = dm.get('max_drawdown_all')
             risk_summary['current_drawdown'] = dm.get('current_drawdown')
 
         if 'volatility_metrics' in portfolio_metrics:
@@ -517,6 +521,9 @@ class PortfolioAnalyzer:
             **summary,
             'sharpe_ratio': risk_summary.get('sharpe_ratio'),
             'max_drawdown': risk_summary.get('max_drawdown'),
+            'max_drawdown_60d': risk_summary.get('max_drawdown_60d'),
+            'max_drawdown_1y': risk_summary.get('max_drawdown_1y'),
+            'max_drawdown_all': risk_summary.get('max_drawdown_all'),
             'volatility': risk_summary.get('annual_volatility')
         }
         self.db.save_portfolio_summary(self.today, summary_with_risk)

@@ -48,6 +48,16 @@ class PortfolioRiskAnalyzer:
             logger.warning("历史数据不足，无法计算完整风险指标")
             return {'error': '历史数据不足'}
 
+        # P1-3: 回撤需 60d/1Y/ALL 三档 → 取全历史净值序列供 drawdown 使用；
+        # sharpe/波动率仍用最近 `days` 窗口（与历史口径一致）。
+        full_history = self._get_portfolio_history(100000)
+        full_daily = np.array(
+            [h.get('daily_return', 0) or 0 for h in full_history], dtype=float) / 100.0
+        if np.any(full_daily != 0):
+            full_prices = np.cumprod(1 + full_daily)
+        else:
+            full_prices = np.array([h['total_value'] for h in full_history], dtype=float)
+
         # 计算日收益率（使用 corrected daily_return，避免 total_value 跳变影响）
         # daily_return 在 DB 中以百分比格式存储（如 1.5 = 1.5%），需 /100 转小数
         values = np.array([h['total_value'] for h in history])
@@ -55,17 +65,18 @@ class PortfolioRiskAnalyzer:
         # 优先使用 corrected daily_return；若全部为 0 则 fallback 到 total_value.pct_change
         if np.any(daily_returns_pct != 0):
             returns = daily_returns_pct / 100
-            # 用 corrected returns 构建累积净值序列（避免 total_value 跳变影响回撤计算）
-            prices = np.cumprod(1 + returns)
+            # 用全历史 corrected 累积净值供 drawdown 分窗口（60d/1Y/ALL）
+            dd_prices = full_prices
         else:
             returns = np.diff(values) / values[:-1]
-            prices = values
+            dd_prices = values
 
         # 获取沪深300作为基准
         benchmark_returns = self._get_benchmark_returns('sh000300', days)
 
-        # 计算风险指标（使用 corrected 累积净值 prices 而非 raw total_value，避免场外基金跳变导致回撤虚高）
-        metrics = self.risk_analyzer.calculate_all(returns, prices, benchmark_returns)
+        # 计算风险指标（sharpe/波动率用 `returns`(days 窗口)；
+        # drawdown 用全历史 `dd_prices`，由 risk.py 内部切 60d/1Y/ALL）
+        metrics = self.risk_analyzer.calculate_all(returns, dd_prices, benchmark_returns)
 
         # 添加组合特定信息
         metrics['data_period'] = len(history)

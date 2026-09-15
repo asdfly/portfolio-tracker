@@ -95,33 +95,52 @@ class RiskAnalyzer:
         }
 
     def calculate_drawdown_metrics(self, prices: np.ndarray) -> Dict[str, Any]:
-        """计算回撤指标"""
+        """计算回撤指标（P1-3：同时给出 60d / 1Y / ALL 三档最大回撤）。
+
+        - `max_drawdown`       = 输入序列全历史（ALL）最大回撤，作为 headline 口径
+        - `max_drawdown_60d`   = 最近 60 个交易日
+        - `max_drawdown_1y`    = 最近 252 个交易日
+        - `max_drawdown_all`   = 与 `max_drawdown` 同值，便于显式区分窗口
+        其余字段（当前回撤、持续/恢复天数等）基于全历史计算。
+        """
         if len(prices) < 2:
             return {}
 
+        prices_arr = np.asarray(prices, dtype=float)
+
+        def _max_dd(sub: np.ndarray) -> float:
+            if len(sub) < 2:
+                return 0.0
+            cummax = np.maximum.accumulate(sub)
+            dd = (cummax - sub) / cummax
+            return float(np.max(dd))
+
+        # 全历史（ALL）
+        max_drawdown = _max_dd(prices_arr)
+        max_dd_60d = _max_dd(prices_arr[-60:]) if len(prices_arr) > 60 else max_drawdown
+        max_dd_1y = _max_dd(prices_arr[-252:]) if len(prices_arr) > 252 else max_drawdown
+
         # 计算累计最大值（转为 numpy array 确保负索引兼容）
-        prices_arr = np.array(prices, dtype=float)
         cumulative_max = np.maximum.accumulate(prices_arr)
 
         # 计算回撤
         drawdowns = (cumulative_max - prices_arr) / cumulative_max
 
-        # 最大回撤
-        max_drawdown = np.max(drawdowns)
+        # 最大回撤（全历史，与上面一致）
         max_dd_idx = np.argmax(drawdowns)
 
         # 找到最大回撤的起始点（峰值）
-        peak_idx = np.argmax(prices[:max_dd_idx+1]) if max_dd_idx > 0 else 0
+        peak_idx = np.argmax(prices_arr[:max_dd_idx+1]) if max_dd_idx > 0 else 0
 
         # 计算回撤持续天数
         dd_duration = max_dd_idx - peak_idx
 
         # 计算恢复天数（从最大回撤点到创新高）
         recovery_days = 0
-        if max_dd_idx < len(prices) - 1:
-            peak_price = prices[peak_idx]
-            for i in range(max_dd_idx + 1, len(prices)):
-                if prices[i] >= peak_price:
+        if max_dd_idx < len(prices_arr) - 1:
+            peak_price = prices_arr[peak_idx]
+            for i in range(max_dd_idx + 1, len(prices_arr)):
+                if prices_arr[i] >= peak_price:
                     recovery_days = i - max_dd_idx
                     break
 
@@ -133,6 +152,9 @@ class RiskAnalyzer:
 
         return {
             'max_drawdown': round(max_drawdown * 100, 2),
+            'max_drawdown_60d': round(max_dd_60d * 100, 2),
+            'max_drawdown_1y': round(max_dd_1y * 100, 2),
+            'max_drawdown_all': round(max_drawdown * 100, 2),
             'max_drawdown_date': max_dd_idx,  # 索引，实际使用时转换为日期
             'peak_date': peak_idx,
             'dd_duration_days': int(dd_duration),
@@ -144,17 +166,21 @@ class RiskAnalyzer:
         }
 
     def calculate_risk_adjusted_metrics(self, returns: np.ndarray) -> Dict[str, float]:
-        """计算风险调整收益指标"""
+        """计算风险调整收益指标（P1-3：夏普改算术年化 + Newey-West 显著性）"""
         if len(returns) < 2:
             return {}
 
         # 年化收益率和波动率
         n = len(returns)
         total_return = (1 + returns).prod() - 1
-        annual_return = (1 + total_return) ** (self.trading_days / n) - 1
+        # P1-3: 夏普/索提诺改用**算术**年化收益（mean*T），与下方算术年化波动同源，
+        # 消除原先几何年化分子 + 算术年化分母的混用（几何年化会系统性低估夏普）。
+        annual_return = float(np.mean(returns)) * self.trading_days
+        # 卡玛比率保留**几何**年化口径（与历史实现/测试一致），避免改动 calmar 语义。
+        annual_return_geo = (1 + total_return) ** (self.trading_days / n) - 1
         annual_vol = np.std(returns, ddof=1) * np.sqrt(self.trading_days)
 
-        # 夏普比率 = (年化收益 - 无风险利率) / 年化波动率
+        # 夏普比率 = (算术年化收益 - 无风险利率) / 算术年化波动率
         sharpe_ratio = (annual_return - self.risk_free_rate) / annual_vol if annual_vol > 0 else 0
 
         # 索提诺比率 = (年化收益 - 无风险利率) / 下行波动率
@@ -162,19 +188,52 @@ class RiskAnalyzer:
         downside_vol = np.std(downside_returns, ddof=1) * np.sqrt(self.trading_days) if len(downside_returns) > 1 else 0
         sortino_ratio = (annual_return - self.risk_free_rate) / downside_vol if downside_vol > 0 else 0
 
-        # 卡玛比率 = 年化收益 / 最大回撤
+        # 卡玛比率 = 年化收益 / 最大回撤（几何口径）
         prices = np.cumprod(1 + returns)
         cumulative_max = np.maximum.accumulate(prices)
         max_dd = np.max((cumulative_max - prices) / cumulative_max)
-        calmar_ratio = annual_return / max_dd if max_dd > 0 else 0
+        calmar_ratio = annual_return_geo / max_dd if max_dd > 0 else 0
+
+        # P1-3: Newey-West HAC t 统计量 + 显著性（对"均值日收益是否显著非零"做稳健检验）
+        sharpe_nw_t, sharpe_significant, nw_method = self._sharpe_nw_stats(returns)
 
         return {
             'sharpe_ratio': round(sharpe_ratio, 4),
             'sharpe_grade': self._grade_sharpe(sharpe_ratio),
             'sortino_ratio': round(sortino_ratio, 4),
             'calmar_ratio': round(calmar_ratio, 4),
-            'return_risk_ratio': round(annual_return / annual_vol, 4) if annual_vol > 0 else 0
+            'return_risk_ratio': round(annual_return / annual_vol, 4) if annual_vol > 0 else 0,
+            'sharpe_nw_t': round(float(sharpe_nw_t), 4),
+            'sharpe_nw_method': nw_method,
+            'sharpe_significant': bool(sharpe_significant),
         }
+
+    def _sharpe_nw_stats(self, returns: np.ndarray):
+        """Newey-West HAC t 与显著性（夏普的补充检验，不替代夏普值本身）。
+
+        返回 (nw_t, significant, method)：
+        - n >= 20 且非退化：用 Newey-West HAC t（滞后阶取 min(20, n-1)，量级对齐
+          标签窗口，避免自相关被低估），检验日均值收益是否显著非零。
+        - n < 20 或收益退化为常量：降级为普通 t = mean/(std/√n)，method='naive'，
+          并在返回 method 中标注，便于上层 warning。
+        显著性阈值取 95% 双侧 |t| >= 1.96。
+        """
+        from src.analysis.stats_utils import newey_west_tstat
+        r = np.asarray(returns, dtype=float)
+        r = r[np.isfinite(r)]
+        n = len(r)
+        thr = 1.96
+        if n < 2 or np.std(r, ddof=1) == 0:
+            return 0.0, False, 'naive'
+        if n < 20:
+            # 样本过短：降级为普通 t（rf 极小可忽略，对原始收益检验）
+            sd = np.std(r, ddof=1)
+            t = float(r.mean() / (sd / np.sqrt(n))) if sd > 0 else 0.0
+            return t, abs(t) >= thr, 'naive'
+        # Newey-West，滞后阶对齐标签窗口量级（避免低估自相关）
+        lags = min(20, n - 1)
+        t = float(newey_west_tstat(r, lags=lags))
+        return t, abs(t) >= thr, 'newey_west'
 
     def calculate_var_metrics(self, returns: np.ndarray, 
                              confidence_levels: List[float] = [0.95, 0.99]) -> Dict[str, Any]:

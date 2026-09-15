@@ -66,8 +66,9 @@ class DatabaseManager:
             cursor.execute("""
                 INSERT OR REPLACE INTO portfolio_summary 
                 (date, total_value, total_cost, total_pnl, daily_pnl, daily_return,
-                 vs_hs300, profit_count, loss_count, sharpe_ratio, max_drawdown, volatility)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 vs_hs300, profit_count, loss_count, sharpe_ratio, max_drawdown,
+                 max_drawdown_60d, max_drawdown_1y, max_drawdown_all, volatility)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 date_str,
                 summary.get('total_value'),
@@ -80,6 +81,9 @@ class DatabaseManager:
                 summary.get('loss_count'),
                 summary.get('sharpe_ratio'),
                 summary.get('max_drawdown'),
+                summary.get('max_drawdown_60d'),
+                summary.get('max_drawdown_1y'),
+                summary.get('max_drawdown_all'),
                 summary.get('volatility')
             ))
             conn.commit()
