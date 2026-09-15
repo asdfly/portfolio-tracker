@@ -27,9 +27,11 @@ con = sqlite3.connect(DB); cur = con.cursor()
 cur.execute('SELECT MAX(date) FROM portfolio_snapshots'); SNAP = cur.fetchone()[0]
 cur.execute('SELECT MAX(date) FROM portfolio_summary'); DATA_DATE = cur.fetchone()[0]
 
-# 运行日是否为交易日：DATA_DATE 为本地库最新交易日；若 RUN_DATE 与之不同（周末/节假日，
-# 本地库尚未更新当日数据），则本次为"休市日运行"，免责声明须如实标注，不得硬编码"交易日（盘后）"。
-RUN_DATE_IS_TRADING = (RUN_DATE == DATA_DATE)
+# 运行日是否为交易日：以日历判断周末（采集器滞后导致 RUN_DATE != DATA_DATE 时，
+# 不能误判为休市日）。组合/持仓数据可能滞后停留在较早交易日（DATA_LAG 标记）。
+_RUN_WD = datetime.strptime(RUN_DATE, '%Y-%m-%d').weekday()  # 0=Mon..6=Sun
+RUN_DATE_IS_TRADING = (_RUN_WD < 5)  # 周一至周五为交易日（盘后）
+DATA_LAG = (RUN_DATE != DATA_DATE)   # 组合/持仓采集器滞后标记
 _RUN_DAY_LABEL = ('为交易日（盘后）' if RUN_DATE_IS_TRADING
                   else f'为休市日运行（数据基准为最近交易日 {DATA_DATE}）')
 
@@ -45,8 +47,9 @@ cur.execute('''SELECT total_value,total_cost,total_pnl,daily_pnl,daily_return,vs
 S = cur.fetchone()
 tot_val, tot_cost, tot_pnl, d_pnl, d_ret, vs300, pc, lc, sharpe, mdd, vol = S
 
-# ---------- 2. 指数（本地 index_quotes）----------
-cur.execute('SELECT name,close,change_pct,amount FROM index_quotes WHERE date=?', (DATA_DATE,))
+# ---------- 2. 指数（本地 index_quotes，取最新可得交易日，通常为 RUN_DATE 当日）----------
+cur.execute('SELECT MAX(date) FROM index_quotes'); IDX_DATE = cur.fetchone()[0]
+cur.execute('SELECT name,close,change_pct,amount FROM index_quotes WHERE date=?', (IDX_DATE,))
 idx = {r[0]: (r[1], r[2], r[3]) for r in cur.fetchall()}
 
 # ---------- 3. 资金流（本地 fund_flows）----------
@@ -417,8 +420,12 @@ _prev_date = _prev_state.get('date') if _prev_state else None
 if _prev_date is None:
     _prev_gap_note = '首期运行，无上期对照基准。'
 elif _prev_date == DATA_DATE:
-    _prev_gap_note = (f'本期数据日 {DATA_DATE} 与上期相同：周末/非交易日运行，两期同指最近交易日，'
-                      f'下方"较上期"为同日连续性对比，非新交易日变化。')
+    if DATA_LAG and RUN_DATE_IS_TRADING:
+        _prev_gap_note = (f'本期组合数据日 {DATA_DATE} 与上期相同：组合/持仓采集器滞后（运行日 {RUN_DATE} 为交易日，'
+                          f'但本地 portfolio_summary 等尚未更新至当日），下方"较上期"为同日连续性对比。')
+    else:
+        _prev_gap_note = (f'本期数据日 {DATA_DATE} 与上期相同（周末/非交易日运行，两期同指最近交易日），'
+                          f'下方"较上期"为同日连续性对比，非新交易日变化。')
 else:
     try:
         from datetime import date as _dt
@@ -659,7 +666,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 </style></head><body><div class="wrap">
 
 <h1>组合 + 大盘综合视角 · 盘后日报</h1>
-<div class="sub">报告生成：{now}（运行日 {RUN_DATE}）　|　<b style="color:#d29922">交易数据基准日：{DATA_DATE}（收盘）</b>　|　持仓快照：{SNAP}　|　22 只 ETF　总市值 ¥{TOT:,.0f}
+<div class="sub">报告生成：{now}（运行日 {RUN_DATE}）　|　<b style="color:#d29922">组合数据基准日：{DATA_DATE}（收盘）</b>{f'　|　⚠ 大盘指数采用 {IDX_DATE} 实时（组合/持仓采集器滞后至 {DATA_DATE}）' if (DATA_LAG and IDX_DATE != DATA_DATE) else ''}　|　持仓快照：{SNAP}　|　22 只 ETF　总市值 ¥{TOT:,.0f}
 <br>数据源：项目本地数据层（东方财富/新浪）+ NeoData 金融搜索 <span class="ok">✓ 均可用</span>　|　NeoData 查询时间 {MKT_NEO['query_time']}</div>
 
 <div class="tldr">
@@ -676,7 +683,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <h2>一、大盘视角</h2>
 
 <div class="card">
-<h3>1.1 指数收盘（{DATA_DATE}）</h3>
+<h3>1.1 指数收盘（{IDX_DATE}）</h3>
 <div class="grid">
 <div class="kpi"><div class="k">上证指数</div><div class="v">{idx['上证指数'][0]:,.2f}</div><div class="n">{chg(idx['上证指数'][1])}　{("守住 3900–4000 箱体" if idx['上证指数'][0]>=3900 and idx['上证指数'][0]<=4000 else "箱体下沿/上方")}</div></div>
 <div class="kpi"><div class="k">两市成交额</div><div class="v">{amt2:.2f}万亿</div><div class="n"><span class="down">{amt_chg_txt}</span>　较昨日{amt_dir}</div></div>
@@ -685,7 +692,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 </div>
 <table><thead><tr><th>指数</th><th class="num">收盘</th><th class="num">涨跌幅</th><th class="num">成交额</th></tr></thead>
 <tbody>{rows_idx}</tbody></table>
-<div class="note">指数数据：项目本地 index_quotes（{DATA_DATE}）与 NeoData 统一行情交叉核对一致；涨跌家数/涨停跌停来自 NeoData 大盘市场宽度统计，涨停/跌停本地 market_breadth 当日已采集（zt={loc_zt}、dt={loc_dt}）作为交叉核对基准。⚠ 完整跌幅榜 NeoData 仍仅返回涨幅榜（系统性限制），跌幅口径以指数/重仓板块当日涨跌幅替代。</div>
+<div class="note">指数数据：项目本地 index_quotes（{IDX_DATE}）与 NeoData 统一行情交叉核对一致；涨跌家数/涨停跌停来自 NeoData 大盘市场宽度统计，涨停/跌停本地 market_breadth 当日已采集（zt={loc_zt}、dt={loc_dt}）作为交叉核对基准。⚠ 完整跌幅榜 NeoData 仍仅返回涨幅榜（系统性限制），跌幅口径以指数/重仓板块当日涨跌幅替代。</div>
 </div>
 
 <div class="card">
@@ -872,7 +879,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="src">
 <b>✓ 项目本地数据层</b>（data/database/portfolio.db）—— 本次为主数据源<br>
 &nbsp;&nbsp;· portfolio_snapshots / portfolio_summary：{SNAP}（22 只持仓、当日真实回报 {d_ret}%）<br>
-&nbsp;&nbsp;· index_quotes：{DATA_DATE}（11 个指数收盘/涨跌/成交额）<br>
+&nbsp;&nbsp;· index_quotes：{IDX_DATE}（11 个指数收盘/涨跌/成交额）{f'　⚠ 较组合基准 {DATA_DATE} 更新（采集器滞后）' if IDX_DATE != DATA_DATE else ''}<br>
 &nbsp;&nbsp;· fund_flows：{DATA_DATE}（90 个申万板块 + 23 只 ETF；main_fund 行缺失，主资金以 90 板块合计代理）<br>
 &nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币，PMI 仍缺）<br>
 &nbsp;&nbsp;· market_breadth：{BL.get('date','—')}（zt={loc_zt}/dt={loc_dt} 已采集）<br>
@@ -900,7 +907,7 @@ print('OK', OUT, os.path.getsize(OUT), 'bytes')
 
 # 落盘纯文本 TLDR（evolution #27）：供邮件 --body 直读，消除 agent 人工复述漂移。
 # 复用本脚本已派生的全部变量，与 HTML TLDR 同源、不会二次失真。
-_tldr_lines = [f"【组合+大盘综合视角】{RUN_DATE}（交易数据基准 {DATA_DATE}）", ""]
+_tldr_lines = [f"【组合+大盘综合视角】{RUN_DATE}（组合数据基准 {DATA_DATE}；大盘指数 {IDX_DATE} 实时）", ""]
 _tldr_lines.append(
     f"大盘今日{regime_txt}：{_idx_desc}。{_main_line_txt}{_mil_txt}。"
     f"组合当日回报 {chg(d_ret)}、{_perf_word}沪深300 {abs(vs300):+.2f}pct：{_perf_reason}。")
@@ -930,6 +937,10 @@ _tldr_lines.append("")
 _tldr_lines.append(
     f"数据来源：项目本地数据层（东方财富/新浪）+ NeoData 金融搜索（查询时间 {MKT_NEO['query_time']}）。"
     f"NeoData 仅增强，主力以本地为准。不构成投资建议。")
+if DATA_LAG:
+    _tldr_lines.append(
+        f"⚠ 数据新鲜度提示：组合/持仓/资金流/本地广度仍停留在 {DATA_DATE}（采集器滞后，运行日 {RUN_DATE} 为交易日但本地 portfolio_summary 等尚未更新），"
+        f"大盘指数已采用 {IDX_DATE} 实时；组合回报与跨日信号以 {DATA_DATE} 为基准，研判时请注意日期口径差异。")
 TLDR_PATH = f'data/reports/组合大盘综合视角_{RUN_DATE}.tldr.txt'
 # TLDR 为纯文本（邮件 --body 直读），需剥离因复用 HTML 片段而混入的标签与实体
 _tldr_clean = '\n'.join(html.unescape(re.sub(r'<[^>]+>', '', ln)) for ln in _tldr_lines)
