@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import logging
 import os
 import urllib.request
+import urllib.error
 import json
 import time
 import requests as _requests
@@ -67,20 +68,38 @@ _requests.Session.__init__ = _NoProxySessionInit
 
 from src.utils.database import get_db_connection
 
-def _urllib_get_json(url, retries=2, delay=1.0):
+def _urllib_get_json(url, retries=3, delay=1.0):
+    """urllib 直连取 JSON（ProxyHandler({}) 显式绕过系统代理）。
+
+    改动前必读的两个历史坑：
+
+    1. 本函数曾把 except 写成 ``sqlite3.OperationalError``——HTTP 请求永远
+       不会抛 SQLite 异常，于是 ``URLError`` / ``RemoteDisconnected`` /
+       JSON 解析错误全部漏网：重试形同虚设，异常直接上抛，调用方只看到
+       「push2his 不可用」并降级，而实际只是抖了一下连接。
+       （系 de6b312 / 61976ba 两轮 "fine-grained exception handling"
+       重构误收窄所致，网络异常谱系不可写成 DB 异常。）
+
+    2. 东方财富 push2his 对**直连**同样会间歇性 ``RemoteDisconnected``
+       （2026-09-15 实测：单次失败率约 20~40%，与代理无关，绕代理也一样）。
+       因此重试不是可选项而是刚需——单次失败就判定「源不可用」会把一个
+       可用源永久误降级。
+    """
     proxy_handler = urllib.request.ProxyHandler({})
     opener = urllib.request.build_opener(proxy_handler)
+    last_err = None
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             resp = opener.open(req, timeout=15)
             return json.loads(resp.read().decode("utf-8"))
-        except sqlite3.OperationalError as e:
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as e:
+            # URLError/HTTPError 均为 OSError 子类，显式写出只为可读性
+            last_err = e
             if attempt < retries - 1:
                 time.sleep(delay)
-            else:
-                logger.warning(f"urllib GET failed {url}: {e}")
-                return None
+    logger.warning(f"urllib GET failed (已重试{retries}次) {url}: {last_err}")
+    return None
 
 def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
     try:
@@ -106,45 +125,71 @@ def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
         logger.warning(f"获取行业资金流失败: {e}")
     return pd.DataFrame()
 
-def fetch_etf_fund_flow(code: str, name: str = '') -> pd.DataFrame:
+def fetch_etf_fund_flow(code: str, name: str = '', retries=3, delay=0.8) -> pd.DataFrame:
     """获取单只ETF的资金流数据（东方财富push2his接口）。
-    
+
     防御性设计：
-    - akshare 内部使用 requests.get 调用 push2his API，当系统代理开启或
-      东方财富封禁 IP 时，requests 可能抛出 ProxyError / ConnectionError，
-      或返回的 JSON 中 data 字段为 None（导致 NoneType subscriptable）。
-    - 本函数对所有异常路径做统一处理，仅输出 WARNING 级别日志，不中断主流程。
+    - akshare 内部使用 requests.get 调用 push2his API，可能抛出
+      ProxyError / ConnectionError，或返回的 JSON 中 data 字段为 None。
+    - **重试是刚需**：push2his 对本机直连也会间歇性 RemoteDisconnected
+      （实测单次失败率 20~40%）。改动前本函数无重试，34 只逐只采集时几乎必然
+      触发连续失败阈值 → 「跳过剩余 N 只」→ ETF 资金流整天落 0 行。
+      现与 _urllib_get_json 保持同样的重试语义。
+
+    返回空 DataFrame 表示失败（调用方按失败计数，不抛异常）。
     """
-    try:
-        import akshare as ak
-        market = "sh" if code.startswith('5') or code.startswith('15') or code.startswith('56') or code.startswith('58') else "sz"
-        df = ak.stock_individual_fund_flow(stock=code, market=market)
-        # 空值检查：API 返回的 JSON 中 data 字段可能为 None
-        if df is None:
-            logger.debug(f"ETF {code} 资金流: API返回空数据(None)")
+    market = "sh" if code.startswith('5') or code.startswith('15') or code.startswith('56') or code.startswith('58') else "sz"
+    last_err = None
+    for attempt in range(retries):
+        try:
+            import akshare as ak
+            df = ak.stock_individual_fund_flow(stock=code, market=market)
+            # 空值检查：API 返回的 JSON 中 data 字段可能为 None。
+            # 注意「空返回」不能立即放弃——实测 push2his 掐断连接时 akshare
+            # 有时不抛异常而是直接返回空表，若这里 return 就等于绕过重试。
+            if df is None or (hasattr(df, 'empty') and df.empty):
+                last_err = 'empty response'
+                if attempt < retries - 1:
+                    time.sleep(delay * (2 ** attempt))
+                    continue
+                logger.debug(f"ETF {code} 资金流: API 连续{retries}次返回空, 放弃")
+                return pd.DataFrame()
+            # 正常数据
+            df = df.rename(columns={
+                '日期': 'date', '收盘价': 'close', '涨跌幅': 'change_pct',
+                '主力净流入-净额': 'net_inflow', '主力净流入-净占比': 'net_inflow_pct',
+                '超大单净流入-净额': 'super_large_inflow', '大单净流入-净额': 'large_inflow',
+                '中单净流入-净额': 'medium_inflow', '小单净流入-净额': 'small_inflow',
+            })
+            df['code'] = code
+            df['name'] = name
+            df['category'] = 'etf'
+            keep_cols = ['date', 'code', 'name', 'close', 'change_pct', 'net_inflow', 'net_inflow_pct', 'super_large_inflow', 'large_inflow', 'medium_inflow', 'small_inflow', 'category']
+            df = df[[c for c in keep_cols if c in df.columns]]
+            return _stamp(df, 'em_push2his', is_estimated=False, confidence=1.0)
+        except (ConnectionError, OSError) as e:
+            # 网络层：连接被掐断 —— 可重试
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(delay * (2 ** attempt))
+                continue
+            # 重试耗尽后降级为 DEBUG 避免日志轰炸
+            logger.debug(f"ETF {code} 资金流: 网络错误({type(e).__name__}), "
+                         f"已重试{retries}次仍失败, 将由回填机制补充")
+        except (TypeError, KeyError, ValueError, IndexError) as e:
+            # 响应结构异常：push2his 被阻尼时并不总是断连，更多时候回一个
+            # data=None 的 JSON，akshare 解包时抛
+            # 'NoneType' object is not subscriptable —— 这同样是可重试的抖动，
+            # 不能当成"该标的没数据"直接放弃。
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(delay * (2 ** attempt))
+                continue
+            logger.debug(f"ETF {code} 资金流: 响应结构异常({type(e).__name__}), "
+                         f"已重试{retries}次仍失败")
+        except Exception as e:
+            logger.warning(f"获取ETF {code} 资金流失败: {e}")
             return pd.DataFrame()
-        if hasattr(df, 'empty') and df.empty:
-            logger.debug(f"ETF {code} 资金流: API返回空DataFrame")
-            return pd.DataFrame()
-        # 正常数据
-        df = df.rename(columns={
-            '日期': 'date', '收盘价': 'close', '涨跌幅': 'change_pct',
-            '主力净流入-净额': 'net_inflow', '主力净流入-净占比': 'net_inflow_pct',
-            '超大单净流入-净额': 'super_large_inflow', '大单净流入-净额': 'large_inflow',
-            '中单净流入-净额': 'medium_inflow', '小单净流入-净额': 'small_inflow',
-        })
-        df['code'] = code
-        df['name'] = name
-        df['category'] = 'etf'
-        keep_cols = ['date', 'code', 'name', 'close', 'change_pct', 'net_inflow', 'net_inflow_pct', 'super_large_inflow', 'large_inflow', 'medium_inflow', 'small_inflow', 'category']
-        df = df[[c for c in keep_cols if c in df.columns]]
-        return _stamp(df, 'em_push2his', is_estimated=False, confidence=1.0)
-    except (ConnectionError, OSError) as e:
-        # 网络层错误：代理、封禁、连接中断等 —— 降级为 DEBUG 避免日志轰炸
-        logger.debug(f"ETF {code} 资金流: 网络错误({type(e).__name__}), "
-                      f"可能因代理或数据源封禁, 将由回填机制补充")
-    except Exception as e:
-        logger.warning(f"获取ETF {code} 资金流失败: {e}")
     return pd.DataFrame()
 
 def fetch_main_fund_flow(days: int = 120, date_str: str = None) -> pd.DataFrame:

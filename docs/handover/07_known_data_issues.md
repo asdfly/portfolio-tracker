@@ -727,3 +727,56 @@ DB 列名，不存在"上游某天突然改成中文键"的路径。实测文件
 ### 若真要改，正确姿势
 不要改 57 处。在 `_load_all_data()`（`excel_report.py:83`，统一数据入口）返回前
 做一次键名归一即可——一处改动覆盖全部下游。
+
+---
+
+## 问题九：push2his 会阻尼式拒绝 —— **不是代理问题**（2026-09-15 实测定论）
+
+> 注：本文档存在两个「问题八」（`etf_technical` 三套口径、`excel_report` 全英文键），
+> 为历史编号失误，暂不重排以免打乱既有引用。本节顺延为「问题九」。
+
+### 此前误判
+早期记录（见 `docs/自动化采集完善方案.md` 的 D3 项）写的是
+「主源 EM 被代理墙挡：`push2his.eastmoney.com` 返回 ProxyError」。
+**这个结论是错的**，按它去查代理配置会查不到东西。
+
+### 实测真相（2026-09-15）
+
+| 检查项 | 结果 |
+|---|---|
+| 模块是否已绕代理 | **是**。`fund_flow.py:18-19` 弹出全部 `*_proxy` 环境变量；`:62-66` 把 `requests.Session.__init__` 改成默认 `trust_env=False`；`_urllib_get_json` 用 `ProxyHandler({})`。实测 `requests.Session().trust_env == False` |
+| 绕代理后能否连通 | **能**。`curl --noproxy '*'` 直连 `push2his` 返回 200；`check_push2his_available()` 返回 `True` |
+| 那为什么还失败 | push2his 对**高频直连**做阻尼：约 20~40% 的请求被掐断或返回 `data: null` |
+| 失败形态 | 两种：① TLS/HTTP 层 `RemoteDisconnected`（`urllib` 与 `requests` 都会遇到）；② HTTP 200 但 JSON 里 `data: null`，akshare 解包时抛 `'NoneType' object is not subscriptable` |
+| 是否与标的有关 | **无关**。同一标的连续 4 次重试仍可能全部 `data: null`，换一只立刻成功；反之亦然。纯粹是请求频率函数 |
+
+### 真正的代码缺陷（已修）
+
+1. **`_urllib_get_json` 的 except 类型写错**（`de6b312` / `61976ba` 两轮
+   "fine-grained exception handling" 重构误收窄）：
+   写成 `except sqlite3.OperationalError` —— HTTP 请求永远不抛 SQLite 异常，
+   于是 `URLError` / `RemoteDisconnected` / JSON 解析错误**全部漏网**：
+   重试形同虚设、异常直接上抛、失败只剩一条 debug 日志。
+   → 已改为捕获 `(urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError)`，
+   并在重试耗尽后 `logger.warning`，默认 `retries` 2 → 3。
+
+2. **`fetch_etf_fund_flow` 完全没有重试**：单只失败即 0 行。
+   34 只逐只采集（失败率 p）时，连续 5 只全失败的概率在 p=0.3 时约 0.24%，
+   在 p=0.4 时约 1%——看起来不高，但**每天跑一次，一个月就会撞上**，
+   表现为「ETF资金流: 连续5只失败，跳过剩余29只」→ 整天 ETF 资金流落 0 行
+   （2026-09-14 生产日志正是如此）。
+   → 已加 3 次重试 + 指数退避（0.8s / 1.6s），并把三类抖动都纳入可重试：
+   网络异常、`empty response`、`data: null` 解包异常（`TypeError/KeyError/ValueError/IndexError`）。
+
+### ⚠️ 度量陷阱：不要用「刚压测完的成功率」评估这个修复
+本轮排查期间连续高频打 push2his，IP 被阻尼后同一批标的成功率会从 6/10 掉到 3/8。
+**这不是修复变坏了**，是自伤。要看真实效果，请对比修复前后**各一个正常交易日**
+15:30 定时任务的日志：
+- 修前：`ETF资金流: 连续5只失败，跳过剩余N只` + `资金流采集完成: ... ETF0条`
+- 修后：期望看到 `ETF资金流(push2his): N 条 (M/34 只)` 且 M 显著大于 0
+
+### 仍未解决（接受）
+push2his 的阻尼无法从客户端消除。现有的兜底链保持不变且必须保留：
+`逐只 push2his` → `fetch_etf_fund_flow_batch`（datacenter-web 端点，单次请求，
+**不受 push2his 阻尼影响**）→ `backfill_etf_fund_flow_from_kline`（K 线估算）。
+即「逐只拿历史、批量保当日、K线补空缺」三层，任何一层都不要删。
