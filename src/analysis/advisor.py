@@ -2,6 +2,8 @@
 智能建议引擎 - 基于规则和数据驱动的投资建议
 """
 import pandas as pd
+import hashlib
+from collections import deque
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
@@ -10,6 +12,11 @@ import logging
 import sqlite3
 
 logger = logging.getLogger(__name__)
+
+# P1-4 建议冷却指纹环形缓冲：保存"最近已推送"的方案结构指纹。
+# 同一结构（标的+方向+换手率）在缓冲窗口内重复触发时，抑制重复推送。
+# 用模块级 deque 以保证进程内多个 advisor 实例共享同一冷却窗口。
+_RECENT_PLAN_FINGERPRINTS: deque = deque(maxlen=10)
 
 
 class AdviceType(Enum):
@@ -178,6 +185,7 @@ class SmartAdvisor:
 
         返回 RebalancePlan（仅在需要调仓时非空），供 UI/报告渲染完整方案。
         只读，不写库；缺表或空库等异常时安全返回 None（静默降级）。
+        P1-4 冷却指纹去重：若本次方案结构与"最近已推送"方案相同，则抑制重复推送。
         """
         try:
             from src.analysis.rebalance_engine import compute_rebalance_suggestion
@@ -185,7 +193,66 @@ class SmartAdvisor:
         except Exception as e:  # 引擎依赖持仓快照/日历，缺表或空库时静默降级
             logger.warning(f"再平衡引擎调用失败，跳过: {e}")
             return None
-        return plan if getattr(plan, "action_needed", False) else None
+        if not getattr(plan, "action_needed", False):
+            return None
+        # P1-4: 冷却指纹去重 —— 结构相同且仍在冷却窗口内则抑制
+        if not self.should_emit(plan, as_of=as_of):
+            return None
+        self._record_emit(plan)
+        return plan
+
+    # ------------------------------------------------------------------
+    #  P1-4 建议冷却指纹去重
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _plan_fingerprint(plan: "RebalancePlan") -> str:
+        """结构指纹：绝不用 description/title（其文本每日变化但决策可能相同）。
+
+        指纹 = hash( 按 code 排序的 (code, direction, round(target_weight,1)) 序列
+                     + round(turnover,1) )
+        依据：advisor.py 在 _plan_to_advice 中会截断到 12 腿、动态追加⚠️陈旧/🔴失效
+        标记、序列化时丢弃结构化 RebalancePlan —— 这些都会让 description 逐日变化，
+        但同一调仓决策的结构（标的+方向+换手率+目标权重）不变。按结构去重才能
+        真正抑制"决策同、文本变"的重复推送。
+        """
+        parts: List[str] = []
+        trades = getattr(plan, "trades", None) or []
+        if trades:
+            for t in sorted(trades, key=lambda x: x.code):
+                parts.append(str(t.code))
+                parts.append(str(getattr(t, "direction", "")))
+                parts.append(str(round(getattr(t, "target_weight", 0.0), 1)))
+        else:
+            # 兜底：无 trades 时用 related_codes（保证指纹稳定）
+            for c in sorted(getattr(plan, "related_codes", []) or []):
+                parts.append(str(c))
+        parts.append(str(round(getattr(plan, "turnover", 0.0), 1)))
+        raw = "|".join(parts)
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+    def should_emit(self, plan: "RebalancePlan", as_of: Optional[str] = None,
+                    cooling_days: int = 5) -> bool:
+        """P1-4 冷却判定：返回 True 表示应当推送，False 表示命中冷却、抑制推送。
+
+        cooling_days 仅作 API/前向兼容参数（保留未来按日期裁剪的可能性）；
+        实际冷却窗口由模块级环形缓冲 _RECENT_PLAN_FINGERPRINTS 的 maxlen 决定。
+        未来函数红线：仅比较"历史已推送"的结构指纹 + 传入的 as_of，绝不读取
+        任何"未来"数据或依赖调用方未提供的状态。
+        """
+        fp = self._plan_fingerprint(plan)
+        if fp in _RECENT_PLAN_FINGERPRINTS:
+            logger.info(
+                "P1-4 冷却命中：结构指纹 %s 已在最近 %d 个推送中，抑制重复推送",
+                fp[:8], len(_RECENT_PLAN_FINGERPRINTS),
+            )
+            return False
+        return True
+
+    def _record_emit(self, plan: "RebalancePlan") -> None:
+        """记录已推送方案的结构指纹到环形缓冲（真正推送后由调用方调用）。"""
+        fp = self._plan_fingerprint(plan)
+        if fp not in _RECENT_PLAN_FINGERPRINTS:
+            _RECENT_PLAN_FINGERPRINTS.append(fp)
 
     def _plan_to_advice(self, plan: "RebalancePlan") -> "InvestmentAdvice":
         """将 RebalancePlan 转为 InvestmentAdvice（兼容现有建议渲染/序列化）。"""
