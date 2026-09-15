@@ -75,13 +75,18 @@ class StrategyBacktester:
         self.tplus1 = tplus1
 
     def get_historical_data(self, codes: List[str], start_date: str, end_date: str) -> pd.DataFrame:
-        """获取历史价格数据（优先 qfq 复权价，缺失回退未复权快照价）。
+        """获取历史价格数据（优先 etf_price_history.adj_close，缺失回退快照价）。
 
-        P1-2 复权修正：原实现直接读 portfolio_snapshots.current_price（未复权），
-        分红/派息事件被当成真实收益。改为优先用 etf_price_history.adj_close
-        （qfq 复权，已含分红再投资）；某标的无复权数据（如场外基金）则回退
-        current_price 并告警，不因此中断回测。缺口价格向前/向后填充，
-        避免复权源稀疏导致收益序列出现 NaN。
+        P1-2 诚实口径说明：etf_price_history.adj_close 目前与 close 完全相等
+        （全表差异行 = 0），本表并未做分红调整。差异来自来源：
+          - akshare_fund_etf_hist_em：拉取时已指定前复权(qfq)，故其 close 本身即 qfq；
+          - akshare_fund_etf_hist_sina：接口无 adjust 参数，为【未复权】，
+            可能含未剔除的分红缺口与基准重置跳变
+            （例：159220 2025-11-10 −49.4%、159300 2024-06-25 +255.8%，均属 sina 源）。
+        因此本函数对含 sina 来源的标的输出 warning，提醒其收益序列可能含非真实跳变、
+        回测结论需谨慎，而非宣称"已复权"。某标的无行情（如场外基金）则回退
+        portfolio_snapshots.current_price（同为未复权）并告警，不中断回测；
+        缺口价格向前/向后填充，避免收益序列出现 NaN。
         """
         if not codes:
             return pd.DataFrame()
@@ -96,6 +101,30 @@ class StrategyBacktester:
             df = pd.read_sql_query(q_adj, self.db, params=codes + [start_date, end_date])
         except Exception:
             df = pd.DataFrame()
+
+        # P1-2 诚实修正：adj_close==close、本表无分红调整；sina 源标的为未复权，
+        # 可能含非真实跳变（分红缺口/基准重置）。对含 sina 来源的标的显式告警，
+        # 不改变取数口径（仅提示），避免回测结论被误认为"已复权"。
+        try:
+            q_src = f"""
+                SELECT code, source, COUNT(*) AS c
+                FROM etf_price_history
+                WHERE code IN ({placeholders}) AND date BETWEEN ? AND ?
+                GROUP BY code, source
+            """
+            sd = pd.read_sql_query(q_src, self.db, params=codes + [start_date, end_date])
+            sina_codes = sorted(sd.loc[
+                sd["source"].astype(str).str.contains("sina", na=False), "code"
+            ].unique().tolist())
+            if sina_codes:
+                logger.warning(
+                    "P1-2 复权提示：%d 只标的含未复权新浪源(akshare_fund_etf_hist_sina)，"
+                    "其收益序列可能含分红缺口/基准重置跳变（etf_price_history.adj_close==close，"
+                    "本表不做分红调整），回测结果需谨慎解读: %s",
+                    len(sina_codes), sina_codes,
+                )
+        except Exception as e:
+            logger.warning("P1-2 行情来源检查失败（不影响回测）: %s", e)
 
         # 统计已覆盖的 code；未覆盖的（如场外基金）从 portfolio_snapshots 回退
         if not df.empty:
@@ -117,7 +146,7 @@ class StrategyBacktester:
                 df = pd.concat([df, df2], ignore_index=True)
             else:
                 df = df2
-            logger.warning("etf_price_history 无复权价、回退未复权快照价: %s", missing)
+            logger.warning("etf_price_history 无行情、回退未复权快照价(portfolio_snapshots.current_price): %s", missing)
 
         if df.empty:
             return pd.DataFrame()
