@@ -116,6 +116,72 @@ def run_stage0_otc_nav(date_str=None):
     return res
 
 
+def run_stage0b_watchlist(date_str=None):
+    """阶段0b: 观察名单标的的行情与技术面补采。
+
+    背景：已清仓标的（当前为 159732）被 is_delisted() 排除出持仓/再平衡/预测底座，
+    但用户要求**保持关注**。若只补一次数据而不接进日常管线，次日就重新开始空窗——
+    这与 P0-1 场外净值踩的是同一个坑，故"补采"与"接线"必须一起做。
+
+    与阶段0 的关系：两者都只补数据、不产生决策，顺序无强依赖，同在阶段一之前即可。
+
+    安全性：只写 etf_price_history / etf_technical。**不写**
+    etf_features / etf_forward_returns —— 预测底座的标的域来自 resolve_target_codes，
+    该函数已排除 delisted，故观察名单不会污染任何模型训练与推理。
+
+    Returns:
+        dict: run_watchlist 的结构化结果（ok/failed/price_new/tech_new/per_code）。
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("[阶段0b/5] 观察名单行情补采")
+    logger.info("-" * 50)
+
+    from scripts.fetch_watchlist_quotes import run_watchlist
+    res = run_watchlist(apply_db=True, log=logger.info)
+    logger.info(
+        f"  观察名单: 成功 {res['ok']} 只, 失败 {res['failed']} 只, "
+        f"行情新增 {res['price_new']} 行(重取 {res['price_refresh']}), "
+        f"技术面新增 {res['tech_new']} 行(重取 {res['tech_refresh']})")
+    if res["error"]:
+        raise RuntimeError(res["error"])
+    if res["ok"] == 0 and res["failed"] > 0:
+        raise RuntimeError("观察名单行情采集全部失败")
+    return res
+
+
+def run_stage0_watchlist():
+    """阶段0.5: 观察名单（已清仓但保持关注）的行情 / 技术面采集。
+
+    背景：159732 消费电子ETF 已清仓，用户要求保持关注。它被 is_delisted() 全域
+    排除（这是对的，不能回到持仓/再平衡/预测域），副作用是 etf_price_history 0 行、
+    etf_technical 停在 2026-07-31 —— 想看走势都没数据。
+
+    本阶段只补两张**行情**表：
+      - etf_price_history（OHLCV）
+      - etf_technical（技术指标）
+    不碰 portfolio_snapshots / portfolio_summary / etf_features / etf_forward_returns。
+
+    Returns:
+        dict: run_watchlist 的结构化结果。
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("[阶段0.5/5] 观察名单行情采集")
+
+    from config.settings import WATCHLIST_CODES
+    if not WATCHLIST_CODES:
+        logger.info("  观察名单为空，跳过")
+        return {"ok": 0, "failed": 0}
+
+    from scripts.fetch_watchlist_quotes import run_watchlist
+    res = run_watchlist(apply_db=True, log=logger.info)
+    logger.info(
+        f"  观察名单: 成功 {res['ok']} 只, 失败 {res['failed']} 只, "
+        f"OHLCV 新增 {res['price_new']} 日, 技术指标新增 {res['tech_new']} 日")
+    if res["error"]:
+        raise RuntimeError(res["error"])
+    return res
+
+
 def run_stage1_basic(analyzer):
     """阶段一: 基础分析 - 持仓数据获取、技术指标计算"""
     logger = logging.getLogger(__name__)
@@ -924,6 +990,23 @@ def main(argv=None):
         except Exception as e:
             logger.warning(f"场外基金净值采集失败(不影响主流程): {e}")
             _reporter.stage("otc_nav", "error", note=str(e)[:160])
+
+        # === 阶段0b: 观察名单行情补采（已清仓标的保持关注，同样须先于阶段一）===
+        try:
+            run_stage0b_watchlist(backfill_date)
+            _reporter.stage("watchlist", "ok")
+        except Exception as e:
+            logger.warning(f"观察名单行情补采失败(不影响主流程): {e}")
+            _reporter.stage("watchlist", "error", note=str(e)[:160])
+
+        # === 阶段0.5: 观察名单行情采集（已清仓但保持关注的标的，如 159732）===
+        # 与阶段0 同类：只补行情/技术面，不进持仓、不进再平衡、不进预测底座。
+        try:
+            run_stage0_watchlist()
+            _reporter.stage("watchlist", "ok")
+        except Exception as e:
+            logger.warning(f"观察名单行情采集失败(不影响主流程): {e}")
+            _reporter.stage("watchlist", "error", note=str(e)[:160])
 
         # === 阶段一: 基础分析 ===
         results = run_stage1_basic(analyzer)
