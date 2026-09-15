@@ -415,6 +415,35 @@ def is_delisted(code: str) -> bool:
     return bool(isinstance(entry, dict) and entry.get("delisted"))
 
 
+# ==================== 观察名单（已清仓但保持关注） ====================
+# 与 DELISTED_CODES 是**并列关系，不是替代关系**：159732 同时命中两者。
+#
+# 语义（新增消费方前必读，别用错）：
+#   ✅ 采集：照常补 etf_price_history（OHLCV）+ etf_technical（技术指标），
+#      供前端「观察区」展示走势与技术面；
+#   ❌ 不进持仓统计 —— 不计入 portfolio_snapshots / portfolio_summary 的任何口径；
+#   ❌ 不进再平衡 —— 不生成任何买入/卖出建议（159732 曾因未被排除而凭空多出一笔
+#      35,783 元买入建议，见 DELISTED_CODES 处注释）；
+#   ❌ 不进预测底座 —— 不写 etf_features / etf_forward_returns，不参与任何模型训练
+#      或推理（build_prediction_base 的标的域来自 resolve_target_codes，该函数已
+#      排除 delisted，所以只写行情表是安全的；改动前请先复验这条）；
+#
+# 一句话：**给它数据，不给它决策权。**
+WATCHLIST_CODES = frozenset({
+    "159732",  # 消费电子ETF华夏，2026-07-30 后清仓，用户要求保持关注
+})
+
+
+def is_watchlist(code: str) -> bool:
+    """观察名单标的 → True：只保留行情/技术面采集，不进持仓/再平衡/预测底座。
+
+    注意：本函数**不**解除 is_delisted() 的排除。两者必须同时为真的场景
+    （如 159732）是设计意图，不是冲突——delisted 管"别拿它做决策"，
+    watchlist 管"但它的数据要继续采"。
+    """
+    return str(code) in WATCHLIST_CODES
+
+
 # ==================== 快照披露节奏（决定「陈旧告警」阈值） ====================
 # 不能对所有标的用同一个阈值：场外基金**没有日更链路**，只在每月最后一天导入一次
 # （data-engineer 2026-09-15 确认：13 只场外全部只出现在 01-31/02-28/…/07-31 等月末）。
