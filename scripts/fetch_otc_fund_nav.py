@@ -52,10 +52,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fetch_otc_fund_nav")
 
-# 无公开净值源的场外标的：券商资管现金管理产品，akshare 取不到净值走势
-NO_NAV_SOURCE = {
-    "880013": "天添利（券商资管现金管理产品，非公募基金，akshare 无净值源）",
+# 无公开净值源的场外标的（取不到就跳过并告警，绝不硬编码造数）
+NO_NAV_SOURCE = {}
+
+# 货币型基金：单位净值恒为 1.0，收益不体现在价格上，而是体现为**份额增长**。
+# 走「每万份收益」口径，不能套用普通场外的「价格 × 固定份额」。
+#
+# 880013 招商资管智远天添利货币：
+#   - fund_name_em 可查到，基金类型 = 货币型-普通货币（在公募基金名录内）
+#   - akshare fund_open_fund_info_em 抛 JSEvalException（Data_netWorthTrend 未定义）
+#   - akshare fund_money_fund_info_em 抛 ValueError（硬编码 14 个列名，
+#     本产品返回字段数不符）——**不是没有数据，是 akshare 解析列名卡住**
+#   - 直连东财 f10/lsjz 正常：TotalCount 1462，含净值日期/每万份收益/7日年化
+#     （2026-09-15 实测 7 日年化约 0.70%）
+MONEY_FUND_CODES = {
+    "880013",
 }
+
+# 货币基金单位净值（恒为 1）
+MONEY_FUND_NAV = 1.0
 
 # 单位净值与上一已知净值偏离超过该阈值时告警（可能为份额折算 / 分红除权，
 # 此时份额会变，沿用旧 quantity 会失真，需人工核对）
@@ -99,6 +114,50 @@ def fetch_nav_history(code):
     if not out:
         return None
     return sorted(out.items())
+
+
+def fetch_money_fund_yield(code, max_pages: int = 20):
+    """货币基金「每万份收益」序列，返回 [(date_str, 每万份收益)] 升序。
+
+    直连东财 f10/lsjz，不走 akshare：
+    `ak.fund_money_fund_info_em` 内部把返回列硬编码成 14 个名字，
+    本产品实际字段数不符即抛 ValueError（数据本身是有的）。
+    """
+    import requests
+
+    url = "https://api.fund.eastmoney.com/f10/lsjz"
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36"),
+        "Referer": f"https://fundf10.eastmoney.com/jjjz_{code}.html",
+        "Host": "api.fund.eastmoney.com",
+    }
+    rows = {}
+    page = 1
+    while page <= max_pages:
+        params = {"fundCode": code, "pageIndex": str(page), "pageSize": "200",
+                  "startDate": "", "endDate": ""}
+        r = requests.get(url, params=params, headers=headers, timeout=20)
+        r.raise_for_status()
+        js = r.json()
+        lst = (js.get("Data") or {}).get("LSJZList") or []
+        if not lst:
+            break
+        for it in lst:
+            d, dwjz = it.get("FSRQ"), it.get("DWJZ")
+            if not d:
+                continue
+            try:
+                rows[str(d)[:10]] = float(dwjz)
+            except (TypeError, ValueError):
+                continue
+        total = int(js.get("TotalCount") or 0)
+        if len(rows) >= total or len(lst) < 20:
+            break
+        page += 1
+    if not rows:
+        return None
+    return sorted(rows.items())
 
 
 # --------------------------------------------------------------------------
@@ -200,6 +259,63 @@ def build_rows(code, nav_hist, baseline, existing_dates, start_date):
     return rows, meta
 
 
+def build_money_fund_rows(conn, code, yield_hist, baseline, existing_dates, start_date):
+    """货币基金专用：单位净值恒为 1.0，收益按「每万份收益」折算成**份额增长**。
+
+    与普通场外的关键差异：
+    - current_price 恒为 1.0，价格不涨 → 不能用「固定份额 × 变动价格」
+    - 每万份收益 X 元 ⇒ 每份当日收益 X/10000 元 ⇒ 份额 ×(1 + X/10000)
+    - **成本总额固定**（= 基线份额 × 基线成本价），份额增长全部计入收益；
+      若沿用 `pnl = mv − qty × cost` 会随份额一起放大成本基数，把收益吃掉。
+
+    只在**交易日**插入（取组合已有快照的日期集合），避免把周末计息日写成新日期行
+    而让 portfolio_summary 多出周末行；非交易日的收益合并计入下一交易日。
+    """
+    qty = baseline["quantity"]
+    cost = baseline["cost_price"]
+    if not qty or qty <= 0:
+        logger.warning("%s 基线 quantity=%s 非正数，跳过", code, qty)
+        return [], {"skipped": "quantity<=0"}
+
+    name = baseline["name"]
+    ytd = baseline["ytd_return"]
+    beta = baseline["beta"]
+    cost_total = round(qty * cost, 2) if cost else 0.0     # 固定成本总额
+
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT DISTINCT date FROM portfolio_snapshots WHERE date > ? AND date >= ? "
+        "ORDER BY date", (baseline["date"], start_date))
+    trade_dates = [r[0] for r in cur.fetchall()]
+
+    ymap = dict(yield_hist)
+    rows = []
+    prev = baseline["date"]
+    for d in trade_dates:
+        if d in existing_dates:
+            prev = d
+            continue  # 幂等
+        # 累计 (prev, d] 区间内的每万份收益（含非交易日）
+        acc = sum(v for dt, v in yield_hist if prev < dt <= d)
+        qty = qty * (1 + acc / 10000.0)
+        mv = round(qty * MONEY_FUND_NAV, 2)
+        pnl = round(mv - cost_total, 2)
+        pnl_rate = round(pnl / cost_total * 100, 2) if cost_total else 0.0
+        rows.append((d, code, name, round(qty, 4), cost, MONEY_FUND_NAV,
+                     mv, pnl, pnl_rate, ytd, beta))
+        prev = d
+
+    meta = {
+        "last_snapshot_date": baseline["date"],
+        "nav_latest": (trade_dates[-1], MONEY_FUND_NAV) if trade_dates else None,
+        "nav_count": len(yield_hist),
+        "jumps": [],
+        "qty_end": qty,
+        "accrued": round(qty - baseline["quantity"], 4),
+    }
+    return rows, meta
+
+
 # --------------------------------------------------------------------------
 # 写库
 # --------------------------------------------------------------------------
@@ -294,10 +410,16 @@ def run_otc_nav(start_date=None, codes=None, apply=True, log=print):
                 result["per_code"].append({"code": code, "status": "无基线-跳过", "rows": 0})
                 continue
 
+            is_money = code in MONEY_FUND_CODES
             try:
-                nav_hist = fetch_nav_history(code)
+                if is_money:
+                    # 货币基金：单位净值恒为 1，走「每万份收益 → 份额增长」口径
+                    nav_hist = fetch_money_fund_yield(code)
+                else:
+                    nav_hist = fetch_nav_history(code)
             except Exception as e:
                 log(f"  [{code}] 净值获取失败：{type(e).__name__}: {e}")
+                logger.warning("%s 净值获取失败 %s: %s", code, type(e).__name__, e)
                 result["failed"] += 1
                 result["per_code"].append(
                     {"code": code, "status": f"抓取失败-{type(e).__name__}", "rows": 0})
@@ -310,15 +432,31 @@ def run_otc_nav(start_date=None, codes=None, apply=True, log=print):
                 continue
 
             existing = load_existing_dates(con, code)
-            rows, meta = build_rows(code, nav_hist, baseline, existing, start_date)
+            if is_money:
+                rows, meta = build_money_fund_rows(con, code, nav_hist, baseline,
+                                                   existing, start_date)
+            else:
+                rows, meta = build_rows(code, nav_hist, baseline, existing, start_date)
             all_rows.extend(rows)
             result["ok"] += 1
-            result["per_code"].append({
-                "code": code, "status": "OK", "rows": len(rows),
-                "nav_latest_date": meta["nav_latest"][0],
+            pc = {
+                "code": code, "rows": len(rows),
+                "nav_latest_date": meta["nav_latest"][0] if meta.get("nav_latest") else None,
                 "row_range": (rows[0][0], rows[-1][0]) if rows else None,
-            })
-            log(f"  [{code}] 最新净值 {meta['nav_latest'][0]} | 待插入 {len(rows)} 行")
+            }
+            if is_money:
+                pc["status"] = "OK-货币基金(每万份收益口径)"
+                pc["qty_end"] = meta.get("qty_end")
+                pc["accrued"] = meta.get("accrued")
+            else:
+                pc["status"] = "OK"
+            result["per_code"].append(pc)
+            if is_money:
+                log(f"  [{code}] 货币基金：净值恒 1.0，份额 {baseline['quantity']:.2f} → "
+                    f"{meta.get('qty_end', 0):.2f}（应计收益 {meta.get('accrued', 0):.2f} 元）"
+                    f" | 待插入 {len(rows)} 行")
+            else:
+                log(f"  [{code}] 最新净值 {meta['nav_latest'][0]} | 待插入 {len(rows)} 行")
 
         if not apply:
             log(f"  [dry-run] 共 {len(all_rows)} 行待插入，未写库")
@@ -383,8 +521,12 @@ def main():
             per_code.append({"code": code, "status": "无基线-跳过", "rows": 0})
             continue
 
+        is_money = code in MONEY_FUND_CODES
         try:
-            nav_hist = fetch_nav_history(code)
+            if is_money:
+                nav_hist = fetch_money_fund_yield(code)
+            else:
+                nav_hist = fetch_nav_history(code)
         except Exception as e:
             logger.warning("跳过 %s：净值获取失败 %s: %s", code, type(e).__name__, e)
             per_code.append({"code": code, "status": f"抓取失败-{type(e).__name__}", "rows": 0})
@@ -396,16 +538,20 @@ def main():
             continue
 
         existing = load_existing_dates(con, code)
-        rows, meta = build_rows(code, nav_hist, baseline, existing, args.start_date)
+        if is_money:
+            rows, meta = build_money_fund_rows(con, code, nav_hist, baseline,
+                                               existing, args.start_date)
+        else:
+            rows, meta = build_rows(code, nav_hist, baseline, existing, args.start_date)
         all_rows.extend(rows)
 
         latest_nav_d, latest_nav = meta["nav_latest"]
-        new_mv = round((baseline["quantity"] or 0) * latest_nav, 2)
+        new_mv = rows[-1][6] if rows else round((baseline["quantity"] or 0) * latest_nav, 2)
         otc_new_latest[code] = (latest_nav_d, new_mv)
 
         per_code.append({
             "code": code,
-            "status": "OK",
+            "status": "OK-货币基金(每万份收益口径)" if is_money else "OK",
             "rows": len(rows),
             "last_snap": meta["last_snapshot_date"],
             "last_snap_price": baseline["current_price"],
@@ -417,9 +563,14 @@ def main():
             "row_range": (rows[0][0], rows[-1][0]) if rows else None,
             "jumps": meta["jumps"],
         })
-        print(f"  [{code}] 基线快照 {meta['last_snapshot_date']} 价 {baseline['current_price']} "
-              f"| 净值最新 {latest_nav_d} = {latest_nav} | 待插入 {len(rows)} 行 "
-              f"| 重算市值 {new_mv:,.2f}")
+        if is_money:
+            print(f"  [{code}] 货币基金：净值恒 1.0，份额 {baseline['quantity']:.2f} → "
+                  f"{meta.get('qty_end', 0):.2f}（应计收益 {meta.get('accrued', 0):.2f} 元）"
+                  f" | 待插入 {len(rows)} 行 | 重算市值 {new_mv:,.2f}")
+        else:
+            print(f"  [{code}] 基线快照 {meta['last_snapshot_date']} 价 {baseline['current_price']} "
+                  f"| 净值最新 {latest_nav_d} = {latest_nav} | 待插入 {len(rows)} 行 "
+                  f"| 重算市值 {new_mv:,.2f}")
 
     # ---------------- 汇总 ----------------
     print("-" * 96)
@@ -429,7 +580,7 @@ def main():
         print(f"日期范围: {dates[0]} ~ {dates[-1]}  (共 {len(set(dates))} 个不同日期)")
     else:
         print("待插入总行数: 0（无新增）")
-    print(f"涉及 code 数: {sum(1 for p in per_code if p['status'] == 'OK' and p['rows'] > 0)}")
+    print(f"涉及 code 数: {sum(1 for p in per_code if p['status'].startswith('OK') and p['rows'] > 0)}")
     print("-" * 96)
 
     # 组合口径：旧 vs 新
