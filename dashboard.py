@@ -1093,6 +1093,7 @@ def main():
         ("🔁 交易复盘",   "tabs.tab15_trade_review",   "render_tab15"),
         ("🔮 ETF 风险展望", "tabs.tab16_risk_outlook",   "render_tab16"),
         ("🎯 高低位定位",   "tabs.tab17_etf_position",   "render_tab17"),
+        ("👀 清仓观察",     "tabs.tab18_watchlist",      "render_tab18"),
     ]
     _render_quick_stats(positions, profit_count, loss_count, technical)
 
