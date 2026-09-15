@@ -30,6 +30,9 @@ from src.analysis.predictor.risk_gate import (
     BASELINE_FEATURE, risk_walkforward_vs_baseline, apply_fdr,
 )
 
+# 注意：本脚本读 etf_forward_returns_v2，该表已与生产表 etf_forward_returns 逐行等价
+# （相关性 1.000000），保留仅供 2026-09-15 风险模型 VETO 结论复现留档。
+# 新代码请一律使用生产表 etf_forward_returns。
 NEW_LABEL_TABLE = "etf_forward_returns_v2"
 NEW_MODEL_NAME = "risk_lgb_v2"
 

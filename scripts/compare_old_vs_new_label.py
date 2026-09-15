@@ -5,6 +5,9 @@
 
 若旧标签下 R² 复现历史 ≈0.74、新标签下 ≈-0.24，即可确认 0.74 是标签泄漏的产物。
 """
+# 注意：本脚本读 etf_forward_returns_v2，该表已与生产表 etf_forward_returns 逐行等价
+# （相关性 1.000000），保留仅供 2026-09-15 风险模型 VETO 结论复现留档。
+# 新代码请一律使用生产表 etf_forward_returns。
 import sqlite3
 import sys
 from pathlib import Path
@@ -35,6 +38,7 @@ def load_panel(conn, table: str) -> pd.DataFrame:
 def main():
     conn = sqlite3.connect(str(DATABASE_PATH))
     print("=== 旧标签(含未来函数) vs 新标签(干净) —— w=20, LightGBM ===")
+    # 表名说明见文件顶部注释（v2 表为留档，已与生产表等价）
     for table, tag in (("etf_forward_returns", "旧(有未来函数)"),
                        ("etf_forward_returns_v2", "新(已修正)")):
         df = load_panel(conn, table)
@@ -47,6 +51,7 @@ def main():
 
     # 两个标签表的相关性差异
     a = pd.read_sql_query("SELECT date,code,fwd_vol_20 o FROM etf_forward_returns", conn)
+    # 表名说明见文件顶部注释（v2 表为留档，已与生产表等价）
     b = pd.read_sql_query("SELECT date,code,fwd_vol_20 n FROM etf_forward_returns_v2", conn)
     m = a.merge(b, on=["date", "code"]).dropna()
     print(f"\n新旧 fwd_vol_20 相关系数 = {m['o'].corr(m['n']):.4f} "

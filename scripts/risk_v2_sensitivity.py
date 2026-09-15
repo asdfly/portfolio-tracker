@@ -14,6 +14,9 @@ portfolio_snapshots.current_price 是**未复权**价格，历史上存在 10 �
 注意：本口径**不是**为了让数字变好看而挑选样本 —— 它同时改善模型和基线的 R²，
 且我们关心的是两者的**相对**高低与 ΔIC 显著性。
 """
+# 注意：本脚本读 etf_forward_returns_v2，该表已与生产表 etf_forward_returns 逐行等价
+# （相关性 1.000000），保留仅供 2026-09-15 风险模型 VETO 结论复现留档。
+# 新代码请一律使用生产表 etf_forward_returns。
 import sqlite3
 import sys
 from pathlib import Path
@@ -47,6 +50,7 @@ def load_clean_panel(conn, guard: int = GUARD) -> pd.DataFrame:
     sp = split_mask(conn)
     feat = pd.read_sql_query(
         f"SELECT date, code, {', '.join(FEATURE_COLS)} FROM etf_features", conn)
+    # 表名说明见文件顶部注释（v2 表为留档，已与生产表等价）
     lab = pd.read_sql_query(
         "SELECT date, code, fwd_vol_5, fwd_vol_20, fwd_vol_60 FROM etf_forward_returns_v2",
         conn)

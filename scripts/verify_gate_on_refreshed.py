@@ -9,6 +9,9 @@
 本脚本**全程只读**（以 mode=ro 打开），不写任何表，不会影响他人跑测。
 另独立校验生产表的 fwd_vol 与自建 v2 表是否一致（不盲信他人结论）。
 """
+# 注意：本脚本读 etf_forward_returns_v2，该表已与生产表 etf_forward_returns 逐行等价
+# （相关性 1.000000），保留仅供 2026-09-15 风险模型 VETO 结论复现留档。
+# 新代码请一律使用生产表 etf_forward_returns。
 import sqlite3
 import sys
 from pathlib import Path
@@ -36,6 +39,7 @@ def connect_ro():
 
 def main():
     conn = connect_ro()
+    # 表名说明见文件顶部注释（v2 表为留档，已与生产表等价）
     for t in ("etf_features", "etf_forward_returns", "etf_forward_returns_v2",
               "etf_price_history", "portfolio_snapshots"):
         try:
@@ -47,6 +51,7 @@ def main():
     # 独立校验：生产表 etf_forward_returns 的 fwd_vol 是否与自建 v2 一致
     a = pd.read_sql_query(
         "SELECT date, code, fwd_vol_20 FROM etf_forward_returns", conn)
+    # 表名说明见文件顶部注释（v2 表为留档，已与生产表等价）
     b = pd.read_sql_query(
         "SELECT date, code, fwd_vol_20 FROM etf_forward_returns_v2", conn)
     m = a.merge(b, on=["date", "code"], suffixes=("_prod", "_v2")).dropna()

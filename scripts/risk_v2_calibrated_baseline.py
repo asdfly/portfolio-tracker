@@ -4,6 +4,9 @@
 标定是单调变换 → Spearman IC / AUC 与 raw 版完全一致，只有 R² 会变。
 若标定后基线的 R² 也超过模型，则模型在两个判据上**双双落后**，VETO 无争议。
 """
+# 注意：本脚本读 etf_forward_returns_v2，该表已与生产表 etf_forward_returns 逐行等价
+# （相关性 1.000000），保留仅供 2026-09-15 风险模型 VETO 结论复现留档。
+# 新代码请一律使用生产表 etf_forward_returns。
 import sqlite3
 import sys
 from pathlib import Path
@@ -25,6 +28,7 @@ from scripts.risk_v2_sensitivity import load_clean_panel
 def load_panel(conn) -> pd.DataFrame:
     feat = pd.read_sql_query(
         f"SELECT date, code, {', '.join(FEATURE_COLS)} FROM etf_features", conn)
+    # 表名说明见文件顶部注释（v2 表为留档，已与生产表等价）
     lab = pd.read_sql_query(
         "SELECT date, code, fwd_vol_5, fwd_vol_20, fwd_vol_60 FROM etf_forward_returns_v2",
         conn)
