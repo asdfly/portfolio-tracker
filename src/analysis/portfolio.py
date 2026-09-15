@@ -357,14 +357,29 @@ class PortfolioAnalyzer:
 
         return results
 
-    def _calculate_summary(self, positions: List[Dict[str, Any]], 
+    @staticmethod
+    def _pick_number(d: Dict[str, Any], *keys, default=0):
+        """按顺序取第一个**存在**的数值，0 是合法值不得跳过。
+
+        为什么不能写 `d.get(a) or d.get(b) or 0`：
+        `or` 链会把合法的 0 当成假值继续往后找。若 realtime_pnl 真实为 0（当日盈亏持平），
+        会错误地回落到旧的 pnl（一个非零的历史值），把"持平"显示成盈利/亏损。
+        同时这里用 `v == v` 排除 NaN（NaN 不等于自身），避免 nan 污染求和。
+        """
+        for k in keys:
+            v = d.get(k)
+            if v is not None and v == v:  # v == v 为 False 仅当 v 是 NaN
+                return v
+        return default
+
+    def _calculate_summary(self, positions: List[Dict[str, Any]],
                           index_quotes: Dict[str, Dict[str, Any]],
                           risk_results: Dict[str, Any]) -> Dict[str, Any]:
         """计算汇总数据"""
         # 使用实时价格计算
         total_value = sum(p.get('realtime_market_value', p['market_value']) for p in positions)
         total_cost = sum(p['cost_price'] * p['quantity'] for p in positions)
-        total_pnl = sum(p.get('realtime_pnl') or p.get('pnl') or 0 for p in positions)
+        total_pnl = sum(self._pick_number(p, 'realtime_pnl', 'pnl') for p in positions)
 
         # 计算日涨跌（校正版：用共同持仓相同数量×当日价格 vs 前日市值，避免新增/加仓导致跳变）
         daily_pnl = 0
@@ -424,12 +439,14 @@ class PortfolioAnalyzer:
         vs_hs300 = daily_return - hs300_change
 
         # 盈亏统计
-        profit_count = len([p for p in positions if (p.get('realtime_pnl') or p.get('pnl') or 0) > 0])
-        loss_count = len([p for p in positions if (p.get('realtime_pnl') or p.get('pnl') or 0) < 0])
+        profit_count = len([p for p in positions
+                            if self._pick_number(p, 'realtime_pnl', 'pnl') > 0])
+        loss_count = len([p for p in positions
+                          if self._pick_number(p, 'realtime_pnl', 'pnl') < 0])
 
         # 最大贡献/拖累
-        sorted_by_pnl = sorted(positions, 
-                              key=lambda x: x.get('realtime_pnl') or x.get('pnl') or 0, 
+        sorted_by_pnl = sorted(positions,
+                              key=lambda x: self._pick_number(x, 'realtime_pnl', 'pnl'),
                               reverse=True)
 
         # 风险指标摘要
