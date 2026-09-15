@@ -13,7 +13,13 @@ from typing import Iterable, Optional
 import numpy as np
 import pandas as pd
 
-FEAT_VERSION = "v2"
+# ⚠️ 量纲/语义红线（2026-09-15 事故后写死）：任何改变特征【量纲或语义】的改动
+#   （如本次 绝对价→相对量）必须对 etf_features 做**全表重算**，**不能靠升 FEAT_VERSION
+#   隔离** —— 因为 etf_features 的 PK=(date, code) 且 feat_version 不在键里
+#   （src/utils/db_schema.py:501），同一 (date,code) 只能存在一行，升版本号只是给同一批
+#   行换标签、无法新旧并存；增量重算会留下「同列两套尺度」的静默回归。FEAT_VERSION
+#   仅作语义标记（读取方不过滤）：v2=绝对价尺度，v3=相对量尺度。
+FEAT_VERSION = "v3"
 
 # P1-6 特征整改（2026-09-15）：
 #  - ret_20d 与 mom_20d 精确等价（corr 1.0000），已删 ret_20d 保留 mom_20d（消重，R4）。
@@ -230,16 +236,14 @@ def build_feature_matrix(conn, codes: Iterable[str], as_of: Optional[str] = None
     ohlc_map = load_ohlc(conn, codes)
     for code, g in snap.groupby("code"):
         g = g.sort_values("date").set_index("date")
-        # P1-6 R3：close 与 OHLC 统一到 etf_price_history 复权基准（同源自同量纲）。
-        #   - 当 OHLC 可用（2018+）时，close 取 etf_price_history.close，使 ma/macd/boll
-        #     与 KDJ/ATR/range 量纲一致（消除跨源 0.57~2.44× 量级错配）。
-        #   - OHLC 不可用（2012-2017 段）时回退 snapshot close，仅产出 close 派生特征。
-        # 注：两个时段不强行拼接，避免 2018 边界处 level 跳变污染 pct_change/rolling。
+        # P1-6 R3：close 全程统一取 portfolio_snapshots.current_price（单一源，全程覆盖
+        #   2012-2026），ma/macd/boll 等由相对量公式计算 → 跨标的、跨期量纲统一。
+        #   不可改用 etf_price_history.close：该表 2018 起，会丢失 2012-2017 全部行，
+        #   且与 snapshot 造成同列两套尺度（PK=(date,code) 且 feat_version 不在键里）。
+        #   OHLC 派生特征（KDJ/ATR/高低幅/Parkinson）均为同源比值/对数比，尺度不变，
+        #   不会与 snapshot close 产生跨源量纲混用。
+        close = g["close"]
         ohlc = ohlc_map.get(code)
-        if ohlc is not None and not ohlc.empty and "close" in ohlc.columns:
-            close = ohlc["close"]
-        else:
-            close = g["close"]
         tech = compute_technical_from_close(close, ohlc)
         tech["code"] = code
         frames.append(tech)

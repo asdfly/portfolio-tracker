@@ -90,7 +90,7 @@ def test_build_feature_matrix_integrates(memdb):
         assert col in feat.columns
     late = feat[feat["date"] >= "2024-06-01"]
     assert late["ma20"].notna().all()
-    assert (feat["feat_version"] == "v2").all()
+    assert (feat["feat_version"] == "v3").all()
     # 后期技术特征也应无 NaN（合成快照已为两标的提供完整收盘价序列）
     late_300 = late[late["code"] == "510300"]
     assert late_300["vol_20d"].notna().all()
@@ -105,3 +105,49 @@ def test_build_labels_integrates(memdb):
     mask = lab["fwd_ret_5"].notna()
     expected_up = (lab.loc[mask, "fwd_ret_5"] > 0).astype("Int64")
     assert (lab.loc[mask, "is_up_5"] == expected_up).all()
+
+
+# ==================== P1-6 量纲回归护栏（2026-09-15 事故后加固）====================
+# 事故：ma*/macd*/boll_* 由绝对价改相对量后未做全表重算，导致同一列混两套尺度。
+# 根因：etf_features PK=(date, code)，feat_version 不在键里 -> 升版本号无法隔离。
+_ABS_TOL = 1e-6  # 同代码同源应精确复现；容差仅吸收浮点噪声
+
+
+def test_stored_features_scale_matches_recompute():
+    """护栏：库内 etf_features 存量值必须与【当前代码】现算值同尺度。
+
+    任何「改量纲/语义却不全表重算」都会让存量(旧尺度) 与现算(新尺度) 不一致而立即失败：
+    例如把 ma20 由绝对价改相对量却不重算，存量≈4.6、现算≈-0.02，断言直接失败。
+    测试期 DATABASE_PATH 已被 conftest 改道到「生产库副本」——只读比对，零污染。
+    """
+    import os
+    from config.settings import DATABASE_PATH
+    p = str(DATABASE_PATH)
+    if not os.path.exists(p):
+        pytest.skip("无可用数据库（CI 下 DATABASE_PATH=:memory:）")
+    conn = sqlite3.connect(p)
+    try:
+        codes = [r[0] for r in conn.execute(
+            "SELECT code FROM etf_features GROUP BY code HAVING COUNT(*) >= 60 "
+            "ORDER BY code LIMIT 3").fetchall()]
+        if not codes:
+            pytest.skip("etf_features 无足够历史行")
+        mx = conn.execute("SELECT MAX(date) FROM etf_features").fetchone()[0]
+        checks = ["ma20", "macd", "boll_mid", "rsi_14", "mom_20d", "vol_20d"]
+        stored = pd.read_sql_query(
+            f"SELECT date, code, {', '.join(checks)} FROM etf_features "
+            f"WHERE code IN ({', '.join('?' * len(codes))})", conn, params=codes)
+        fresh = build_feature_matrix(conn, codes, as_of=mx)
+        merged = fresh[["date", "code"] + checks].merge(
+            stored, on=["date", "code"], suffixes=("_fresh", "_db"))
+        assert len(merged) >= 30, f"可比对行数过少: {len(merged)}"
+        for col in checks:
+            a = pd.to_numeric(merged[col + "_fresh"], errors="coerce")
+            b = pd.to_numeric(merged[col + "_db"], errors="coerce")
+            ok = a.notna() & b.notna()
+            assert int(ok.sum()) >= 30, f"{col} 可比对非空行过少: {int(ok.sum())}"
+            md = float((a[ok] - b[ok]).abs().max())
+            assert md < _ABS_TOL, (
+                f"{col} 存量与现算不一致(max|Δ|={md:.6g})：疑全表未重算或量纲漂移")
+    finally:
+        conn.close()

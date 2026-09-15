@@ -479,6 +479,11 @@ TABLE_DEFS = [
         "CREATE INDEX IF NOT EXISTS idx_eph_date ON etf_price_history(date)",
     ]),
 
+    # ⚠️ 量纲/语义红线（2026-09-15 事故后写死）：etf_features 的 PK=(date, code) 且
+    #   feat_version 不在键里 —— 任何改变特征【量纲或语义】的改动（如绝对价→相对量）
+    #   都必须对本表做**全表重算**，不能靠升 feat_version 隔离（同键只能存一行，无关
+    #   版本）；增量重算会留下「同列两套尺度」且无法区分的静默回归。见
+    #   src/analysis/predictor/features.py 顶部同款红线注释。
     ("etf_features", """
         CREATE TABLE IF NOT EXISTS etf_features (
             date TEXT NOT NULL,
