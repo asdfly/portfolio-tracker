@@ -44,6 +44,34 @@ def _is_etf(code: str, name: str) -> bool:
     return False
 
 
+# P1-6 R5 双保险：已知非 ETF / 脏代码，绝不许进入特征域。
+# 来源 docs/handover/07_known_data_issues.md —— 001323/002152 为场外基金，曾误入
+# etf_fundamental，虽不在 v2 特征域推导路径上，仍在此硬拒，防历史脏数据复辟。
+_NON_ETF_EXCLUDE = {"001323", "002152"}
+
+
+def _assert_etf_domain(codes: List[str]) -> None:
+    """resolve_target_codes 产出的目标域再校验：非场内 ETF 代码一律拒绝。
+
+    双保险：resolve_target_codes 已用 _is_etf 过滤，这里再独立做一次纯代码段校验
+    （要求命中场内 ETF 代码正则），并显式拒掉 _NON_ETF_EXCLUDE 中的已知脏代码。
+    """
+    bad = []
+    for c in codes:
+        c6 = _norm_code(c)
+        if not c6 or len(c6) != 6 or not c6.isdigit():
+            bad.append((c, "非 6 位纯数字代码"))
+        elif c6 in _NON_ETF_EXCLUDE:
+            bad.append((c, "已知非 ETF 脏代码(07_known_data_issues)"))
+        elif not _ETF_CODE_RE.match(c6):
+            bad.append((c, "代码段非场内 ETF 模式"))
+    if bad:
+        raise ValueError(
+            "[P1-6 R5] 非 ETF 代码试图进入特征域，已拒绝: "
+            + "; ".join(f"{c}({why})" for c, why in bad)
+        )
+
+
 def _is_delisted(c6: str) -> bool:
     """ETF_CATEGORIES 中被显式标记 delisted（已退市/已清仓）的场外/历史标的。
 
@@ -100,6 +128,7 @@ def build_prediction_base(conn=None, backfill_ohlcv: bool = True,
     try:
         init_all_tables(conn)  # 确保三张新表已创建
         codes = resolve_target_codes(conn)
+        _assert_etf_domain(codes)  # P1-6 R5 双保险：非 ETF 代码不进特征域
         log(f"[Base] 目标域 {len(codes)} 只 ETF: {codes}")
 
         target = as_of or conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()[0]

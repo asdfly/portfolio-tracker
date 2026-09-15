@@ -75,7 +75,8 @@ def test_technical_no_future_leakage():
     close = pd.Series(np.cumprod(1 + rng.normal(0, 0.01, n)), index=idx)
     tech = compute_technical_from_close(close)
     for t in (50, 100, 150):
-        expected = close.iloc[t - 19:t + 1].mean()
+        # P1-6 R3：ma20 现为相对量 close/ma-1（仍仅用 close[t-19..t]，无未来泄漏）
+        expected = close.iloc[t] / close.iloc[t - 19:t + 1].mean() - 1.0
         assert abs(tech["ma20"].iloc[t] - expected) < 1e-9
     assert pd.isna(tech["ma20"].iloc[0])  # 窗口不足 -> NaN
 
@@ -85,14 +86,14 @@ def test_build_feature_matrix_integrates(memdb):
     feat = build_feature_matrix(memdb, codes)
     assert not feat.empty
     assert set(feat["code"].unique()) <= set(codes)
-    for col in ("ma20", "ff_net_inflow_5d", "hs300_ret_20d", "feat_version"):
+    for col in ("ma20", "vol_20d", "hs300_ret_20d", "feat_version"):
         assert col in feat.columns
     late = feat[feat["date"] >= "2024-06-01"]
     assert late["ma20"].notna().all()
     assert (feat["feat_version"] == "v2").all()
-    # 后期资金流特征也应有值（合成数据已为 510300 提供 fund_flows）
+    # 后期技术特征也应无 NaN（合成快照已为两标的提供完整收盘价序列）
     late_300 = late[late["code"] == "510300"]
-    assert late_300["ff_net_inflow_5d"].notna().all()
+    assert late_300["vol_20d"].notna().all()
 
 
 def test_build_labels_integrates(memdb):

@@ -33,7 +33,7 @@ from src.analysis.stats_utils import _lag_truncation, benjamini_hochberg, newey_
 from src.analysis.predictor.models import (
     EMBARGO_DAYS, N_SPLITS, VETO_IC, VETO_T,
     FEATURE_COLS, _fit_lgb, _fit_ridge, _ic, _pred_ridge, _r2,
-    walkforward_splits,
+    walkforward_splits, _impute_features,
 )
 
 # 免费基线：历史 20 日已实现波动率直接外推（features.py: ret.rolling(20).std()，
@@ -121,7 +121,8 @@ def risk_walkforward_vs_baseline(df: pd.DataFrame, window: int, model: str = "lg
     if not splits:
         return {"error": f"insufficient history ({len(dates)} days)"}
 
-    X_all = panel[FEATURE_COLS].fillna(0.0)
+    # P1-6（A）：折内中位数填充，ref=训练折，防泄漏（绝不填 0）
+    X_raw = panel[FEATURE_COLS]
     y_all = panel[label_col].astype(float)
     base_all = panel[baseline_feature].astype(float)  # 基线无需训练，直接外推
 
@@ -131,8 +132,10 @@ def risk_walkforward_vs_baseline(df: pd.DataFrame, window: int, model: str = "lg
         te_mask = (panel["_pos"] >= ts_start) & (panel["_pos"] < ts_end)
         if tr_mask.sum() < 300 or te_mask.sum() < 30:
             continue
-        X_tr, y_tr = X_all[tr_mask], y_all[tr_mask]
-        X_te, y_te = X_all[te_mask], y_all[te_mask]
+        X_tr = _impute_features(X_raw[tr_mask])
+        y_tr = y_all[tr_mask]
+        X_te = _impute_features(X_raw[te_mask], ref=X_raw[tr_mask])
+        y_te = y_all[te_mask]
         if baseline_mode == "linear":
             b_tr = base_all[tr_mask].to_numpy(dtype=float)
             coef = np.polyfit(b_tr, y_tr.to_numpy(dtype=float), 1)

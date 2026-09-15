@@ -21,15 +21,18 @@ import numpy as np
 import pandas as pd
 
 # 数值特征（对应 etf_features，除 date/code/feat_version）
+# P1-6（A/R1/R4）：与 features.py 对齐，31 维。
+#   - 删 4 个资金流特征（ff_*，etf_features 中 ~83% NULL，置 0 即纯噪声维，R1）。
+#   - 删 ret_20d（与 mom_20d 精确等价 corr 1.0000，R4）。
+#   - 删 atr_14（绝对真幅，复权基准异于 close，量纲不一致，R3）。
 FEATURE_COLS = [
     "ma5", "ma10", "ma20", "ma60", "macd", "macd_signal", "macd_hist",
     "rsi_14", "boll_mid", "boll_upper", "boll_lower", "boll_pctb",
-    "kdj_k", "kdj_d", "kdj_j", "atr_14", "atr_pct",
-    "ret_1d", "ret_5d", "ret_20d", "vol_20d", "mom_20d",
+    "kdj_k", "kdj_d", "kdj_j", "atr_pct",
+    "ret_1d", "ret_5d", "vol_20d", "mom_20d",
     # v2 新增：波动率结构 + 量价 + 多周期动量
     "vol_5d", "vol_60d", "vol_ratio_5_20", "ret_60d", "mom_5d", "range_20d",
     "parkinson_vol_20d", "hl_range_20d", "volume_zscore_20d",
-    "ff_net_inflow_5d", "ff_net_inflow_20d", "ff_super_net_5d", "ff_large_net_5d",
     "hs300_ret_20d", "hs300_vol_20d",
 ]
 WINDOWS = (5, 20, 60)
@@ -124,6 +127,32 @@ def _ic(y_true: np.ndarray, y_pred: np.ndarray) -> Tuple[float, float]:
             float(s) if np.isfinite(s) else np.nan)
 
 
+# P1-6（A）：缺失填充护栏。绝不 fillna(0.0)——会把 ~83% NULL 的资金流特征变成纯噪声维。
+#   - 以 ref（训练折）中位数填充 X 的 NaN，仅用训练折统计，杜绝跨折泄漏。
+#   - ref 缺省为 X 自身（用于全量重训/推理场景，此时 X 即训练集）。
+#   - 护栏：ref 中任特征列缺失率 > _MISS_THRESHOLD 直接 raise，避免把全 NULL 坏列喂给模型。
+# 注：未加缺失指示列——Ridge 走 StandardScaler，常数列会触发除零 NaN；折内中位数已足够，
+#     且 P1-6 的核心是把"填 0 噪声维"换成"训练折统计量填充"。
+_MISS_THRESHOLD = 0.90
+
+
+def _impute_features(X: pd.DataFrame, ref: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """walk-forward 安全缺失填充：训练折中位数（绝不填 0）。"""
+    feats = list(X.columns)
+    ref = X if ref is None else ref
+    miss_rate = ref[feats].isna().mean()
+    bad = miss_rate[miss_rate > _MISS_THRESHOLD]
+    if len(bad):
+        raise ValueError(
+            "[P1-6 护栏] 特征缺失率超限(>%.0f%%): " % (_MISS_THRESHOLD * 100)
+            + ", ".join(f"{c}={rate:.1%}" for c, rate in bad.items()))
+    med = ref[feats].median()
+    X = X.copy()
+    for c in feats:
+        X[c] = X[c].fillna(med[c])
+    return X
+
+
 def walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
                          n_splits: int = N_SPLITS,
                          embargo: int = EMBARGO_DAYS) -> dict:
@@ -140,7 +169,7 @@ def walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
     if not splits:
         return {"error": f"insufficient history ({n_dates} days)"}
 
-    X_all = panel[FEATURE_COLS].fillna(0.0)
+    X_raw = panel[FEATURE_COLS]
     y_all = panel[y_col].astype(float)
     folds = []
     ys, ps = [], []
@@ -150,8 +179,11 @@ def walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
         te_mask = (panel["_pos"] >= ts_start) & (panel["_pos"] < ts_end)
         if tr_mask.sum() < 300 or te_mask.sum() < 30:
             continue
-        X_tr, y_tr = X_all[tr_mask], y_all[tr_mask]
-        X_te, y_te = X_all[te_mask], y_all[te_mask]
+        # P1-6（A）：折内中位数填充，ref=训练折，防泄漏（绝不填 0）
+        X_tr = _impute_features(X_raw[tr_mask])
+        y_tr = y_all[tr_mask]
+        X_te = _impute_features(X_raw[te_mask], ref=X_raw[tr_mask])
+        y_te = y_all[te_mask]
         if model == "lgb":
             mdl = _fit_lgb(X_tr, y_tr)
             p = mdl.predict(X_te)
@@ -212,13 +244,15 @@ def predict_latest(conn, model: str = "lgb", as_of: Optional[str] = None) -> pd.
     for w in WINDOWS:
         y_col = LABEL_COLS[w]
         panel = df.dropna(subset=[y_col]).copy()
-        X_all = panel[FEATURE_COLS].fillna(0.0)
+        X_raw = panel[FEATURE_COLS]
         y_all = panel[y_col].astype(float)
+        # P1-6（A）：全量重训以训练折（panel）中位数填充，推理用同一中位数（不泄露 latest）
+        X_all = _impute_features(X_raw)
         if model == "lgb":
             mdl = _fit_lgb(X_all, y_all)
         else:
             sc, mdl = _fit_ridge(X_all, y_all)
-        X_new = latest[FEATURE_COLS].fillna(0.0)
+        X_new = _impute_features(latest[FEATURE_COLS], ref=X_raw)
         pred = mdl.predict(X_new) if model == "lgb" else _pred_ridge(sc, mdl, X_new)
         for r, p in zip(latest.itertuples(index=False), pred):
             d = 1 if p > 0 else (-1 if p < 0 else 0)
@@ -310,7 +344,7 @@ def risk_walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
     if not splits:
         return {"error": f"insufficient history ({len(dates)} days)"}
 
-    X_all = panel[FEATURE_COLS].fillna(0.0)
+    X_raw = panel[FEATURE_COLS]
     y_all = panel[label_col].astype(float)
     ys, ps = [], []
     ys_cls, ps_cls = [], []
@@ -319,8 +353,11 @@ def risk_walkforward_evaluate(df: pd.DataFrame, window: int, model: str = "lgb",
         te_mask = (panel["_pos"] >= ts_start) & (panel["_pos"] < ts_end)
         if tr_mask.sum() < 300 or te_mask.sum() < 30:
             continue
-        X_tr, y_tr = X_all[tr_mask], y_all[tr_mask]
-        X_te, y_te = X_all[te_mask], y_all[te_mask]
+        # P1-6（A）：折内中位数填充，ref=训练折，防泄漏
+        X_tr = _impute_features(X_raw[tr_mask])
+        y_tr = y_all[tr_mask]
+        X_te = _impute_features(X_raw[te_mask], ref=X_raw[tr_mask])
+        y_te = y_all[te_mask]
         if model == "lgb":
             mdl = _fit_lgb(X_tr, y_tr)
             p = mdl.predict(X_te)
@@ -426,14 +463,16 @@ def predict_risk_latest(conn, model: str = "lgb", as_of: Optional[str] = None,
         panel = df.dropna(subset=[vol_col]).copy()
         if panel.empty:
             continue
-        X_all = panel[FEATURE_COLS].fillna(0.0)
+        # P1-6（A）：全量重训以 panel 中位数填充，推理用同一中位数
+        X_raw = panel[FEATURE_COLS]
         y_all = panel[vol_col].astype(float)
+        X_all = _impute_features(X_raw)
         if model == "lgb":
             mdl = _fit_lgb(X_all, y_all)
-            pred = mdl.predict(latest[FEATURE_COLS].fillna(0.0))
+            pred = mdl.predict(_impute_features(latest[FEATURE_COLS], ref=X_raw))
         else:
             sc, mdl = _fit_ridge(X_all, y_all)
-            pred = _pred_ridge(sc, mdl, latest[FEATURE_COLS].fillna(0.0))
+            pred = _pred_ridge(sc, mdl, _impute_features(latest[FEATURE_COLS], ref=X_raw))
         for r, p in zip(latest.itertuples(index=False), pred):
             rows.append((as_of, r.code, w, float(p), model))
     return pd.DataFrame(rows, columns=["date", "code", "forward_window", "pred_vol", "model"])
@@ -534,14 +573,16 @@ def predict_drawdown_latest(conn, model: str = "lgb", as_of: Optional[str] = Non
         panel = df.dropna(subset=[dd_col]).copy()
         if panel.empty:
             continue
-        X_all = panel[FEATURE_COLS].fillna(0.0)
+        # P1-6（A）：全量重训以 panel 中位数填充，推理用同一中位数
+        X_raw = panel[FEATURE_COLS]
         y_all = panel[dd_col].astype(float)
+        X_all = _impute_features(X_raw)
         if model == "lgb":
             mdl = _fit_lgb(X_all, y_all)
-            pred = mdl.predict(latest[FEATURE_COLS].fillna(0.0))
+            pred = mdl.predict(_impute_features(latest[FEATURE_COLS], ref=X_raw))
         else:
             sc, mdl = _fit_ridge(X_all, y_all)
-            pred = _pred_ridge(sc, mdl, latest[FEATURE_COLS].fillna(0.0))
+            pred = _pred_ridge(sc, mdl, _impute_features(latest[FEATURE_COLS], ref=X_raw))
         for r, p in zip(latest.itertuples(index=False), pred):
             rows.append((as_of, r.code, w, float(p), model))
     return pd.DataFrame(rows, columns=["date", "code", "forward_window", "pred_dd", "model"])
