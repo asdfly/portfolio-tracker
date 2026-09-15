@@ -2,6 +2,7 @@
 组合风险分析器 - 整合风险指标计算
 """
 import numpy as np
+import pandas as pd
 from typing import Dict, List, Any
 import logging
 
@@ -147,48 +148,98 @@ class PortfolioRiskAnalyzer:
 
     def _analyze_correlations(self, positions: List[Dict[str, Any]], 
                               days: int = 60) -> Dict[str, Any]:
-        """分析品种间相关性"""
-        # 获取各品种历史收益率
-        returns_dict = {}
+        """分析品种间相关性（P0 修复：按日期对齐，容忍不等长序列）。
+
+        各标的可得历史行数不等（场外基金净值回填区间较短，ETF 可达 days 上限），
+        原实现把裸 numpy 数组直接塞进 returns_dict，pd.DataFrame 会抛
+        "All arrays must be of the same length" 致每日管线中断。
+        改为：按 date 升序排序后取日收益，构造带日期索引的 pd.Series，
+        由 pandas 按索引对齐（缺失为 NaN），再用 min_periods 控制最小重叠。
+        """
+        min_overlap = 20  # 最小有效重叠观测数（不对 days 打折，不静默跳过场外）
+        returns_dict: Dict[str, pd.Series] = {}
+        overlap_days: Dict[str, int] = {}
 
         for pos in positions:
             code = pos['code']
+            label = f"{code}_{str(pos.get('name', ''))[:6]}"
             history = self.db.get_price_history(code, days)
+            if len(history) < 2:
+                overlap_days[label] = 0
+                continue
 
-            if len(history) >= 20:
-                values = np.array([h['current_price'] for h in history])
-                returns = np.diff(values) / values[:-1]
-                returns_dict[f"{code}_{pos['name'][:6]}"] = returns
+            # get_price_history 为 date DESC；必须先升序，否则 diff 的时间轴反向
+            hist_sorted = sorted(history, key=lambda h: h['date'])
+            dates = [h['date'] for h in hist_sorted]
+            values = np.array([h['current_price'] for h in hist_sorted], dtype=float)
+
+            if len(values) < min_overlap + 1:
+                # 收益观测不足 min_overlap，记录后丢弃（避免薄样本污染相关矩阵）
+                overlap_days[label] = max(len(values) - 1, 0)
+                continue
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                rets = np.diff(values) / values[:-1]
+            series = pd.Series(rets, index=dates[1:], name=label)
+            series = series[np.isfinite(series.values)]
+            if series.shape[0] < min_overlap:
+                overlap_days[label] = int(series.shape[0])
+                continue
+            returns_dict[label] = series
+            overlap_days[label] = int(series.shape[0])
 
         if len(returns_dict) < 2:
-            return {'error': '数据不足'}
+            return {'error': '数据不足', 'overlap_days': overlap_days,
+                    'min_overlap': min_overlap}
 
-        # 计算相关系数矩阵
-        corr_matrix = self.risk_analyzer.calculate_correlation_matrix(returns_dict)
+        # 按日期索引对齐（缺失为 NaN），并丢弃有效观测 < min_overlap 的标的
+        df = pd.DataFrame(returns_dict)
+        valid_counts = df.notna().sum()
+        kept = [c for c in df.columns if int(valid_counts.get(c, 0)) >= min_overlap]
+        dropped_thin = {c: int(valid_counts.get(c, 0)) for c in df.columns if c not in kept}
+        df = df[kept]
 
+        if df.shape[1] < 2:
+            return {'error': '数据不足', 'overlap_days': overlap_days,
+                    'dropped_thin': dropped_thin, 'min_overlap': min_overlap}
+
+        # 计算相关系数矩阵（传入带日期索引的 Series，由 risk 层对齐）
+        corr_matrix = self.risk_analyzer.calculate_correlation_matrix(
+            {c: df[c] for c in df.columns}, min_periods=min_overlap
+        )
+
+        cols = list(corr_matrix.columns)
         # 找出高相关性品种对
         high_corr_pairs = []
-        for i in range(len(corr_matrix.columns)):
-            for j in range(i+1, len(corr_matrix.columns)):
+        for i in range(len(cols)):
+            for j in range(i + 1, len(cols)):
                 corr = corr_matrix.iloc[i, j]
-                if abs(corr) > 0.8:  # 高相关性阈值
+                if pd.notna(corr) and abs(corr) > 0.8:  # 高相关性阈值
                     high_corr_pairs.append({
-                        'asset1': corr_matrix.columns[i],
-                        'asset2': corr_matrix.columns[j],
-                        'correlation': round(corr, 4),
+                        'asset1': cols[i],
+                        'asset2': cols[j],
+                        'correlation': round(float(corr), 4),
                         'type': '强正相关' if corr > 0 else '强负相关'
                     })
 
-        # 计算平均相关性
-        avg_correlation = np.mean([corr_matrix.iloc[i, j] 
-                                   for i in range(len(corr_matrix)) 
-                                   for j in range(i+1, len(corr_matrix))])
+        # 计算平均相关性（仅统计有效重叠达标的标对，避免 NaN 污染）
+        off_diag = [
+            float(corr_matrix.iloc[i, j])
+            for i in range(len(cols))
+            for j in range(i + 1, len(cols))
+            if pd.notna(corr_matrix.iloc[i, j])
+        ]
+        avg_correlation = float(np.mean(off_diag)) if off_diag else 0.0
 
         return {
             'correlation_matrix': corr_matrix.round(4).to_dict(),
             'high_correlation_pairs': high_corr_pairs,
             'average_correlation': round(avg_correlation, 4),
-            'diversification_score': round(1 - abs(avg_correlation), 4)
+            'diversification_score': round(1 - abs(avg_correlation), 4),
+            # P0 修复附带：各标的可用重叠天数，便于识别场外基金样本偏薄
+            'overlap_days': {c: int(df[c].notna().sum()) for c in df.columns},
+            'dropped_thin': dropped_thin,
+            'min_overlap': min_overlap,
         }
 
     def _run_stress_test(self, positions: List[Dict[str, Any]]) -> Dict[str, Any]:

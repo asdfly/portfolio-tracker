@@ -341,15 +341,51 @@ class RiskAnalyzer:
             'concentration_level': '高' if hhi > 0.25 else ('中' if hhi > 0.15 else '低')
         }
 
-    def calculate_correlation_matrix(self, returns_dict: Dict[str, np.ndarray]) -> pd.DataFrame:
-        """计算相关系数矩阵"""
-        # 构建DataFrame
-        df = pd.DataFrame(returns_dict)
+    def calculate_correlation_matrix(self, returns_dict: Dict[str, Any],
+                                     min_periods: int = 20) -> pd.DataFrame:
+        """计算相关系数矩阵（P0 修复：不再假设入参等长，按索引对齐）。
 
-        # 计算相关系数
-        corr_matrix = df.corr()
+        入参支持两类：
+          - pd.Series（带日期索引）：由 pandas 按索引对齐（缺失为 NaN），重叠不足返回 NaN；
+          - 等长的裸数组：无索引，按键值对齐。
 
-        return corr_matrix
+        防御规则：
+          - 混用 Series 与裸数组 → 无法对齐，抛明确错误；
+          - 裸数组长度不等 → 抛明确错误，并列出长度不等的标的及各自长度，
+            避免 pandas 抛含糊的 "All arrays must be of the same length"。
+        """
+        if not returns_dict:
+            return pd.DataFrame()
+
+        has_series = any(isinstance(v, pd.Series) for v in returns_dict.values())
+        has_array = any(not isinstance(v, pd.Series) for v in returns_dict.values())
+
+        if has_series and has_array:
+            raise ValueError(
+                "calculate_correlation_matrix: 入参混用 pd.Series 与裸数组，无法按日期索引对齐；"
+                "请统一传入带索引的 pd.Series。"
+            )
+
+        if has_array:
+            lengths = {k: int(np.asarray(v).shape[0]) for k, v in returns_dict.items()}
+            if len(set(lengths.values())) > 1:
+                detail = ", ".join(
+                    f"{k}({lengths[k]})"
+                    for k in sorted(lengths, key=lambda x: lengths[x])
+                )
+                raise ValueError(
+                    "calculate_correlation_matrix: 序列长度不等且无日期索引，无法构造相关矩阵；"
+                    f"长度不等的标的: {detail}"
+                )
+            df = pd.DataFrame({k: np.asarray(v) for k, v in returns_dict.items()})
+        else:
+            df = pd.DataFrame(returns_dict)
+
+        if df.shape[1] < 2:
+            return pd.DataFrame()
+
+        # min_periods 控制最小重叠观测数，重叠不足的标对返回 NaN
+        return df.corr(min_periods=min_periods)
 
     def stress_test(self, current_value: float, positions: List[Dict[str, Any]],
                    scenarios: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
