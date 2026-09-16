@@ -935,6 +935,33 @@ class TestReplicaRowGuardTier2Breadth:
             [_pos(c) for c in self.OTC] + [_pos(self.ETF)], 60)
         assert out["copied_rows_voided"] == {}, out["copied_rows_voided"]
 
+    def test_breadth_ratio_constant_is_actually_consumed(self, monkeypatch):
+        """旋钮有效性：占比下限必须**真的**由 `COPY_BREADTH_MIN_RATIO` 控制（两侧各推一次）。
+
+        背景（2026-09-16 data-engineer 报、fix-copy-two-tier 收口）：此前判据写成硬编码的
+        `c * 2 < n`，而 `COPY_BREADTH_MIN_RATIO` 只出现在 `logger.info` 的格式串里 ⇒
+        改常量**不改行为**、日志却会打印新值（「日志说 99%、实际按 50% 执行」），
+        而且当时 4 条 Tier2 用例全过 —— 谁也发现不了。收口后判据 = `c / n < 常量`。
+
+        本用例把常量往两侧各推一次，任何「把常量改回装饰品」的改动都会立刻红：
+          * 抬到 0.75 ⇒ n=4 / c=2（50%）**不得**命中；
+          * 降到 0.25 ⇒ n=4 / c=1（25%）**必须**命中（边界含等号）。
+        """
+        import src.analysis.portfolio_risk as pr
+
+        positions = [_pos(c) for c in self.OTC] + [_pos(self.ETF)]
+        half = self._build(flat_otc={"001194", "001323"})   # 2 / 4 = 50%
+        quarter = self._build(flat_otc={"001194"})          # 1 / 4 = 25%
+
+        monkeypatch.setattr(pr, "COPY_BREADTH_MIN_RATIO", 0.75)
+        assert _make_analyzer(half[1])._analyze_correlations(positions, 60)[
+            "copied_rows_voided"] == {}, "下限抬到 75% 后 50% 的日期不该命中"
+
+        monkeypatch.setattr(pr, "COPY_BREADTH_MIN_RATIO", 0.25)
+        out = _make_analyzer(quarter[1])._analyze_correlations(positions, 60)
+        assert out["copied_rows_voided"].get("001194_001194") == [
+            f"{quarter[0][-1]} Tier2 段长=2"], out["copied_rows_voided"]
+
     def test_basket_smaller_than_three_is_not_voided(self):
         """场外篮子只有 2 只且全都同 key（100%）→ 仍不命中（n < 3）。"""
         dates, series = self._build(flat_otc=set(self.OTC))
