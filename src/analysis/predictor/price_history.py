@@ -115,6 +115,8 @@ def fetch_etf_ohlcv_tx(code6: str, start: str = "20180101", end: Optional[str] =
       - 每行字段顺序为 [date, open, close, high, low, volume] —— **close 在 index 2，排在 high/low 之前**，
         不能按 OHLC 顺序解析。
       - 接口不返回成交额，amount 一律置 None（入库即 NULL）。**禁止**用 volume×price 等口径伪造。
+      - volume 单位 = **手**，与 EM 主源一致；**禁止**在此乘/除 100 —— 全表已在 2026-09-16
+        统一为手（历史 7018 行 TX 行已 ÷100 归一），任何换算都会重新引入 100× 断层。
       - 响应中 qfqday 缺失时返回空 DataFrame，**绝不**回退取未复权的 `day` 键：宁可该标的今天不更新，
         也不能把未复权价写进 etf_price_history。
       - 该接口有间歇性 RemoteDisconnected，故带 6 次指数退避重试（base 0.75s）。
