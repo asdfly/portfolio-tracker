@@ -1,0 +1,389 @@
+# 12 · 工程铁律与坑位总表（portfolio_tracker）
+
+> **本文件与 `~/.workbuddy` 会话记忆的分工**
+> 会话记忆 `MEMORY.md` 每次会话自动注入、有长度预算，超限会被**静默截断**（截断后的部分等于不存在）。
+> 因此：**只有「一句话就能救命」的铁律留在 MEMORY.md**；台账、实测数字、代码行号、判据演化史全部放本文件，MEMORY.md 用指针引用。
+> **维护规则**：新增坑位先写本文件，只有确属「不看会立刻犯错」的才上提到 MEMORY.md。
+>
+> 生成于 2026-09-16，随项目演进更新。
+
+---
+
+## 1. 环境与工具链铁律
+
+| 项 | 规则 | 违反后果 |
+|---|---|---|
+| Python | 一律 `venv313/Scripts/python.exe` | 系统 python 缺依赖 / 版本不符（需 3.13） |
+| Git Bash coreutils | `grep`/`head`/`tail`/`wc`/`ls`/`cat` **常 command not found** | 管道命令静默失败、`Exit Code: 127`；改用 python 或 `git --no-pager` |
+| 路径写法 | 用 `D:/...` | `/d/...` 形式部分命令不认 |
+| 库副本落点 | 一律 `data/backups/` | 落 `data/database/` 会让 worker 连错库 |
+| 计划任务 | 沙箱内 `schtasks` / `Get-ScheduledTask` **禁用** | 计划任务详情只能用户本地自查 |
+| ⚠️ 时钟 | **本机时钟才是准的**，会话头 `<current_time>` 不可信（曾差 5 小时） | 误判时限已过/未到；涉时限先 `python -c "import datetime;print(datetime.datetime.now())"` |
+
+### 1.1 批处理文件
+- **`.bat` 必须 CRLF**。LF 会让 cmd.exe 解析错乱 → 日志显示假成功、邮件静默未发。
+- Write 工具产出 LF ⇒ 写完必须转 CRLF 并用 `od -c` 核验。
+
+---
+
+## 2. Git 作业规程
+
+### 2.1 三条禁令
+| 禁令 | 原因 |
+|---|---|
+| **禁** `git status` / `git add -A` / `git add .` | 全量遍历触发 Git-for-Windows `err_win_to_posix` 崩溃 |
+| **禁** `git gc` / `git repack` / `git fsck` | 删旧 pack 必崩，**曾连损 3 次** |
+| **禁** 不带 pathspec 的 `git commit` | 见下 2.2 |
+
+- 查状态用 `git diff --name-status HEAD`；暂存用 `git add <具体文件>`。
+- 自动维护已关闭（`gc.auto=0` + `maintenance.auto=false`）：此前每次提交 git 2.55 会后台跑 `geometric-repack`，撞上 filter-repo 残留失效对象（`bad tree object 4570cdb5`）反复失败。**不要重新打开**。仓库有缺失对象但 HEAD 链完整，commit/push 正常。
+
+### 2.2 🔴 误卷事故台账（commit 带上别人的文件）
+**`git add <具体文件>` 不保证 commit 只含自己的文件** —— 多人共用同一工作区，他人已 `git add` 未提交的文件会被一并卷进你的 commit。
+
+| 提交 | 声称内容 | 实际装入 |
+|---|---|---|
+| `05c7288` | `docs(correlation):` | 多装 128 行代码 |
+| `8a7173c` | `docs(handover):` | 多装 502 行（gp-4 两文件）；**已推送 ⇒ 不可拆**（拆 = force-push） |
+
+**作业纪律**：`git commit -m "..." <显式路径>` → 提交前 `git diff --cached --name-only` 核对 → 提交后 `git show --stat HEAD` 自核。
+
+### 2.3 filter-repo
+`filter-repo --force --no-gc ... --invert-paths`（**必须 `--no-gc`**）→ 会删掉 `origin`，收尾需 `git remote add` + `push --force`。mirror 备份一律 `--no-hardlinks`。
+
+### 2.4 推送出口
+沙箱对 GitHub 写出口受限（https push reset / 代理 502 / gh 超时）。**唯一稳定写通道 = SSH-over-443**（`~/.ssh/config` github.com→ssh.github.com:443），远端 `git@github.com:asdfly/portfolio-tracker.git`。
+⚠️ `git push` **无输出返回实为未成**，须显式核验远端 hash（`git rev-parse origin/master`）。
+
+---
+
+## 3. 数据层不变量
+
+### 3.1 表结构陷阱
+- **`etf_features` PK = `(date, code)`，`feat_version` 不入键** ⇒ 升版本号**无法**隔离新旧量纲。任何改量纲/语义的改动**必须全表重算**；增量会造成「同列两套尺度」且事后无法区分。
+- `etf_price_history.adj_close == close`（**零差异**）⇒ 该列**不含复权**。对 sina 源标的，「用了 qfq 复权」的说法不成立。
+- `database.get_price_history(code, days)` 返回 `date/current_price/market_value/pnl`，**`ORDER BY date DESC`**（用前须升序）。
+
+### 3.2 量纲（volume）
+- **`etf_price_history.volume` 全表口径 = 「手」**（2026-09-16 归一）。
+- tx 段 7,018 行原由 akshare `stock_zh_a_hist_tx`（走 newfqkline）写入时 **×100 成「股」**，已 ÷100 修正。
+- 腾讯 **raw** 端点 `web.ifzq.gtimg.cn/appstock/app/fqkline/get` 原生即「手」，与 EM 逐日精确相等。
+- 落盘 fetcher 走 raw 端点 ⇒ **代码里零转换，禁止再乘除 100**。
+
+### 3.3 覆盖缺口（结构性）
+- **12 只场外基金在 `etf_price_history` 零行**，占持仓约 **33%** ⇒ 任何「按行数对齐」的算法都会在这里踩坑。
+- 交易日历 `src/utils/trading_calendar.py`：`_HOLIDAY_RANGES` 只内置 **2024/2025/2026**，覆盖外年份**静默退化**（快照回溯到 2012）。**每年初必须补下一年。**
+
+### 3.4 🔴 `etf_features.ret_1d` 双向落盘伪收益
+5 例与 `r−1` 差 **`0.000e+00`**（同一事件同时污染 `ret_1d` 与 `ret_1d_lag`）：
+
+| 幅度 | 方向 |
+|---|---|
+| +255.8% / +221.3% / +176.3% / +248.6% | 向上跳 |
+| **−73.9%**（`512010`） | **向下跳** |
+
+⇒ 量纲/折算改动后**必须全表重算**，不能指望增量补齐。
+
+### 3.5 实测行数快照（2026-09-16，勿重数）
+| 表 | 行数 | 最新日期 |
+|---|---|---|
+| `portfolio_summary` | 3477 | 09-14 |
+| `portfolio_snapshots` | 36173 | 09-15 |
+| `etf_price_history` | 31515 | 09-15 |
+| `etf_technical` | 35100 | 09-15 |
+| `index_quotes` | 50850 | 09-15 |
+
+---
+
+## 4. `portfolio_snapshots` 复制行（fill-forward）= 活跃泄漏
+
+### 4.1 事实基座
+存在「**行上日期 D、实际装更早真实值**」的复制行。已证实链条：
+
+- `2026-06-15~06-29` 十只场外连续 **10 行** `(current_price, market_value)` 恒等；
+- 值**逐个精确等于官方 `06-12` 单位净值**；
+- `06-30` 行 = 官方 **`06-29`** 净值；
+- ⇒ 那根 **+15~18%** 是 **`06-12→06-29`（17 自然日）收益被贴上「1 个交易日」标签**；
+- 官方 `06-30` 当日实际只 **+3.59%~+4.97%**。
+
+**教训：β「幅度可达」不能证明基期合法。** 必须证明分子分母的日期归属。
+
+### 4.2 🔴 写入方仍存活
+08-03 采集器上线**之后**仍发生 **17 段**，最近一次 = `2026-09-14→09-15`（13 只场外中 **12 只**）。`portfolio_snapshots.id` `38408~38419` **连续一码一行** ⇒ 存在另一处写入路径。**守卫是唯一防线，写入方未断源。**
+
+仓库内 `INSERT ... portfolio_snapshots` 共 3 处：
+- `src/utils/backfill.py:187`
+- `src/utils/database.py:41`
+- `scripts/backfill/backfill_full_history.py:288`
+
+### 4.3 判据（两级，勿退回旧写法）
+> **禁止**退回「相邻两行同价即非观测」—— 那会误删 ETF 真实观测。
+
+**Tier 1 · 段长**：`(round(price,2), round(market_value,2))` 同值连续行数 **≥5** ⇒ **整段含段首**非观测。
+- 数据驱动，**不加 `is_otc_fund` gate**。
+- 依据：ETF 侧全历史自然同价段**最长 4 行、`≥5` = 0 段**。
+
+**Tier 2 · 横截面广度**（仅场外篮子内）：某日「与各自上一行同值」的场外标的**占比 ≥50% 且绝对数 ≥3** ⇒ 该日这些标的非观测。
+- 用于覆盖只有 2 行的全市场事件。
+
+**分侧段长实测（判据的判别力来源）**：
+
+| 段长 | 场外 | ETF |
+|---|---|---|
+| ≥3 | 19 | 47 |
+| ≥4 | 11 | 5 |
+| **≥5** | **11** | **0** |
+
+（污染段 10 行；分布无重叠）
+
+### 4.4 两条禁忌
+① 复制位必须置 **NaN，不能置 0** —— `0.0` 是「看起来完全合法的零收益」，会被 `np.isfinite(rets).sum()` 计入 `valid_returns` 并进入 `df.corr`。
+② **禁止另立「零收益观测即丢弃」判据** —— 会误杀真实平价日 / 无成交日。
+
+### 4.5 必须按「有效基期」算 gap
+- 复制行**内部** `gap = 1`，正好从 `MAX_SINGLE_SESSION_GAP_DAYS=12` 闸门**下方通过**；
+- 假跳变 `|log_ret| = 0.17 < SPLIT_SPIKE_LOG_RET = 0.30` 也躲过尖端闸门；
+- ⇒ 必须维护 `last_real_date`，按有效基期算间隔。
+
+### 4.6 🔴 `round(2)` 是承重构件
+`market_value` 存在**亚分位浮点抖动**：`2026-06-19` 行 `001407` `55498.0→55497.997`、`166301` `81672.52→81672.51680000001`（quantity 逐位不变）。
+
+若逐位比较 ⇒ 在此断链 ⇒ 基期被刷新到 06-19 ⇒ 06-30 伪收益 `gap` 只剩 **11 天** ⇒ 恰好被 `MAX_SINGLE_SESSION_GAP_DAYS = 12` 放行。
+
+量化差异：不取到分 `average_correlation` = **0.3728**；取到分 = **0.4113**。
+
+### 4.7 守卫顺序不可交换
+`2026-06-30→07-31` 的**真实**跨期收益全部 > 0.30：
+
+| 标的 | log_ret |
+|---|---|
+| `001437` | −0.4598 |
+| `001407` | −0.3910 |
+| `166301` | −0.3797 |
+| `001323` | −0.3339 |
+| `519770` | −0.3107 |
+
+⇒ 尖峰判定若先跑，会把这 5 只场外**误标成「折算」**。**跨期判定必须在前。**
+
+### 4.8 阈值口径二分（0.30 原理上无法区分）
+| 事件 | `|log_ret|` | 应否保留 |
+|---|---|---|
+| `159949` 2024-10-08 ±18% | 0.14~0.17 | ✅ 真行情，必须保留 |
+| `2026-06-30` 场外 +15.7%~+18.5% | 0.14~0.17 | ❌ 不是收益，应排除 |
+
+⇒ 单一阈值**原理上无法分开**，只能靠「有效基期」规则。
+
+### 4.9 判别力不变量（防回归，必须持续成立）
+- `100032` 单只同价段（08-04/05、08-20/21、08-31/09-01，**段长 2**）**不得被 void**；
+- `09-14→09-15` 那 **12 只必须被 void**；
+- **ETF×ETF 对数 = 231 = C(22,2)**（曾误报 462，把无序对当有序数）—— 相关性改动最干净的对照组。
+
+### 4.10 守卫代码现状
+文件 `src/analysis/portfolio_risk.py`｜HEAD `ba96ce8`｜blob `f8aaf95cd143`（= `6434f05` = `198dee8`）
+
+| 位置 | 内容 |
+|---|---|
+| `:39` | `MAX_SINGLE_SESSION_GAP_DAYS = 12` |
+| `:55` | `SPLIT_SPIKE_LOG_RET = 0.30` |
+| `:125` | `COPY_RUN_MIN_LEN = 5` |
+| `:156` | `_scan_replica_rows` |
+| `:198` | `run_len >= COPY_RUN_MIN_LEN` |
+| `:223` | `if c * 2 < n:`（Tier 2 判定，**硬编码**） |
+| `:500` | `head_hit` |
+| — | `zero_variance`（`np.ptp == 0` ⇒ 显式丢弃并登记） |
+
+留痕键：`unreliable_codes` / `cross_period_voided` / `skipped_codes`
+reason 枚举：`rows_lt_2` / `rows_le_min_overlap` / `zero_variance` / `valid_returns_lt_min_overlap` / `window_too_narrow` / `series_lt_2` / `columns_lt_2`
+
+blob 历史：`5f7c6a3e4797`（`401a39f`，无守卫）/ `0a6e815b75fe`（`9de2800`，B2 版，602 行）/ `673590464107`（`05c7288`，两级落地，763 行）/ `f8aaf95cd143`（已验收）。
+
+### 4.11 ⚠️ 待处理：`COPY_BREADTH_MIN_RATIO` 死常量
+- 判定用**硬编码** `c*2 < n`，常量**只在日志被读** ⇒ 旋钮无效。
+- `b034f9a` 曾修为 `c / n < COPY_BREADTH_MIN_RATIO`，随后 `ba96ce8` **回滚**（裁定：保持已验收 blob）。
+- 最终裁定 **B：删常量**，**解冻后执行**；需同笔清理 5 处悬空符号引用：`07_known_data_issues.md`:899/1229/1238/1291 与 `10_correlation_guard_decision_log.md`:56。
+
+### 4.12 不可达分支裁定
+`_calculate_metrics:122` 的 `total_value` 差分 fallback 裁定**不可达**：最近 60 行 `daily_return` 60/60 非零；全历史最长连续全 0 = 1 行；触发需 ≥61 连续全 0。
+⇒ **不加守卫、只加告警绊线。**
+
+`src/analysis/risk.py::calculate_correlation_matrix`（`:288`）**勿动**（崩溃修复已验证）。
+
+---
+
+## 5. 静默失败目录
+
+> **准则：测出来的数必须要么显式标记、要么显式拒绝，不许静默。**
+
+### 5.1 已实证的失败模式
+
+| # | 模式 | 实证 | 为什么危险 |
+|---|---|---|---|
+| 1 | **阶段崩溃后静默** | 2026-09-15 15:30 在阶段一/步骤5 崩（`All arrays must be of the same length`）⇒ 阶段二/三/四**全未执行** | 产物存在、看着正常 |
+| 2 | **进程硬死** | `2026-09-03`：备份→起跑→写快照 22 条→进入「步骤4 计算技术指标」→**进程硬死** | 无 failed 终态、无 run_report、无告警；缺口躺 **13 天**无人报，并污染 09-04 的 `daily_return` |
+| 3 | **DQ 门禁失明** | 09-15 那次失败仍写出 `run_report_2026-09-15.json`，`dq_score=100, alerts=0` | **`dq_score` 不能作为「今天跑通了」的证据** |
+| 4 | **邮件仍然推送** | stale 守卫「现场重生今日报告」，产物**章节可能缺失** | 09-15 报告比 09-14 **少「相关性分析」章节**，155,387 vs 158,787 字节。**收到报告 ≠ 管线跑通** |
+| 5 | **`run_status` 闸门从未生效** | `data/reports/` 27 份 run_report **全缺该字段** | 闸门实际只靠 summary 日期判据兜着 |
+| 6 | **看门狗盲区** | `collect_core.py:167` 的 `os._exit(1)` **绕过 `finally`** | run_report / execution_logs 终态写不出；唯一存活痕迹是 `:162` 的 `logger_.error` |
+| 7 | **`etf_features.ret_1d` 双向伪收益** | 见 3.4，5 例差 0.000e+00 | 同一事件污染两列 |
+
+### 5.2 🔴 正确的「跑通了」判据
+- **必须看 `logs/scheduled_run.log` 的 rc / 阶段日志**，或 `[EMAIL] 已推送日报` 行。
+- **不能用** `dq_score`、不能只看出没出报告、不能只看报告能不能打开。
+
+### 5.3 ⚠️ 测试与生产共用日志与报告目录（读日志时的头号误判源）
+pytest 会把隔离空库的错误大量写进 `logs/portfolio_YYYYMMDD.log`：
+- `no such table: portfolio_snapshots` / `no such table: etf_price_history`
+- 并向 `data/reports/` 写 `test_p2_report.html`
+
+**读到这些不代表生产库坏了。**
+
+### 5.4 ⚠️ 15:30 跑的是工作区，不是 git HEAD
+`run_analysis.bat` 只做 `cd /d "%~dp0"` + `%PYTHON% run_analysis.py`，**不 git pull、不 checkout**。
+⇒ 「上已提交的 X」**不自动成立**；改完代码必须**冻结工作区**才算真上了版本，且要记录工作区 diff 指纹作为证据。
+
+---
+
+## 6. 测试约定与防污染
+
+### 6.1 🔴 单文件单 writer
+两个 worker 先后写同一测试文件 ⇒ 重复 `import` + **同类名定义两次**（`TestCrossPeriodGuard` 在 433 / 742 各一份）⇒ Python **静默屏蔽第一个类，其用例永不执行**。
+
+**症状：测试在跑、数量看着正常、实际有一批没跑。**
+
+**处置**：声明单文件单 writer + 新增 **AST 收集完整性守卫**（断言无重复类/函数名、AST 计数与 `pytest --collect-only` 数量一致）。
+
+### 6.2 生产库污染检测（勿退回旧写法）
+- **禁止**用整库 `(mtime, size)` 变化判定污染：conftest 已把进程内所有连接改道到隔离副本，运行期观测到的 mtime 变化**必然来自外部进程**（多人并发写库是常态）⇒ 判定 fail **必为假红**。该类比对一律降级 `warnings.warn`。
+- **真污染检测走零假阳性的正向断言**：`TestProductionDbHasNoTestArtifacts`。
+- ⚠️ **加防污染断言前必须先证明它读到了正确目标**：曾因直接用 `sqlite3.connect` 实际读到副本，写出**永远不命中的空测试** —— 比假红更危险。
+- 🔑 **观测真实生产库的唯一通道**：`sqlite3.connect._pt_real_connect`，且必须传 **URI 形式** `file:<prod>?mode=ro`（普通路径会被 conftest 硬兜底改走副本）。
+- `WB_ALLOW_PROD_WRITE=1` 可降级授权写库的告警；真实 `.env` 不受该逃生口覆盖。
+- pytest cache NTFS ACL 损坏（C→D 后遗症，已 gitignore）⇒ 加 `-p no:cacheprovider` 规避。
+
+### 6.3 崩溃类修复的硬要求
+**给崩溃类修复补回归测试 + 反证（旧实现确实抛错）是硬要求。**
+反面教材：`e1610fd` 修 09-15 崩溃时**无任何测试**（`grep tests/ min_overlap|_analyze_correlations` 零命中）。
+
+---
+
+## 7. 数据排障顺序与已知误判台账
+
+### 7.1 顺序（多次验证有效）
+1. 报「某标的取不到数据」前，先区分是**数据源真没有**还是**封装层坏了**。
+2. 报「某处有 bug」前，先 grep **下游读取点** + 对齐**时间口径**（避免跨停更期比较）。
+3. 判断量纲/单位分歧时，**必须对撞数据源端点原值**，不能比「包装器写入库后的值」。
+
+### 7.2 误判台账
+| 案例 | 误判 | 真相 | 教训 |
+|---|---|---|---|
+| `880013` | 「无净值源」 | akshare `fund_money_fund_info_em` 列名硬编码 14 个 vs 货币型返回 13 列；绕开直连东财 `api.fund.eastmoney.com/f10/lsjz` 即可日更 | **结论先行会把活源误标成死源 = 给未来真实断流埋免责声明** |
+| 「手→股」量纲 | 判反 | 必须对撞腾讯 raw 端点原值 | 不能只比包装器写入库后的值 |
+| 「EM 被代理墙挡」 | 外部故障 | `fund_flow.py` 早已绕代理，绕后直连 200 通 | 见 §8 |
+
+---
+
+## 8. push2his（东财资金流）阻尼
+
+- **旧结论「EM 被代理墙挡」是错的。** `fund_flow.py` 早已绕代理（弹 `*_proxy`、`trust_env=False`、`ProxyHandler({})`），绕后直连 200 通。
+- **真相**：push2his 对**高频直连**做阻尼，**20~40%** 请求被掐断或回 `data: null`。与标的无关，是请求频率的函数。⇒ **重试是刚需**（`31ff35b` 已加 3 次 + 指数退避）。
+- ⚠️ **度量陷阱**：连续压测会把自家 IP 打进阻尼（健康度 6/10 → 3/8），**不是修复变坏**。评估必须对比**两个正常交易日 15:30** 的 `scheduled_run.log`。
+- **兜底链三层都不要删**：逐只 push2his → `fetch_etf_fund_flow_batch`（datacenter-web，不受阻尼）→ `backfill_etf_fund_flow_from_kline`。
+
+---
+
+## 9. 重构类提交的高危模式
+
+两轮「fine-grained exception handling」重构把 `_urllib_get_json` 的 `except Exception` **误收窄成 `except sqlite3.OperationalError`** ——
+
+- HTTP 请求**永不抛 SQLite 异常** ⇒ 网络异常漏网、重试与告警**双双失效**；
+- 只在生产日志留下「push2his 不可用」这种**看起来像外部故障**的假象，**误导排查数月**。
+
+**判据：把 `except Exception` 收窄成具体类型时，必须核对该调用实际能抛的异常谱系；「网络/IO 调用」不能被收窄成 DB 异常。这类 bug 不会让测试变红。**
+
+---
+
+## 10. ETF → 跟踪指数 PE 覆盖
+
+- `index_pe_history` 约 **2.8 万行**，csindex 全量（2018→），**权益 ETF 估值因子已全覆盖**。
+- ⚠️ 映射代码需在 `etf_position.py` 与 `etf_fundamental.py` **两处同步**。曾因只改一处 + 早期填错代码（`930006` / `h11118`）而误判「指数无数据」；正确为 `H30590`（中证机器人，`159770`）/ `930914`（港股通高股息，`159220`）。
+- **判据「中证 / 国证」不同源**：`399673`（创业板50）是**国证指数（深交所体系），非中证** ⇒ csindex 不发布、akshare 无函数、国证官网只有行业级 PE。2026-09-15 用**乐咕 legulegu** 补齐（`48d779d`）：
+  - `index_pe_history` 228 行 / `2009-10-30~2026-09-15`
+  - `PE_SOURCE_CONFIDENCE` legulegu = 1.0
+  - `VAL_MIN_DAYS` 改**来源感知闸门**（月频 `VAL_MIN_MONTHS = 120`）
+  - **这是中证类接口取不到国证指数的根因。**
+
+---
+
+## 11. 建模结论（三条已定型，勿重复试错）
+
+| 目标 | 结论 | 证据 |
+|---|---|---|
+| **方向预测** | **死路，不上线** | Tier0 命中率 46-50%；Tier1（LightGBM+Ridge，walk-forward 5 折 + embargo 60 + HAC t）v1/v2 均 **6/6 VETO**（IC 0.006） |
+| **风险 / 波动率预测** | **强达标，已落地** | OOS R² 0.44–0.89、IC 0.66–0.94、AUC 0.90–0.97 ⇒ `tabs/tab16_risk_outlook.py` + `src/utils/risk_report.py` |
+| **回撤幅度预测** | **不达标，降级** | R² 全负、AUC 0.63–0.68 ⇒ Tab16 降级为「历史回撤参照」 |
+
+- 数据底座三表：`etf_price_history` / `etf_features`(v3) / `etf_forward_returns`。
+- **无未来函数红线。**
+
+### 11.1 🔴 引用上表时必须连带的面板范围与 OOS 覆盖限定
+（2026-09-16 由 quant-analyst 补记，原文见 `07_known_data_issues.md`:765-775）
+
+| 限定 | 内容 | 为什么危险 |
+|---|---|---|
+| **面板范围** | 原面板含 **2012–2017 的 4,091 行**，而 `etf_price_history` 自 **2018-01-02** 才有数据 ⇒ 这些行 OHLC/volume 派生特征**结构性全 NULL** ⇒ 触发 P1-6 缺失率护栏，**门禁跑不到第一折**。收窄到 `>=2018-01-02`（**30,309 行**）后方可运行（task #84） | 裸报「6/6 VETO」而不报面板范围，等于隐去「该结论在什么样本上成立」 |
+| **结论随范围变** | 收窄后的结果是 **5/6 VETO**（仅 `w=20 ridge` PASS）。与 6/6 的差异来自**面板范围 + 数据延伸**，**与 volume 手/股修复无关**（同面板重建污染前后逐折 verdict **逐位相同**） | **勿跨范围直接比较「6/6」与「5/6」** |
+| **OOS 覆盖缺口** | `walkforward_splits` 的 OOS **只覆盖到 2025-11-06**，其后约 **1/6 数据（含整个 2026）从未进入 OOS**（task #83） | ⇒ 结论只基于 **2025-11 之前**的数据；**任何 2026 年的数据污染结构性无法在 OOS 里体现** |
+
+**判据：引用/对照本表任何结论时，必须连带引用面板范围与 OOS 覆盖区间。** 只看命中率/IC/R² 数字就下结论，属于今天反复出现的「样本未钉死」伪影。
+
+> 相关工具：`scripts/verify_gate_on_refreshed.py` 已把「面板起点对齐数据源覆盖」与「每窗口 OOS 区间 + 末端缺口（超 30 日历日即告警）」做成**显式打印**，禁止「最近一段没被验证」隐形。这是「要么显式标记、要么显式拒绝」准则的正面落地样本。
+
+---
+
+## 12. 标的状态约定
+
+- **`159732` 消费电子 ETF**：已清仓（末次快照 `2026-07-30`，市值 6,210 **非 0**，是「停更」非「归零」）。`is_delisted()` 将其排除出持仓 / 再平衡 / 预测底座（**保留**），同时进 `WATCHLIST_CODES` 保留行情与技术面，前端 Tab18「清仓观察」展示。
+  ⇒ **原则：给它数据，不给它决策权。**
+- **`880013` 天添利**：货币型，**不参与分析、但计入总持仓**（9,451 元 / 0.607%），靠「现金管理不在 `SECTOR_TARGET_WEIGHTS` → 保持当前占比」实现。用户明确**保持现状**；其 `price ≡ 1.0` 是货币型**设计约定非 bug**（改市值增长算收益会把申赎当收益）。
+- **组合口径**：36 只全量 1,564,199.58（含 `159732` 陈旧估值）；**正确口径 = 35 只 / 1,557,989.58**。
+- **ETF 数量（实测勿重数）**：**36 = 23 场内 + 13 场外**；23 == `etf_technical` == `config.ETF_CATEGORIES`；`etf_fundamental` = 25 含 2 条脏数据不可用。
+
+---
+
+## 13. 收益 / 风险口径（2026-09-16 定论）
+
+- 头条 TWR 与风险三列**都依赖口径选择，不是客观量**。三条序列实测（窗口口径）：
+
+| 口径 | 窗口收益 | `sharpe_60` |
+|---|---|---|
+| **A 现库** | **−0.6295%** | **+0.7291** |
+| B 补场外 | −10.5488% | −0.8511 |
+| C' 区间摊销 | −10.6409% | −1.1346 |
+
+- **「夏普转正」不稳健** ⇒ 只能表述为「**在现库口径下**转正」。
+- **裁定：不采纳 B**（补场外 = 用水平换伪尖峰）。A 丢水平保日序列，B 补水平毁日序列，C' 补水平保形态但压深回撤。**三者都不是「真」。**
+- 场外口径缺口的根因：`portfolio.py` 用 `WHERE date = prev_dt` **精确匹配** ⇒ 仅月末落行的场外基金**当日被整只踢出收益**。
+- 08-03 后那 1.03% 的差**不是**真实日频补齐，而是 `027293` 只按周落行所致的**陈旧价兜底**伪影。
+- ⚠️ **全历史头条 `max_drawdown` 不受口径影响**（A = B = 51.30%）。
+- **TWR 链严格相等**：quantity 在分子分母约掉 ⇒ `1 + r_t = V_t / V_{t-1}` **精确** ⇒ **补历史缺口不改任何已发布 TWR**（`twr_cumulative` 既有行 0 变动，差 < 1e-7）。
+- ⚠️ **`_SUSPECT_DIVERGENCE = 0.30` 单位错**：`md` / `r` 都是小数 ⇒ 实为 **30 个百分点**。且若有入金不在 `trade_records` ⇒ `net_flow = 0` 会带偏 `md`。
+
+---
+
+## 14. 已知债务清单
+
+| 项 | 说明 |
+|---|---|
+| 文档债 | 前端实际注册 **17 个 Tab**，README 仍写 15 |
+| P2-8 持仓舆情 | 需 westock / neodata，非 akshare 栈，暂缓 |
+| 其他 P2 | 波动率目标化、IOPV 历史表、分散化相关性 |
+| neodata 凭证 | 12h 有效，仅会话内可采，**生产 `scheduled_run` 调不到** |
+| NAV 恒等式 | `portfolio_nav.total_units` / `total_value` 恒等式破损 |
+| `_save_snapshot_from_kline` | 债务（行情表统一 qfq 后**不可再跑**） |
+| 告警被吞 | `run_analysis.py:1405-1406` 告警被 `except Exception` 吞 |
+| rc 被覆盖 | `scheduled_run.bat:20`；周末 rc=1 假失败 |
+| `etf_pe_backfill.py` | csindex 分支**无交易日过滤** |
+| `tab8` periodic | 无 `last_rebalance_date` 来源 |
+| `fetch_etf_ohlcv_sina` | `adj_close` 为**休眠路径** ⇒ 裁定 (a) 维持现状 + 登记到 `11_measurement_conventions.md` |
+| `recompute_summary_window.py` | **结构上补不了缺口**（问题 `#65`）：`:70-72` 日期清单取自 summary 自己（实测只覆盖 7 天）；`:197-203` `o = old[dt]` 对新增日期 `TypeError` 崩在写库前。已修（`8a7173c`：改 `resolve_dates()` 快照∪汇总并集 + `old.get(dt)`），**未执行** |
+| 报告库漂移 | `08_report_library_drift.md`：95 份 HTML vs 库 MATCH 57 / DIFFER 35 / NO_DB_ROW 5；08-03~09-14 窗口 29 条**全部漂移**（差值恒负 −53.6万~−65.7万）。10 个历史改写入口，真正有「写前阻断」的只有 1 个（`recompute_summary_window.py`）⇒ **唯一每天无人值守自动改写历史的入口零校验** |
