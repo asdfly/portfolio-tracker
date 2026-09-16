@@ -35,6 +35,11 @@ def _warn_if_production_db_fingerprint_changed(before_stat):
     提取为公共函数的目的：多处都有"用例内取快照再比对"的写法，它们同样会被外部
     进程写库误伤。统一走告警口径，比对 result：真正的写入穿透由各用例的
     「连接落点 != 生产库」主断言拦截，那条零假阳性、保持严格。
+
+    口径对齐（2026-09-16）：conftest.py::pytest_sessionfinish 已同步为同一口径——
+    默认硬失败，`WB_ALLOW_PROD_WRITE=1/true` 显式授权维护写库时降级为 RuntimeWarning
+    （见 tests/conftest.py 的「生产库守卫口径统一」段，单测见 tests/test_db_guard_optin.py）。
+    本函数无需 opt-in 的原因见下方 test_production_db_not_modified 的说明。
     """
     after = PRODUCTION_DB.stat()
     if (after.st_mtime_ns, after.st_size) == (
@@ -44,9 +49,13 @@ def _warn_if_production_db_fingerprint_changed(before_stat):
         return
     warnings.warn(
         f"生产库指纹在用例运行期间发生变化（外部进程写库，非写入穿透，不计失败）：\n"
-        f"    mtime_ns : {before_stat.st_mtime_ns} -> {after.st_mtime_ns}\n"
-        f"    size     : {before_stat.st_size} -> {after.st_size}\n"
-        f"  若确需判断写入是否穿透，请以「连接落点是否为生产库」的主断言为准。",
+        f"    mtime_ns : {before_stat.st_mtime_ns} -> {after.st_mtime_ns}"
+        f"  (Δ {(after.st_mtime_ns - before_stat.st_mtime_ns) / 1e9:+.3f}s)\n"
+        f"    size     : {before_stat.st_size} -> {after.st_size}"
+        f"  (Δ {after.st_size - before_stat.st_size:+d} 字节)\n"
+        f"  若确需判断写入是否穿透，请以「连接落点是否为生产库」的主断言为准。\n"
+        f"  口径说明：conftest.py::pytest_sessionfinish 对同一现象默认硬失败，"
+        f"授权维护写库窗口可设 WB_ALLOW_PROD_WRITE=1 降级为同样的告警。",
         RuntimeWarning,
         stacklevel=3,
     )
@@ -150,6 +159,20 @@ class TestProductionFilesUntouched:
 
         真正的污染检测已由下方 `TestProductionDbHasNoTestArtifacts` 承担：
         它断言生产库里**不存在测试专用对象**，是零假阳性的正向断言，不依赖文件时间戳。
+
+        口径对齐与差异说明（2026-09-16 整改）：
+          conftest.py::pytest_sessionfinish 原先对同一现象**无条件硬失败**，与这里
+          "外部进程改动不计失败"直接冲突（同一轮测试两个守卫互相打脸）。现已统一为
+          「默认硬失败 + WB_ALLOW_PROD_WRITE=1 显式授权后降级为 RuntimeWarning」，
+          完整口径与三条路径单测见 tests/test_db_guard_optin.py。
+
+          本用例与本文件 `_warn_if_production_db_fingerprint_changed` **刻意保持"无需 opt-in
+          即告警"**，不跟随该开关，原因有二（此为二者唯一的实质差异，非口径分歧）：
+            1. 判据不同：本用例断言的是"本进程写不到生产库"这一**已经由连接改道保证**的
+               事实，观测到的变化必然是外部的；而 conftest 巡检覆盖整个会话，
+               需要保留"纯测试场景下确实发生了意外写入"的硬失败探测能力。
+            2. 真污染不靠这里兜：写入穿透由本类「连接落点 != 生产库」与
+               TestProductionDbHasNoTestArtifacts 的探针断言零假阳性地拦截。
         """
         baseline = protected_file_baselines.get("生产数据库")
         if baseline is None:
@@ -167,7 +190,9 @@ class TestProductionFilesUntouched:
             f"    size     : {base_size} -> {st.st_size}  (Δ {st.st_size - base_size:+d} 字节)\n"
             f"  判据说明：conftest 已把测试进程内连接全改道到隔离副本，本进程写不到生产库，\n"
             f"  故此变化来自外部进程。若确需排查是否有测试写穿，请改用\n"
-            f"  TestProductionDbHasNoTestArtifacts 的探针断言（零假阳性）。",
+            f"  TestProductionDbHasNoTestArtifacts 的探针断言（零假阳性）。\n"
+            f"  口径对齐：conftest.py::pytest_sessionfinish 覆盖整个会话，默认硬失败；\n"
+            f"  授权维护写库窗口请设 WB_ALLOW_PROD_WRITE=1 使其降级为同类告警。",
             RuntimeWarning,
             stacklevel=2,
         )

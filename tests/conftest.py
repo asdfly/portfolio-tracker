@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
+import warnings
 import pytest
 from pathlib import Path
 
@@ -266,24 +267,180 @@ def _guard_db_isolation():
     )
 
 
-def pytest_sessionfinish(session, exitstatus):
-    """会话结束时校验受保护的真实文件未被改动——污染即报错，绝不静默通过。"""
-    violations = []
-    for name, path in _PROTECTED_FILES.items():
-        before = _BASELINE_FINGERPRINTS.get(name)
-        after = _fingerprint(path)
-        if before != after:
-            violations.append(f"{name} ({path}): before={before} after={after}")
+# ============================================================================
+# 生产库守卫口径统一（2026-09-16）
+# ----------------------------------------------------------------------------
+# 问题：本文件的指纹巡检原先是**无条件硬失败**，而
+# tests/test_regression_db_isolation.py 里同一件事已于 2026-09-15 降级为
+# RuntimeWarning，理由是存在**合法外部写入方**：
+#   scripts/recompute_summary_window.py --apply（INSERT OR REPLACE）、
+#   场外基金净值补采写 portfolio_snapshots、
+#   data/backups/ 备份 + 参数化 UPDATE 等已授权维护写库窗口。
+# 测试进程内所有连接已被上面几层改道到隔离副本，因此观测到的 mtime/size 变化
+# **必然来自外部进程**，此时判 fail 就是假红。两个守卫因此互相打脸：
+# conftest 报 "[P0] 测试污染了真实文件"，同一时刻 regression 用例却说"外部进程改动，非污染"。
+#
+# 统一口径（不削弱安全网）：
+#   默认（未设 WB_ALLOW_PROD_WRITE）—— 行为与改造前**完全一致**：硬失败 + exitstatus=1。
+#     日常纯测试场景下这是有效的污染探测器，必须继续生效。
+#   显式 opt-in（WB_ALLOW_PROD_WRITE=1/true）—— 操作者声明"当前处于已授权的维护写库
+#     窗口"，降级为 RuntimeWarning，不置 exitstatus。
+#
+# 刻意保留的严格性：真实 .env **不在** opt-in 覆盖范围内（见 _OPT_IN_COVERED）。
+#   没有任何合法流程会在 pytest 会话期间改写 .env，它是 2026-08-05 事故
+#   （被 write_text + unlink 销毁）的直接防线；即使开了逃生口也继续硬失败。
+# ============================================================================
 
+# 显式授权外部写入的环境变量；值为 1/true（大小写与空白不敏感）视为开启。
+ALLOW_PROD_WRITE_ENV = "WB_ALLOW_PROD_WRITE"
+
+# opt-in 可以覆盖的受保护文件（只含生产库）。未列入者任何情况下都硬失败。
+_OPT_IN_COVERED = frozenset({"生产数据库"})
+
+
+def _external_write_authorized(env=None) -> bool:
+    """WB_ALLOW_PROD_WRITE 是否被显式设为真值。
+
+    :param env: 环境变量映射；None 表示 os.environ（便于单测注入合成环境）。
+    """
+    environ = os.environ if env is None else env
+    return str(environ.get(ALLOW_PROD_WRITE_ENV, "")).strip().lower() in {"1", "true"}
+
+
+def _fmt_fingerprint(fp) -> str:
+    """把 (mtime_ns, size) 渲染成可读文本；None 表示文件不存在。"""
+    if fp is None:
+        return "<不存在>"
+    return f"mtime_ns={fp[0]} size={fp[1]}"
+
+
+def _fmt_delta(before, after) -> str:
+    """描述 before/after 的 mtime、size 差值（任一侧缺失说明是存在性变化）。"""
+    if before is None or after is None:
+        return "文件存在性发生变化（无法计算差值）"
+    return (
+        f"mtime Δ {(after[0] - before[0]) / 1e9:+.3f}s / "
+        f"size Δ {after[1] - before[1]:+d} 字节"
+    )
+
+
+def compare_protected_fingerprints(baselines, files=None, fingerprint_fn=None):
+    """比对受保护文件指纹，返回差异列表（**纯函数**，可用合成指纹直接单测）。
+
+    指纹取值可注入、目标文件可注入，因此单测**不需要真的去 stat/触碰生产库**。
+
+    :param baselines: {name: (mtime_ns, size) | None} 基线指纹
+    :param files: {name: Path} 待校验目标；None 表示使用 _PROTECTED_FILES
+    :param fingerprint_fn: 取指纹的 callable(path) -> (mtime_ns, size) | None；
+                           None 表示使用 _fingerprint
+    :return: 仅包含发生变化条目的列表，每项形如
+             {"name", "path", "before", "after", "delta", "opt_in_covered"}；
+             无变化时返回 []
+    """
+    targets = _PROTECTED_FILES if files is None else files
+    probe = _fingerprint if fingerprint_fn is None else fingerprint_fn
+    diffs = []
+    for name, path in targets.items():
+        before = baselines.get(name)
+        after = probe(path)
+        if before == after:
+            continue
+        diffs.append({
+            "name": name,
+            "path": path,
+            "before": before,
+            "after": after,
+            "delta": _fmt_delta(before, after),
+            "opt_in_covered": name in _OPT_IN_COVERED,
+        })
+    return diffs
+
+
+def handle_protected_fingerprint_diffs(diffs, reporter=None, env=None) -> bool:
+    """判定并输出受保护文件指纹差异。
+
+    :return: True 表示应判定本次会话失败（调用方据此置 session.exitstatus = 1）；
+             False 表示无差异，或差异已被 WB_ALLOW_PROD_WRITE 显式授权放行。
+
+    判定顺序：
+      1. 存在**未被 opt-in 覆盖**的差异（如真实 .env）—— 永远硬失败；
+      2. 差异全部落在 opt-in 覆盖范围内且 WB_ALLOW_PROD_WRITE 已开启 —— 仅 RuntimeWarning；
+      3. 其余（含"有差异但未开启 opt-in"）—— 硬失败，并在文案里提示逃生口。
+
+    :param reporter: pytest terminalreporter；None 时只做判定、不输出（单测用）。
+    :param env: 环境变量映射；None 表示 os.environ。
+    """
+    if not diffs:
+        return False
+
+    authorized = _external_write_authorized(env)
+    soft = [d for d in diffs if authorized and d["opt_in_covered"]]
+    hard = [d for d in diffs if not (authorized and d["opt_in_covered"])]
+
+    def _emit(line, **kw):
+        if reporter is not None:
+            reporter.write_line(line, **kw)
+
+    if hard:
+        _emit("", red=True)
+        _emit("[P0] 测试污染了真实文件：", red=True)
+        for d in hard:
+            _emit(
+                f"  - {d['name']} ({d['path']}): "
+                f"before={_fmt_fingerprint(d['before'])} "
+                f"after={_fmt_fingerprint(d['after'])}",
+                red=True,
+            )
+            _emit(f"      {d['delta']}", red=True)
+        if soft:
+            _emit("  以下差异已通过 opt-in 授权，不计入失败：", yellow=True)
+            for d in soft:
+                _emit(f"  - {d['name']}: {d['delta']}", yellow=True)
+        _emit(
+            f"  如为已授权的维护写库，请设置 {ALLOW_PROD_WRITE_ENV}=1 重跑"
+            f"（将降级为 RuntimeWarning 告警）。",
+            yellow=True,
+        )
+        _emit(
+            f"  注意：真实 .env 不受 {ALLOW_PROD_WRITE_ENV} 覆盖，改动一律判失败。",
+            yellow=True,
+        )
+        return True
+
+    # 全部差异都被显式授权覆盖 —— 告警，不失败
+    message = (
+        f"已通过 {ALLOW_PROD_WRITE_ENV} 显式授权外部写入，本次不作失败判定：\n"
+        + "\n".join(
+            f"  - {d['name']} ({d['path']}): "
+            f"before={_fmt_fingerprint(d['before'])} "
+            f"after={_fmt_fingerprint(d['after'])} | {d['delta']}"
+            for d in soft
+        )
+        + "\n  判据说明：测试进程内所有连接已改道到隔离副本，此变化来自外部进程（合法维护写库），"
+          f"故本次不作失败判定。如需恢复严格判定，取消 {ALLOW_PROD_WRITE_ENV} 后重跑即可。"
+    )
+    warnings.warn(message, RuntimeWarning, stacklevel=2)
+    _emit("", yellow=True)
+    _emit(
+        f"[放行] 已通过 {ALLOW_PROD_WRITE_ENV} 显式授权外部写入，本次不作失败判定：",
+        yellow=True,
+    )
+    for d in soft:
+        _emit(f"  - {d['name']} ({d['path']}): {d['delta']}", yellow=True)
+    return False
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """会话结束时校验受保护的真实文件未被改动。
+
+    默认硬失败（exitstatus=1）；若设置了 WB_ALLOW_PROD_WRITE=1，视为已授权的维护写库
+    窗口，降级为 RuntimeWarning 告警。完整口径见本文件上方「生产库守卫口径统一」段。
+    """
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
 
-    if violations:
+    diffs = compare_protected_fingerprints(_BASELINE_FINGERPRINTS)
+    if handle_protected_fingerprint_diffs(diffs, reporter=reporter):
         session.exitstatus = 1
-        if reporter is not None:
-            reporter.write_line("", red=True)
-            reporter.write_line("[P0] 测试污染了真实文件：", red=True)
-            for v in violations:
-                reporter.write_line(f"  - {v}", red=True)
 
     # 不算失败，但要暴露出来：这些调用点硬编码了生产库路径，应逐步改用 DATABASE_PATH
     if REDIRECTED_CALLERS and reporter is not None:
