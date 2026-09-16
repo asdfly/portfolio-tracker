@@ -49,10 +49,14 @@ MIN_OVERLAP = 20  # 与 _analyze_correlations 内的硬约束一致
 # ============================================================================
 
 class _StubDB:
-    """复刻 DatabaseManager.get_price_history 的真实行为：date DESC + LIMIT days。"""
+    """复刻 DatabaseManager.get_price_history 的真实行为：date DESC + LIMIT days。
+
+    price_series 的元素可以是 `(date, price)`，也可以是 `(date, price, market_value)`；
+    后者用于复制行判据（该判据要比较 `(current_price, round(market_value,2))`）。
+    """
 
     def __init__(self, price_series, summary_rows=None):
-        # price_series: {code: [(date_str, price), ...]}，按日期升序给出
+        # price_series: {code: [(date_str, price[, market_value]), ...]}，按日期升序给出
         self._prices = {k: list(v) for k, v in price_series.items()}
         self._summary = list(summary_rows or [])
         self.calls = []
@@ -60,8 +64,12 @@ class _StubDB:
     def get_price_history(self, code, days=60):
         self.calls.append((code, days))
         rows = sorted(self._prices.get(code, []), key=lambda x: x[0], reverse=True)
-        return [{"date": d, "current_price": p, "market_value": None, "pnl": None}
-                for d, p in rows[:days]]
+        out = []
+        for r in rows[:days]:
+            mv = r[2] if len(r) > 2 else None
+            out.append({"date": r[0], "current_price": r[1],
+                        "market_value": mv, "pnl": None})
+        return out
 
     def get_portfolio_history(self, days=30):
         return list(self._summary[-days:])
@@ -776,6 +784,224 @@ class TestGuardsAreNoOpOnCleanData:
         got = out["correlation_matrix"]["600001_600001"]["600002_600002"]
         assert got == pytest.approx(expected, abs=1e-9), (
             "干净输入上的相关系数被守卫改变：got=%r expected=%r" % (got, expected))
+        assert int(spy.last_input["600001_600001"].notna().sum()) == n - 1
+
+
+# ============================================================================
+# 8. 复制行（fill-forward 陈旧行）守卫 —— Tier1 段长 / Tier2 横截面
+#    判据定义见 portfolio_risk.py 顶部 COPY_* 常量注释，由项目所有者裁定：
+#      Tier1 = `(current_price, round(market_value,2))` 同值连续段长 >= 5
+#              （数据驱动，**不加** is_otc_fund gate）；
+#      Tier2 = 某日「与各自上一行同 key」的**场外**标的占比 >= 50% 且绝对数 >= 3。
+#    三条不可交换的语义（本组用例逐条锁死）：
+#      a) 命中行收益保持 NaN，**绝不能置 0**（0.0 会被 isfinite 计入并进 df.corr）；
+#      b) 不刷新有效基期（否则段后的跨期伪收益 gap 会缩到 1 天）；
+#      c) Tier2 只在场外篮子内统计 ⇒ ETF 的同值段不得被横截面判据误伤。
+#
+#    生产侧对照（34 只真实持仓副本，as_of=2026-09-15，days=60）：
+#      命中 12 只 / 122 行；Tier1 段长=10 命中 11 只 × 06-15~06-29 共 10 天；
+#      Tier2 段长=2 命中 12 只 × 09-15 共 1 天（09-15 横截面：可比较场外 12 只、
+#      同 key 12 只 = 100%；09-14 为 0/12，对照组）；
+#      copied_rows_voided 11 只（880013 先被 zero_variance 丢弃，走不到这一步）。
+# ============================================================================
+
+def _plain_rows(dates, base=1.0, step=0.001):
+    """逐日缓变的干净序列（无复制段）。"""
+    return [(d, base + i * step, round((base + i * step) * 1000.0, 2))
+            for i, d in enumerate(dates)]
+
+
+def _replica_rows(dates, run_start, run_len, base=1.0, step=0.001):
+    """造一段复制行，返回 `(rows, prices)`；rows 元素为 `(date, current_price, market_value)`。
+
+    关键在**段前那一行**：它的 `current_price` 与段内**相同**，只有 `market_value` 不同。
+    这正是生产侧的形状 —— 06-12 是真值行、06-15~06-29 装的就是它，两者 price 逐位相同，
+    只因份额变化导致 market_value 不同，所以 `(price, round(mv,2))` 的判等把段界切在
+    `run_start`。这样构造有两个后果，都是我们要锁的：
+      * `(price, mv)` 同值连续段长恰好 = `run_len`（段后一行 price 不同，段前一行 mv 不同）；
+      * 段首那一行的**价格收益恰好是 0.0**（与段前同价），正是「置 0 会被当成合法零收益」的场景。
+    """
+    n = len(dates)
+    assert 1 <= run_start and run_start + run_len <= n, (run_start, run_len, n)
+    prices = [base + i * step for i in range(n)]
+    run_price = base + (run_start + run_len + 3) * step   # 与段后一行错开
+    for i in range(run_start - 1, run_start + run_len):
+        prices[i] = run_price
+    mvs = [round(p * 1000.0, 2) for p in prices]
+    mvs[run_start - 1] = round(mvs[run_start] + 13.37, 2)  # 段前 mv 不同 ⇒ 段界落在 run_start
+    rows = [(d, p, m) for d, p, m in zip(dates, prices, mvs)]
+    return rows, prices
+
+
+def _run_dates(n, run_start, run_len):
+    return _bdates(n)[run_start:run_start + run_len]
+
+
+class TestReplicaRowGuardTier1RunLength:
+    """Tier1：段长阈值 `COPY_RUN_MIN_LEN = 5`，边界两侧都要锁。"""
+
+    def test_run_len_4_is_kept_and_run_len_5_is_voided(self):
+        n = 30
+        dates = _bdates(n)
+        # 同为 30 天：AAA 的同值段长 4（不足 5）、BBB 的段长 5（达标）
+        aaa, _ = _replica_rows(dates, 10, 4)
+        bbb, _ = _replica_rows(dates, 10, 5)
+        a = _make_analyzer({"AAA": aaa, "BBB": bbb})
+        out = a._analyze_correlations([_pos("AAA"), _pos("BBB")], 60)
+        rv = out["copied_rows_voided"]
+
+        assert "AAA_AAA" not in rv, (
+            "段长 4 是真实同价段（ETF 里常见 1~2 行、场外也见不足 5 行），不得误判")
+        assert "BBB_BBB" in rv, "段长 5 必须命中（边界含等号）"
+        assert len(rv["BBB_BBB"]) == 5, rv["BBB_BBB"]
+        assert [s.split()[0] for s in rv["BBB_BBB"]] == _run_dates(n, 10, 5)
+        assert all("Tier1 段长=5" in s for s in rv["BBB_BBB"]), rv["BBB_BBB"]
+
+    def test_equal_run_longer_than_threshold_reports_full_run_length(self):
+        """段长 7 要如实报 7（留痕给的是段长，不是阈值）。"""
+        n = 30
+        dates = _bdates(n)
+        bbb, _ = _replica_rows(dates, 8, 7)
+        aaa, _ = _replica_rows(dates, 20, 2)
+        a = _make_analyzer({"AAA": aaa, "BBB": bbb})
+        out = a._analyze_correlations([_pos("AAA"), _pos("BBB")], 60)
+        rv = out["copied_rows_voided"]
+        assert len(rv["BBB_BBB"]) == 7, rv["BBB_BBB"]
+        assert all("Tier1 段长=7" in s for s in rv["BBB_BBB"])
+        # 段长 2 的真实同价段（ETF 大量存在）保持不动
+        assert "AAA_AAA" not in rv
+
+
+class TestReplicaRowGuardTier2Breadth:
+    """Tier2：横截面广度判据，且**只在场外篮子内**统计。"""
+
+    # 用 config.settings.OTC_FUND_CODES 里的真实代码，否则 is_otc_fund 为 False
+    OTC = ("001194", "001323", "001407", "001437")
+    ETF = "510300"
+
+    def _build(self, flat_otc):
+        """`flat_otc` 里的标的在**最后一天**与上一行同 key（段长=2，Tier1 抓不到）。"""
+        n = 30
+        dates = _bdates(n)
+        series = {}
+        for c in self.OTC:
+            if c in flat_otc:
+                rows, _ = _replica_rows(dates, n - 2, 2)
+            else:
+                rows = _plain_rows(dates)
+            series[c] = rows
+        series[self.ETF] = _replica_rows(dates, n - 2, 2)[0]
+        return dates, series
+
+    def test_full_breadth_on_last_day_is_voided(self):
+        """4/4 场外同 key（100%）→ 命中，最后一天全部记 Tier2 段长=2。"""
+        dates, series = self._build(flat_otc=set(self.OTC))
+        a = _make_analyzer(series)
+        out = a._analyze_correlations(
+            [_pos(c) for c in self.OTC] + [_pos(self.ETF)], 60)
+        rv = out["copied_rows_voided"]
+        last = dates[-1]
+        for c in self.OTC:
+            assert f"{c}_{c}" in rv, f"{c} 应被 Tier2 命中"
+            assert rv[f"{c}_{c}"] == [f"{last} Tier2 段长=2"], rv[f"{c}_{c}"]
+        # Tier2 场外门控：ETF 同一天也同 key（段长 2，不达 Tier1 的 5）但不得被误伤
+        assert f"{self.ETF}_{self.ETF}" not in rv, (
+            "Tier2 只在场外篮子内统计，ETF 不得进入横截面分母/分子")
+
+    def test_half_breadth_is_enough_because_the_floor_is_on_the_denominator(self):
+        """裁定口径：判据只约束**分母** `n >= 3` 与占比 `c*2 >= n`，**不**约束命中只数 c。
+
+        n=4、c=2 恰好 50% ⇒ 命中（见 portfolio_risk.py:114-117 的显式说明：
+        「误把下限定在 c 上会漏掉小篮子上的横截面事件」）。此前一版实现写成
+        `n < 3 or c < 3` 才是错的，本用例防止它再被改回去。
+        """
+        dates, series = self._build(flat_otc={"001194", "001323"})
+        a = _make_analyzer(series)
+        out = a._analyze_correlations(
+            [_pos(c) for c in self.OTC] + [_pos(self.ETF)], 60)
+        rv = out["copied_rows_voided"]
+        last = dates[-1]
+        for c in ("001194", "001323"):
+            assert rv.get(f"{c}_{c}") == [f"{last} Tier2 段长=2"], rv
+        # 未同值的那两只不得被牵连（判定是逐只的，不是「整日全 void」）
+        for c in ("001407", "001437"):
+            assert f"{c}_{c}" not in rv, rv
+
+    def test_ratio_below_half_is_not_evidence(self):
+        """n=4、c=1（25% < 50%）→ 不命中：占比下限是有效的那一侧。"""
+        dates, series = self._build(flat_otc={"001194"})
+        a = _make_analyzer(series)
+        out = a._analyze_correlations(
+            [_pos(c) for c in self.OTC] + [_pos(self.ETF)], 60)
+        assert out["copied_rows_voided"] == {}, out["copied_rows_voided"]
+
+    def test_basket_smaller_than_three_is_not_voided(self):
+        """场外篮子只有 2 只且全都同 key（100%）→ 仍不命中（n < 3）。"""
+        dates, series = self._build(flat_otc=set(self.OTC))
+        a = _make_analyzer(series)
+        two = self.OTC[:2]
+        out = a._analyze_correlations([_pos(c) for c in two], 60)
+        assert out["copied_rows_voided"] == {}, out["copied_rows_voided"]
+
+
+class TestReplicaRowGuardVoidsToNaNNotZero:
+    """硬约束 a/b：命中行收益必须是 NaN（不能置 0），且不得刷新有效基期。"""
+
+    def test_voided_positions_are_nan_while_raw_return_would_be_zero(self):
+        n = 30
+        dates = _bdates(n)
+        run_start, run_len = 10, 5
+        bbb, prices = _replica_rows(dates, run_start, run_len)
+        # 反证：不置 NaN 的话，这些位置算出来的**就是** 0.0（段首与段前同价、段内同价）
+        raw = [prices[k] / prices[k - 1] - 1.0
+               for k in range(run_start, run_start + run_len)]
+        assert raw == [0.0] * run_len, raw
+
+        aaa = _plain_rows(dates)
+        spy = _SpyRiskAnalyzer()
+        a = _make_analyzer({"BBB": bbb, "AAA": aaa})
+        a.risk_analyzer = spy
+        out = a._analyze_correlations([_pos("BBB"), _pos("AAA")], 60)
+
+        s = spy.last_input["BBB_BBB"]
+        void_dates = _run_dates(n, run_start, run_len)
+        for d in void_dates:
+            assert pd.isna(s[d]), f"{d} 是复制行，收益位必须是 NaN，实际 {s[d]!r}"
+        # 段外的真实观测不受影响（不是「整只作废」）
+        assert np.isfinite(s[dates[3]])
+        assert np.isfinite(s[dates[run_start + run_len + 2]])
+        # 有效观测数 = 位置总数 − 被 void 的位置数
+        assert out["overlap_days"]["BBB_BBB"] == (n - 1) - run_len
+        assert out["copied_rows_voided"]["BBB_BBB"] == \
+            [f"{d} Tier1 段长={run_len}" for d in void_dates]
+
+    def test_voided_positions_do_not_refresh_the_effective_base(self):
+        """硬约束 b：复制行不刷新有效基期 ⇒ 段后第一天按「跨期」作废，而不是伪单日收益。
+
+        段长 15 的复制段（第 10~24 位）之后第 25 位是真实观测：
+          * 若基期被复制行刷到第 24 位 ⇒ gap=1 自然日，会被当合法单日收益放行（伪收益）；
+          * 正确行为是基期停在第 9 位的真值观测上 ⇒ gap>12，落入跨期判定被置 NaN。
+        """
+        n = 30
+        dates = _bdates(n)
+        run_start, run_len = 10, 15
+        # 对照：若基期被复制行刷到段尾（第 24 位），段后首行只隔 3 个自然日（周五→周一），
+        # 会被当成合法单日收益放行 —— 这正是「刷新基期」的伪收益。
+        gap_if_refreshed = (pd.Timestamp(dates[25]) - pd.Timestamp(dates[24])).days
+        # 实际：基期停在第 9 位的真值观测上，间隔远超单日上限。
+        gap_real = (pd.Timestamp(dates[25]) - pd.Timestamp(dates[9])).days
+        assert gap_if_refreshed <= MAX_SINGLE_SESSION_GAP_DAYS < gap_real, \
+            (gap_if_refreshed, gap_real)
+
+        bbb, _ = _replica_rows(dates, run_start, run_len)
+        a = _make_analyzer({"BBB": bbb, "AAA": _plain_rows(dates)})
+        out = a._analyze_correlations([_pos("BBB"), _pos("AAA")], 60)
+
+        assert out["cross_period_voided"].get("BBB_BBB") == 1, \
+            out["cross_period_voided"]
+        assert len(out["copied_rows_voided"]["BBB_BBB"]) == run_len
+        # 15 条复制 + 1 条跨期 = 16 条 NaN ⇒ 有效观测 29-16=13
+        assert out["overlap_days"]["BBB_BBB"] == 13
 
 
 # ============================================================================
