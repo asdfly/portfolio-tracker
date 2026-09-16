@@ -43,6 +43,38 @@ def _norm_priority(p):
     v = getattr(p, 'value', p)  # 兼容直接传入 AdvicePriority 枚举对象的情况
     return _PRIORITY_ALIASES.get(str(v).strip().lower(), 'low')
 
+# 降级报告的机器可读标记（渲染成 HTML 注释，供调用方/测试判定）。
+#
+# 背景（2026-09-15 事故）：本报告的两个核心区块来自两张不同的表 ——
+# 页头/指标来自 portfolio_summary，持仓明细来自 portfolio_snapshots。
+# 当日管线在阶段一崩溃，portfolio_summary 停在 09-14，而 portfolio_snapshots
+# 已被写到 09-15，于是"重生"出来的报告页头口径是 09-14、持仓口径是 09-15，
+# 两者相差 6,735 元却没有任何提示，最终被推送给了真实用户。
+# 现在的硬约束：任何调用方都不可能在不带此标记的情况下拿到这种拼接报告 ——
+# 宽松模式(strict=False)会强制在页面顶部插红色降级横幅，严格模式(strict=True)直接抛异常。
+DEGRADED_MARKER = "DATA_INCONSISTENT_DEGRADED"
+
+# 单条告警在报告中展示的上限（与原实现一致）。
+_ALERTS_LIMIT = 5
+
+
+class ReportDataInconsistentError(RuntimeError):
+    """portfolio_summary 与 portfolio_snapshots 的数据日期不一致。
+
+    strict=True 时由 build_full_report 抛出，调用方据此拒绝产出一份
+    跨日期拼接的报告（例如定时邮件应当据此跳过当天推送）。
+    """
+
+    def __init__(self, summary_date, snapshot_date):
+        self.summary_date = summary_date
+        self.snapshot_date = snapshot_date
+        super().__init__(
+            "报告数据日期不一致：portfolio_summary 数据日期="
+            f"{summary_date or '(空)'}，portfolio_snapshots 最新快照日期="
+            f"{snapshot_date or '(空)'}。拒绝在未标记的情况下产出拼接报告。"
+        )
+
+
 # 主题颜色映射（深色 dashboard 版 / 浅色邮件版）。语义色（涨跌/优先级）不在此处，
 # 两主题共用 #27ae60(绿) #e74c3c(红) #f39c12(琥珀) #1a73e8(蓝) #3498db(蓝) 等。
 THEMES = {
@@ -141,31 +173,66 @@ class EnhancedReportBuilder:
         self.db_path = db_path
         self.theme = theme
 
-    def build_full_report(self, news_data=None, theme: Optional[str] = None) -> str:
+    def build_full_report(self, news_data=None, theme: Optional[str] = None,
+                          strict: bool = False) -> str:
+        """构建完整 HTML 报告。
+
+        Args:
+            news_data: 新闻/资讯数据；None 时该板块整体不渲染。
+            theme: 'dark' | 'light'，覆盖实例主题。
+            strict: True 时，若 portfolio_summary 的数据日期与
+                portfolio_snapshots 的最新快照日期不一致，抛
+                ReportDataInconsistentError，而不是产出一份跨日期拼接的报告。
+                默认 False（宽松）：仍产出报告，但**必定**在页面顶部插入
+                红色降级横幅 + DEGRADED_MARKER 标记，不存在"静默拼接"这条路。
+
+        一致性口径（2026-09-15 事故修复）：
+          报告对外声明的"数据日期"一律取自 portfolio_summary 的最新日期；
+          持仓明细、告警、智能建议、30日前价格全部按该日期取数，
+          保证单份报告内部自洽。若 portfolio_snapshots 的日期与之不同，
+          说明本次运行的数据写入不完整 —— 此时必须显式降级提示。
+        """
         theme = theme or self.theme
         T = THEMES.get(theme, THEMES["dark"])
         css = _CSS_LIGHT if theme == "light" else _CSS_DARK
         self._T = T
         self._theme = theme
+
+        # --- 一致性断言（必须先于任何区块取数）---
+        summary_date, snapshot_date = self._load_data_dates()
+        inconsistent = bool((summary_date or snapshot_date) and summary_date != snapshot_date)
+        if inconsistent and strict:
+            raise ReportDataInconsistentError(summary_date, snapshot_date)
+
         summary = self._load_summary()
-        positions = self._load_positions()
-        alerts = self._load_alerts()
-        advice = self._load_advice()
-        history = self._load_history(60)
+        # 报告数据日期以 summary 为准；summary 整表为空时退回快照日期，避免页头日期为空。
+        report_date = summary_date or snapshot_date
+        # summary 行内日期与聚合 MAX(date) 不一致(理论上不会发生)时以行为准并视为不一致。
+        _row_date = _pick(summary, 'date', '日期') if summary else None
+        if _row_date and report_date and str(_row_date)[:10] != str(report_date)[:10]:
+            inconsistent = True
+            report_date = _row_date
+        self._data_date = report_date
+
+        positions = self._load_positions(report_date)
+        alerts = self._load_alerts(report_date)
+        advice = self._load_advice(report_date)
+        history = self._load_history(60, report_date)
         index_today = self._load_index_today()
         technical = self._load_technical()
-        price_30d = self._load_price_30d_ago()
+        price_30d = self._load_price_30d_ago(report_date)
 
+        banner = self._build_degraded_banner(inconsistent, summary_date, snapshot_date)
         if not summary or not positions:
-            return "<p>暂无足够数据生成报告</p>"
+            return banner + "<p>暂无足够数据生成报告</p>"
 
         nav_b64 = self._build_nav_chart(history) if len(history) > 2 else ""
         dd_b64 = self._build_drawdown_chart(history) if len(history) > 5 else ""
 
         now = datetime.now()
-        date_str = now.strftime('%Y年%m月%d日')
-        wd_map = {0:'周一',1:'周二',2:'周三',3:'周四',4:'周五',5:'周六',6:'周日'}
-        weekday = wd_map.get(now.weekday(), '')
+        # 页头日期必须来自数据，不得用 datetime.now()（它永远是"今天"，会把
+        # 09-14 的指标渲染成 09-16 的日报）。数据日期与生成时间分行展示。
+        date_str, weekday = self._fmt_data_date(report_date)
 
         dr = _pick(summary, 'daily_return', '日收益率', default=0) or 0
         tp = _pick(summary, 'total_pnl', '总盈亏', default=0) or 0
@@ -231,16 +298,16 @@ class EnhancedReportBuilder:
                 '</tr>'
             )
 
-        # 告警
+        # 告警（口径 = 报告数据日期当天，见 _load_alerts）
         if alerts:
             ai = ''
             for a in alerts:
                 lc = '#e74c3c' if a['level'] == 'error' else '#f39c12'
                 ic = '🔴' if a['level'] == 'error' else '🟡'
                 ai += '<tr><td style="padding:6px 10px;font-size:12px;">' + ic + ' <span style="color:' + lc + ';font-weight:600;">[' + a['level'].upper() + ']</span> ' + a['message'] + '</td></tr>'
-            ab = '<div style="margin:14px 0;padding:14px;background:' + T['alert_bg'] + ';border-radius:8px;border-left:4px solid #e74c3c;"><div style="font-size:13px;font-weight:600;color:#e74c3c;margin-bottom:8px;">⚠️ 今日告警 (' + str(len(alerts)) + ')</div><table style="width:100%;border-collapse:collapse;">' + ai + '</table></div>'
+            ab = '<div style="margin:14px 0;padding:14px;background:' + T['alert_bg'] + ';border-radius:8px;border-left:4px solid #e74c3c;"><div style="font-size:13px;font-weight:600;color:#e74c3c;margin-bottom:8px;">⚠️ 告警 (' + str(len(alerts)) + ' 条，数据日期 ' + str(report_date) + ')</div><table style="width:100%;border-collapse:collapse;">' + ai + '</table></div>'
         else:
-            ab = '<div style="margin:14px 0;padding:14px;background:' + T['ok_bg'] + ';border-radius:8px;border-left:4px solid #27ae60;"><span style="font-size:12px;color:#27ae60;">✅ 今日无告警，投资组合运行正常</span></div>'
+            ab = '<div style="margin:14px 0;padding:14px;background:' + T['ok_bg'] + ';border-radius:8px;border-left:4px solid #27ae60;"><span style="font-size:12px;color:#27ae60;">✅ 数据日期 ' + str(report_date) + ' 无告警</span></div>'
 
         # 智能建议
         adv_block = ''
@@ -277,7 +344,10 @@ class EnhancedReportBuilder:
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<style>' + css + '</style></head><body>'
             '<div class="c">'
-            '<div class="hd"><h1>📊 投资组合日报</h1><p>' + date_str + ' ' + weekday + '</p><p style=\'font-size:10px;margin-top:6px;color:' + T['sub'] + ';\'>' + '数据来源: 新浪财经 / 东方财富 | 更新时间: ' + now.strftime('%H:%M:%S') + '</p></div>'
+            + banner +
+            '<div class="hd"><h1>📊 投资组合日报</h1><p>数据日期: ' + date_str + ' ' + weekday + '</p>'
+            '<p style=\'font-size:10px;margin-top:6px;color:' + T['sub'] + ';\'>数据来源: 新浪财经 / 东方财富 | 生成时间: '
+            + now.strftime('%Y-%m-%d %H:%M:%S') + '</p></div>'
             '<div class="ms">'
             '<div class="m"><div class="l">总市值</div><div class="v" style="color:#1a73e8;">¥' + f"{summary['total_value']:,.0f}" + '</div></div>'
             '<div class="m"><div class="l">当日盈亏</div><div class="v" style="color:' + clr(dr) + ';">' + sign(dr) + '¥' + f"{dp:,.0f}" + '</div><div class="s">' + sign(dr) + f"{dr:.2f}" + '%</div></div>'
@@ -377,6 +447,62 @@ class EnhancedReportBuilder:
         logger.info("已同步: " + str(latest_path))
         return str(filepath)
 
+    @staticmethod
+    def _fmt_data_date(report_date):
+        """把 'YYYY-MM-DD' 数据日期渲染成 ('2026年09月14日', '周一')。
+
+        无法解析时原样返回、星期留空 —— 绝不回退到 datetime.now()，
+        否则又会把数据日期伪装成"今天"。
+        """
+        wd_map = {0: '周一', 1: '周二', 2: '周三', 3: '周四', 4: '周五', 5: '周六', 6: '周日'}
+        if not report_date:
+            return '', ''
+        try:
+            d = datetime.strptime(str(report_date)[:10], '%Y-%m-%d')
+        except (ValueError, TypeError):
+            return str(report_date), ''
+        return d.strftime('%Y年%m月%d日'), wd_map.get(d.weekday(), '')
+
+    def _build_degraded_banner(self, inconsistent, summary_date, snapshot_date):
+        """数据源日期不一致时，返回页面顶部的红色降级横幅（含机器可读标记）。
+
+        这是"不允许静默拼接报告"的落地点：横幅渲染在 <div class="c"> 之后、
+        页头之前，邮件/仪表盘任何消费方都会第一眼看到。
+        """
+        if not inconsistent:
+            return ''
+        return (
+            '<!-- ' + DEGRADED_MARKER + ' -->'
+            '<div style="padding:12px 20px;background:#fdecea;border-bottom:3px solid #e74c3c;'
+            'color:#b3261e;font-size:12px;line-height:1.7;font-weight:600;">'
+            '⛔ 数据降级：本报告数据源日期不一致，数据不完整。'
+            '<br>· 组合汇总(portfolio_summary)数据日期: ' + str(summary_date or '(缺失)') +
+            '<br>· 持仓快照(portfolio_snapshots)最新日期: ' + str(snapshot_date or '(缺失)') +
+            '<br>持仓明细/告警/智能建议已统一按 ' + str(summary_date or snapshot_date or '(未知)') +
+            ' 口径取值，以保证单份报告内部自洽。'
+            '<br>本报告仅供内部排查，<span style="text-decoration:underline;">不可作为决策依据</span>。'
+            '</div>'
+        )
+
+    def _load_data_dates(self):
+        """一次性取出两个日期源的最新日期。
+
+        Returns:
+            (portfolio_summary.MAX(date), portfolio_snapshots.MAX(date))
+            任一表为空时为 None。
+        """
+        conn = get_db_connection(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT (SELECT MAX(date) FROM portfolio_summary), "
+                "(SELECT MAX(date) FROM portfolio_snapshots)"
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        return (row[0], row[1]) if row else (None, None)
+
     def _load_summary(self):
         conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -386,18 +512,39 @@ class EnhancedReportBuilder:
         conn.close()
         return dict(row) if row else None
 
-    def _load_positions(self):
+    def _load_positions(self, report_date=None):
+        """持仓快照。给定 report_date 时**只取该日**，与页头口径强制一致。
+
+        原实现固定取 `MAX(date)`，与页头取值的 portfolio_summary 最新日期相互独立，
+        正是 09-15 报告"页头 09-14 / 持仓 09-15"的直接成因。
+        """
         conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM portfolio_snapshots WHERE date = (SELECT MAX(date) FROM portfolio_snapshots) ORDER BY market_value DESC")
+        if report_date:
+            cursor.execute(
+                "SELECT * FROM portfolio_snapshots WHERE date = ? ORDER BY market_value DESC",
+                (str(report_date)[:10],),
+            )
+        else:
+            cursor.execute("SELECT * FROM portfolio_snapshots WHERE date = (SELECT MAX(date) FROM portfolio_snapshots) ORDER BY market_value DESC")
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]
 
-    def _load_history(self, days):
+    def _load_history(self, days, report_date=None):
+        """净值/回撤曲线的历史序列。
+
+        report_date 给定时只取 <= 该日期的行，避免曲线画到数据日期之后
+        （回填/跨日期场景下与页头声明的数据日期矛盾）。日期一致时行为不变。
+        """
         conn = get_db_connection(self.db_path)
-        df = pd.read_sql_query("SELECT * FROM portfolio_summary ORDER BY date DESC LIMIT ?", conn, params=(days,))
+        if report_date:
+            df = pd.read_sql_query(
+                "SELECT * FROM portfolio_summary WHERE date <= ? ORDER BY date DESC LIMIT ?",
+                conn, params=(str(report_date)[:10], days))
+        else:
+            df = pd.read_sql_query("SELECT * FROM portfolio_summary ORDER BY date DESC LIMIT ?", conn, params=(days,))
         conn.close()
         return df.sort_values('date').reset_index(drop=True)
 
@@ -407,24 +554,50 @@ class EnhancedReportBuilder:
         conn.close()
         return df.sort_values('date').reset_index(drop=True)
 
-    def _load_alerts(self):
+    def _load_alerts(self, report_date=None):
+        """只取【与报告数据日期同一天】的告警。
+
+        原实现 `ORDER BY id DESC LIMIT 5` 取的是"最近 5 条"，与报告数据日期无关：
+        09-15 管线崩溃、summary 停在 09-14 时，报告会把 09-14 15:31 的旧告警
+        原样渲染成「今日告警」，读者完全看不出来（这正是事故报告里最隐蔽的一处）。
+        alerts.created_at 为 ISO 时间戳，date() 可直接取自然日。
+        """
+        if report_date is None:
+            report_date = self._load_data_dates()[0]
+        if not report_date:
+            return []
         conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT rule_name, level, message FROM alerts ORDER BY id DESC LIMIT 5")
+        cursor.execute(
+            "SELECT rule_name, level, message FROM alerts "
+            "WHERE date(created_at) = ? ORDER BY id DESC LIMIT ?",
+            (str(report_date)[:10], _ALERTS_LIMIT),
+        )
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]
 
-    def _load_advice(self):
+    def _load_advice(self, report_date=None):
+        """读取 smart_report 的建议条目。
+
+        给定 report_date 时**只认与报告日期同日**的那份 md —— 原实现按文件名排序
+        取最新一份，与报告数据日期无关，会把另一天的建议挂到本报告上。
+        """
         report_dir = Path(self.db_path).parent.parent.parent / 'data' / 'reports'
         if not report_dir.exists():
             return []
-        reports = sorted(report_dir.glob('smart_report_*.md'), reverse=True)
-        if not reports:
-            return []
+        if report_date:
+            target = report_dir / ('smart_report_' + str(report_date)[:10].replace('-', '') + '.md')
+            if not target.exists():
+                return []
+        else:
+            reports = sorted(report_dir.glob('smart_report_*.md'), reverse=True)
+            if not reports:
+                return []
+            target = reports[0]
         advices = []
-        with open(reports[0], 'r', encoding='utf-8') as f:
+        with open(target, 'r', encoding='utf-8') as f:
             content = f.read()
         import re
         for m in re.finditer(r'### \d+\.\s+\[(高|中|低)\]\s+(.+?)(?:\n|$)', content):
@@ -455,21 +628,38 @@ class EnhancedReportBuilder:
         return [dict(r) for r in rows]
 
 
-    def _load_price_30d_ago(self):
-        """加载30个交易日前的持仓价格，用于计算30日涨跌幅"""
+    def _load_price_30d_ago(self, report_date=None):
+        """加载30个交易日前的持仓价格，用于计算30日涨跌幅。
+
+        report_date 给定时，起点与 30 日窗口都锚定在该数据日期上，
+        避免"起点是 09-15、对照价来自 09-14 之前"的跨日期混算。
+        """
         try:
             import sqlite3
+            anchor_date = str(report_date)[:10] if report_date else None
             conn = get_db_connection(self.db_path)
             cur = conn.cursor()
-            cur.execute("""
-                SELECT a.code, b.current_price as price_30d_ago
-                FROM (SELECT DISTINCT code FROM portfolio_snapshots WHERE date = (SELECT MAX(date) FROM portfolio_snapshots)) a
-                JOIN portfolio_snapshots b ON a.code = b.code
-                AND b.date = (
-                    SELECT date FROM portfolio_snapshots
-                    ORDER BY date DESC LIMIT 1 OFFSET 29
-                )
-            """)
+            if anchor_date:
+                cur.execute("""
+                    SELECT a.code, b.current_price as price_30d_ago
+                    FROM (SELECT DISTINCT code FROM portfolio_snapshots WHERE date = ?) a
+                    JOIN portfolio_snapshots b ON a.code = b.code
+                    AND b.date = (
+                        SELECT date FROM portfolio_snapshots
+                        WHERE date <= ?
+                        ORDER BY date DESC LIMIT 1 OFFSET 29
+                    )
+                """, (anchor_date, anchor_date))
+            else:
+                cur.execute("""
+                    SELECT a.code, b.current_price as price_30d_ago
+                    FROM (SELECT DISTINCT code FROM portfolio_snapshots WHERE date = (SELECT MAX(date) FROM portfolio_snapshots)) a
+                    JOIN portfolio_snapshots b ON a.code = b.code
+                    AND b.date = (
+                        SELECT date FROM portfolio_snapshots
+                        ORDER BY date DESC LIMIT 1 OFFSET 29
+                    )
+                """)
             result = {row[0]: row[1] for row in cur.fetchall()}
             conn.close()
             return result
