@@ -5,10 +5,27 @@
 - 交易日定义：周一至周五 且 不在休市区间内
 - 年度表缺失时退化为"仅周末"规则，并打一次 warning（表需每年初更新）
 
+覆盖范围与退化（2026-09-16 排查，task #66）
+- **只有 2024/2025/2026 有官方休市表**；其余年份（含 2023 及更早、2027 及以后）一律
+  退化为"仅周末"规则：节假日只要落在周一~周五就会被判成交易日。
+- 这不是"理论上"的问题：库内 index_pe_history 覆盖 2009-10-30~2026-09-15（2018~2023
+  每年 1600~3660 行）、index_quotes 覆盖 1990 至今、portfolio_snapshots 覆盖 2012 至今，
+  所以任何"回看历史"的调用方都会踩在没有表的年份上。
+  实测：`get_trading_days(2023-01-01, 2023-12-31)` 在退化口径下返回 260 天，
+  用 index_quotes 的真实行情日期做基准是 242 天 —— 多出的 18 天全是节假日
+  （2023-01-02、01-23~01-27 春节、05-01~05-03、06-22~06-23、09-29~10-06 国庆）。
+  这类偏差会让"两个日期之间有多少个交易日"这种对外数字整体偏大（例：11 天春节间隔
+  会被算成约 7 个交易日），且答案看起来完全正常。
+- 因此退化不再只是"打一条日志"：`has_official_calendar` / `uncovered_years` /
+  `degraded_years` 三个公开函数让调用方可编程地判断自己是否拿到了退化答案，
+  两个批量入口（`get_trading_days`）会额外给出「本次结果里有多少天落在缺表年份内」。
+
 说明
 - 休市区间以闭区间 (start, end) 表达，含两端；周末本身已自动排除，不在区间内重复列。
 - 元旦若跨年（如 2023-12-30~2024-01-01），只需记 2024-01-01（其余两天为周末自动休）。
-- 2027 及以后年份未内置，会退化为仅周末规则——这是已知限制，警告提示维护者补表。
+- 补历史年份 vs 数据驱动的取舍见 task #66 报告：index_quotes 的"真实日期"本身就含伪行
+  （实测 2026-06-19 收盘与前一日逐字相同，而该日是端午休市），直接用它反推会把污染
+  固化进日历，故本模块仍以官方公告为准。
 """
 from __future__ import annotations
 
@@ -53,8 +70,35 @@ _HOLIDAY_RANGES: Dict[int, List[Tuple[str, str]]] = {
 _MAX_LOOKAHEAD = 30   # next_trading_day 最多向前看的天数
 _MAX_LOOKBACK = 30    # prev / last_on_or_before 最多向后看的天数
 
+# 有官方休市表的年份（唯一权威来源就是 _HOLIDAY_RANGES，不另行维护）
+CALENDAR_COVERED_YEARS: Tuple[int, ...] = tuple(sorted(_HOLIDAY_RANGES))
+
 # 年度表缺失警告去重（每缺一年只告警一次）
 _missing_year_warned: set = set()
+
+# 本次进程内**实际发生过退化判定**的年份；日志可能被过滤/淹没，故同时留可编程痕迹
+_degraded_years: set = set()
+
+
+def has_official_calendar(year: int) -> bool:
+    """该年份是否有官方休市表。False = 该年任何判定都是「仅周末」口径，不可信。"""
+    try:
+        return int(year) in _HOLIDAY_RANGES
+    except (TypeError, ValueError):
+        return False
+
+
+def uncovered_years(start, end) -> List[int]:
+    """[start, end] 区间内没有官方休市表的年份（升序）。非空 ⇒ 结果不可信。"""
+    s, e = _to_date(start), _to_date(end)
+    if s > e:
+        s, e = e, s
+    return [y for y in range(s.year, e.year + 1) if not has_official_calendar(y)]
+
+
+def degraded_years() -> List[int]:
+    """本次进程内实际退化的年份（升序）。管线可据此把「数字不可信」显式暴露出去。"""
+    return sorted(_degraded_years)
 
 
 def _to_date(d) -> date:
@@ -82,17 +126,24 @@ def _closed_dates_for_year(year: int) -> Optional[set]:
 
 
 def is_trading_day(d) -> bool:
-    """判断某天是否为 A股交易日（周一~周五 且 非休市）。"""
+    """判断某天是否为 A股交易日（周一~周五 且 非休市）。
+
+    年份无官方休市表时退化为「仅周末」口径：节假日若落在工作日会被判成交易日。
+    退化会（1）打一次 warning、（2）记入 `degraded_years()`，两者都只做一次/年。
+    """
     d = _to_date(d)
     if d.weekday() >= 5:           # 周六=5, 周日=6
         return False
     closed = _closed_dates_for_year(d.year)
     if closed is None:
+        _degraded_years.add(d.year)
         if d.year not in _missing_year_warned:
             _missing_year_warned.add(d.year)
             logger.warning(
-                f"交易日历无 {d.year} 年官方休市表，退化为仅周末规则；"
-                f"请补充 _HOLIDAY_RANGES 以保证节假日准确。"
+                f"交易日历无 {d.year} 年官方休市表，退化为仅周末规则——该年所有"
+                f"节假日（若为工作日）都会被判成交易日；已覆盖年份仅 "
+                f"{list(CALENDAR_COVERED_YEARS)}。请补充 _HOLIDAY_RANGES，"
+                f"或勿把该年的交易日计数用于对外数字。"
             )
         return True                # 仅周末规则：工作日即视为交易日
     return d not in closed
@@ -135,7 +186,11 @@ def last_trading_day_on_or_before(d) -> date:
 
 
 def get_trading_days(start, end) -> List[date]:
-    """返回 [start, end] 闭区间内所有交易日（升序）。"""
+    """返回 [start, end] 闭区间内所有交易日（升序）。
+
+    区间跨越无官方休市表的年份时，会额外打一条汇总 warning：这类结果用于
+    「间隔交易日数」等对外数字会整体偏大（实测 2023 全年 260 vs 真实 242）。
+    """
     s, e = _to_date(start), _to_date(end)
     if s > e:
         s, e = e, s
@@ -149,6 +204,17 @@ def get_trading_days(start, end) -> List[date]:
         if is_trading_day(cur):
             out.append(cur)
         cur += timedelta(days=1)
+
+    missing = uncovered_years(s, e)
+    if missing:
+        covered = set(CALENDAR_COVERED_YEARS)
+        unreliable = sum(1 for d in out if d.year not in covered)
+        logger.warning(
+            "get_trading_days(%s~%s) 跨 %s 年，这些年份无官方休市表：返回的 %d 天中"
+            "有 %d 天是退化口径（节假日工作日被算成交易日），用于「间隔交易日数」"
+            "会偏大；已覆盖年份仅 %s。",
+            s, e, missing, len(out), unreliable, list(CALENDAR_COVERED_YEARS),
+        )
     return out
 
 
