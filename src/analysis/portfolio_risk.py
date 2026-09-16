@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # 实测（真实 34 只持仓，副本 data/backups/portfolio.db.bak_verify_corr_20260916_095652.db）：
 #   场外×ETF 242 对均值 ρ 0.1277（含跨期） -> 0.3090（剔除跨期）
 #   average_correlation 0.2618 -> 0.3480，diversification_score 0.7382 -> 0.6520
-#   对照组 ETF×ETF 462 对 Δ=0.0000（0/462 变化），证明是系统性偏低而非噪声。
+#   对照组 ETF×ETF 231 对（无序；计序 462）Δ=0.0000（0/231），证明是系统性偏低而非噪声。
 # ============================================================================
 
 # 单个「交易日」允许的最大自然日间隔；超出即视为跨期（桩/空洞），该位置不产出收益。
@@ -47,7 +47,17 @@ MAX_SINGLE_SESSION_GAP_DAYS = 12
 #     （含 20% 涨跌停的 588000/159949 全历史实测最大 |log_ret| 亦在该范围内）；
 #   * 已确认的份额折算：159220 2025-11-07->11-10 单位净值 ×0.5056、份额 ×2.0000
 #     → log_ret = -0.6819；512810 2025-06-20->06-23 同为 1:2 折算。
+#     这两次日 quantity 与 cost_price 都同步翻倍（159220: 10000→20000、1.234→0.617），
+#     即"折算"只发生在 current_price 这一列上没被调整。
+#   * 全历史另命中 5 条 ETF 侧台阶，|log_ret| 1.02~1.34，但 quantity / cost_price
+#     **完全没有同步** ⇒ 不是折算，而是快照价在这些日期换了价格基准（口径断点）：
+#     159300 2024-06-25 ×3.56、510500 2015-04-15 ×3.49、512010 2021-06-28 ×0.26、
+#     512100 2022-09-05 ×2.76、516160 2024-09-18 ×3.21
+#     （5 条全部落在最近 60 行窗口外，不影响当期报告）。
 # 0.30 > 0.2231（真实上限）、< 0.6819（折算量级），故能干净区分。
+#
+# ⚠ 语义范围：命中本阈值只说明「疑似份额折算**或**价格口径断点」，两者都不该作为行情
+# 收益进矩阵，但后续处置不同 —— 命中后必须人工判定，不要直接按折算入账。
 #
 # 顺序约束（实测，不可交换）：跨期守卫必须先于本阈值判定。原因：窗口内真实存在的
 # 跨期区间收益量级与本阈值重叠——2026-06-30 -> 07-31 这 31 天里 001437 -0.4598、
@@ -71,6 +81,49 @@ SPLIT_SPIKE_LOG_RET = 0.30
 #     故 06-30 那行不构成「06-30 当日」的有效观测点，须由**有效基期**（last_real_date）
 #     规则拦下，**不能指望本阈值** —— 它 |log_ret| 仅 0.14~0.17，远低于 0.30，会被直接放行。
 
+# ============================================================================
+# 复制行（fill-forward 陈旧行）守卫阈值 —— 两级判据（2026-09-16 项目所有者裁定）
+# ----------------------------------------------------------------------------
+# 缺陷本体：写入侧对场外标的存在 fill-forward —— 行上日期是 D，装的却是更早的真实值。
+# 已证实 2026-06-15~06-29 连续 10 行的 (current_price, market_value) 恒等，且值逐个精确
+# 等于官方 2026-06-12 单位净值；06-30 行 = 官方 06-29 净值 ⇒ 那根 +15%~+18% 是
+# `06-12 -> 06-29`（17 自然日）的收益被贴了「1 个交易日」标签，官方 06-30 当日实际只
+# +3.59%~+4.97%。详见 docs/handover/07_known_data_issues.md 问题十一。
+#
+# 判据分两级，取行 key = `(current_price, round(market_value, 2))`（见 `_replica_key`）：
+#
+#   Tier1 —— 段长（数据驱动，**不加 is_otc_fund gate**）
+#     某标的自身序列里 key 相同且连续的行构成一段，段长 L = 该段行数；
+#     `L >= COPY_RUN_MIN_LEN(5)` ⇒ 该段全部 L 行（**含段首**，段首装的同样是陈旧值）
+#     都不是观测。
+#     阈值 5 的实测依据（全历史扫描，只读副本
+#     data/backups/portfolio.db.bak_verify_corr_20260916_095652.db）：
+#       * 分侧段长计数（本次复核，key = `(current_price, round(market_value,2))`）——
+#         `>=3` 场外 11 / ETF 48；`>=4` 场外 11 / ETF 5；**`>=5` 场外 11 / ETF 0**
+#         ⇒ 阈值 5 处两侧分布无重叠（`>=4` 与 `>=5` 两项与裁定书一致；`>=3` 一行裁定书
+#         记的是「场外 19 / ETF 47」，属另一套扫描口径，不影响阈值选择）；
+#       * ETF 侧全历史自然同价段最长 4 行、`>=5` 的段 0 个；场外侧 `>=5` 的 11 段
+#         = 06-15~06-29 的 10 行段 × 10 只标的 + 880013 货币基金 49 行恒定价
+#         （880013 在进入本守卫前已被 zero_variance 丢弃，见问题六）。
+#     不加 gate 的理由：该判据对 ETF **零影响**（`>=5` 的段在 ETF 历史上不存在），
+#     无需按 is_otc_fund 分流。
+#
+#   Tier2 —— 横截面广度（**仅场外篮子内**，用 config.settings.is_otc_fund）
+#     对每个日期 D：在场外标的中，统计有多少只满足「它在 D 行的 key == 它自己上一行的
+#     key」，记为 c；分母 n = 「在 D 行存在、且它自己的上一行也存在」的可比较场外标的数。
+#     若 `n >= COPY_BREADTH_MIN_N(3)` 且 `c / n >= COPY_BREADTH_MIN_RATIO(0.5)` ⇒ 这 c 只
+#     在 D 的那些行都不是观测。
+#     依据：覆盖只有 2 行的全市场事件（2026-09-14 -> 09-15，12 只场外与上一行同值 ⇒
+#     12/12 = 100% >= 50%、c = 12 >= 3），段长性质抓不到它，只能靠横截面广度。
+#
+# 刻意**不**采用的两条替代判据（工作区旧实现，已偏离裁定）：
+#   * `is_otc_fund(code)` 门控整体判据 —— 该门控只有 Tier2 需要；
+#   * 「相邻两行同价」—— 漏掉长复制段的段首，又误 void 场外单只真实平价日
+#     （100032 的 08-04/05、08-20/21、08-31/09-01 三段，段长各 2、横截面占比 1/12=8%）。
+COPY_RUN_MIN_LEN = 5          # Tier1：段长阈值（行）
+COPY_BREADTH_MIN_N = 3        # Tier2：可比较场外标的数下限
+COPY_BREADTH_MIN_RATIO = 0.5  # Tier2：同值占比下限
+
 
 def _calendar_gap_days(prev: str, cur: str) -> Optional[int]:
     """两个 'YYYY-MM-DD' 之间的自然日间隔；无法解析时返回 None（调用方按不可判定处理）。"""
@@ -78,6 +131,104 @@ def _calendar_gap_days(prev: str, cur: str) -> Optional[int]:
         return (_date.fromisoformat(str(cur)) - _date.fromisoformat(str(prev))).days
     except (TypeError, ValueError):
         return None
+
+
+def _replica_key(row: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    """复制行判等用的统一 key：`(current_price, round(market_value, 2))`。
+
+    * `market_value` **必须取到分**再比。写入侧存在亚分位浮点抖动：`2026-06-19` 行
+      001407 是 `55498.0 -> 55497.997`、166301 是 `81672.52 -> 81672.51680000001`
+      （quantity 逐位不变）。逐位比较会在此断链，把复制链的基期刷到 06-19，使 06-30
+      伪收益的 gap 只剩 11 天而被放行。
+    * `current_price` 逐位相等即可（实测 price 逐位相同，抖动只出现在 market_value）。
+    * 任一字段缺失 ⇒ 返回 None：证据不足不下结论（该行不参与判等），由调用方显式告警，
+      不静默放行也不静默作废。
+    """
+    price = row.get('current_price')
+    mv = row.get('market_value')
+    if price is None or mv is None:
+        return None
+    return (float(price), round(float(mv), 2))
+
+
+def _scan_replica_rows(series: List[Tuple[str, str, List[Dict[str, Any]]]]
+                       ) -> Dict[str, Dict[str, Tuple[int, int]]]:
+    """预扫描「非观测行」集合 —— 两级复制行判据的实现（判据定义见文件顶部常量注释）。
+
+    `series` = `[(code, label, hist_sorted)]`，`hist_sorted` 按日期升序。
+    返回 `{code: {date: (tier, 段长)}}`，`tier ∈ (1, 2)`，未被命中的标的/日期不出现。
+
+    Tier2 是**跨标的**统计 ⇒ 必须在逐标的产出收益之前一次算完，故本函数独立于主循环。
+    Tier1 也在这里算完，这样留痕（层级 + 段长）由同一处产出，不会两处口径漂移。
+    """
+    keys_by_code: Dict[str, List[Optional[Tuple[float, float]]]] = {}
+    dates_by_code: Dict[str, List[str]] = {}
+
+    for code, label, hist in series:
+        if len(hist) < 2:
+            continue
+        keys = [_replica_key(h) for h in hist]
+        n_missing = sum(1 for k in keys if k is None)
+        if n_missing:
+            logger.warning(
+                "复制行判据降级：%s 有 %d/%d 行 current_price/market_value 缺失，"
+                "这些行不参与 (price, market_value) 判等（证据不足不作废）",
+                label, n_missing, len(keys))
+        keys_by_code[code] = keys
+        dates_by_code[code] = [h['date'] for h in hist]
+
+    # ---- 段长表 + Tier1 ----
+    out: Dict[str, Dict[str, Tuple[int, int]]] = {}
+    run_len_at: Dict[Tuple[str, str], int] = {}
+    for code, keys in keys_by_code.items():
+        dates = dates_by_code[code]
+        i = 0
+        while i < len(keys):
+            if keys[i] is None:          # 不可比行：自成断点，不作废
+                i += 1
+                continue
+            j = i
+            while j + 1 < len(keys) and keys[j + 1] == keys[i]:
+                j += 1
+            run_len = j - i + 1
+            for k in range(i, j + 1):
+                run_len_at[(code, dates[k])] = run_len
+            if run_len >= COPY_RUN_MIN_LEN:
+                slot = out.setdefault(code, {})
+                for k in range(i, j + 1):          # 含段首：段首装的也是陈旧值
+                    slot[dates[k]] = (1, run_len)
+            i = j + 1
+
+    # ---- Tier2：仅场外篮子内，按日期做横截面统计 ----
+    comparable: Dict[str, set] = {}       # date -> 可比较（有行且自己有前一行）的场外标的
+    flat: Dict[str, List[str]] = {}       # date -> key 与各自上一行相同的场外标的
+    for code, keys in keys_by_code.items():
+        if not is_otc_fund(code):
+            continue
+        dates = dates_by_code[code]
+        for k in range(1, len(keys)):
+            if keys[k] is None or keys[k - 1] is None:
+                continue
+            comparable.setdefault(dates[k], set()).add(code)
+            if keys[k] == keys[k - 1]:
+                flat.setdefault(dates[k], []).append(code)
+
+    for d, flats in flat.items():
+        n = len(comparable.get(d, ()))
+        c = len(flats)
+        if n < COPY_BREADTH_MIN_N or c < COPY_BREADTH_MIN_N:
+            continue
+        if c / n < COPY_BREADTH_MIN_RATIO:
+            continue
+        logger.info("复制行横截面判据命中：%s 场外 %d/%d 只与各自上一行同 key（>=%.0f%%），"
+                    "该日这些行按非观测处置", d, c, n, COPY_BREADTH_MIN_RATIO * 100)
+        for code in flats:
+            hit = out.setdefault(code, {})
+            if d in hit:
+                continue                       # Tier1（段长）优先级更高，保留其层级标注
+            hit[d] = (2, run_len_at.get((code, d), 1))
+
+    return out
 
 
 class PortfolioRiskAnalyzer:
@@ -234,12 +385,14 @@ class PortfolioRiskAnalyzer:
         由 pandas 按索引对齐（缺失为 NaN），再用 min_periods 控制最小重叠。
 
         输入口径守卫（2026-09-16，输入是未复权快照价 portfolio_snapshots.current_price）：
-          0) 复制行不产出收益：场外基金的 (current_price, market_value) 与上一行相同
-             ⇒ 该行不是新观测 ⇒ 收益记 NaN 且**不刷新**有效基期 last_real_date。
-             场外快照里存在写入侧 fill-forward 的陈旧行（2026-06-15~06-29 共 10 行装的是
-             06-12 的官方净值），它们既让「块内单日收益」恒为 0，又让块后第一天变成多日
-             收益却挂着 1 个交易日的标签。**只套用在场外基金上**、且 market_value 取到分
-             再比（吸收写入侧亚分位浮点抖动），理由见循环内注释。
+          0) 复制行不产出收益：快照里存在写入侧 fill-forward 的陈旧行（行上日期是 D，
+             装的是更早的真实值；2026-06-15~06-29 共 10 行装的是官方 06-12 的单位净值），
+             它们既让块内「单日收益」恒为 0，又让块后第一天变成多日收益却挂着 1 个
+             交易日的标签。判据为**两级**（定义与实测依据见文件顶部 COPY_* 常量注释）：
+             Tier1 段长 `>= 5`（数据驱动，不加场外 gate）、Tier2 场外篮子内同 key 占比
+             `>= 50%` 且绝对数 `>= 3`。命中行收益记 NaN 且**不刷新**有效基期。
+             两级判据都要跨标的/跨行统计 ⇒ 先由 `_scan_replica_rows` 预扫描出待作废的
+             `(date, code)` 集合，逐标的循环里只做「命中即跳过」。
           1) 跨期不产出收益：相邻快照自然日间隔 > MAX_SINGLE_SESSION_GAP_DAYS 时，
              该位置记 NaN。场外基金是「月末桩 + 日频」混合序列，桩后第一天原本会
              产出 28~31 天的区间收益并被当成日收益，系统性压低与 ETF 的相关性
@@ -266,22 +419,39 @@ class PortfolioRiskAnalyzer:
         copied_rows_voided: Dict[str, List[str]] = {}
         skipped_codes: List[Dict[str, Any]] = []
 
+        # ---- 第 1 遍：取数 + 复制行预扫描 ----
+        # Tier2 是跨标的统计、Tier1 是逐标的段长统计，都必须先全局算完再进逐标的循环
+        # （裁定：判据要先预扫描出待 void 的 (date, code) 集合）。取数一并做掉，
+        # 主循环复用同一份已升序序列，避免同一标的查两次库。
+        prepared: List[Dict[str, Any]] = []
         for pos in positions:
             code = pos['code']
-            label = f"{code}_{str(pos.get('name', ''))[:6]}"
             history = self.db.get_price_history(code, days)
-            if len(history) < 2:
+            prepared.append({
+                'code': code,
+                'label': f"{code}_{str(pos.get('name', ''))[:6]}",
+                'n_raw': len(history),
+                # get_price_history 为 date DESC；必须先升序，否则 diff 的时间轴反向
+                'hist': sorted(history, key=lambda h: h['date']) if history else [],
+            })
+        replica_rows = _scan_replica_rows(
+            [(p['code'], p['label'], p['hist']) for p in prepared])
+
+        for p in prepared:
+            code = p['code']
+            label = p['label']
+            hist_sorted = p['hist']
+            if p['n_raw'] < 2:
                 logger.warning("相关性输入不足：%s 只有 %d 行快照价，跳过",
-                               label, len(history))
+                               label, p['n_raw'])
                 overlap_days[label] = 0
                 skipped_codes.append({'code': label, 'reason': 'rows_lt_2',
-                                      'rows': len(history), 'valid_returns': 0})
+                                      'rows': p['n_raw'], 'valid_returns': 0})
                 continue
 
-            # get_price_history 为 date DESC；必须先升序，否则 diff 的时间轴反向
-            hist_sorted = sorted(history, key=lambda h: h['date'])
             dates = [h['date'] for h in hist_sorted]
             values = np.array([h['current_price'] for h in hist_sorted], dtype=float)
+            void_map = replica_rows.get(code, {})
 
             if len(values) < min_overlap + 1:
                 # 收益观测不足 min_overlap，记录后丢弃（避免薄样本污染相关矩阵）
@@ -309,49 +479,39 @@ class PortfolioRiskAnalyzer:
             copied_dates: List[str] = []
             max_abs_log_ret = 0.0
 
-            # ---- 复制行（fill-forward 陈旧行）守卫 ----
-            # 判据：(current_price, market_value) 与上一行相同 ⇒ 该行不是新观测 ⇒
-            #   该位置收益记 NaN，且**不刷新**有效基期 last_real_date。
-            # 两条实测约束（见 docs/handover/07_known_data_issues.md 问题十一）：
-            #   * **只套用在场外基金上**。场内 ETF 的「相邻同价」是最小报价单位 + 低波动
-            #     造成的真实行情（全历史同价段最长 4 行），套用会把真实观测误 void
-            #     ——实测全标的版会 flag 82 条 ETF 观测、并让 ETF×ETF 均值 ρ 由
-            #     0.3652 变 0.3685，属于制造新缺口。
-            #   * market_value **取到分**再比。写入侧存在亚分位浮点抖动：2026-06-19 那行
-            #     001407 是 55498.0 -> 55497.997、166301 是 81672.52 -> 81672.51680000001
-            #     （quantity 逐位不变），逐位比较会在此断链，把复制链的基期刷新到 06-19，
-            #     使 06-30 的伪收益 gap 只剩 11 天而被放行。
-            mvs = [h.get('market_value') for h in hist_sorted]
-            apply_copy_rule = is_otc_fund(code)
-            if apply_copy_rule and any(m is None for m in mvs):
-                logger.warning(
-                    "copy 行判定降级：%s 有 %d/%d 行 market_value 缺失，"
-                    "这些位置改为只比 current_price",
-                    label, sum(1 for m in mvs if m is None), len(mvs))
+            # ---- 逐标的推进：复制行（fill-forward 陈旧行）命中即跳过 ----
+            # 命中集合由 `_scan_replica_rows` 预扫描给出（Tier1 段长 / Tier2 横截面），
+            # 这里只消费，不做判等；hit 值 = (tier, 段长)，用于留痕。
+            # 三条硬约束（裁定，顺序与语义都不可交换）：
+            #   a) 命中行收益保持 NaN，**绝不能置 0**（0.0 是「看起来完全合法的零收益」，
+            #      会被 np.isfinite(...).sum() 计入 valid_returns 并进 df.corr）；
+            #   b) 不刷新有效基期：last_real_date / last_real_value 两者只在「真实新观测」
+            #      时**一起**前移，复制行 `continue` 掉（否则 06-30 的伪收益 gap 会缩到 1 天）；
+            #   c) 算 gap 用 last_real_date、算收益的被减数用 last_real_value（不是
+            #      `values[k-1]` —— 它在复制段内是陈旧值）。
             last_real_date = dates[0]
+            last_real_value = values[0]
             for k in range(1, len(values)):
-                if apply_copy_rule:
-                    if mvs[k] is not None and mvs[k - 1] is not None:
-                        is_copy = (values[k] == values[k - 1]
-                                   and round(mvs[k], 2) == round(mvs[k - 1], 2))
-                    else:
-                        is_copy = (values[k] == values[k - 1])
-                    if is_copy:
-                        copied_dates.append(dates[k])
-                        continue      # 收益保持 NaN（不是 0），且不刷新 last_real_date
+                d = dates[k]
+                hit = void_map.get(d)
+                if hit is not None:
+                    copied_dates.append('%s Tier%d 段长=%d' % (d, hit[0], hit[1]))
+                    continue
                 # 该行是真实新观测 → 基期前移（无论本次能否算出收益）
-                gap = _calendar_gap_days(last_real_date, dates[k])
+                gap = _calendar_gap_days(last_real_date, d)
                 if gap is None or gap <= 0 or gap > MAX_SINGLE_SESSION_GAP_DAYS:
                     # gap 为 None（日期不可解析）或非正（同日重复采集，当前生产库
                     # 实测 0 例）同样不是「单个交易日」，一并按跨期处理。
-                    cross_gaps.append({'date': dates[k],
+                    cross_gaps.append({'date': d,
                                        'gap_days': 'unparsable' if gap is None else gap,
                                        'base_date': last_real_date})
-                    last_real_date = dates[k]
+                    last_real_date = d
+                    last_real_value = values[k]
                     continue
-                prev = values[k - 1]
+                prev = last_real_value
                 cur = values[k]
-                last_real_date = dates[k]
+                last_real_date = d
+                last_real_value = cur
                 if not (prev > 0 and cur > 0):
                     continue  # 非正价（脏价），log 无定义，保持 NaN
                 log_ret = float(np.log(cur / prev))
@@ -377,8 +537,9 @@ class PortfolioRiskAnalyzer:
             if valid_returns < min_overlap:
                 logger.warning(
                     "相关性输入在守卫后过薄：%s 有效收益 %d 条 < min_overlap=%d"
-                    "（跨期置 NaN %d 条、折算尖峰置 NaN %d 条），丢弃",
-                    label, valid_returns, min_overlap, len(cross_gaps), len(spike_dates))
+                    "（复制行置 NaN %d 条、跨期置 NaN %d 条、折算尖峰置 NaN %d 条），丢弃",
+                    label, valid_returns, min_overlap, len(copied_dates),
+                    len(cross_gaps), len(spike_dates))
                 overlap_days[label] = valid_returns
                 skipped_codes.append({'code': label,
                                       'reason': 'valid_returns_lt_min_overlap',
