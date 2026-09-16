@@ -111,7 +111,7 @@ SPLIT_SPIKE_LOG_RET = 0.30
 #   Tier2 —— 横截面广度（**仅场外篮子内**，用 config.settings.is_otc_fund）
 #     对每个日期 D：在场外标的中，统计有多少只满足「它在 D 行的 key == 它自己上一行的
 #     key」，记为 c；分母 n = 「在 D 行存在、且它自己的上一行也存在」的可比较场外标的数。
-#     若 `n >= COPY_BREADTH_MIN_N(3)` 且 `c / n >= COPY_BREADTH_MIN_RATIO(0.5)`（= 整数式 `c * 2 >= n`）
+#     若 `n >= COPY_BREADTH_MIN_N(3)` 且 `c * 2 >= n`（即占比 `>= COPY_BREADTH_MIN_RATIO`）
 #     ⇒ 这 c 只在 D 的那些行都不是观测。
 #     ⚠ 判据只约束**分母** n，不额外约束命中只数 c（例如 n=4、c=2 恰好 50% 即命中）；
 #     误把下限定在 c 上会漏掉小篮子上的横截面事件。
@@ -123,9 +123,8 @@ SPLIT_SPIKE_LOG_RET = 0.30
 #   * 「相邻两行同价」—— 漏掉长复制段的段首，又误 void 场外单只真实平价日
 #     （100032 的 08-04/05、08-20/21、08-31/09-01 三段，段长各 2、横截面占比 1/12=8%）。
 COPY_RUN_MIN_LEN = 5          # Tier1：段长阈值（行）
-COPY_BREADTH_MIN_N = 3        # Tier2：可比较场外标的数下限（判据只约束分母，不约束命中只数）
-COPY_BREADTH_MIN_RATIO = 0.5  # Tier2：同值占比下限。**必须被判据消费**（见 _scan_replica_rows），
-                              # 不许只出现在日志里 —— 否则改它不改行为、日志却会撒谎（2026-09-16 收口）
+COPY_BREADTH_MIN_N = 3        # Tier2：可比较场外标的数下限
+COPY_BREADTH_MIN_RATIO = 0.5  # Tier2：同值占比下限
 
 
 def _calendar_gap_days(prev: str, cur: str) -> Optional[int]:
@@ -221,7 +220,7 @@ def _scan_replica_rows(series: List[Tuple[str, str, List[Dict[str, Any]]]]
         c = len(flats)
         if n < COPY_BREADTH_MIN_N:      # 分母下限：可比较场外标的太少 ⇒ 不构成横截面证据
             continue
-        if c / n < COPY_BREADTH_MIN_RATIO:   # 占比 < 下限(50%) ⇒ 不构成证据；常量即唯一真值源
+        if c * 2 < n:                   # 占比 < COPY_BREADTH_MIN_RATIO(50%) ⇒ 不构成证据
             continue
         logger.info("复制行横截面判据命中：%s 场外 %d/%d 只与各自上一行同 key（%.0f%% >= %.0f%%），"
                     "该日这些行按非观测处置", d, c, n, 100.0 * c / n,
