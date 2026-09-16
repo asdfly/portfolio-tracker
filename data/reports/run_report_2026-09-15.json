@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-15",
+  "run_date": "2026-09-15",
+  "mode": "daily",
+  "duration_s": 31.45,
+  "sources": [],
+  "stages": {
+    "otc_nav": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "watchlist": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    }
+  },
+  "data_quality_issues": [
+    {
+      "issue_type": "spot_historical",
+      "source": "etf_fundamental",
+      "n_affected": 25,
+      "action": "rejected",
+      "detail": "实时快照类源无法回溯历史日期；请求 2026-09-14 但数据实为最新(2026-09-15)，已整体排除，避免重标失真"
+    }
+  ],
+  "dq_score": 100,
+  "retry_queue_pending": 0,
+  "alerts": [],
+  "generated_at": "2026-09-15 15:30:37"
+}

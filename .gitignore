@@ -23,7 +23,15 @@ venv/
 
 # 数据文件（数据库、报告、日志）
 data/database/
-data/reports/
+data/reports/*
+# 例外: run_report_<date>.json 是**机器可读的运行账本**(1~3KB/份), 记录本次运行
+# 跑完没有(run_status)、dq_score 为何为 null、哪些源/阶段失败 —— 是事故复盘时
+# 唯一的原始物证, 体量小且不可由库重生成。
+# 2026-09-15 的事故(管线 rc=1 却写出 dq_score=100/alerts=[])之所以只能靠转录
+# 进测试来留证, 正是因为该目录整体未纳入版本控制。故只放开这一种文件。
+# 注意: 必须写成 data/reports/* 而非 data/reports/ —— 后者会排除目录本身,
+# git 不再下探, 后面的 ! 规则失效; 而 *.html(100KB+, 可由库重生成) 继续被排除。
+!data/reports/run_report_*.json
 data/raw/
 data/processed/
 logs/

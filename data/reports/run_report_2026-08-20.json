@@ -1,0 +1,143 @@
+{
+  "date": "2026-08-20",
+  "run_date": "2026-08-21",
+  "mode": "backfill",
+  "duration_s": 280.0,
+  "sources": [
+    {
+      "name": "ME_margin",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_lhb",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_holder_change",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_institution_research",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_block_trade",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ETF_FUNDAMENTAL",
+      "ok": 790,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "em_spot+sina_fallback",
+      "detail": ""
+    }
+  ],
+  "stages": {
+    "basic": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "risk": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "monitor": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "fund_flow": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "news": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "macro": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_events": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "etf_fundamental": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_event_signals": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "smart": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "dq_check": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "backtest": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "nav_rebuild": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    }
+  },
+  "data_quality_issues": [
+    {
+      "issue_type": "spot_historical",
+      "source": "etf_fundamental",
+      "n_affected": 25,
+      "action": "rejected",
+      "detail": "实时快照类源无法回溯历史日期；请求 2026-08-20 但数据实为最新(2026-08-21)，已整体排除，避免重标失真"
+    },
+    {
+      "issue_type": "spot_historical",
+      "source": "etf_fundamental",
+      "n_affected": 25,
+      "action": "rejected",
+      "detail": "实时快照类源无法回溯历史日期；请求 2026-08-20 但数据实为最新(2026-08-21)，已整体排除，避免重标失真"
+    }
+  ],
+  "dq_score": 97.6,
+  "retry_queue_pending": 1,
+  "alerts": [],
+  "generated_at": "2026-08-21 10:27:24"
+}

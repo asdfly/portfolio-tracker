@@ -1,0 +1,162 @@
+{
+  "date": "2026-09-09",
+  "run_date": "2026-09-09",
+  "mode": "daily",
+  "duration_s": 349.06,
+  "sources": [
+    {
+      "name": "ME_margin",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_lhb",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_holder_change",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_institution_research",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_block_trade",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ETF_FUNDAMENTAL",
+      "ok": 822,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "em_spot+sina_fallback",
+      "detail": ""
+    },
+    {
+      "name": "MARKET_BREADTH",
+      "ok": 1,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "em_zt_pool",
+      "detail": ""
+    }
+  ],
+  "stages": {
+    "basic": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "risk": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "monitor": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "fund_flow": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "news": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "macro": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_events": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "etf_fundamental": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_breadth": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_event_signals": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "smart": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "dq_check": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "backtest": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "nav_rebuild": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    }
+  },
+  "data_quality_issues": [
+    {
+      "issue_type": "spot_historical",
+      "source": "etf_fundamental",
+      "n_affected": 25,
+      "action": "rejected",
+      "detail": "实时快照类源无法回溯历史日期；请求 2026-09-08 但数据实为最新(2026-09-09)，已整体排除，避免重标失真"
+    },
+    {
+      "issue_type": "spot_stale",
+      "source": "etf_fundamental",
+      "n_affected": 20,
+      "action": "flagged",
+      "detail": "实时快照源数据日期(data_date)与目标(2026-09-09)不一致，可能源未刷新；已落库但标记待核查"
+    }
+  ],
+  "dq_score": 96.9,
+  "retry_queue_pending": 1,
+  "alerts": [
+    {
+      "level": "warning",
+      "kind": "stale_over_threshold",
+      "message": "源数据滞后 20 行(≥阈值5), 需核查源刷新"
+    }
+  ],
+  "generated_at": "2026-09-09 15:36:01"
+}
