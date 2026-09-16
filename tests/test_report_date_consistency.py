@@ -33,6 +33,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.utils.enhanced_report import (  # noqa: E402
     DEGRADED_MARKER,
+    HARD_DATE_SOURCES,
+    LAG_NOTICE_MARKER,
     EnhancedReportBuilder,
     ReportDataInconsistentError,
 )
@@ -70,6 +72,11 @@ _SCHEMA = (
            date TEXT, code TEXT, ma_signal TEXT, macd_signal TEXT, rsi_value REAL,
            rsi_status TEXT, kdj_signal TEXT, bollinger_position REAL, atr_pct REAL,
            trend TEXT)""",
+    # 软源（可合法滞后）：波动率特征 / 历史价格
+    """CREATE TABLE etf_features (
+           date TEXT, code TEXT, vol_20d REAL, vol_60d REAL)""",
+    """CREATE TABLE etf_price_history (
+           date TEXT, code TEXT, close REAL)""",
 )
 
 
@@ -148,6 +155,48 @@ def _write_run_report(root: Path, d: str, payload: dict) -> Path:
     return path
 
 
+def _add_index_quotes(db_path: Path, d: str, code="sh000300") -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO index_quotes (date, code, name, close, change_pct) VALUES (?,?,?,?,?)",
+        (d, code, "沪深300", 3500.0, 0.5),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _add_technical(db_path: Path, d: str, code="510300") -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO etf_technical (date, code, ma_signal, macd_signal, rsi_value, "
+        "rsi_status, kdj_signal, bollinger_position, atr_pct, trend) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (d, code, "多头", "买入", 55.0, "中性", "金叉", 50.0, 1.2, "上涨"),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _add_features(db_path: Path, d: str, code="510300") -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO etf_features (date, code, vol_20d, vol_60d) VALUES (?,?,?,?)",
+        (d, code, 0.012, 0.014),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _add_price_history(db_path: Path, d: str, code="510300") -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO etf_price_history (date, code, close) VALUES (?,?,?)",
+        (d, code, 4.2),
+    )
+    conn.commit()
+    conn.close()
+
+
 @pytest.fixture
 def inconsistent_env(tmp_path):
     """summary 停在 YESTERDAY、snapshots 已到 TODAY —— 复刻 09-15 事故现场。"""
@@ -167,6 +216,24 @@ def consistent_env(tmp_path):
     _add_summary(db, TODAY)
     _add_snapshot(db, TODAY, "CCCCCC", "今日持仓", mv=1000000.0)
     _add_alert(db, f"{TODAY}T15:31:14.641471", "TODAY_ALERT")
+    return tmp_path, db
+
+
+@pytest.fixture
+def soft_lag_env(tmp_path):
+    """硬源一致(TODAY)，只有软源滞后：指数/技术指标(昨日)、特征/历史价格(前日)。
+
+    对应真实场景：非交易日没有指数行情、单标的取数失败被吞成 warning、
+    软阶段(prediction_base / nav_rebuild)被软截止跳过 —— 都是设计内降级。
+    """
+    db = _build_db(tmp_path)
+    _add_summary(db, TODAY)
+    _add_snapshot(db, TODAY, "CCCCCC", "今日持仓", mv=1000000.0)
+    old2 = (date.today() - timedelta(days=2)).isoformat()
+    _add_index_quotes(db, YESTERDAY)
+    _add_technical(db, YESTERDAY)
+    _add_features(db, old2)
+    _add_price_history(db, old2)
     return tmp_path, db
 
 
@@ -206,8 +273,14 @@ def test_strict_mode_raises_instead_of_splicing(inconsistent_env):
     _root, db = inconsistent_env
     with pytest.raises(ReportDataInconsistentError) as ei:
         EnhancedReportBuilder(str(db)).build_full_report(strict=True)
-    assert ei.value.summary_date == YESTERDAY
-    assert ei.value.snapshot_date == TODAY
+    assert ei.value.report_date == YESTERDAY
+    hit = {m["table"]: m["date"] for m in ei.value.mismatches}
+    assert hit == {"portfolio_snapshots": TODAY}
+
+
+def test_hard_source_set_is_locked_by_evidence():
+    """锁死"必须同日"的日期源集合 —— 改动此集合必须同时改测试并给新证据。"""
+    assert set(HARD_DATE_SOURCES) == {"portfolio_summary", "portfolio_snapshots"}
 
 
 def test_consistent_dates_report_is_clean(consistent_env):
@@ -216,10 +289,84 @@ def test_consistent_dates_report_is_clean(consistent_env):
     html = EnhancedReportBuilder(str(db)).build_full_report()
 
     assert DEGRADED_MARKER not in html
+    assert LAG_NOTICE_MARKER not in html
     assert "数据降级" not in html
     assert "数据日期: " + _cn(TODAY) in html
     assert "CCCCCC" in html
     assert "TODAY_ALERT" in html
+
+
+def test_soft_lag_is_visible_but_not_hard_refused(soft_lag_env):
+    """只有软源滞后时：必须可见（逐条列出日期/滞后/原因），但不得硬拒绝。
+
+    这一条是本次补齐日期源的关键校准点 —— 若把 etf_features 这类软阶段产物
+    纳入硬判定，正常日就会被误拦成降级。
+    """
+    _root, db = soft_lag_env
+    builder = EnhancedReportBuilder(str(db))
+
+    # 1) 严格模式不得抛错（邮件不会因此拒发）
+    html = builder.build_full_report(strict=True)
+
+    # 2) 不是硬降级
+    assert DEGRADED_MARKER not in html
+    assert "数据降级" not in html
+    assert "不可作为决策依据" not in html
+
+    # 3) 但必须可见：琥珀提示条 + 逐条列出四个软源及其日期/滞后/原因
+    assert LAG_NOTICE_MARKER in html
+    assert "数据口径提示" in html
+    old2 = (date.today() - timedelta(days=2)).isoformat()
+    for label, tbl, d, lag_txt in (
+        ("基准指数行情", "index_quotes", YESTERDAY, "滞后 1 天"),
+        ("技术指标", "etf_technical", YESTERDAY, "滞后 1 天"),
+        ("波动率特征", "etf_features", old2, "滞后 2 天"),
+        ("历史价格", "etf_price_history", old2, "滞后 2 天"),
+    ):
+        assert label in html and tbl in html
+        assert d in html
+        assert lag_txt in html
+    assert "软阶段" in html or "非交易日" in html  # 原因必须写明
+
+    # 4) 硬源一致，持仓仍按报告数据日期取
+    assert "CCCCCC" in html
+    assert "数据日期: " + _cn(TODAY) in html
+
+
+def test_multi_source_mismatch_banner_lists_every_hit(inconsistent_env):
+    """硬不一致 + 多个软源同时不一致（含超前/落后两个方向）时，横幅逐条列出全部命中项。"""
+    root, db = inconsistent_env
+    old2 = (date.today() - timedelta(days=2)).isoformat()
+    old3 = (date.today() - timedelta(days=3)).isoformat()
+    _add_index_quotes(db, TODAY)          # 超前
+    _add_technical(db, old2)              # 滞后 1 天
+    _add_features(db, old2)               # 滞后 1 天
+    _add_price_history(db, old3)          # 滞后 2 天
+
+    html = EnhancedReportBuilder(str(db)).build_full_report()
+
+    assert DEGRADED_MARKER in html
+    assert LAG_NOTICE_MARKER not in html      # 硬降级优先，只出红色横幅
+    for tbl in ("portfolio_summary", "portfolio_snapshots", "index_quotes",
+                "etf_technical", "etf_features", "etf_price_history"):
+        assert tbl in html, tbl
+    # 报告基准日期 + 各源实际日期 + 滞后/超前方向
+    assert "报告数据日期: " + YESTERDAY in html
+    assert YESTERDAY in html and TODAY in html and old2 in html and old3 in html
+    assert "超前 1 天" in html       # snapshots / index_quotes = TODAY
+    assert "滞后 1 天" in html       # etf_technical / etf_features = old2
+    assert "滞后 2 天" in html       # etf_price_history = old3
+
+
+def test_soft_block_titles_carry_their_own_date(soft_lag_env):
+    """允许滞后的区块必须在标题上自带实际数据日期，不能只靠顶部提示条。"""
+    _root, db = soft_lag_env
+    html = EnhancedReportBuilder(str(db)).build_full_report()
+
+    assert "📊 基准指数对比（数据日期 " + YESTERDAY in html
+    assert "🔍 技术信号汇总" in html
+    assert "（数据日期 " + YESTERDAY + "，" in html
+    assert "报告数据日期 " + TODAY in html
 
 
 def test_load_alerts_filters_by_report_date(inconsistent_env):

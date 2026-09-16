@@ -54,24 +54,77 @@ def _norm_priority(p):
 # 宽松模式(strict=False)会强制在页面顶部插红色降级横幅，严格模式(strict=True)直接抛异常。
 DEGRADED_MARKER = "DATA_INCONSISTENT_DEGRADED"
 
+# "软滞后提示"标记：只有**允许合法滞后**的日期源与报告数据日期不一致时使用。
+# 与 DEGRADED_MARKER 的区别是刻意的：软滞后必须**可见**（琥珀色提示条逐条列出，
+# 含各自日期、滞后天数与原因），但**不触发硬拒绝** —— 例如非交易日没有指数行情、
+# 或软阶段(prediction_base/nav_rebuild)被软截止跳过，都是设计内降级，
+# 若一并硬判就会把正常日误拦成降级。
+LAG_NOTICE_MARKER = "DATASOURCE_LAG_NOTICE"
+
 # 单条告警在报告中展示的上限（与原实现一致）。
 _ALERTS_LIMIT = 5
 
+# ---------------------------------------------------------------------------
+# 报告实际读取的**全部**日期源清单（2026-09-16 补齐：原来只挡了前两张表）
+# ---------------------------------------------------------------------------
+# 字段：(表名, 展示名, hard, 可合法滞后的原因)
+#
+# hard=True  —— 必须等于报告数据日期，不等即"硬不一致"(降级横幅 + 严格模式抛错)。
+#               判据：与 portfolio_summary 由**同一硬阶段**(run_analysis.py 阶段一
+#               basic，无 try/except 包裹，挂了即 rc=1)写入、且都用同一个 self.today
+#               作键；历史 80 个交易日中"summary 有而它没有"的次数为 0。
+# hard=False —— 可合法滞后：只进提示条，不做硬判定（原因见第 4 列，均有证据）。
+#
+# 证据（只读生产库，2026-09-16 取数）：
+#   portfolio_snapshots  近 80 个 summary 交易日缺该日 0 次；反向(有 snapshot 无
+#                        summary)仅 2026-09-15 一天 ⇒ 硬判在历史上只命中过那一次事故。
+#   index_quotes         近 80 日缺 1 次(2026-05-31，周日 —— 非交易日没有行情，
+#                        属合法滞后)；反向 2026-09-15。
+#   etf_technical        同 index_quotes(缺 2026-05-31)；另外单标的 K 线取数失败
+#                        只记 warning(portfolio.py:371-374)不中断，可合法缺。
+#   etf_features         由软阶段 prediction_base 构建(run_analysis.py:1150-1154
+#                        try 包裹，skipped=设计内降级)。
+#   etf_price_history    由软阶段 nav_rebuild(run_analysis.py:1372-1376)与补采脚本
+#                        写入，近 80 日缺 2 次(2026-05-31 / 2026-06-19)。
+_DATE_SOURCES = (
+    ("portfolio_summary",   "组合汇总",     True,
+     ""),
+    ("portfolio_snapshots", "持仓快照",     True,
+     ""),
+    ("index_quotes",        "基准指数行情", False,
+     "非交易日无行情；且单个指数取数失败仅记 warning 不中断(portfolio.py:335-339)"),
+    ("etf_technical",       "技术指标",     False,
+     "非交易日无K线；且单标的取数失败仅记 warning 不中断(portfolio.py:362-374)"),
+    ("etf_features",        "波动率特征",   False,
+     "由软阶段 prediction_base 构建，该阶段被软截止跳过属设计内降级(run_analysis.py:1150-1154)"),
+    ("etf_price_history",   "历史价格",     False,
+     "由软阶段 nav_rebuild 与补采脚本写入，可滞后(run_analysis.py:1372-1376)"),
+)
+
+# 硬判定源的表名集合（供调用方/测试引用，避免魔数字符串散落）。
+HARD_DATE_SOURCES = tuple(t for t, _l, hard, _r in _DATE_SOURCES if hard)
+
 
 class ReportDataInconsistentError(RuntimeError):
-    """portfolio_summary 与 portfolio_snapshots 的数据日期不一致。
+    """必须与报告日期一致的日期源出现了不一致（硬不一致）。
 
     strict=True 时由 build_full_report 抛出，调用方据此拒绝产出一份
     跨日期拼接的报告（例如定时邮件应当据此跳过当天推送）。
+
+    mismatches: [{"table","label","date","lag_days","reason"}, ...]，只含硬源。
     """
 
-    def __init__(self, summary_date, snapshot_date):
-        self.summary_date = summary_date
-        self.snapshot_date = snapshot_date
+    def __init__(self, report_date, mismatches):
+        self.report_date = report_date
+        self.mismatches = list(mismatches or [])
+        detail = "；".join(
+            f"{m['label']}({m['table']})数据日期={m['date'] or '(空)'}"
+            for m in self.mismatches
+        ) or "(无)"
         super().__init__(
-            "报告数据日期不一致：portfolio_summary 数据日期="
-            f"{summary_date or '(空)'}，portfolio_snapshots 最新快照日期="
-            f"{snapshot_date or '(空)'}。拒绝在未标记的情况下产出拼接报告。"
+            f"报告数据日期不一致：报告数据日期={report_date or '(空)'}，"
+            f"但与以下必须同日的日期源不符：{detail}。"
+            "拒绝在未标记的情况下产出跨日期拼接报告。"
         )
 
 
@@ -180,17 +233,20 @@ class EnhancedReportBuilder:
         Args:
             news_data: 新闻/资讯数据；None 时该板块整体不渲染。
             theme: 'dark' | 'light'，覆盖实例主题。
-            strict: True 时，若 portfolio_summary 的数据日期与
-                portfolio_snapshots 的最新快照日期不一致，抛
-                ReportDataInconsistentError，而不是产出一份跨日期拼接的报告。
+            strict: True 时，若**必须同日**的日期源（见 HARD_DATE_SOURCES：
+                portfolio_summary / portfolio_snapshots）与报告数据日期不一致，
+                抛 ReportDataInconsistentError，而不是产出一份跨日期拼接的报告。
                 默认 False（宽松）：仍产出报告，但**必定**在页面顶部插入
                 红色降级横幅 + DEGRADED_MARKER 标记，不存在"静默拼接"这条路。
 
-        一致性口径（2026-09-15 事故修复）：
+        一致性口径（2026-09-15 事故修复 + 2026-09-16 补齐日期源）：
           报告对外声明的"数据日期"一律取自 portfolio_summary 的最新日期；
-          持仓明细、告警、智能建议、30日前价格全部按该日期取数，
-          保证单份报告内部自洽。若 portfolio_snapshots 的日期与之不同，
-          说明本次运行的数据写入不完整 —— 此时必须显式降级提示。
+          持仓明细、告警、智能建议、30日前价格、历史曲线全部按该日期取数。
+          其余日期源分两类（清单与证据见模块级 _DATE_SOURCES）：
+            · 硬源(必须同日)：不一致 ⇒ 降级横幅 + DEGRADED_MARKER，strict 时抛错；
+            · 软源(可合法滞后)：不一致 ⇒ 琥珀色提示条 + LAG_NOTICE_MARKER，
+              逐条列出各自日期/滞后天数/原因，但**不**触发硬拒绝（避免把
+              非交易日、软阶段被跳过这类设计内降级误拦成降级）。
         """
         theme = theme or self.theme
         T = THEMES.get(theme, THEMES["dark"])
@@ -198,21 +254,23 @@ class EnhancedReportBuilder:
         self._T = T
         self._theme = theme
 
-        # --- 一致性断言（必须先于任何区块取数）---
-        summary_date, snapshot_date = self._load_data_dates()
-        inconsistent = bool((summary_date or snapshot_date) and summary_date != snapshot_date)
-        if inconsistent and strict:
-            raise ReportDataInconsistentError(summary_date, snapshot_date)
+        # --- 日期源一致性判定（必须先于任何区块取数）---
+        src_dates = self._load_source_dates()
+        self._src_dates = src_dates
 
         summary = self._load_summary()
         # 报告数据日期以 summary 为准；summary 整表为空时退回快照日期，避免页头日期为空。
-        report_date = summary_date or snapshot_date
-        # summary 行内日期与聚合 MAX(date) 不一致(理论上不会发生)时以行为准并视为不一致。
+        report_date = src_dates.get("portfolio_summary") or src_dates.get("portfolio_snapshots")
+        # summary 行内日期与聚合 MAX(date) 不一致(理论上不会发生)时以行为准。
         _row_date = _pick(summary, 'date', '日期') if summary else None
-        if _row_date and report_date and str(_row_date)[:10] != str(report_date)[:10]:
-            inconsistent = True
+        if _row_date:
             report_date = _row_date
         self._data_date = report_date
+
+        hard_mismatches, soft_mismatches = self._split_date_mismatches(report_date, src_dates)
+        inconsistent = bool(hard_mismatches)
+        if inconsistent and strict:
+            raise ReportDataInconsistentError(report_date, hard_mismatches)
 
         positions = self._load_positions(report_date)
         alerts = self._load_alerts(report_date)
@@ -222,7 +280,7 @@ class EnhancedReportBuilder:
         technical = self._load_technical()
         price_30d = self._load_price_30d_ago(report_date)
 
-        banner = self._build_degraded_banner(inconsistent, summary_date, snapshot_date)
+        banner = self._build_date_notice(report_date, hard_mismatches, soft_mismatches)
         if not summary or not positions:
             return banner + "<p>暂无足够数据生成报告</p>"
 
@@ -463,45 +521,142 @@ class EnhancedReportBuilder:
             return str(report_date), ''
         return d.strftime('%Y年%m月%d日'), wd_map.get(d.weekday(), '')
 
-    def _build_degraded_banner(self, inconsistent, summary_date, snapshot_date):
-        """数据源日期不一致时，返回页面顶部的红色降级横幅（含机器可读标记）。
+    @staticmethod
+    def _lag_days(report_date, source_date):
+        """source_date 相对 report_date 的滞后天数（正=更旧，负=更新，None=算不出）。"""
+        if not report_date or not source_date:
+            return None
+        try:
+            a = datetime.strptime(str(report_date)[:10], '%Y-%m-%d')
+            b = datetime.strptime(str(source_date)[:10], '%Y-%m-%d')
+        except (ValueError, TypeError):
+            return None
+        return (a - b).days
 
-        这是"不允许静默拼接报告"的落地点：横幅渲染在 <div class="c"> 之后、
-        页头之前，邮件/仪表盘任何消费方都会第一眼看到。
-        """
-        if not inconsistent:
-            return ''
-        return (
-            '<!-- ' + DEGRADED_MARKER + ' -->'
-            '<div style="padding:12px 20px;background:#fdecea;border-bottom:3px solid #e74c3c;'
-            'color:#b3261e;font-size:12px;line-height:1.7;font-weight:600;">'
-            '⛔ 数据降级：本报告数据源日期不一致，数据不完整。'
-            '<br>· 组合汇总(portfolio_summary)数据日期: ' + str(summary_date or '(缺失)') +
-            '<br>· 持仓快照(portfolio_snapshots)最新日期: ' + str(snapshot_date or '(缺失)') +
-            '<br>持仓明细/告警/智能建议已统一按 ' + str(summary_date or snapshot_date or '(未知)') +
-            ' 口径取值，以保证单份报告内部自洽。'
-            '<br>本报告仅供内部排查，<span style="text-decoration:underline;">不可作为决策依据</span>。'
-            '</div>'
-        )
+    @staticmethod
+    def _fmt_lag(lag):
+        """把滞后天数渲染成人话；None 表示无法计算。"""
+        if lag is None:
+            return '日期不可比'
+        if lag == 0:
+            return '同日'
+        if lag > 0:
+            return f'滞后 {lag} 天'
+        return f'超前 {abs(lag)} 天'
 
-    def _load_data_dates(self):
-        """一次性取出两个日期源的最新日期。
+    def _split_date_mismatches(self, report_date, src_dates):
+        """按模块级 _DATE_SOURCES 把日期源不一致拆成 (硬不一致, 软滞后) 两组。
 
         Returns:
-            (portfolio_summary.MAX(date), portfolio_snapshots.MAX(date))
-            任一表为空时为 None。
+            (hard, soft)，每项形如
+            {"table","label","date","lag_days","reason"}。
+
+        判据：必须同日的硬源(portfolio_summary/portfolio_snapshots)不等即硬不一致；
+        允许合法滞后的软源(指数行情/技术指标/波动率特征/历史价格)只进软滞后组，
+        不做硬判定（否则非交易日或软阶段被跳过会把正常日误报成降级）。
+        表内完全无数据的源(MAX(date) 为 None)**不参与判定** —— 没有数据就没有
+        日期错配可言，硬凑一个"不一致"只会制造噪声。
+        """
+        report_date = str(report_date)[:10] if report_date else None
+        hard, soft = [], []
+        for table, label, is_hard, reason in _DATE_SOURCES:
+            src_date = src_dates.get(table)
+            if not src_date:
+                continue
+            src_date = str(src_date)[:10]
+            if report_date and src_date == report_date:
+                continue
+            item = {
+                "table": table,
+                "label": label,
+                "date": src_date,
+                "lag_days": self._lag_days(report_date, src_date),
+                "reason": reason,
+            }
+            (hard if is_hard else soft).append(item)
+        return hard, soft
+
+    def _build_date_notice(self, report_date, hard_mismatches, soft_mismatches):
+        """渲染页面顶部的日期口径提示条，逐条列出**全部**不一致的日期源。
+
+        - 存在硬不一致 ⇒ 红色降级横幅 + DEGRADED_MARKER（调用方据此拒绝推送）；
+        - 仅软源滞后   ⇒ 琥珀色提示条 + LAG_NOTICE_MARKER（可见但不拒发）。
+        两者都渲染在 <div class="c"> 之后、页头之前，任何消费方第一眼就能看到。
+        """
+        def _lines(items):
+            return ''.join(
+                '<br>&nbsp;&nbsp;· ' + it["label"] + '(' + it["table"] + ')数据日期: '
+                + it["date"] + '（' + self._fmt_lag(it["lag_days"]) + '）'
+                + ('｜原因: ' + it["reason"] if it["reason"] else '')
+                for it in items
+            )
+
+        if hard_mismatches:
+            return (
+                '<!-- ' + DEGRADED_MARKER + ' -->'
+                '<div style="padding:12px 20px;background:#fdecea;border-bottom:3px solid #e74c3c;'
+                'color:#b3261e;font-size:12px;line-height:1.7;font-weight:600;">'
+                '⛔ 数据降级：本报告必须同日的日期源出现不一致，数据不完整。'
+                '<br>· 报告数据日期: ' + str(report_date or '(缺失)')
+                + '（组合汇总 portfolio_summary）'
+                + _lines(hard_mismatches)
+                + _lines(soft_mismatches)
+                + '<br>持仓明细/告警/智能建议已统一按 ' + str(report_date or '(未知)')
+                + ' 口径取值，以保证单份报告内部自洽。'
+                '<br>本报告仅供内部排查，<span style="text-decoration:underline;">不可作为决策依据</span>。'
+                '</div>'
+            )
+        if soft_mismatches:
+            return (
+                '<!-- ' + LAG_NOTICE_MARKER + ' -->'
+                '<div style="padding:10px 20px;background:#fdf6e3;border-bottom:2px solid #f39c12;'
+                'color:#8a6d1f;font-size:12px;line-height:1.7;">'
+                '⚠️ 数据口径提示：以下区块的数据日期与报告数据日期'
+                '(' + str(report_date or '未知') + '，组合汇总 portfolio_summary) 不同，'
+                '属允许的滞后（各区块标题内已标注实际日期）：'
+                + _lines(soft_mismatches) +
+                '</div>'
+            )
+        return ''
+
+    def _block_date_suffix(self, table):
+        """区块标题用的"数据日期"后缀。
+
+        允许合法滞后的区块（指数行情 / 技术指标）必须**自带实际数据日期**，
+        否则读者会把昨天的指数收盘、昨天的技术信号当成报告数据日期当天的 ——
+        这正是 09-15 事故里"旧告警被当成今日告警"的同一类隐蔽错配。
+        与报告数据日期一致时也照常标注（口径透明，不产生歧义）。
+        """
+        src_date = (getattr(self, '_src_dates', {}) or {}).get(table)
+        if not src_date:
+            return ''
+        if str(src_date) == str(getattr(self, '_data_date', '') or ''):
+            return '（数据日期 ' + str(src_date) + '）'
+        lag = self._lag_days(getattr(self, '_data_date', None), src_date)
+        return ('（数据日期 ' + str(src_date) + '，' + self._fmt_lag(lag)
+                + '；报告数据日期 ' + str(getattr(self, '_data_date', '') or '未知') + '）')
+
+    def _load_source_dates(self):
+        """一次性取出**全部**日期源表的最新日期。
+
+        Returns:
+            {表名: MAX(date)，无数据/表不存在为 None}
         """
         conn = get_db_connection(self.db_path)
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT (SELECT MAX(date) FROM portfolio_summary), "
-                "(SELECT MAX(date) FROM portfolio_snapshots)"
-            )
-            row = cursor.fetchone()
+            out = {}
+            for table, _label, _hard, _reason in _DATE_SOURCES:
+                try:
+                    cursor.execute(f"SELECT MAX(date) FROM {table}")
+                    row = cursor.fetchone()
+                    out[table] = (str(row[0])[:10] if row and row[0] else None)
+                except sqlite3.OperationalError:
+                    # 表不存在（精简单元库/全新库）等同"无数据"，不参与判定
+                    out[table] = None
         finally:
             conn.close()
-        return (row[0], row[1]) if row else (None, None)
+        return out
 
     def _load_summary(self):
         conn = get_db_connection(self.db_path)
@@ -563,7 +718,7 @@ class EnhancedReportBuilder:
         alerts.created_at 为 ISO 时间戳，date() 可直接取自然日。
         """
         if report_date is None:
-            report_date = self._load_data_dates()[0]
+            report_date = self._load_source_dates().get("portfolio_summary")
         if not report_date:
             return []
         conn = get_db_connection(self.db_path)
@@ -699,7 +854,7 @@ class EnhancedReportBuilder:
                 '</tr>'
             )
         return (
-            '<div class="sec"><div class="st">📊 基准指数对比</div>'
+            '<div class="sec"><div class="st">📊 基准指数对比' + self._block_date_suffix("index_quotes") + '</div>'
             '<table><thead><tr><th>指数</th><th>收盘价</th><th>涨跌幅</th><th>vs组合</th></tr></thead>'
             '<tbody>' + rows_html + '</tbody></table></div>'
         )
@@ -761,7 +916,8 @@ class EnhancedReportBuilder:
                 '</tr>'
             )
         return (
-            '<div class="sec"><div class="st">🔍 技术信号汇总 (' + str(len(technical)) + '只)</div>'
+            '<div class="sec"><div class="st">🔍 技术信号汇总 (' + str(len(technical)) + '只)'
+            + self._block_date_suffix("etf_technical") + '</div>'
             '<table><thead><tr><th>名称</th><th>均线</th><th>MACD</th><th>RSI</th><th>30日涨跌</th><th>布林位置</th><th>KDJ</th><th>趋势</th></tr></thead>'
             '<tbody>' + rows_html + '</tbody></table></div>'
         )
