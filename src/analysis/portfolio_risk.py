@@ -9,6 +9,7 @@ import logging
 
 from .risk import RiskAnalyzer
 from src.utils.database import DatabaseManager
+from config.settings import is_otc_fund
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,15 @@ class PortfolioRiskAnalyzer:
             # 用全历史 corrected 累积净值供 drawdown 分窗口（60d/1Y/ALL）
             dd_prices = full_prices
         else:
+            # 实测不可达（2026-09-16）：portfolio_summary 全表 3477 行中 daily_return 为
+            # 0/空的仅 14 行，最近 60 行 60/60 非零，最长「连续全零段」= 1 行；本分支要
+            # 触发需最近 `days` 行**全部**为零。但「现在不可达」是实测结论、不是恒真式，
+            # 故留一条告警绊线：一旦真走到这里，口径已从 corrected daily_return 退化成
+            # total_value 差分（总市值含现金流入流出，sharpe/波动率会失真），必须可见。
+            logger.warning(
+                "风险指标回退到 total_value 差分：最近 %d 行 corrected daily_return "
+                "全为 0（窗口实际行数=%d），sharpe/波动率口径已退化",
+                days, len(history))
             returns = np.diff(values) / values[:-1]
             dd_prices = values
 
@@ -224,6 +234,12 @@ class PortfolioRiskAnalyzer:
         由 pandas 按索引对齐（缺失为 NaN），再用 min_periods 控制最小重叠。
 
         输入口径守卫（2026-09-16，输入是未复权快照价 portfolio_snapshots.current_price）：
+          0) 复制行不产出收益：场外基金的 (current_price, market_value) 与上一行相同
+             ⇒ 该行不是新观测 ⇒ 收益记 NaN 且**不刷新**有效基期 last_real_date。
+             场外快照里存在写入侧 fill-forward 的陈旧行（2026-06-15~06-29 共 10 行装的是
+             06-12 的官方净值），它们既让「块内单日收益」恒为 0，又让块后第一天变成多日
+             收益却挂着 1 个交易日的标签。**只套用在场外基金上**、且 market_value 取到分
+             再比（吸收写入侧亚分位浮点抖动），理由见循环内注释。
           1) 跨期不产出收益：相邻快照自然日间隔 > MAX_SINGLE_SESSION_GAP_DAYS 时，
              该位置记 NaN。场外基金是「月末桩 + 日频」混合序列，桩后第一天原本会
              产出 28~31 天的区间收益并被当成日收益，系统性压低与 ETF 的相关性
@@ -247,6 +263,7 @@ class PortfolioRiskAnalyzer:
         overlap_days: Dict[str, int] = {}
         unreliable_codes: Dict[str, Dict[str, Any]] = {}
         cross_period_voided: Dict[str, int] = {}
+        copied_rows_voided: Dict[str, List[str]] = {}
         skipped_codes: List[Dict[str, Any]] = []
 
         for pos in positions:
@@ -285,21 +302,56 @@ class PortfolioRiskAnalyzer:
                                       'rows': len(values), 'valid_returns': 0})
                 continue
 
-            # 逐相邻观测构造收益：跨期与折算尖峰位置留 NaN（保留该日期位置）
+            # 逐相邻观测构造收益：复制行 / 跨期 / 折算尖峰位置一律留 NaN（保留该日期位置）
             rets = np.full(len(values) - 1, np.nan, dtype=float)
             cross_gaps: List[Dict[str, Any]] = []
             spike_dates: List[str] = []
+            copied_dates: List[str] = []
             max_abs_log_ret = 0.0
+
+            # ---- 复制行（fill-forward 陈旧行）守卫 ----
+            # 判据：(current_price, market_value) 与上一行相同 ⇒ 该行不是新观测 ⇒
+            #   该位置收益记 NaN，且**不刷新**有效基期 last_real_date。
+            # 两条实测约束（见 docs/handover/07_known_data_issues.md 问题十一）：
+            #   * **只套用在场外基金上**。场内 ETF 的「相邻同价」是最小报价单位 + 低波动
+            #     造成的真实行情（全历史同价段最长 4 行），套用会把真实观测误 void
+            #     ——实测全标的版会 flag 82 条 ETF 观测、并让 ETF×ETF 均值 ρ 由
+            #     0.3652 变 0.3685，属于制造新缺口。
+            #   * market_value **取到分**再比。写入侧存在亚分位浮点抖动：2026-06-19 那行
+            #     001407 是 55498.0 -> 55497.997、166301 是 81672.52 -> 81672.51680000001
+            #     （quantity 逐位不变），逐位比较会在此断链，把复制链的基期刷新到 06-19，
+            #     使 06-30 的伪收益 gap 只剩 11 天而被放行。
+            mvs = [h.get('market_value') for h in hist_sorted]
+            apply_copy_rule = is_otc_fund(code)
+            if apply_copy_rule and any(m is None for m in mvs):
+                logger.warning(
+                    "copy 行判定降级：%s 有 %d/%d 行 market_value 缺失，"
+                    "这些位置改为只比 current_price",
+                    label, sum(1 for m in mvs if m is None), len(mvs))
+            last_real_date = dates[0]
             for k in range(1, len(values)):
-                gap = _calendar_gap_days(dates[k - 1], dates[k])
+                if apply_copy_rule:
+                    if mvs[k] is not None and mvs[k - 1] is not None:
+                        is_copy = (values[k] == values[k - 1]
+                                   and round(mvs[k], 2) == round(mvs[k - 1], 2))
+                    else:
+                        is_copy = (values[k] == values[k - 1])
+                    if is_copy:
+                        copied_dates.append(dates[k])
+                        continue      # 收益保持 NaN（不是 0），且不刷新 last_real_date
+                # 该行是真实新观测 → 基期前移（无论本次能否算出收益）
+                gap = _calendar_gap_days(last_real_date, dates[k])
                 if gap is None or gap <= 0 or gap > MAX_SINGLE_SESSION_GAP_DAYS:
                     # gap 为 None（日期不可解析）或非正（同日重复采集，当前生产库
                     # 实测 0 例）同样不是「单个交易日」，一并按跨期处理。
                     cross_gaps.append({'date': dates[k],
-                                       'gap_days': 'unparsable' if gap is None else gap})
+                                       'gap_days': 'unparsable' if gap is None else gap,
+                                       'base_date': last_real_date})
+                    last_real_date = dates[k]
                     continue
                 prev = values[k - 1]
                 cur = values[k]
+                last_real_date = dates[k]
                 if not (prev > 0 and cur > 0):
                     continue  # 非正价（脏价），log 无定义，保持 NaN
                 log_ret = float(np.log(cur / prev))
@@ -310,6 +362,8 @@ class PortfolioRiskAnalyzer:
                 rets[k - 1] = cur / prev - 1.0
 
             valid_returns = int(np.isfinite(rets).sum())
+            if copied_dates:
+                copied_rows_voided[label] = list(copied_dates)
             if spike_dates:
                 unreliable_codes[label] = {
                     'reason': 'split_or_split_like_spike',
@@ -342,6 +396,7 @@ class PortfolioRiskAnalyzer:
                     'overlap_days': overlap_days,
                     'unreliable_codes': unreliable_codes,
                     'cross_period_voided': cross_period_voided,
+                    'copied_rows_voided': copied_rows_voided,
                     'skipped_codes': skipped_codes,
                     'min_overlap': min_overlap}
 
@@ -360,6 +415,7 @@ class PortfolioRiskAnalyzer:
                     'overlap_days': overlap_days,
                     'unreliable_codes': unreliable_codes,
                     'cross_period_voided': cross_period_voided,
+                    'copied_rows_voided': copied_rows_voided,
                     'skipped_codes': skipped_codes,
                     'dropped_thin': dropped_thin,
                     'min_overlap': min_overlap}
@@ -419,6 +475,10 @@ class PortfolioRiskAnalyzer:
             # 被跨期守卫置 NaN 的观测条数（label -> count），解释场外基金 overlap_days
             # 为何小于行数，也便于验证守卫确实生效。
             'cross_period_voided': cross_period_voided,
+            # 被判为复制行（非观测）而置 NaN 的日期（label -> [dates]）。复制行本体是
+            # 写入侧的 fill-forward 陈旧行，置 NaN 后仍然「不可见」于聚合指标，
+            # 故必须独立暴露，否则等于静默。
+            'copied_rows_voided': copied_rows_voided,
             # 未进入矩阵的标的及原因（行数不足 / 有效观测不足 / 零方差）
             'skipped_codes': skipped_codes,
         }
