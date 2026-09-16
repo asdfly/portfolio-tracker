@@ -28,10 +28,12 @@ from config.settings import (SMART_ANALYSIS_CONFIG, ETF_LOT_SIZE,
                              is_otc_fund, is_delisted, stale_threshold_days)
 from src.models import RebalanceTrade
 from src.utils.trading_calendar import (
+    CALENDAR_COVERED_YEARS,
     next_trading_day,
     last_trading_day_on_or_before,
     get_trading_days,
     is_trading_day,
+    uncovered_years,
 )
 
 logger = logging.getLogger(__name__)
@@ -406,10 +408,30 @@ class RebalanceEngine:
             return self.propose(as_of_date, target_weights, threshold=0.0, strategy="periodic")
         days = get_trading_days(last_rebalance_date, as_of_date)
         elapsed = max(len(days) - 1, 0)        # 间隔交易日数
+        # 退化口径留痕（task #66）：区间跨无官方休市表的年份时，get_trading_days 用的是
+        # 「仅周末」规则，落在工作日的节假日会被算成交易日，于是 elapsed 系统性偏大
+        # （实测 2023 全年退化 260 天 vs index_quotes 真实 242 天；11 天春节间隔被算成 7~8 个
+        # 交易日）。这条链的终点是 action_needed=False —— 调仓被静默延后，日志里只看得到
+        # 「未到调仓日」，看不出日历本身不可信。故在调用点把「数字 + 决策」一起打出来。
+        missing_years = uncovered_years(last_rebalance_date, as_of_date)
+        calendar_note = ""
+        if missing_years:
+            calendar_note = (
+                f"（注意：交易日历缺 {missing_years} 年官方休市表，"
+                f"该间隔为退化口径、偏大；已覆盖年份仅 {list(CALENDAR_COVERED_YEARS)}）"
+            )
+            logger.warning(
+                "propose_periodic(as_of=%s, last_rebalance=%s): 交易日历缺 %s 年官方休市表，"
+                "间隔交易日数 %d 为退化口径（仅周末）会偏大；判定 elapsed=%d %s 周期 %d → "
+                "action_needed=%s。该数字与结论均不可信，请补 _HOLIDAY_RANGES 后再采信。",
+                as_of_date, last_rebalance_date, missing_years, elapsed,
+                elapsed, ">=" if elapsed >= period_days else "<", period_days,
+                elapsed >= period_days,
+            )
         if elapsed < period_days:
             return RebalancePlan(
                 as_of_date=as_of_date, strategy="periodic", action_needed=False,
-                reason=f"距上次再平衡 {elapsed} 交易日 < 周期 {period_days}，未到调仓日",
+                reason=f"距上次再平衡 {elapsed} 交易日 < 周期 {period_days}，未到调仓日{calendar_note}",
                 current_weights=weights, target_weights=target_weights,
                 execution_date=exec_date, total_value=total,
             )

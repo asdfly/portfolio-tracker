@@ -1,4 +1,5 @@
 """P2-B 再平衡引擎单元测试（内存库，确定性）"""
+import logging
 import sys
 import sqlite3
 from pathlib import Path
@@ -409,3 +410,67 @@ class TestTacticalOverrides:
             assert med > base_med, f"战术留痕未抬升医药目标: {med} vs {base_med}"
         finally:
             S.TACTICAL_OVERRIDES = saved
+
+
+class TestCalendarDegradationTraceability:
+    """task #66 ②：退化日历的答案不得静默流到「间隔交易日数 → action_needed」。
+
+    `propose_periodic` 是唯一把退化答案**同时**变成对外数字（elapsed）与
+    控制流决策（action_needed）的调用点。`trading_calendar` 里的通用 warning 只说
+    「这个年份没表」，看不出它会怎样改变本次判定；故调用点必须把
+    「数字 + 决策」一起留痕。下面用 2026-12-20 ~ 2027-01-05 锁定（2027 无官方休市表）。
+    """
+
+    LRD = "2026-12-20"
+    AS_OF_2027 = "2027-01-05"
+
+    def test_covered_range_is_quiet(self, caplog):
+        """区间全在已覆盖年份内时，不得冒出退化告警、reason 里不得有退化注记。"""
+        conn = _make_db()
+        eng = RebalanceEngine(conn)
+        with caplog.at_level(logging.WARNING, logger="src.analysis.rebalance_engine"):
+            plan = eng.propose_periodic(AS_OF, period_days=20,
+                                        last_rebalance_date="2026-07-31")
+        assert plan.action_needed is False, plan.reason
+        assert "退化" not in plan.reason, plan.reason
+        assert not [r for r in caplog.records if "官方休市表" in r.getMessage()], \
+            [r.getMessage() for r in caplog.records]
+
+    def test_uncovered_year_appears_in_reason_and_call_site_log(self, caplog):
+        """未到调仓日分支：reason 必须带上退化注记，且日志要出现调用点上下文。"""
+        conn = _make_db()
+        eng = RebalanceEngine(conn)
+        with caplog.at_level(logging.WARNING, logger="src.analysis.rebalance_engine"):
+            plan = eng.propose_periodic(self.AS_OF_2027, period_days=20,
+                                        last_rebalance_date=self.LRD)
+        assert plan.action_needed is False, plan.reason
+        assert "2027" in plan.reason and "退化口径" in plan.reason, plan.reason
+        assert "11 交易日" in plan.reason, plan.reason
+        hits = [r.getMessage() for r in caplog.records if "propose_periodic" in r.getMessage()]
+        assert hits, "调用点缺留痕（只有 trading_calendar 的通用告警是不够的）"
+        assert any("action_needed=False" in h and "elapsed=11" in h for h in hits), hits
+
+    def test_degraded_inflation_can_flip_the_decision(self, caplog):
+        """退化把 elapsed 从 10 抬到 11，恰好跨过 period_days=11 → 决策被翻转。
+
+        这就是「静默延后 / 静默放过调仓」的机制本身：数字看着正常，结论却反了。
+        用例同时证明调用点日志里能读到被翻转后的 action_needed。
+        """
+        from src.utils.trading_calendar import get_trading_days
+        days = get_trading_days(self.LRD, self.AS_OF_2027)
+        degraded_elapsed = len(days) - 1
+        # 2027-01-01（元旦）在退化口径下被判成交易日；扣掉它才是真实间隔
+        truth_elapsed = len([d for d in days if str(d) != "2027-01-01"]) - 1
+        assert (degraded_elapsed, truth_elapsed) == (11, 10), (degraded_elapsed, truth_elapsed)
+
+        conn = _make_db()
+        eng = RebalanceEngine(conn)
+        with caplog.at_level(logging.WARNING, logger="src.analysis.rebalance_engine"):
+            plan = eng.propose_periodic(self.AS_OF_2027, period_days=truth_elapsed + 1,
+                                        last_rebalance_date=self.LRD)
+        # period_days=11：真实口径 10 < 11 应「未到调仓日」，退化口径 11 >= 11 直接放行
+        assert plan.action_needed is True, (
+            f"退化口径应把 elapsed 抬到 11 从而放行调仓；实际 reason={plan.reason}")
+        hits = [r.getMessage() for r in caplog.records if "propose_periodic" in r.getMessage()]
+        assert any("action_needed=True" in h for h in hits), hits
+
