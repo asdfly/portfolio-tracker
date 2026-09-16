@@ -78,15 +78,20 @@ class StrategyBacktester:
         """获取历史价格数据（优先 etf_price_history.adj_close，缺失回退快照价）。
 
         P1-2 诚实口径说明：etf_price_history.adj_close 目前与 close 完全相等
-        （全表差异行 = 0），本表并未做分红调整。差异来自来源：
-          - akshare_fund_etf_hist_em：拉取时已指定前复权(qfq)，故其 close 本身即 qfq；
-          - akshare_fund_etf_hist_sina：接口无 adjust 参数，为【未复权】，
-            可能含未剔除的分红缺口与基准重置跳变
-            （例：159220 2025-11-10 −49.4%、159300 2024-06-25 +255.8%，均属 sina 源）。
-        因此本函数对含 sina 来源的标的输出 warning，提醒其收益序列可能含非真实跳变、
-        回测结论需谨慎，而非宣称"已复权"。某标的无行情（如场外基金）则回退
-        portfolio_snapshots.current_price（同为未复权）并告警，不中断回测；
-        缺口价格向前/向后填充，避免收益序列出现 NaN。
+        （全表差异行 = 0），本表没有独立的分红再投资列。当前该表有两个来源：
+          - akshare_fund_etf_hist_em：EM 前复权(qfq)，close 本身即 qfq；
+          - akshare_stock_zh_a_hist_tx_qfq：腾讯前复权，亦为 qfq。
+        即两个来源当前都已前复权，价格在来源切换处（2026-08-19）保持一致；
+        原先未复权的新浪尾段已被 tx_qfq 取代，历史基准重置跳变
+        （159220 2025-11-10 −49.4%、159300 2024-06-25 +255.8%）在当前数据中已不复现
+        （实测已修正为 +1.16% / −0.77%）。
+        为防上游再次回退到非复权源，本函数对【来源名未标注 qfq】的标的输出 warning。
+        注意：volume 量纲已于 2026-09-16 全表统一为「手」——tx 段 7,018 行按 ÷100
+        从 akshare 包装器 stock_zh_a_hist_tx 的「股」归一到「手」（腾讯 raw fqkline
+        端点原生即「手」，实测与 EM 逐日精确相等），全表已是单一单位，
+        特征工程(volume_zscore_20d)不再有跨源 100× 断层；本函数的价格用途不受影响。
+        某标的无行情（如场外基金）则回退 portfolio_snapshots.current_price 并告警，
+        不中断回测；缺口价格向前/向后填充，避免收益序列出现 NaN。
         """
         if not codes:
             return pd.DataFrame()
@@ -102,9 +107,10 @@ class StrategyBacktester:
         except Exception:
             df = pd.DataFrame()
 
-        # P1-2 诚实修正：adj_close==close、本表无分红调整；sina 源标的为未复权，
-        # 可能含非真实跳变（分红缺口/基准重置）。对含 sina 来源的标的显式告警，
-        # 不改变取数口径（仅提示），避免回测结论被误认为"已复权"。
+        # P1-2 诚实修正：adj_close==close、本表无独立分红调整列。当前来源
+        # (EM / tx_qfq) 均已前复权，故正常不触发；一旦上游回退到非 qfq 源
+        # （如未复权新浪），则显式告警，提示收益序列可能含分红缺口/基准重置跳变。
+        # 仅提示，不改变取数口径。
         try:
             q_src = f"""
                 SELECT code, source, COUNT(*) AS c
@@ -113,15 +119,14 @@ class StrategyBacktester:
                 GROUP BY code, source
             """
             sd = pd.read_sql_query(q_src, self.db, params=codes + [start_date, end_date])
-            sina_codes = sorted(sd.loc[
-                sd["source"].astype(str).str.contains("sina", na=False), "code"
-            ].unique().tolist())
-            if sina_codes:
+            _adj_ok = sd["source"].astype(str).str.lower().str.contains("qfq|_em", na=False)
+            non_qfq_codes = sorted(sd.loc[~_adj_ok, "code"].unique().tolist())
+            if non_qfq_codes:
                 logger.warning(
-                    "P1-2 复权提示：%d 只标的含未复权新浪源(akshare_fund_etf_hist_sina)，"
-                    "其收益序列可能含分红缺口/基准重置跳变（etf_price_history.adj_close==close，"
-                    "本表不做分红调整），回测结果需谨慎解读: %s",
-                    len(sina_codes), sina_codes,
+                    "P1-2 复权提示：%d 只标的行情来源未标注前复权(qfq)，"
+                    "可能含未剔除的分红缺口/基准重置跳变（etf_price_history.adj_close==close，"
+                    "本表无独立分红调整列），回测结果需谨慎解读: %s",
+                    len(non_qfq_codes), non_qfq_codes,
                 )
         except Exception as e:
             logger.warning("P1-2 行情来源检查失败（不影响回测）: %s", e)

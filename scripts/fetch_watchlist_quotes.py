@@ -27,7 +27,7 @@
 --------
 1. **复用既有取数逻辑**，不自己拉数：OHLCV 走
    `predictor/price_history.py::backfill_etf_price_history`（内含 EM 主源 →
-   新浪兜底、按 MAX(date) 增量、末日重取、INSERT OR REPLACE 幂等）。
+   腾讯 qfq 兜底，两者均为前复权、按 MAX(date) 增量、末日重取、INSERT OR REPLACE 幂等）。
 2. **幂等**：连跑两次，第二次新增行数必须为 0（只会重算末日 1 行）。
 3. **只补增量**：etf_technical 只算 MAX(date) 之后的新交易日；若末日恰好是
    最新交易日则重算该日（末日重取），不会重写更早的历史行。

@@ -25,6 +25,24 @@ import sqlite3
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# 份额折算闸门（conversion guard）
+# ----------------------------------------------------------------------------
+# 依据：A 股 ETF 单日涨跌幅上限为 ±10%（科创板/创业板类 ±20%），因此
+# 「当日价 / 前日价」偏离 1 超过 ±25% 只可能是基金份额折算（拆分/合并）或基准重置，
+# 不可能是真实收益。已实测 7 次折算（512010 ÷3.907、512100 ×2.76、516160 ×3.158、
+# 159300 ×3.567、510500 ×3.566、159220 ÷2.0015、512810 ÷1.9988）全部远超该阈值。
+# ============================================================================
+CONVERSION_SUSPECT_RATIO = 0.25
+
+# 复权价比探测命中的行，距目标日的最大自然日数。超过即视为陈旧不可用。
+# 为什么必须有这条：探测用 `date <= 目标日 ORDER BY date DESC LIMIT 1`，陈旧的标的
+# （场外基金只挂月末行、已清仓标的停更、采集失败留旧值）会让 prev/curr 两次探测
+# 命中同一行，qfq_ratio 恒为 1.0 —— 等于把一个真实的折算跳变悄悄替换成
+# 「伪造的 0% 收益」，比直接剔除更隐蔽。7 日取自然日，与交易日口径无关；
+# 折算日前后都有正常交易日，7 日足够宽，不会误伤停牌造成的快照断点。
+CONVERSION_QFQ_MAX_STALENESS_DAYS = 7
+
 
 class PortfolioAnalyzer:
     """投资组合分析器"""
@@ -372,6 +390,77 @@ class PortfolioAnalyzer:
                 return v
         return default
 
+    def _conversion_qfq_ratio(self, cur, code: str, prev_dt: str):
+        """折算闸门辅助：取 code 在 prev_dt / self.today 的前复权(qfq)价比。
+
+        各取「date <= 目标日」的最近一行（容忍停牌/非交易日），但命中行必须距目标日
+        不超过 CONVERSION_QFQ_MAX_STALENESS_DAYS 自然日，否则视为不可用。
+
+        任一探测「查不到」或「陈旧」都返回 None —— 调用方据此把该标的从日收益里
+        剔除，绝不让假价比、也不让伪造的 0% 收益进入求和。
+
+        Args:
+            cur: 调用方已打开的游标（复用 _calculate_summary 里的 conn，不新开连接）
+            code: 标的代码
+            prev_dt: 前一交易日（YYYY-MM-DD）
+
+        Returns:
+            qfq_ratio = close_today / close_prev，或 None
+        """
+        closes = {}
+        probe_dates = {}
+        try:
+            for label, target in (('prev', prev_dt), ('curr', self.today)):
+                cur.execute(
+                    "SELECT date, close FROM etf_price_history "
+                    "WHERE code = ? AND date <= ? AND close IS NOT NULL AND close > 0 "
+                    "ORDER BY date DESC LIMIT 1",
+                    (code, target)
+                )
+                row = cur.fetchone()
+                if not row or row[1] is None:
+                    logger.warning(
+                        "[折算闸门] %s 无可用复权价（无复权价数据，目标日 %s），已剔除",
+                        code, target
+                    )
+                    return None
+                try:
+                    row_dt = date.fromisoformat(str(row[0])[:10])
+                    target_dt = date.fromisoformat(str(target)[:10])
+                except ValueError:
+                    logger.warning(
+                        "[折算闸门] %s 无可用复权价（日期无法解析 %s），已剔除",
+                        code, row[0]
+                    )
+                    return None
+                stale_days = (target_dt - row_dt).days
+                if stale_days > CONVERSION_QFQ_MAX_STALENESS_DAYS:
+                    logger.warning(
+                        "[折算闸门] %s 无可用复权价（复权价数据陈旧：最近 %s，距目标 %d 天 "
+                        "> %d 天），已剔除",
+                        code, row[0], stale_days, CONVERSION_QFQ_MAX_STALENESS_DAYS
+                    )
+                    return None
+                closes[label] = float(row[1])
+                probe_dates[label] = row_dt
+        except sqlite3.OperationalError:
+            # 表不存在（老库/测试夹具）等同「查不到」
+            logger.warning(
+                "[折算闸门] %s 无可用复权价（etf_price_history 不可用），已剔除", code
+            )
+            return None
+        if closes['prev'] <= 0 or closes['curr'] <= 0:
+            return None
+        # 两次探测命中同一行 —— 价比恒为 1.0，是无意义的伪造值（今日行情尚未落库
+        # 时很常见）。宁可剔除，也不要让折算跳变被替换成「0% 收益」。
+        if probe_dates['prev'] == probe_dates['curr']:
+            logger.warning(
+                "[折算闸门] %s 无可用复权价（两次探测命中同一行 %s，价比无意义），已剔除",
+                code, probe_dates['prev']
+            )
+            return None
+        return closes['curr'] / closes['prev']
+
     def _calculate_summary(self, positions: List[Dict[str, Any]],
                           index_quotes: Dict[str, Dict[str, Any]],
                           risk_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -385,6 +474,7 @@ class PortfolioAnalyzer:
         daily_pnl = 0
         daily_return = 0
         prev_value = 0
+        guard_fired = False  # 折算闸门是否介入（用于抑制下方 total_value fallback）
         try:
             conn = get_db_connection(self.db.db_path)
             cur = conn.cursor()
@@ -419,6 +509,31 @@ class PortfolioAnalyzer:
                     curr_pos = curr_codes[code]
                     # FIX: 优先使用 realtime_price（_update_realtime_quotes 更新后的最新价格）
                     curr_price = curr_pos.get('realtime_price', curr_pos.get('current_price', 0))
+                    # 份额折算闸门：quantity 在分子分母约掉后，每个标的最多只能贡献
+                    # curr_price/prev_price 的收益。价比偏离 1 超阈值即为份额折算，
+                    # 必须换成复权价比或剔除，否则折算日的假收益（±250%）会被 NAV 永久累乘吸收。
+                    prev_price = (prev_mv / prev_qty) if prev_qty else 0
+                    if curr_price > 0 and prev_price > 0:
+                        raw_ratio = curr_price / prev_price
+                        if abs(raw_ratio - 1) > CONVERSION_SUSPECT_RATIO:
+                            guard_fired = True
+                            qfq_ratio = self._conversion_qfq_ratio(cur, code, prev_dt)
+                            if qfq_ratio is None:
+                                # 查不到可用复权价（典型：场外基金 / 行情陈旧）：
+                                # 两边同时剔除，绝不让假价比进入求和
+                                logger.warning(
+                                    "[折算闸门] %s 原始价比 %.3f 超阈值且无可用复权价"
+                                    "（缺失或陈旧），已从日收益计算中剔除（%s→%s）",
+                                    code, raw_ratio, prev_dt, self.today
+                                )
+                                continue
+                            logger.warning(
+                                "[折算闸门] %s 原始价比 %.3f 超阈值，改用复权价比 %.3f（%s→%s）",
+                                code, raw_ratio, qfq_ratio, prev_dt, self.today
+                            )
+                            price_adj_mv += prev_price * qfq_ratio * prev_qty
+                            prev_common_mv += prev_mv
+                            continue
                     price_adj_mv += curr_price * prev_qty
                     prev_common_mv += prev_mv
                 if prev_common_mv > 0:
@@ -429,7 +544,9 @@ class PortfolioAnalyzer:
             pass
 
         # fallback: 用 total_value 简单对比（仅当无前日快照数据时）
-        if daily_return == 0 and prev_value > 0:
+        # 闸门介入时抑制：daily_return 可能恰好为 0，但 total_value 仍含被折算污染的
+        # 当日价格，走这条分支会把刚拦下的假收益原样算回来。
+        if daily_return == 0 and prev_value > 0 and not guard_fired:
             daily_pnl = total_value - prev_value
             daily_return = daily_pnl / prev_value * 100
 
