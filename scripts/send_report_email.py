@@ -20,6 +20,13 @@
   注意：管线失败时的 [ERROR] 投资组合告警邮件由 run_analysis.py 经
   src/utils/notification.py:send_alert 独立发出，与本脚本无耦合，不受上述改动影响。
 
+监控账本（2026-09-16 裁定 3 取证后补）:
+  上面那条 [ERROR] 告警覆盖不到"进程被硬杀"：src/data_sources/collect_core.py:167 的
+  看门狗用 os._exit(1) 强退，except 与 finally 都不执行 ⇒ 既没有失败告警、
+  portfolio_summary 又停在昨日 ⇒ 本脚本拒绝发送 ⇒ 用户当天收不到任何信号。
+  这是唯一残留的静默窗口。按裁定"不新增邮件路径"，改为在每次"日报没送达"时
+  往 execution_logs 监控账本写一条 daily_report_not_sent，让静默留下痕迹。
+
 时效守卫(P1 修复): 若取到的最新 enhanced_report 不是"今日"，且数据就绪闸门已放行，
 则现场调用 EnhancedReportBuilder 重生今日报告再发，杜绝"旧 HTML + 新摘要"的日期错配推送。
 
@@ -56,10 +63,36 @@ CLOSE_HOUR = 15
 # run_status 取值（与 src/data_sources/collect_core.py 的 RUN_STATUS_* 常量同义）。
 _RUN_STATUS_BLOCKING = ("partial", "failed")
 
+# 监控账本任务名：日报"没送达用户"（被闸门拒绝 / 正文降级 / 与数据日期不符 / SMTP 失败）
+# 时写入 execution_logs。与 portfolio_daily_analysis 同表，便于按时间对齐排查。
+_NOT_SENT_LEDGER_TASK = "daily_report_not_sent"
+
 
 def _log(msg: str) -> None:
     """统一日志行格式（stdout 会被 scheduled_run.bat 重定向到 logs/scheduled_run.log）。"""
     print(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] [EMAIL] {msg}")
+
+
+def _record_not_sent(reason: str) -> None:
+    """把"今日日报没有送达用户"记进监控账本(execution_logs)。
+
+    为什么需要（裁定 3）：管线失败时的 [ERROR] 告警邮件由 run_analysis.py 的顶层
+    except 发出，而 os._exit 强退（看门狗超时 / 断电 / 任务计划程序终止）不会执行
+    except 与 finally ⇒ 无告警 + summary 停更 ⇒ 本脚本静默拒发。本函数让这种"完全
+    静默"在账本里至少留下一条记录，供次日巡检发现。
+
+    裁定 3 明确要求**不新增邮件路径**：这里只记账，绝不发信。
+    只读承诺的例外说明：_ro_connect 保证不写业务表；execution_logs 是运维账本，
+    是本脚本唯一的写入目标（且 best-effort，失败只告警，绝不影响拒绝判定）。
+    """
+    try:
+        from config.settings import DATABASE_PATH
+        from src.utils.monitor import Monitor
+
+        Monitor(str(DATABASE_PATH), {}).log_execution(
+            _NOT_SENT_LEDGER_TASK, "failed", reason)
+    except Exception as exc:  # 账本不可用不得改变"拒发"这个结论
+        _log(f"监控账本记录失败(不影响拒绝判定): {exc}")
 
 
 def _reports_dir() -> str:
@@ -311,11 +344,13 @@ def main() -> int:
     if not ok:
         _log(f"[CRITICAL] 数据未就绪，拒绝生成/发送今日({today_str})日报：{reason}。"
              f"原则：宁可当天不发，也不要发错日期的报告。")
+        _record_not_sent(f"数据未就绪，拒绝发送今日({today_str})日报：{reason}")
         return 1
 
     resolved = _resolve_report(today_str)
     if resolved is None:
         # stale 且重生失败: 拒绝发送, 由操作员介入(调度日志可见失败)
+        _record_not_sent(f"报告与数据日期不符且现场重生失败，今日({today_str})日报未发送")
         return 1
 
     html_path = resolved["html_path"]
@@ -347,6 +382,7 @@ def main() -> int:
         _log(f"已生成{theme_label}邮件正文: {mail_name}")
     except ReportDataInconsistentError as exc:
         _log(f"[CRITICAL] 报告数据日期不一致，拒绝发送：{exc}")
+        _record_not_sent(f"报告数据日期不一致，今日({today_str})日报未发送：{exc}")
         return 1
     except Exception as exc:
         _log(f"{theme_label}正文生成失败({exc})，退回已有报告")
@@ -357,6 +393,7 @@ def main() -> int:
     # 这堵死了"静默降级"这条路 —— 没有 [降级] 前缀的旁路，也没有直接发的旁路。
     if DEGRADED_MARKER in html_body:
         _log(f"[CRITICAL] 待发正文含降级标记({DEGRADED_MARKER})，数据不完整，拒绝发送 {report_date} 日报")
+        _record_not_sent(f"待发正文含降级标记({DEGRADED_MARKER})，{report_date} 日报未发送")
         return 1
 
     text_body = build_summary(md_path)
@@ -400,6 +437,7 @@ def main() -> int:
         return 0
     except Exception as exc:
         _log(f"发送失败: {exc}")
+        _record_not_sent(f"SMTP 发送失败，{report_date} 日报未送达：{exc}")
         return 1
 
 
