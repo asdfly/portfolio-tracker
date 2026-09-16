@@ -29,8 +29,12 @@ _TX_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"}
 # 与 EM 主源 fetch_etf_ohlcv_akshare 输出完全一致的口径与列序
 _COLUMNS = ["date", "open", "high", "low", "close", "volume", "amount", "adj_close", "code", "source"]
 # ⚠️ 量纲/口径约定（跨写入方，勿凭直觉改）：
-#   - 本端点每行仅 6 字段 [date,open,close,high,low,volume]，**无成交额**，故 amount 恒 NULL、不做推算。
+#   - 本端点每行仅 6 字段 [date,open,close,high,low,volume]，**无成交额**，
+#     故经**本函数**写入的行 amount 恒 NULL、不做推算。
 #     （成交额确实存在于同厂另一端点 newfqkline 的 index 7，单位万元；如需 amount 应换端点而非推算。）
+#   - ⚠️ 「amount 恒 NULL」**只对本函数写入的行成立**：同 source 的历史 7,018 行由 akshare 包装器
+#     （走 newfqkline）写入，amount **全部非 NULL**（真实成交额，7018/7018，2026-09-16 全表核验）。
+#     勿据上一条判定「amount 对 SOURCE_TX 段是空列」而删改该列数据。
 #   - 本函数 volume 单位 = **手**，与 EM 主源「成交量」逐日精确相等（实测 320 重叠日比值恒 1）。
 #   - 但 akshare 包装器 stock_zh_a_hist_tx 走的是 newfqkline，且把 volume ×100 成**股**；
 #     source 同为 SOURCE_TX 的历史行曾由该包装器写入，故两批行 volume 一度相差 100 倍。
@@ -114,7 +118,9 @@ def fetch_etf_ohlcv_tx(code6: str, start: str = "20180101", end: Optional[str] =
     实现要点（均为实测结论，勿凭直觉改）：
       - 每行字段顺序为 [date, open, close, high, low, volume] —— **close 在 index 2，排在 high/low 之前**，
         不能按 OHLC 顺序解析。
-      - 接口不返回成交额，amount 一律置 None（入库即 NULL）。**禁止**用 volume×price 等口径伪造。
+      - 本端点不返回成交额，故本函数输出的 amount 一律置 None（经本函数入库即 NULL）。
+        **禁止**用 volume×price 等口径伪造。注意这不代表 SOURCE_TX 段是空列：同 source 的历史行
+        由 akshare 包装器写入、amount 全部非 NULL（见上方常量区的口径约定）。
       - volume 单位 = **手**，与 EM 主源一致；**禁止**在此乘/除 100 —— 全表已在 2026-09-16
         统一为手（历史 7018 行 TX 行已 ÷100 归一），任何换算都会重新引入 100× 断层。
       - 响应中 qfqday 缺失时返回空 DataFrame，**绝不**回退取未复权的 `day` 键：宁可该标的今天不更新，
