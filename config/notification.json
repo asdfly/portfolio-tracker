@@ -12,6 +12,7 @@
     "source_all_down",
     "data_distortion_blocked",
     "stale_over_threshold",
-    "dq_low_score"
+    "dq_low_score",
+    "pipeline_incomplete"
   ]
 }

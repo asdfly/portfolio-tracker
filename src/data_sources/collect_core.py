@@ -481,6 +481,40 @@ import json as _json
 DEFAULT_STALE_ALERT_THRESHOLD = 5
 DEFAULT_DQ_SCORE_WARN = 80
 
+# --- 运行完整性(2026-09-16 P0: 失败运行不得伪装成"高质量运行") ---------------
+# 实证: 2026-09-15 管线在阶段一崩溃并 rc=1, 但同次 run_report 却是
+#   dq_score=100 / alerts=[] / stages={otc_nav, watchlist}
+# —— 失败比成功(09-14: dq_score=90.6/alerts=1)分更高、告警更少。
+# 根因: dq_score 的推导只看 data_quality_issues 的 date_mismatch/spot_stale 两类,
+# 与"本次运行是否跑完"完全解耦; 而 alerts 在为空时直接静默返回。
+#
+# 以下常量把"阶段完整性"显式建模。阶段名取自 run_analysis.py:main() 中
+# 真实的 _reporter.stage(...) 调用点(grep `_reporter.stage(` 全量枚举):
+#   otc_nav/watchlist                -> 阶段0/0b 采集前置(try 包裹, 可降级)
+#   basic/risk/monitor               -> 阶段一/二/三(无 try 包裹, 挂了即整体 rc=1)
+#   fund_flow/prediction_base/news/macro/market_events/etf_fundamental/
+#   market_breadth/market_event_signals/advice_settle/backtest/nav_rebuild
+#                                    -> 各 try 包裹的旁路采集/分析(可降级)
+#   dq_check                         -> 阶段六, 唯一产出权威 dq_score 的阶段
+#   smart                            -> 阶段四, 显式注释为"非必需"(软截止可跳过)
+
+# 必需阶段: 核心链路(basic/risk/monitor, 无 try 包裹) + 权威 dq_score 来源 dq_check。
+# 缺任一(未记录)或 status == "error" ⇒ 本次运行不完整(run_status != "ok")。
+REQUIRED_STAGES = ("basic", "risk", "monitor", "dq_check")
+
+# 关键阶段: 阶段一的产物 results/positions/summary 是全部下游阶段的输入。
+# 缺失或 error ⇒ 整次运行 failed(此时进程也必然 rc=1)。
+# 注: 软截止可跳过的阶段(smart/backtest/nav_rebuild)是**设计内的降级**,
+# 刻意不计入 REQUIRED_STAGES, 否则"skipped"会变成长期噪声告警, 反而训练使用者忽略它。
+CRITICAL_STAGES = ("basic",)
+
+RUN_STATUS_OK = "ok"
+RUN_STATUS_PARTIAL = "partial"
+RUN_STATUS_FAILED = "failed"
+
+# 告警事件名: 必须同步登记到 config/notification.json 的 events 白名单。
+PIPELINE_INCOMPLETE_KIND = "pipeline_incomplete"
+
 
 class RunReporter:
     """采集运行报告器: 增量记录各源/阶段/告警, 结束时产出 run_report_<date>.json。
@@ -499,6 +533,7 @@ class RunReporter:
         self.alerts = []         # [{level, kind, message}]
         self._dq_score = None
         self._hang_recovered = False
+        self.run_failed_reason = None   # 外层 except 显式标记运行失败时的原因
         self.reports_dir = reports_dir
 
     # --- 增量记录 ---
@@ -523,11 +558,84 @@ class RunReporter:
     def mark_hang_recovered(self):
         self._hang_recovered = True
 
+    def mark_run_failed(self, reason=""):
+        """标记"本次运行整体失败"(main() 外层 except 命中, 进程将以 rc=1 退出)。
+
+        为什么不能只靠阶段完整性推导: 失败可能发生在全部必需阶段都记录完之后
+        (如 send_daily_report / 阶段五发信抛错), 此时 stages 看着是齐全的,
+        不显式标记就会产出 run_status="ok" 的报告 —— 与 09-15 属同一类
+        "运行失败被写成成功"的伪装, 必须一并堵死。
+        """
+        self.run_failed_reason = (str(reason).strip()[:300] or "run aborted")
+
+    def evaluate_run_status(self):
+        """按阶段完整性推导运行状态。
+
+        Returns:
+            (run_status, missing_stages, errored_stages)
+            - "failed" : 被显式标记运行失败, 或关键阶段(CRITICAL_STAGES)缺失/error
+            - "partial": 有必需阶段缺失或 status == "error"
+            - "ok"     : 必需阶段齐全且无一 error
+        """
+        missing = [s for s in REQUIRED_STAGES if s not in self.stages]
+        errored = [s for s in REQUIRED_STAGES
+                   if self.stages.get(s, {}).get("status") == "error"]
+        critical_bad = [
+            s for s in CRITICAL_STAGES
+            if s not in self.stages
+            or self.stages.get(s, {}).get("status") == "error"]
+
+        if self.run_failed_reason or critical_bad:
+            return RUN_STATUS_FAILED, missing, errored
+        if missing or errored:
+            return RUN_STATUS_PARTIAL, missing, errored
+        return RUN_STATUS_OK, missing, errored
+
+    def _incomplete_reason(self, run_status, missing, errored):
+        """为 dq_score 被置空写出可解释的 reason(含缺失/失败阶段名)。"""
+        parts = [f"run incomplete (run_status={run_status})"]
+        if missing:
+            parts.append(f"missing stages {missing}")
+        if errored:
+            parts.append(f"error stages {errored}")
+        if self.run_failed_reason:
+            parts.append(f"run failed: {self.run_failed_reason}")
+        if self._dq_score is not None:
+            # 真实评分被抑制时不丢信息: 数值留在 reason 里, 但不出现在 dq_score 字段,
+            # 避免"运行失败"被一个正常的分值粉饰。
+            parts.append(f"real dq_score {self._dq_score} suppressed")
+        return "; ".join(parts)
+
+    def _alert_pipeline_incomplete(self, run_status, missing, errored):
+        """追加 critical / pipeline_incomplete 告警(detail 含缺失与失败阶段名)。
+
+        字段口径: report["alerts"] 的既有 schema 是 {level, kind, message}
+        (dispatch_alerts 按 a["kind"] 命中 notification.json 的 events 白名单),
+        故主线字段沿用 level/kind; 同时冗余 severity/type 两个别名 —— 数据质量
+        告警(dq.generate_alerts)用的是 severity, 两套叫法在仓库里并存, 冗余二者
+        可让两种读法的消费方都不 KeyError。detail 为扁平字符串, 与
+        data_quality_issues 的 detail 风格一致。
+        """
+        detail = (f"missing_required={missing} errored_required={errored} "
+                  f"run_failed={self.run_failed_reason or '-'}")
+        message = (f"本次运行未完整执行(run_status={run_status}): "
+                   f"缺失必需阶段 {missing or '[]'}, 异常阶段 {errored or '[]'}"
+                   + (f"; 运行失败: {self.run_failed_reason}"
+                      if self.run_failed_reason else ""))
+        self.alerts.append(dict(
+            level="critical", kind=PIPELINE_INCOMPLETE_KIND, message=message,
+            severity="critical", type=PIPELINE_INCOMPLETE_KIND, detail=detail))
+
     # --- 终态 ---
     def finalize_and_write(self, dq_issues=None, queue_pending=0,
                            stale_threshold=DEFAULT_STALE_ALERT_THRESHOLD,
                            reports_dir=None, dispatch_config=None):
         """汇总并写 run_report_<date>.json; 计算 dq_score 与三类告警; 触发推送。
+
+        写入字段除原有内容外新增:
+          run_status      "ok"|"partial"|"failed" —— 由阶段完整性推导(含
+                          mark_run_failed() 的显式失败标记)
+          dq_score_reason 分数来源 / 为何为 null(运行不完整时 dq_score 恒为 null)
 
         Args:
             dq_issues: list of dict(issue_type, source, n_affected, action, detail)
@@ -538,6 +646,9 @@ class RunReporter:
             (report_dict, path_or_None)
         """
         duration_s = round(time.time() - self.start_ts, 2)
+
+        # === 运行完整性: 先判定 run_status, dq_score 与告警都依赖它 ===
+        run_status, missing_stages, errored_stages = self.evaluate_run_status()
 
         # data_quality_issues 汇总(供报告与告警)
         dq_issue_summary = []
@@ -552,12 +663,30 @@ class RunReporter:
             if it.get("issue_type") == "spot_stale":
                 stale_n += int(it.get("n_affected") or 0)
 
-        # dq_score: 优先外部传入(DataQualityChecker), 否则由 issue 推导
-        dq_score = self._dq_score
-        if dq_score is None:
-            dq_score = max(0, 100 - mismatch_n * 5 - stale_n * 1)
+        # dq_score: 优先外部传入(DataQualityChecker), 否则由 issue 推导。
+        # P0 修复: 回退公式**只在 run_status == "ok" 时**可用。
+        # 公式只统计 date_mismatch / spot_stale 两类 issue, 分子为 0 就直给 100 ——
+        # 09-15 正是"管线崩溃 + 当日 issue 类型为 spot_historical"⇒ 输出 100,
+        # 比成功日(90.6)还高。运行不完整时 dq_score 必须为 null, 由
+        # dq_score_reason 说明原因, 绝不允许失败运行借回退公式拿到漂亮分数。
+        dq_score = None
+        if run_status == RUN_STATUS_OK:
+            dq_score = self._dq_score
+            if dq_score is None:
+                dq_score = max(0, 100 - mismatch_n * 5 - stale_n * 1)
+                dq_score_reason = (
+                    "fallback: derived from dq issues "
+                    f"(date_mismatch={mismatch_n}, spot_stale={stale_n})")
+            else:
+                dq_score_reason = "from DataQualityChecker (stage dq_check)"
+        else:
+            dq_score_reason = self._incomplete_reason(
+                run_status, missing_stages, errored_stages)
 
         # --- 三类(及扩展)告警 ---
+        if run_status != RUN_STATUS_OK:
+            self._alert_pipeline_incomplete(
+                run_status, missing_stages, errored_stages)
         if self._hang_recovered:
             self.alert("warning", "hang_recovered",
                        "某数据源发生硬超时(已被杀进程恢复), 主流程继续; 建议排查该源")
@@ -580,10 +709,14 @@ class RunReporter:
             "run_date": self.run_date,
             "mode": self.mode,
             "duration_s": duration_s,
+            # 运行是否完整: "ok" | "partial" | "failed"(见 REQUIRED_STAGES/CRITICAL_STAGES)
+            "run_status": run_status,
             "sources": [dict(name=k, **v) for k, v in self.sources.items()],
             "stages": self.stages,
             "data_quality_issues": dq_issue_summary,
             "dq_score": dq_score,
+            # 为何为 null(或不完整)/分数来源; 旧读取方忽略即可, 不得依赖其存在
+            "dq_score_reason": dq_score_reason,
             "retry_queue_pending": queue_pending,
             "alerts": self.alerts,
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -636,23 +769,49 @@ def dispatch_alerts(report, config_path):
     配置缺省/未启用/无 webhook 时仅记日志, 不抛错。
     推送内容仅含 report['alerts'](为空则不推送)。log_file 通道始终可用,
     作为可观测兜底(即便 webhook 未配也能在本地留存告警流水)。
+
+    P0 修复: run_status != "ok"(本次运行没跑完)时该通道**不得静默** ——
+      a) 不被 `if not report["alerts"]: return` 挡掉(判定条件纳入 run_status);
+      b) pipeline_incomplete 告警不受 events 白名单裁剪(白名单是"选订"语义,
+         运行失败属兜底信息, 不应因白名单漏配而消失);
+      c) 配置缺失或 enabled=false 时升为 error 级日志, 让"想推却推不出去"可见。
+    兼容性: 旧报告(2026-09-15 及以前)无 run_status 字段, 缺省按 "ok" 处理,
+    行为与改造前完全一致。
     """
-    if not report.get("alerts"):
+    run_status = report.get("run_status", RUN_STATUS_OK)
+    run_incomplete = run_status != RUN_STATUS_OK
+
+    if not report.get("alerts") and not run_incomplete:
         return
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = _json.load(f)
     except Exception:
-        logger.info("[P5] 未找到通知配置, 跳过告警推送")
+        if run_incomplete:
+            logger.error(
+                "[P5] 运行未完整(run_status=%s)但通知配置不可用(%s), "
+                "告警仅存于 run_report", run_status, config_path)
+        else:
+            logger.info("[P5] 未找到通知配置, 跳过告警推送")
         return
     if not cfg.get("enabled", False):
+        if run_incomplete:
+            logger.error(
+                "[P5] 运行未完整(run_status=%s)但通知通道被配置禁用"
+                "(enabled=false), 告警仅存于 run_report", run_status)
         return
     events = set(cfg.get("events", []))
     to_send = [a for a in report["alerts"] if a["kind"] in events] \
-        if events else report["alerts"]
+        if events else list(report["alerts"])
+    if run_incomplete:
+        # 运行失败属兜底信息: 脱离 events 白名单强制纳入
+        for a in report.get("alerts", []):
+            if a.get("kind") == PIPELINE_INCOMPLETE_KIND and a not in to_send:
+                to_send.append(a)
     if not to_send:
         return
-    payload = {"report_date": report.get("date"), "alerts": to_send}
+    payload = {"report_date": report.get("date"), "run_status": run_status,
+               "alerts": to_send}
 
     ch = cfg.get("channels", {})
     # 1) webhook (若配置)

@@ -1098,6 +1098,12 @@ def main(argv=None):
                     f'{_ok_count}/{len(_api_checks)} sources OK')
         except Exception as e:
             logger.warning(f"数据源健康检测失败(不影响主流程): {e}")
+            # P0: 这块整段抛异常时, 上面逐源 record_source 一次都没执行 ⇒
+            # run_report 的 "sources" 变成 [] —— "数据源全挂"在报告里零痕迹。
+            # 记一条失败源, 让探测本身的失败也可观测。
+            _reporter.record_source("HEALTH_CHECK", fail=1,
+                                    source_used="exception",
+                                    detail=str(e)[:160])
 
 
         # === 阶段0: 场外基金净值采集（必须先于阶段一，否则当天日报仍用昨日净值）===
@@ -1382,6 +1388,13 @@ def main(argv=None):
         duration = time.time() - start_time
         logger.error(f"任务执行失败: {e}", exc_info=True)
 
+        # P0: 显式标记本次运行失败。不能只靠阶段完整性推导 —— 失败可能发生在
+        # 全部必需阶段都记录完之后(如 send_daily_report 抛错), 那样 stages 看着
+        # 齐全, 兜底报告会写成 run_status="ok", 与 09-15 的"崩溃却 dq_score=100"
+        # 属同一类伪装。标记后 run_report 必为 failed 且 dq_score=null。
+        if _reporter is not None:
+            _reporter.mark_run_failed(f"{type(e).__name__}: {e}")
+
         # 记录失败
         try:
             monitor = Monitor(str(DATABASE_PATH), MONITOR_CONFIG)
@@ -1422,7 +1435,8 @@ def main(argv=None):
                     dispatch_config=str(PROJECT_DIR / "config" / "notification.json"))
                 if _rpath:
                     logger.info(f"[P5] 运行报告已生成: {_rpath} "
-                                f"(dq_score={_report.get('dq_score')}, "
+                                f"(run_status={_report.get('run_status')}, "
+                                f"dq_score={_report.get('dq_score')}, "
                                 f"alerts={len(_report.get('alerts', []))})")
             except Exception as _e:
                 logger.warning(f"[P5] 报告生成失败(不影响主流程): {_e}")
