@@ -23,6 +23,12 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# 仓库根(本文件位于 <root>/src/data_sources/collect_core.py)。
+# 用途: 把 config/notification.json 里的相对路径(如 "data/reports/alerts.log")
+# 按仓库根解析, 而不是按进程 CWD。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+
 
 class CollectTimeout(Exception):
     """硬超时：子进程在限定时间内未返回，已被 kill。"""
@@ -609,12 +615,16 @@ class RunReporter:
     def _alert_pipeline_incomplete(self, run_status, missing, errored):
         """追加 critical / pipeline_incomplete 告警(detail 含缺失与失败阶段名)。
 
-        字段口径: report["alerts"] 的既有 schema 是 {level, kind, message}
-        (dispatch_alerts 按 a["kind"] 命中 notification.json 的 events 白名单),
-        故主线字段沿用 level/kind; 同时冗余 severity/type 两个别名 —— 数据质量
-        告警(dq.generate_alerts)用的是 severity, 两套叫法在仓库里并存, 冗余二者
-        可让两种读法的消费方都不 KeyError。detail 为扁平字符串, 与
-        data_quality_issues 的 detail 风格一致。
+        字段口径严格对齐 report["alerts"] 的既有 schema {level, kind, message}:
+        全仓 `report["alerts"]` 的消费点(collect_core.dispatch_alerts 按 a["kind"]
+        命中白名单、run_analysis.py:1440 与 run_supplemental.py:105/118 取 len)
+        **没有一处读 severity/type**, 故不设别名。
+        唯一产出 `severity` 的是 DataQualityChecker.generate_alerts()
+        (src/utils/data_quality.py), 那是一批**独立对象**, 只在
+        run_analysis.py:1307-1317 里被逐条打日志, 从不进入本数组 ——
+        两套叫法属于两个对象, 不构成给本告警加别名的理由。
+
+        detail 是**新增信息**(缺了哪些阶段), 不是别名, 故保留。
         """
         detail = (f"missing_required={missing} errored_required={errored} "
                   f"run_failed={self.run_failed_reason or '-'}")
@@ -623,8 +633,8 @@ class RunReporter:
                    + (f"; 运行失败: {self.run_failed_reason}"
                       if self.run_failed_reason else ""))
         self.alerts.append(dict(
-            level="critical", kind=PIPELINE_INCOMPLETE_KIND, message=message,
-            severity="critical", type=PIPELINE_INCOMPLETE_KIND, detail=detail))
+            level="critical", kind=PIPELINE_INCOMPLETE_KIND,
+            message=message, detail=detail))
 
     # --- 终态 ---
     def finalize_and_write(self, dq_issues=None, queue_pending=0,
@@ -691,6 +701,13 @@ class RunReporter:
             self.alert("warning", "hang_recovered",
                        "某数据源发生硬超时(已被杀进程恢复), 主流程继续; 建议排查该源")
         core = ["market_events", "etf_fundamental", "fund_flow", "macro"]
+        # 判据边界(裁定于 2026-09-16, 语义刻意不改):
+        #   本告警只回答"这四个采集阶段**都跑了且都报错**"。
+        #   "根本没跑到/从未被记录"**不归本判据管** —— 此时 .get(s, {}) 返回 {}
+        #   ⇒ status 为 None ≠ "error" ⇒ 本分支不触发。那类情形由
+        #   run_status != "ok" 的 pipeline_incomplete 告警负责
+        #   (2026-09-15 即此情形: 阶段一崩溃, 四个源一个都没记录; 见 commit 5892d89)。
+        #   两判据含义不同, 不可合并, 也不要在这里补 `.get(s) is None` 分支。
         if core and all(self.stages.get(s, {}).get("status") == "error" for s in core):
             self.alert("critical", "source_all_down",
                        "核心采集源(市场事件/ETF基本面/资金流/宏观)全部失败")
@@ -826,6 +843,12 @@ def dispatch_alerts(report, config_path):
     # 2) 本地日志文件(可观测兜底)
     lf = ch.get("log_file")
     if lf:
+        # config 里写的是相对仓库根的路径(如 "data/reports/alerts.log")。
+        # 定时任务的 CWD 未必是仓库根 —— 直接打开会把告警流水写到别处, 而
+        # os.makedirs(dirname or ".") 还会顺手造目录, 于是"通道看起来配好了,
+        # 实际没落在预期位置", 正属要杜绝的观测静默。故显式按仓库根解析。
+        if not os.path.isabs(lf):
+            lf = os.path.join(_REPO_ROOT, lf)
         try:
             os.makedirs(os.path.dirname(lf) or ".", exist_ok=True)
             with open(lf, "a", encoding="utf-8") as f:

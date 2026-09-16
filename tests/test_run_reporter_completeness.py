@@ -120,6 +120,12 @@ class TestFailedRun:
         assert alert["level"] == "critical"
         assert "basic" in json.dumps(alert, ensure_ascii=False)
         assert "basic" in alert["detail"]
+        # 字段口径严格对齐既有 schema {level, kind, message} + 新增信息 detail。
+        # 刻意**不设** severity/type 别名: 全仓 report["alerts"] 的消费点
+        # (dispatch_alerts 读 kind / 另两处只取 len)无一读它们; 唯一产出
+        # `severity` 的是 DataQualityChecker.generate_alerts(), 属另一批对象,
+        # 从不进入本数组。此断言防别名被重新加回来(裁定于 2026-09-16)。
+        assert set(alert) == {"level", "kind", "message", "detail"}
 
         # 落盘内容与返回值一致(读取方按文件读)
         assert path is not None
@@ -445,3 +451,55 @@ def test_reporter_does_not_require_database(tmp_path):
     """RunReporter 全链路不碰数据库(测试不依赖生产库的材料保证)。"""
     src = inspect.getsource(RunReporter)
     assert "sqlite3" not in src and "get_db_connection" not in src
+
+
+# ---------------------------------------------------------------------------
+# 7) log_file 相对路径必须按仓库根解析(不能按进程 CWD)
+# ---------------------------------------------------------------------------
+class TestAlertLogFilePath:
+    def test_repo_root_constant_is_project_root(self):
+        from src.data_sources.collect_core import _REPO_ROOT
+        assert Path(_REPO_ROOT).resolve() == PROJECT_ROOT.resolve()
+
+    def test_relative_log_file_is_resolved_against_repo_root(self, tmp_path,
+                                                            monkeypatch):
+        """配置里写的是相对仓库根的路径; 定时任务 CWD 未必是仓库根。
+
+        直接按 CWD 打开会把告警流水写到别处(os.makedirs 还会顺手造目录),
+        等于"通道配了但没落在预期位置"。这里把 _REPO_ROOT 指向 tmp_path 来
+        验证 join 行为, 避免往真实仓库里写文件。
+        """
+        import src.data_sources.collect_core as cc
+        monkeypatch.setattr(cc, "_REPO_ROOT", str(tmp_path))
+
+        cfg_path = tmp_path / "notification.json"
+        cfg_path.write_text(json.dumps({
+            "enabled": True,
+            "channels": {"webhook": {"url": "", "method": "POST"},
+                         "log_file": "data/reports/alerts.log"},   # 相对路径
+            "events": [PIPELINE_INCOMPLETE_KIND],
+        }, ensure_ascii=False), encoding="utf-8")
+
+        rep = _make_reporter(tmp_path)
+        rep.stage("otc_nav", "ok")            # 不完整 ⇒ 必然推送
+        report, _ = rep.finalize_and_write(reports_dir=str(tmp_path))
+        cc.dispatch_alerts(report, str(cfg_path))
+
+        expected = tmp_path / "data" / "reports" / "alerts.log"
+        assert expected.exists(), "相对 log_file 未按仓库根解析"
+        assert PIPELINE_INCOMPLETE_KIND in expected.read_text(encoding="utf-8")
+
+    def test_absolute_log_file_is_not_rewritten(self, tmp_path, monkeypatch):
+        """绝对路径保持原样(只对相对路径做仓库根解析)。"""
+        import src.data_sources.collect_core as cc
+        monkeypatch.setattr(cc, "_REPO_ROOT", str(tmp_path / "fake_root"))
+
+        cfg, log_path = _write_config(tmp_path, events=[PIPELINE_INCOMPLETE_KIND],
+                                      log_name="abs_alerts.log")
+        rep = _make_reporter(tmp_path)
+        rep.stage("otc_nav", "ok")
+        report, _ = rep.finalize_and_write(reports_dir=str(tmp_path))
+        cc.dispatch_alerts(report, cfg)
+
+        assert log_path.exists()
+        assert not (tmp_path / "fake_root").exists()

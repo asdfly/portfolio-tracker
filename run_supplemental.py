@@ -100,10 +100,22 @@ def main(argv=None):
     # 3) 读取当日主分析报告摘要
     report = read_run_report(date_display)
     if report:
+        # run_status 是主分析"本次是否跑完整"的唯一判据(失败时 dq_score 为 null)。
+        # 不打印它, 16:30 的巡检就会看着一份 run_report 说"一切正常", 而同一时刻
+        # monitor 里可能正记着 failed —— 同一信息要在两处才能看到即为观测缺口。
+        # 旧格式报告无该字段, 显式标为"未记录(旧格式)"而非静默显示 None。
+        run_status = report.get("run_status")
         logger.info(
-            f"[补采巡检] 主分析报告({date_display}): dq_score={report.get('dq_score')}, "
+            f"[补采巡检] 主分析报告({date_display}): "
+            f"run_status={run_status or '未记录(旧格式)'}, "
+            f"dq_score={report.get('dq_score')}, "
             f"alerts={len(report.get('alerts', []))}, "
             f"pending={report.get('retry_queue_pending')}")
+        if run_status and run_status != "ok":
+            logger.warning(
+                f"[补采巡检] 主分析本次运行未完整(run_status={run_status}): "
+                f"{report.get('dq_score_reason') or '原因未记录'}; "
+                f"当日报告与库数据可信度需人工确认")
     else:
         logger.info(f"[补采巡检] 未找到 run_report_{date_display}.json "
                     "(主分析尚未运行或未启用P5)")
@@ -116,6 +128,9 @@ def main(argv=None):
         "pending_after": [list(p) for p in pending_after],
         "main_report": (report.get("date"), report.get("dq_score"),
                         len(report.get("alerts", []))) if report else None,
+        # 新增键(不动 main_report 三元组的元数, 避免破坏既有消费方);
+        # 旧格式报告无该字段时为 None
+        "main_run_status": report.get("run_status") if report else None,
         "run_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     out = PROJECT_DIR / "data" / "reports" / f"supplemental_{date_display}.json"
