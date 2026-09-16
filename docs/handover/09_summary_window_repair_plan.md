@@ -4,8 +4,9 @@
 |---|---|
 | 文档编号 | 09 |
 | 对应任务 | #65（读证）+ #59 第 5 项（落地） |
-| 编写时间 | 2026-09-16 11:20（生产冻结窗口 15:00–15:30 之前） |
-| 本轮范围 | **只写计划 + 只读取证 + 副本实测**；不写生产库、不改 `is_suspect` 逻辑、不动 `docs/handover/07_known_data_issues.md` |
+| 编写时间 | 2026-09-16 11:20 初稿；**约 13:45 按 lead 裁定增补**（§三b 09-16 确认、§7.1b 看门狗证伪、§7.4b 两条独立缺陷、§九 状态表、§十一 已完成的代码修复与自验） |
+| 本轮范围 | **计划 + 只读取证 + 副本实测 + 前置代码修复**；不写生产库、不改 `is_suspect` 逻辑、不动 `docs/handover/07_known_data_issues.md` |
+| 代码修复 | `scripts/recompute_summary_window.py`（日期源 ∪ 对照表新增分支）+ `tests/test_recompute_summary_window.py`（19 例），内容随提交 `8a7173c` 入库 |
 | 生产库基线 | `data/database/portfolio.db`，141,017,088 B，mtime `2026-09-16 09:09:04`，**sha256[:16] = `261a4a6ed03396cd`** |
 | 副本 | 全部在 `%TEMP%`（`p9_exp2A.db` / `p9_exp2B.db`），跑完即删；取证脚本也不在仓库内 |
 
@@ -34,10 +35,20 @@
    - `portfolio_nav`：**新增 2 行**、**修改 7 个既有行**（仅 `mwr_return`，09-04 另含 `total_units`）、删除 0；
    - **`twr_cumulative` / `unit_nav` / `net_flow` / `is_suspect` 的既有行 0 变动 ⇒ 已发布的 TWR 历史不被改写。**
 7. **`mwr_return` 会有 7 行小幅重算**（幅度 ≤ 0.018）。这是 `_trailing_mwr_annualized` 用
-   **行号窗口**（`nav_engine.py:255` `start = max(0, idx - 365)`）的结构性后果，需要 lead 明确"接受"。
+   **行号窗口**（`nav_engine.py:255` `start = max(0, idx - 365)`）的结构性后果，
+   **已接受（lead 2026-09-16）**，永久留痕为已知代价，见 §5.2。
 8. **`is_suspect` 的 md-vs-r 通道无法用作本缺陷的判据**：实测 09-04 的 `|md−r|` 在修复前后
    几乎不动（2.734 pp → 2.729 pp），因为 09-04 有一笔约 **+50,000** 的入金**不在 `trade_records` 里**
    （`nav.net_flow = 0.0`）。硬化的主判据必须换成**交易日跨度**，见 §七。
+9. **今天这根 09-16 也是同一个缺陷的复发**：`_determine_trading_date()` 在 15:30 返回
+   `now.date()`（`portfolio.py:85-86`），而 `prev_dt` 取自汇总表（`portfolio.py:482-488`）——
+   汇总表里没有 09-15，所以 `prev_dt` 会是 **09-14**。⇒ 今天日报的「今日涨跌」是两日值。
+   详见 §十一（含 15:45 一键对撞脚本）。
+10. **09-03 的死因不是看门狗**：全量 112 个日志里 `[WATCHDOG]` 只出现 **1 次**（08-19 16:22:35），
+    09-03 日志里没有 ⇒ 09-03 是在 **15:30:48 ~ 16:20:29** 之间被其它原因硬杀的。详见 §7.1。
+11. **两个前置代码缺陷已修**（日期源 / 对照表新增分支），修好后同一条 dry-run 覆盖 9 天、`rc=0`、
+    打印 2 个 `NEW`，且 `compute()` 结果与已认下的写入面**逐位一致**。详见 §十二。
+12. **`mwr_return` 那 7 行小改写已被 lead 接受**（2026-09-16），作为已知代价保留，见 §5.2。
 
 ---
 
@@ -173,6 +184,89 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
   所以现在放进来**无害**；一旦 15:30 跑完写出 09-16，同一命令自然把 09-16 一起纳入，
   无需改参数（是否要在 09-16 已落库后重算它，见 §八 第 3 条）。
 - 窗口内其它日期（09-07 ~ 09-14）会连带重算，但已实测为"只动风险两列"，见 §五。
+
+---
+
+## 三b、今天（2026-09-16）这根必然也是两日值 —— 代码确认 + 15:45 对撞方案
+
+### 3b.1 推理链（两步都由代码与数据坐实，不是猜测）
+
+**第一步：今天写出的行日期是 `2026-09-16`。** `src/analysis/portfolio.py:64-86`：
+
+```python
+64  def _determine_trading_date(self) -> str:
+73      now = datetime.now()
+74      current_time = now.hour * 100 + now.minute      # 15:30 -> 1530
+76      if current_time < 930:
+             ...                                            # 开盘前才回退
+85      else:
+86          return now.strftime('%Y-%m-%d')                 # >= 9:30 ⇒ 直接取 now.date()
+```
+
+15:30 运行 ⇒ `current_time = 1530 >= 930` ⇒ 返回 `now.date()` = `2026-09-16`。
+（注：`_determine_trading_date` 的 `days_back` 回退分支只在 9:30 **之前**才走，
+所以"15:30 跑出来的日期就是当天"这条成立。）
+
+**第二步：它的 `prev_dt` 会是 `2026-09-14`。** `src/analysis/portfolio.py:482-488`：
+
+```sql
+SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
+```
+
+当前 `portfolio_summary` 的 `max(date) = 2026-09-14`（09-15 那一行不存在）⇒ `prev_dt = 2026-09-14`
+⇒ 今天写出的 `daily_return` 是 **09-14 → 09-16 的两日值**，与 09-04 **同形**。
+
+⇒ **今天 15:30 发出日报的「今日涨跌」字段本身就是这个缺陷的又一次复发。**
+
+### 3b.2 两个数的定义与代数桥
+
+对同一组共同持仓（数量不变），共同持仓法的链式恒等式给出：
+
+```
+数1（管线会写出的，prev_dt = 09-14）
+      = (1 + r_0915)(1 + 数2) - 1
+数2（真·单日 = 09-15 收盘 → 09-16 收盘）
+      = 今天的单日涨跌
+偏差  数1 - 数2 ≈ r_0915 = -0.444697%   （加上二阶项 -r_0915·数2/100，量级 <1e-5 pp）
+```
+
+其中 `r_0915 = -0.444697%` 已由 09-14/09-15 快照实测得出（§2.4）。
+⇒ 日报的「今日涨跌」将比真实单日**低约 0.44 pp**，`vs_hs300` 继承同量级偏差
+（`index_quotes` 当日涨跌两边相减会自动抵消，所以偏差全部落在 `daily_return` 侧）。
+
+### 3b.3 为什么现在给不出这两个数（依赖未就绪，实测）
+
+09-16 的行情/持仓数据**此刻在库里完全不存在**。已逐表扫描 41 张含 `date` 列的表：
+
+```
+含 2026-09-16 数据的表: 无
+portfolio_snapshots 09-16 行数 = 0        ⇒ 数2 无法计算
+portfolio_summary   09-16 行数 = 0        ⇒ 数1 无法读取
+（全库 max(date) 最靠前的也只有 etf_price_history / index_quotes / portfolio_snapshots 的 2026-09-15）
+```
+
+⇒ 两个数**必须等 15:30 批次把 09-16 写进库之后**才能产出。**任何"现在就算出来"的说法都是假的。**
+
+### 3b.4 15:45 一键对撞（已就绪，无需改动）
+
+脚本已写好并试跑通过（当依赖缺失时它会明确报"尚未就绪"，不会给假数）：
+
+```bat
+venv313\Scripts\python.exe %TEMP%\p9_0916_verify.py
+```
+
+全程 `mode=ro`。它输出并判定：
+
+| 输出 | 含义 |
+|---|---|
+| 数1 | `portfolio_summary['2026-09-16'].daily_return` —— 管线实际写出的值 |
+| 数2 | 用 09-15/09-16 快照按共同持仓口径算出的**真·单日**值 |
+| 链式对撞 | `(1+r_0915)(1+数2)-1` 与 数1 的差 |
+| 判定 | `|数1 - 链式值| < 0.01pp` 且 `|数1 - 数2| > 0.01pp` ⇒ **确认复发**；反之若 `|数1 - 数2| < 0.01pp` ⇒ 未复发 |
+
+**为什么用链式对撞而不是比大小**：只看"数1 比 数2 低 0.44 pp"不能排除巧合；
+而 `(1+r_0915)(1+数2)-1` 与 数1 在 `1e-7 pp` 量级上吻合，是**只有"数1 记的是两日链"才能解释**的指纹
+（09-04 的 1.16e-07 pp 就是这样验出来的）。
 
 ---
 
@@ -412,7 +506,12 @@ mwr_return       7
 成因（`nav_engine.py:214-259` `_trailing_mwr_annualized`）：窗口是按**行号**取的
 `start = max(0, idx - 365)`，不是自然日。窗口中间插入 2 行 ⇒ 每行的 `v_begin` / `net_in`
 端点位移 ⇒ 既有行 `mwr_return` 全体小幅重算。这是结构性副作用，
-**是 nav 唯一被改写的既有列，需要 lead 明确接受**。
+**是 nav 唯一被改写的既有列**。
+
+> **处置：已接受（lead 2026-09-16）。** 理由：① 头条是 TWR，而 `twr_cumulative` 既有行
+> **0 变动**已有实测；② 变动是行号窗口的结构性后果，幅度 ≤ 0.0175；③ 把行号窗口改成
+> 自然日窗口是独立任务，塞进本轮会把一个已验证的修复变成口径工程。
+> 本条在此**永久留痕为已知代价**，后续若有人发现 `mwr_return` 变了，不是漏项。
 
 ### 5.3 TWR 链不变性（乘式恒等，实测）
 
@@ -552,6 +651,69 @@ SELECT daily_return FROM portfolio_summary
 
 区别只在于 09-15 **留下了 failed 终态**（所以被抓到），09-03 连终态都没有（所以没人抓）。
 
+### 7.1b 死因核查：**不是**看门狗（假设被证伪）
+
+曾有一个很有解释力的假设：这次硬死是 `src/data_sources/collect_core.py:167` 的全局墙钟看门狗
+`os._exit(1)` 造成的 —— 因为 `os._exit` 既不走 `except` 也不走 `finally`，正好能解释
+"连 failed 终态都没有"。**实测证伪，全部证据如下：**
+
+看门狗机制（确认存在）：
+
+```
+collect_core.py:150  def start_watchdog(minutes: float = 50, logger_=None):
+collect_core.py:159      def _fire():
+collect_core.py:160          msg = f"[WATCHDOG] 全局墙钟超时 {minutes}min，强制退出以避免无限挂死"
+collect_core.py:161          if logger_:
+collect_core.py:162              logger_.error(msg)
+collect_core.py:164          sys.stderr.write(msg + "\n")
+collect_core.py:167          os._exit(1)  # 硬退出
+run_analysis.py:998  _WATCHDOG_MINUTES = 50
+run_analysis.py:1000 _wd = start_watchdog(minutes=_WATCHDOG_MINUTES, logger_=logger)
+```
+
+关键点是 `logger_` **确实被传进来了**（`run_analysis.py:1000`），所以一旦触发，
+日志文件里必然留下一行 `[WATCHDOG] ...`。而实测：
+
+```
+112 个 logs/portfolio_*.log 中 "WATCHDOG" 只出现 1 次：
+  portfolio_20260819.log:248   2026-08-19 16:22:35,324 - __main__ - ERROR -
+      [WATCHDOG] 全局墙钟超时 50min，强制退出以避免无限挂死
+09-03 日志中 "WATCHDOG / 墙钟 / 强制退出 / 看门狗" 命中数 = 0
+```
+
+**反证**：唯一一次确认的看门狗强杀（08-19）发生在 `signal_backtest` 阶段（16:21 还在跑
+Per-ETF 回测），而 08-19 的落库结果是 `summary=1 / nav=1` —— 也就是说
+**那次强杀并没有造成缺口**，因为 `portfolio_summary` 早在 `步骤5` 就写完了。
+看门狗是在"写完之后"才开火的，它是**报告期的兜底**，不是缺口制造者。
+
+**因此 09-03 的死因另有其人**，且可由看门狗的 50 分钟时限**反推出一个硬边界**：
+
+- 批次约 `15:30:29` 起跑（`run_analysis.py:1000` 此刻布防）⇒ 若活着到 `16:20:29`，
+  必然写下 `[WATCHDOG]` 行；
+- 实测没有该行，且该批次最后一行是 `15:30:48` `步骤4: 计算技术指标`
+  ⇒ **进程死在 `15:30:48` ~ `16:20:29` 之间**，且是**外部/硬性**终止
+  （全程无 Traceback、无 ERROR、无 finally 产物）。
+
+剩余候选（**均未证实，需项目所有者手工核查**）：计划任务的时间上限勒停、控制台窗口被关闭、
+机器休眠/关机、原生库硬崩溃。本机 `schtasks.exe` 被安全策略黑名单拦截
+（`PROGRAM BLOCKED BY SECURITY POLICY`），**我无法读取计划任务配置，且按规则不做任何绕行尝试**。
+建议所有者手工执行并核对"如果任务运行时间超过以下时间，停止任务"这一项：
+
+```bat
+schtasks /query /tn PortfolioDailyAnalysis /v /fo LIST
+```
+
+### 7.1c 一个仍然成立的残留洞（与 #55 有关，值得单独记一笔）
+
+即使死因不是看门狗，**看门狗这条路依然能造出"无终态"**：`RunReporter` 的报告是在
+`finally` 里出的（`run_analysis.py:1002` 注释"贯穿全程增量记录, finally 出报告"），
+而 `os._exit(1)` **会绕过 `finally`** ⇒ 看门狗开火时，`run_report` 与 `execution_logs`
+的终态**都写不出来**。今天 #55 补的 `mark_run_failed` / 阶段完整性同样救不了这一路。
+
+⇒ 残留结论：**任何 `os._exit` 式的硬退出（含外部强杀）天然是观测盲区**，
+只能靠"外部巡检"（例如次日检查 `summary` 是否缺行，即正式工单 G5 的复发检测）兜底，
+不能指望进程内的 finally。这条并入 §7.5 的判据依据。
+
 ### 7.2 缺陷在无人察觉下存活 13 天的直接证据
 
 `logs/portfolio_20260904.log` 第 1 条：
@@ -569,10 +731,11 @@ SELECT daily_return FROM portfolio_summary
 
 | 通道 | 09-04 的实际状态 | 为什么没报 |
 |---|---|---|
+| 09-03 那次运行本身 | `execution_logs` 只有 `{status:'running'}`（id 501），**无终态**；`data/reports/` 27 个 run_report **不含 09-03** | 进程被硬性终止（非看门狗，见 §7.1b），`finally` 没走到 ⇒ 连"我失败了"都没人喊 |
 | `RunReporter` / `run_status`（#55 修的那套） | 09-04 的 `run_status` 是 `ok` | 那天的运行**确实成功了**，缺行不是当天产生的 |
 | `execution_logs` | `success` | 同上 |
 | `DataQualityChecker` | 09-04 `score=96.5, alerts=4`；09-14 `score=90.6, alerts=9` | 没有一条检查项比对"快照日期集合 vs 汇总日期集合" |
-| `portfolio_nav.is_suspect` | **09-01 ~ 09-14 全为 0** | 见 7.4 |
+| `portfolio_nav.is_suspect` | **09-01 ~ 09-14 全为 0** | 见 §7.4 |
 
 ### 7.4 `is_suspect` 为什么必然漏掉（实测，非推断）
 
@@ -617,6 +780,16 @@ if abs(md - r) > _SUSPECT_DIVERGENCE:          # :331
 
    ⇒ `_daily_net_cashflow` 取不到 ⇒ `nav.net_flow = 0.0` ⇒ `md` 被未建模的现金流整个抬起来。
    **把阈值收紧到 0.3 pp 也不能判别**：修复前后都会报 09-04，同样不具备判别力。
+
+### 7.4b 顺带挖出的两条**独立缺陷**（已登记，归属单独工单，**今天不动**）
+
+| # | 缺陷 | 位置 | 后果 | 归属 |
+|---|---|---|---|---|
+| D-1 | **阈值单位错**：`md` 与 `r` 都是**小数**，而阈值写 `0.30` ⇒ 实际等于 **30 个百分点**，不是 0.3pp | `src/analysis/nav_engine.py:36`（阈值）、`:329-332`（比较） | 任何 0.3 pp 量级的错位都过不了这道网。"守卫看着在、实际从不触发"——与今天 P0 那条同一家族 | 单独工单 |
+| D-2 | **现金流入账缺口**：09-04 有约 **+50,000** 入金（`SUM(cost_price*quantity)` 增加 `50,000.6578`，标的 34→35；`trade_records` 的 `max(date)` 仅到 **2026-08-31**），`_daily_net_cashflow` 取不到 ⇒ `nav.net_flow = 0.0` ⇒ `md` 被未建模现金流整个抬起 | `src/analysis/nav_engine.py:56-97`（`_daily_net_cashflow`） | `md` 通道**恒指错方向**；实测把阈值收到 0.3 pp 后，修复前后**都会**报 09-04 ⇒ 光调阈值无用，必须先把现金流量进表 | 单独工单 |
+
+> D-1 与 D-2 的联合结论已写进 §7.5：`is_suspect` 硬化的**主判据必须是交易日跨度**，
+> 不能依赖 md-vs-r。
 
 ### 7.5 建议的判据（供 `is_suspect` 硬化参考，本轮不实现）
 
@@ -663,19 +836,27 @@ has_official_calendar(2026)=True ; (2025)=True ; (2023)=False
 
 ---
 
-## 九、执行前仍缺什么（按顺序）
+## 九、执行前清单（含 2026-09-16 裁定后的状态）
 
-| # | 缺口 | 说明 | 归属 |
+> 排序裁定（lead 2026-09-16）：**数据修复在前，G1/G2/G3 在后**，但 G1/G2/G3 仍要做，
+> 并让"重算 09-03~09-16"成为 **G1 的第一个真实用户**（G1 出世即带真实案例，不空转）。
+> 理由：现有脚本已自带 dry-run + backup，加上整库 sha256 锚点 + 逐行预期值 + 验证 SQL，
+> 框架前置会把一个已验证透彻的修复拖成框架工程；且数据缺口每多挂一天，
+> `sharpe`/`volatility` 的 60 日窗口就多带一天错值。
+
+| # | 事项 | 状态 | 说明 |
 |---|---|---|---|
-| 1 | **日期源修复** | `scripts/recompute_summary_window.py:70-72` 改为从快照表取日期（或取"快照∩汇总"的并集），否则 09-03/09-15 永远进不了清单。实测：现脚本只覆盖 7 天 | #59 第 5 项 |
-| 2 | **打印块修复** | 同文件 `:197-203`，`o = old[dt]` 必须容忍"新增日期"（`old.get(dt)` + `None` 分支）。否则日期源一改，脚本以 `rc=1` 崩在写库之前 | #59 第 5 项 |
-| 3 | **09-16 时序决策** | 15:30 跑完会先写出 09-16（其 `prev_dt` 仍是 09-14 ⇒ 又是一个两日值）。需定：先重算再让 09-16 落库（则 09-16 一次性正确），还是后重算（则 09-16 也要进窗口一起改）。**本计划建议把 `--end-date` 保持 `2026-09-16`，用同一条命令覆盖两种情况** | lead 决策 |
-| 4 | **写入面验收基线** | 以 §5 的实测为准：`summary 3477→3479 (+2)`、`nav 3477→3479 (+2)`、既有行 summary 改 7 / nav 改 7 | lead 确认 |
-| 5 | **`mwr_return` 7 行重算是否接受** | 幅度 ≤ 0.0175，成因见 §5.2（行号窗口）。若不接受，需要另立"行号窗口改自然日窗口"的独立任务 | lead 决策 |
-| 6 | **闸门就绪** | G1（`history_write_guard.py`，默认 dry-run + `--confirm-window` + 含备份路径与 sha256 的审计 JSON）、G2（各写库脚本的 `--confirm-window`）、G3（`data/reports/history_write.lock` + 交叉窗口需 `--force` + 理由）。本条是第 5 项的**前置** | #59 |
-| 7 | **备份** | 生产库当前**不存在** `.bak_recompute_*`，真重算第一条命令必须是 `--backup`；执行前记录整库 `sha256`（本轮锚点 `261a4a6ed03396cd`） | 执行者 |
-| 8 | **`--rebuild-nav` 务必带上** | 不加则 summary 多 2 行、nav 少 2 行，NAV/look-through 面板会读到旧口径 | 执行者 |
-| 9 | **不动项（明确排除）** | `max_drawdown_60d` / `max_drawdown_1y` / `max_drawdown_all` 三列本脚本不写（现状 NULL，`INSERT` 不含这三列）；`snapshot_type` 由 `:156-157` 的 `COALESCE` 保留 | — |
+| 1 | **日期源修复** | **✅ 已闭环** | 新增 `resolve_dates()`，取 `portfolio_snapshots` ∪ `portfolio_summary` 并集；并**显式返回/报出**反方向（只有汇总行、没有快照）的日期，不静默丢。前驱日期同样取并集。见提交 `8a7173c` 中的 `scripts/recompute_summary_window.py` |
+| 2 | **打印块修复** | **✅ 已闭环** | 抽出 `format_diff_table()`，`old.get(dt)` + 新增分支，行尾标 `NEW`，汇总行打印新增日期清单。**未**用大 `try/except` 吞掉（并有测试护栏：异常必须上抛） |
+| 3 | **09-16 时序** | **✅ 已定** | 采纳 `--end-date 2026-09-16` 固定；今天这根的两日值已由代码坐实，见 §三b |
+| 4 | **写入面验收基线** | **✅ 已认下** | `summary 3477→3479 (+2)`、`nav 3477→3479 (+2)`、既有行 summary 改 7 / nav 改 7；修复后 `compute()` 与基线**逐位一致**（Δ=0.00e+00，见 §十一） |
+| 5 | **`mwr_return` 7 行重算** | **✅ 已接受** | lead 2026-09-16；幅度 ≤ 0.0175，成因见 §5.2。已永久留痕为已知代价 |
+| 6 | **闸门（G1/G2/G3）** | ⏳ **排在数据修复之后** | G1：`src/utils/history_write_guard.py`，默认 dry-run，`mode="apply"` 需 `--confirm-window`（与 G2 合并为同一个开关），审计 JSON 含**备份文件 sha256 + 备份路径**。G2：`backfill_full_history.py` / `recompute_summary_window.py` / `fetch_otc_fund_nav.py` 加 `--confirm-window`，须与实际计算出的窗口完全相等。G3：`data/reports/history_write.lock`，窗口交集需 `--force` + 理由。**"重算 09-03~09-16"作为 G1 的第一个真实用户** |
+| 7 | **G5 复发检测** | ⏳ 排在重算之后 | 写 `portfolio_summary` 前检查 `prev_dt` 与今天之间是否"有快照无汇总行"，有则**显式告警**（列出缺失日期与跨度）并往 `run_report` 丢 `summary_gap_before_write`。warn + continue（拒绝写入会让当天报告完全没有数据）。验收：pre-fix 副本必须报**两组**（09-03 一组、09-15 一组），post-fix 副本不报 |
+| 8 | **`is_suspect` 硬化** | ⏳ 最后 | 交易日跨度 `span_days` 为主判据（见 §7.5）。双向验收：pre-fix 必须同时报 09-04 与 09-16，post-fix 都不报；**两条断言缺一不可**。注意 09-16 那一半只能等今天落库后才能验 |
+| 9 | **备份** | ⏳ 执行者第一步 | 生产库当前**不存在**任何 `.bak_recompute_*`，真重算第一条命令必须是 `--backup`；执行前记录整库 `sha256`（本轮锚点 `261a4a6ed03396cd`） |
+| 10 | **`--rebuild-nav` 务必带上** | ⏳ 执行者 | 不加则 summary 多 2 行、nav 少 2 行，NAV/look-through 面板会读到旧口径 |
+| 11 | **不动项（明确排除）** | — | `docs/handover/07`（他人未提交改动，由 lead 统一提交）；`trading_calendar` 覆盖外年份退化（→ #66）；`is_suspect` 逻辑本身；`max_drawdown_60d/1y/all` 三列（本脚本不写，现状 NULL）；`snapshot_type` 由 `:186-187` 的 `COALESCE` 保留 |
 
 ---
 
@@ -705,6 +886,94 @@ venv313\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect(r'data\database
 
 ---
 
+## 十一、本轮已完成的代码修复与自验（2026-09-16，**未执行任何生产库写入**）
+
+### 11.1 改了什么
+
+`scripts/recompute_summary_window.py`（+131 / -16）：
+
+| 位置 | 改动 |
+|---|---|
+| 新增 `resolve_dates(cur, start, end)` | 返回 `(dates, snapshots_only, summary_only)`。`dates` 取快照 ∪ 汇总的**并集**；`summary_only`（反方向）**显式返回**，由 `compute()` 打印警告，绝不静默丢 |
+| `compute()` 头部 | 用 `resolve_dates()` 取日期；`snaps_only` 非空时打印 `[缺口] ... 将补算`；`sums_only` 非空时打印 `[警告] ... 将被跳过（请人工确认）` |
+| `compute()` 的 `prev_dates` | 由"只查 summary"改为 **union**：避免窗口起点之前的缺口日被跨过、把缺口复制到窗口第一天。（对当前窗口行为等价，见 §11.2 逐位比对） |
+| 新增 `format_diff_table(computed, old)` + `_cell_money/_cell_float3/_cell_str` | 取代 `main()` 里内联的打印循环。`old.get(dt)` + 新增分支；新增行旧列渲染 `<无行>`、行尾标 `NEW`；列宽常量固定，行长度一致 |
+| `main()` 打印段 | 调 `format_diff_table()`；有新增日期时打印 `共 N 天（其中新增 M 天: [...]）` 与提示行 |
+
+**刻意不做的事**：没有用一个大 `try/except` 包住打印块（那只是把崩溃变成静默），
+也没有在 `--apply` 里加任何"猜你想干什么"的自动修复。
+
+### 11.2 自验一：修好后在**副本**上跑同一条 dry-run
+
+生产库全程 `mode=ro`；副本 `%TEMP%\p9_fixcopy.db` 跑完即删；未调用 `--backup`、未调用 `--apply`。
+
+```
+$ venv313/Scripts/python.exe scripts/recompute_summary_window.py --start-date 2026-09-03 --end-date 2026-09-16
+  rc = 0
+  [缺口] 窗口内 2 个日期只有快照、没有汇总行，将补算: ['2026-09-03', '2026-09-15']
+  date                  tv旧          tv新     dr旧%     dr新%  ...  盈亏旧     盈亏新    标记
+  2026-09-03           <无行>    1,528,187     <无行>    0.166  ...  <无行>   19/15   NEW
+  2026-09-04      1,561,001    1,561,001   -0.417   -0.582  ...   20/15   20/15
+  2026-09-07      1,541,964    1,541,964    1.492    1.492  ...   19/15   19/15
+  2026-09-08      1,543,547    1,543,547    0.103    0.103  ...   20/14   20/14
+  2026-09-09      1,545,312    1,545,312    0.114    0.114  ...   20/14   20/14
+  2026-09-10      1,535,484    1,535,484   -0.636   -0.636  ...   20/14   20/14
+  2026-09-11      1,564,453    1,564,453   -0.943   -0.943  ...   19/16   19/16
+  2026-09-14      1,514,541    1,514,541   -0.425   -0.425  ...   19/15   19/15
+  2026-09-15           <无行>    1,507,806     <无行>   -0.445  ...  <无行>   19/15   NEW
+
+  共 9 天（其中新增 2 天: ['2026-09-03', '2026-09-15']）
+  [DRY-RUN] 未写库。
+
+  dry-run 后 summary=3477 nav=3477 缺口行=0  ⇒ 未写库（正确）
+```
+
+对照修复前：同一条命令只覆盖 **7 天**，且加缺口场景 `rc=1`（`TypeError`）。
+**现在 `rc=0`、9 天、2 个 NEW 全部可见、副本零写入。**
+
+### 11.3 自验二：`compute()` 输出与被认下的写入面**逐位一致**
+
+```
+2026-09-03  dr 期望 +0.166127538229 实得 +0.166127538229  Δ=0.00e+00 | tv Δ=0.00e+00
+2026-09-04  dr 期望 -0.582186650133 实得 -0.582186650133  Δ=0.00e+00 | tv Δ=0.00e+00
+2026-09-15  dr 期望 -0.444696500483 实得 -0.444696500483  Δ=0.00e+00 | tv Δ=0.00e+00
+结论：修复后的输出与已认下的写入面逐位一致
+```
+
+即：**本次代码修复没有改变任何一个将被写入的数值**，只改变了"这些日期能不能进清单、
+以及进不了/新增了会不会被看见"。
+
+### 11.4 自验三：测试
+
+新增 `tests/test_recompute_summary_window.py`，**19 例全绿**，全部使用合成库（`tmp_path`），
+不触碰生产库。覆盖：
+
+- `resolve_dates`：含缺口日 / 报出反方向 / 窗口边界 / 无快照日期被警告并跳过
+- **缺口补上后次日为单日 +1.00%**；对照组（拿掉缺口日快照）退化为**两日 +2.01%**
+  —— 把缺陷机理写成了可执行证据，而不是注释
+- `format_diff_table`：新增日期不崩、`<无行>`/`NEW` 可见、`None` 列与 `<无行>` 不混淆、列宽一致
+- `main()` 端到端：dry-run 不写库 / apply 真的写入缺口日且 `snapshot_type` 兜底 `daily` /
+  二次 apply 不再报新增
+- **护栏**：`format_diff_table` 与 `apply_summary` 抛错必须上抛 ——
+  直接锁死"不许把崩溃变成静默"
+
+全量套件：**1780 passed / 4 skipped / 1 xfailed / 0 failed**（`rc=0`）。
+
+### 11.5 提交与一个需要协调者知悉的插曲（诚实记录）
+
+- 修复内容已进入提交 **`8a7173c`**（该提交的信息是 `docs(handover): 10 相关性复制行守卫判据决策留痕`，
+  属另一位队友的文档提交）。
+- 原因：共享工作树下 `git add` 写的是**共享索引**。我把两个文件 `git add` 之后，
+  另一位队友在此刻执行了一次不带 pathspec 的 `git commit`，于是把它们一并带入；
+  我自己的 `git commit <path>` 同时因 `.git/index.lock` 被占用而 `rc=128` 失败。
+- 内容核对无误：`scripts/recompute_summary_window.py` +131/-16、
+  `tests/test_recompute_summary_window.py` +371 均已入库，工作区对这两个文件已干净。
+- **没有做任何历史改写**（不 amend、不 rebase 共享提交）。
+- 建议（供协调者决定）：共享工作树下**一律用 `git commit <显式路径>` 直接提交、不要先 `git add`**，
+  否则任何队友的并发提交都会把别人暂存的文件卷走。
+
+---
+
 ## 附：本轮取证脚本与产物（均在 `%TEMP%`，不入仓库）
 
 | 脚本 | 产物 | 用途 |
@@ -712,7 +981,13 @@ venv313\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect(r'data\database
 | `%TEMP%\p9_forensic.py` | `p9_forensic.txt` | 生产库只读取证（差值集 / 逐日 / `prev_dt` / 执行痕迹） |
 | `%TEMP%\p9_exp2.py` | `p9_exp2.txt` | 副本 A/B 对照实验、行级 before/after、TWR 恒等、日历 |
 | `%TEMP%\p9_diag.py` | `p9_diag.txt` | 定位 `:197-203` 打印块崩溃（缺陷 2） |
-| `%TEMP%\p9_log2.py` | `p9_log2.txt` | 09-03 日志现场重建 |
-| `%TEMP%\p9_bak.py` / `p9_bakchk.py` | `p9_bak.txt` / `p9_bakchk.txt` | 备份清单与回滚候选校验 |
+| `%TEMP%\p9_log2.py` | `p9_log2.txt` | 09-03 日志现场重建（15:30 批次最后一行、小时分布、异常行） |
+| `%TEMP%\p9_wd2.py` | `p9_wd2.txt` | 看门狗假设证伪：112 个日志中 `WATCHDOG` 仅 1 次（08-19），09-03 为 0 |
+| `%TEMP%\p9_bak.py` / `p9_bakchk.py` | `p9_bak.txt` / `p9_bakchk.txt` | 备份清单与回滚候选校验（含 sha256） |
+| `%TEMP%\p9_0916chk.py` | `p9_0916chk.txt` | 41 张表扫描：确认 09-16 数据此刻不存在（两数不可算） |
+| **`%TEMP%\p9_0916_verify.py`** | `p9_0916_verify.txt` | **15:45 一键对撞**：产出数1/数2 并做链式判定（依赖未就绪时明确报"尚未就绪"，不给假数） |
+| `%TEMP%\p9_fixverify.py` | `p9_fixverify.txt` | 修复后在副本上 dry-run 自验 + 与写入面逐位比对 |
 
-未执行项：**没有对生产库做过任何写操作**（全部 `mode=ro`）；副本 `p9_exp2A.db` / `p9_exp2B.db` 已删除。
+未执行项：**没有对生产库做过任何写操作**（全部 `mode=ro`）；
+本轮所有副本（`p9_exp2A/B.db`、`p9_diag.db`、`p9_fixcopy.db`）均已删除；
+未调用过 `recompute_summary_window.py --backup` 或 `--apply`。
