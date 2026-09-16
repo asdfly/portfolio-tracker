@@ -64,15 +64,45 @@ def backup(db_path: str) -> str:
     return dst
 
 
+def resolve_dates(cur, start: str, end: str):
+    """解析窗口内需要重算的日期 —— 取 portfolio_snapshots 与 portfolio_summary 的**并集**。
+
+    返回 (dates, snapshots_only, summary_only)：
+
+    - `dates`          窗口内应重算的日期（升序）
+    - `snapshots_only` 只有快照、没有汇总行的日期（= 缺口日）。**必须纳入**：
+      旧实现只取 `portfolio_summary` 自己，缺口日永远进不了清单，
+      实测窗口 2026-09-03 ~ 2026-09-16 只覆盖 7 天、漏掉 09-03 与 09-15，
+      而"缺行 ⇒ 下一日的 daily_return 变成多日值"正是本脚本要修的那个缺陷。
+    - `summary_only`   只有汇总行、没有快照的日期（反方向）。算不出 12 列，
+      `compute()` 会跳过它 —— 必须显式报出，不能静默丢掉。
+    """
+    snaps = {r[0] for r in cur.execute(
+        "SELECT DISTINCT date FROM portfolio_snapshots WHERE date BETWEEN ? AND ?",
+        (start, end)).fetchall()}
+    sums = {r[0] for r in cur.execute(
+        "SELECT date FROM portfolio_summary WHERE date BETWEEN ? AND ?",
+        (start, end)).fetchall()}
+    return sorted(snaps | sums), sorted(snaps - sums), sorted(sums - snaps)
+
+
 def compute(conn, start: str, end: str):
     """返回 {date: {...12 列...}}，只读，不写库。"""
     cur = conn.cursor()
-    dates = [r[0] for r in cur.execute(
-        "SELECT date FROM portfolio_summary WHERE date BETWEEN ? AND ? ORDER BY date",
-        (start, end)).fetchall()]
+    dates, snaps_only, sums_only = resolve_dates(cur, start, end)
+    if snaps_only:
+        print(f"[缺口] 窗口内 {len(snaps_only)} 个日期只有快照、没有汇总行，将补算: {snaps_only}")
+    if sums_only:
+        print(f"[警告] 窗口内 {len(sums_only)} 个日期只有汇总行、没有快照，"
+              f"算不出 12 列、将被跳过（请人工确认是否正常）: {sums_only}")
 
+    # 前驱日期同样取并集：若紧邻窗口起点之前是缺口日（只有快照），
+    # 只认 summary 会把 prev_dt 再往前跨一格、把缺口复制到窗口第一天的收益上。
+    # 注：对当前窗口（09-03 起点前无缺口）与原实现逐位等价。
     prev_dates = [r[0] for r in cur.execute(
-        "SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date", (start,)).fetchall()]
+        "SELECT date FROM portfolio_summary WHERE date < ? "
+        "UNION SELECT DISTINCT date FROM portfolio_snapshots WHERE date < ? "
+        "ORDER BY date", (start, start)).fetchall()]
     hist_all = {r[0]: r[1] for r in cur.execute(
         "SELECT date, daily_return FROM portfolio_summary").fetchall()}
 
@@ -162,6 +192,76 @@ def apply_summary(conn, computed):
     return len(computed)
 
 
+# --------------------------------------------------------------------------
+# 对照表渲染
+# --------------------------------------------------------------------------
+_MISSING = "<无行>"
+_TABLE_HEADER = (f"{'date':<12}{'tv旧':>13}{'tv新':>13}{'dr旧%':>9}{'dr新%':>9}"
+                 f"{'sharpe旧':>10}{'sharpe新':>10}{'mdd旧':>8}{'mdd新':>8}"
+                 f"{'vol旧':>9}{'vol新':>9}{'盈亏旧':>8}{'盈亏新':>8}{'标记':>6}")
+
+
+def _cell_money(v, w: int) -> str:
+    return _MISSING.rjust(w) if v is None else format(v, f">{w},.0f")
+
+
+def _cell_float3(v, w: int) -> str:
+    return _MISSING.rjust(w) if v is None else format(v, f">{w}.3f")
+
+
+def _cell_str(v, w: int) -> str:
+    """整行不存在时由调用方直接给 `<无行>`；本函数用于"行存在"的列。
+
+    该列为 NULL 时原样显示 `None`，与"整个日期在旧库里没有行"的 `<无行>`
+    明确区分 —— 两者含义完全不同，不能渲染成同一个字符串。
+    """
+    return format(str(v), f">{w}")
+
+
+def format_diff_table(computed: dict, old: dict):
+    """渲染窗口重算对照表，返回 (行列表, 新增日期列表)。
+
+    ⚠️ `old` 里【可能没有】某个日期：窗口内的缺口日就是新增日期。
+    旧实现直接 `o = old[dt]` 再 `f"{o[1]:...}"`，一旦窗口含新增日期就以
+    `TypeError: unsupported format string passed to NoneType.__format__`
+    在**写库之前**退出（实测 rc=1）。这里改为 `old.get(dt)` + 新增分支，
+    并把新增日期在行尾标 `NEW`、由 main 汇总打印，保证新增行始终可见。
+    刻意不使用"整个打印块套 try/except" —— 那只会把崩溃变成静默。
+    """
+    lines = [_TABLE_HEADER]
+    new_dates = []
+    for dt in sorted(computed):
+        o = old.get(dt)
+        n = computed[dt]
+        mdd_new = round(n["max_drawdown"], 2) if n["max_drawdown"] is not None else None
+        if o is None:
+            new_dates.append(dt)
+            cells = [
+                f"{dt:<12}",
+                _MISSING.rjust(13), _cell_money(n["total_value"], 13),
+                _MISSING.rjust(9), _cell_float3(n["daily_return"], 9),
+                _MISSING.rjust(10), _cell_str(n["sharpe_ratio"], 10),
+                _MISSING.rjust(8), _cell_str(mdd_new, 8),
+                _MISSING.rjust(9), _cell_str(n["volatility"], 9),
+                _MISSING.rjust(8), _cell_str(f"{n['profit_count']}/{n['loss_count']}", 8),
+                f"{'NEW':>6}",
+            ]
+        else:
+            cells = [
+                f"{dt:<12}",
+                _cell_money(o[1], 13), _cell_money(n["total_value"], 13),
+                _cell_float3(o[2], 9), _cell_float3(n["daily_return"], 9),
+                _cell_str(o[6], 10), _cell_str(n["sharpe_ratio"], 10),
+                _cell_str(o[7], 8), _cell_str(mdd_new, 8),
+                _cell_str(o[8], 9), _cell_str(n["volatility"], 9),
+                _cell_str(f"{o[4]}/{o[5]}", 8),
+                _cell_str(f"{n['profit_count']}/{n['loss_count']}", 8),
+                f"{'':>6}",
+            ]
+        lines.append("".join(cells))
+    return lines, new_dates
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start-date", default=DEFAULT_START)
@@ -192,17 +292,16 @@ def main():
 
     computed = compute(conn, args.start_date, args.end_date)
 
-    print(f"\n{'date':<12}{'tv旧':>13}{'tv新':>13}{'dr旧%':>9}{'dr新%':>9}"
-          f"{'sharpe旧':>10}{'sharpe新':>10}{'mdd旧':>8}{'mdd新':>8}{'vol旧':>9}{'vol新':>9}{'盈亏旧':>8}{'盈亏新':>8}")
-    for dt in sorted(computed):
-        o = old[dt]; n = computed[dt]
-        print(f"{dt:<12}{o[1]:>13,.0f}{n['total_value']:>13,.0f}{o[2]:>9.3f}{n['daily_return']:>9.3f}"
-              f"{str(o[6]):>10}{str(n['sharpe_ratio']):>10}{str(o[7]):>8}"
-              f"{str(round(n['max_drawdown'],2) if n['max_drawdown'] is not None else None):>8}"
-              f"{str(o[8]):>9}{str(n['volatility']):>9}"
-              f"{str(o[4])+'/'+str(o[5]):>8}{str(n['profit_count'])+'/'+str(n['loss_count']):>8}")
+    lines, new_dates = format_diff_table(computed, old)
+    print("")
+    for line in lines:
+        print(line)
 
-    print(f"\n共 {len(computed)} 天")
+    if new_dates:
+        print(f"\n共 {len(computed)} 天（其中新增 {len(new_dates)} 天: {new_dates}）")
+        print("[提示] 新增日期的旧列为 <无行>，属正常：这些就是被补上的缺口日。")
+    else:
+        print(f"\n共 {len(computed)} 天")
 
     if not args.apply:
         print("\n[DRY-RUN] 未写库。加 --apply 落地；建议同时加 --rebuild-nav 避免中间态。")
