@@ -123,7 +123,11 @@ def read_run_status(today_str: str, reports_dir=None):
 
 
 def _ro_connect(db_path):
-    """以只读模式打开 SQLite（file: URI + mode=ro）—— 本脚本绝不写业务库。"""
+    """以只读模式打开 SQLite（file: URI + mode=ro）—— 业务表一律只读。
+
+    注：唯一的写入目标是运维账本 execution_logs（见 _record_not_sent），
+    它不经本函数、也不改任何业务表。
+    """
     import sqlite3
 
     from pathlib import Path as _Path
