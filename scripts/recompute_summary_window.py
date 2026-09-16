@@ -24,14 +24,18 @@ volatility / profit_count 等指标全部残缺）。
 
 用法
 ----
-    # 先备份
+    # 先备份（整库落到 data/backups/，不会污染 data/database/）
     venv313\\Scripts\\python.exe scripts\\recompute_summary_window.py --backup
 
     # dry-run（默认，只读）
     venv313\\Scripts\\python.exe scripts\\recompute_summary_window.py
 
-    # 落地：重算 summary + 连续重建 portfolio_nav（二三步不停在中问态）
+    # 落地：重算 summary + 连续重建 portfolio_nav（二三步不停在中间态）
     venv313\\Scripts\\python.exe scripts\\recompute_summary_window.py --apply --rebuild-nav
+
+    # 指定窗口（缺口修复必须显式给 --dates 覆盖缺口日所在的区间）
+    venv313\\Scripts\\python.exe scripts\\recompute_summary_window.py \\
+        --start-date 2026-09-03 --end-date 2026-09-16 --apply --rebuild-nav
 """
 
 import argparse
@@ -41,12 +45,13 @@ import sqlite3
 import statistics
 import sys
 from datetime import datetime
+from pathlib import Path
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from config.settings import DATABASE_PATH  # noqa: E402
+from config.settings import DATABASE_PATH, BACKUP_DIR  # noqa: E402
 
 DEFAULT_START = "2026-08-03"
 DEFAULT_END = "2026-09-14"
@@ -56,11 +61,24 @@ HIST_DAYS = 60                      # 与 backfill_full_history.py:442 一致
 
 
 # --------------------------------------------------------------------------
-def backup(db_path: str) -> str:
+def backup(db_path: str, backup_dir=None) -> str:
+    """把整库备份到 `data/backups/`（`config.settings.BACKUP_DIR`），返回备份路径。
+
+    ⚠️ **备份不落在 `data/database/`。** 本仓库约定该目录只允许有 `portfolio.db`
+    （立规理由：防止 worker 连错库）。原实现写 `f"{db_path}.bak_recompute_{stamp}"`，
+    备份会直接躺在 `data/database/` 里 —— 一次 `--backup` 就破坏该约定，
+    并留下一个"看起来能连"的库。改为落 `BACKUP_DIR` 后，这一步不再依赖任何人记得搬。
+    文件名沿用既有惯例：`portfolio.db.bak_recompute_<YYYYmmdd_HHMMSS>`
+    （`data/backups/portfolio.db.bak_recompute_20260915_110813` 已存在同款命名）。
+    """
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst = f"{db_path}.bak_recompute_{stamp}"
+    target_dir = Path(backup_dir) if backup_dir is not None else Path(BACKUP_DIR)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dst = str(target_dir / f"{os.path.basename(db_path)}.bak_recompute_{stamp}")
     shutil.copyfile(db_path, dst)
     print(f"[备份] {dst}  ({os.path.getsize(dst):,} bytes)")
+    print(f"[备份] 源库 {db_path}")
+    print(f"[备份] 已确认落点不在 data/database/：{dst}")
     return dst
 
 

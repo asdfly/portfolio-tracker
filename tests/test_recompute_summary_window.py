@@ -21,6 +21,7 @@
 不静默丢；③ 新增日期渲染不崩且可见。全部使用合成库，**不触碰生产库**。
 """
 import importlib.util
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -266,7 +267,74 @@ class TestFormatDiffTable:
 
 
 # ---------------------------------------------------------------------------
-# ④ main() 端到端（dry-run / apply / 不吞异常）
+# ④ 备份落点：必须进 data/backups/，不得污染 data/database/
+# ---------------------------------------------------------------------------
+class TestBackupLanding:
+    """仓库约定：`data/database/` 只允许有 `portfolio.db`（防 worker 连错库）。
+
+    原实现把备份写成 `f"{db_path}.bak_recompute_{stamp}"`，备份直接躺在库旁边 ——
+    一次 `--backup` 就破坏该约定。这几条用例把约定钉死。
+    """
+
+    @staticmethod
+    def _prod_like(tmp_path):
+        """造一个和真实布局同形的最小库：<tmp>/database/portfolio.db。"""
+        dbdir = tmp_path / "database"
+        dbdir.mkdir()
+        return dbdir, _build_db(dbdir / "portfolio.db",
+                                [("2026-09-02", "AAA", 100.0, 10.0)],
+                                summary_dates=["2026-09-02"])
+
+    def test_backup_lands_in_backup_dir_not_next_to_db(self, tmp_path, monkeypatch, capsys):
+        dbdir, src = self._prod_like(tmp_path)
+        backup_dir = tmp_path / "backups"
+        monkeypatch.setattr(rsw, "BACKUP_DIR", backup_dir)
+
+        dst = rsw.backup(src)
+        out = capsys.readouterr().out
+
+        assert Path(dst).exists()
+        assert Path(dst).parent == backup_dir, "备份必须落在 BACKUP_DIR 下"
+        assert Path(dst).parent != dbdir, "备份不得留在数据库同目录"
+        assert Path(dst).stat().st_size == Path(src).stat().st_size
+        assert str(backup_dir) in out, "备份路径必须打印出来，便于回填审计要素"
+        assert sorted(p.name for p in dbdir.iterdir()) == ["portfolio.db"], (
+            "data/database/ 只能有 portfolio.db —— 本用例就是这条约定的守卫")
+
+    def test_backup_uses_conventional_name(self, tmp_path, monkeypatch):
+        _, src = self._prod_like(tmp_path)
+        monkeypatch.setattr(rsw, "BACKUP_DIR", tmp_path / "bk")
+        name = Path(rsw.backup(src)).name
+        assert name.startswith("portfolio.db.bak_recompute_"), (
+            "应沿用 data/backups/ 既有命名惯例 portfolio.db.bak_recompute_<ts>，实际=%s" % name)
+        assert len(name) == len("portfolio.db.bak_recompute_") + len("20260916_115500")
+
+    def test_backup_creates_backup_dir_if_missing(self, tmp_path, monkeypatch):
+        _, src = self._prod_like(tmp_path)
+        backup_dir = tmp_path / "not_yet" / "backups"
+        monkeypatch.setattr(rsw, "BACKUP_DIR", backup_dir)
+        assert not backup_dir.exists()
+        rsw.backup(src)
+        assert backup_dir.is_dir(), "目录不存在时应自动创建"
+
+    def test_backup_leaves_no_sibling_file(self, tmp_path, monkeypatch):
+        """回归：原实现会在库旁边留下 *.bak_recompute_<ts>。"""
+        dbdir, src = self._prod_like(tmp_path)
+        before = sorted(p.name for p in dbdir.iterdir())
+        monkeypatch.setattr(rsw, "BACKUP_DIR", tmp_path / "backups")
+        rsw.backup(src)
+        after = sorted(p.name for p in dbdir.iterdir())
+        assert before == after, "备份不得在数据库目录留下任何新文件"
+
+    def test_backup_dir_defaults_to_data_backups(self):
+        from config.settings import BACKUP_DIR as SETTINGS_BACKUP_DIR
+        assert Path(SETTINGS_BACKUP_DIR).name == "backups"
+        assert Path(SETTINGS_BACKUP_DIR).parent.name == "data"
+        assert Path(rsw.BACKUP_DIR) == Path(SETTINGS_BACKUP_DIR)
+
+
+# ---------------------------------------------------------------------------
+# ⑤ main() 端到端（dry-run / apply / 不吞异常）
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def patched_script_db(monkeypatch):
@@ -351,7 +419,7 @@ class TestMainEndToEnd:
 
 
 # ---------------------------------------------------------------------------
-# ⑤ 前驱日期并集（防止把缺口复制到窗口第一天）
+# ⑥ 前驱日期并集（防止把缺口复制到窗口第一天）
 # ---------------------------------------------------------------------------
 def test_previous_day_before_window_is_also_union_based(tmp_path):
     """窗口起点【之前】若是缺口日（只有快照），prev_dt 也要认它。"""
@@ -369,3 +437,50 @@ def test_previous_day_before_window_is_also_union_based(tmp_path):
     # prev_dt 若只看 summary 会取到 09-01（跨过 09-02）⇒ +2.01%；
     # 取并集后 prev_dt = 09-02 ⇒ +1.00%
     assert abs(res["2026-09-03"]["daily_return"] - 1.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# ⑥ 备份落点：必须落 data/backups/，不得污染 data/database/
+# ---------------------------------------------------------------------------
+class TestBackupLandingSpot:
+    """仓库约定 `data/database/` 只允许有 portfolio.db（防 worker 连错库）。
+
+    原 `backup()` 写 `f"{db_path}.bak_recompute_{stamp}"` ⇒ 备份直接躺在 data/database/ 里，
+    一次 `--backup` 就破坏该约定、并留下一个"看起来能连"的库。
+    """
+
+    def test_backup_goes_to_backup_dir_not_next_to_db(self, gap_db, tmp_path, monkeypatch, capsys):
+        bdir = tmp_path / "backups"
+        monkeypatch.setattr(rsw, "BACKUP_DIR", bdir)
+        dst = rsw.backup(gap_db)
+        assert Path(dst).parent == bdir
+        assert Path(dst).is_file()
+        assert Path(dst).stat().st_size == Path(gap_db).stat().st_size
+        # 源库所在目录（模拟 data/database/）不得出现任何备份产物
+        assert list(Path(gap_db).parent.glob("*bak_recompute*")) == []
+        assert "[备份]" in capsys.readouterr().out
+
+    def test_backup_dir_created_when_missing(self, gap_db, tmp_path, monkeypatch):
+        bdir = tmp_path / "nested" / "backups"
+        monkeypatch.setattr(rsw, "BACKUP_DIR", bdir)
+        assert not bdir.exists()
+        dst = rsw.backup(gap_db)
+        assert bdir.is_dir()
+        assert Path(dst).is_file()
+
+    def test_backup_filename_follows_existing_convention(self, gap_db, tmp_path, monkeypatch):
+        monkeypatch.setattr(rsw, "BACKUP_DIR", tmp_path)
+        dst = rsw.backup(gap_db)
+        # 与 data/backups/portfolio.db.bak_recompute_20260915_110813 同款命名
+        assert re.search(r"bak_recompute_\d{8}_\d{6}$", Path(dst).name)
+        assert Path(dst).name.startswith("gap.db.bak_recompute_")
+
+    def test_main_backup_flag_does_not_pollute_db_dir(self, gap_db, patched_script_db,
+                                                       tmp_path, monkeypatch):
+        bdir = tmp_path / "bk"
+        monkeypatch.setattr(rsw, "BACKUP_DIR", bdir)
+        patched_script_db(gap_db, extra=["--backup"])
+        assert rsw.main() == 0
+        assert list(Path(gap_db).parent.glob("*bak_recompute*")) == [], (
+            "data/database/ 里出现了备份产物 —— 破坏『该目录只允许 portfolio.db』的约定")
+        assert len(list(bdir.glob("*bak_recompute*"))) == 1
