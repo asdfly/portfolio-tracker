@@ -23,10 +23,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from config.settings import DATABASE_PATH
-from src.analysis.predictor.models import FEATURE_COLS, WINDOWS
+from src.analysis.predictor.models import (
+    EMBARGO_DAYS, N_SPLITS, FEATURE_COLS, WINDOWS, walkforward_splits,
+)
 from src.analysis.predictor.risk_gate import (
     BASELINE_FEATURE, apply_fdr, risk_walkforward_vs_baseline,
 )
+
+# task #83：末折 OOS 与数据末端的允许缺口（日历日），超过即显式告警。
+_OOS_GAP_WARN_DAYS = 30
 
 
 def connect_ro():
@@ -77,6 +82,51 @@ def main():
     df = df.sort_values(["date", "code"]).reset_index(drop=True)
     print(f"\n面板 {len(df)} 行 / {df['code'].nunique()} 只 / 日期 "
           f"{df['date'].min().date()} ~ {df['date'].max().date()}")
+
+    # ---- 口径可见性（task #83/#84 底线）：面板范围 / 数据源覆盖 / OOS 覆盖 ----
+    # 面板起点必须对齐数据源(etf_price_history)覆盖范围：其覆盖外年份的
+    # OHLC/volume 派生特征结构性全 NULL，会触发 P1-6 缺失率护栏（task #84）。
+    src = pd.read_sql_query(
+        "SELECT source, MIN(date) AS mn, MAX(date) AS mx, COUNT(*) AS n "
+        "FROM etf_price_history GROUP BY source ORDER BY n DESC", conn)
+    print("\n[口径] etf_price_history 数据源覆盖范围：")
+    for r in src.itertuples():
+        print(f"    {r.source:38s} {r.mn} ~ {r.mx}   rows={r.n}")
+    cover_start = str(src["mn"].min())
+    cover_end = str(src["mx"].max())
+    print(f"[口径] 数据源总覆盖 = {cover_start} ~ {cover_end}")
+    n_all = len(df)
+    df = df[df["date"] >= cover_start].reset_index(drop=True)
+    print(f"[口径] 面板起点对齐数据源覆盖：原始 {n_all} 行 → 裁剪后 {len(df)} 行"
+          f"（排除 {n_all - len(df)} 行，均为价格表覆盖外年份、其 OHLC/volume 派生特征结构性全 NULL）")
+    print(f"[口径] 门禁面板范围 = {df['date'].min().date()} ~ {df['date'].max().date()}"
+          f" / {df['code'].nunique()} 只 / {len(df)} 行")
+    print("[口径] 被豁免的列 = 无（采用「面板起点对齐数据源覆盖」，不豁免任何特征列）")
+
+    # OOS 覆盖可见性 + 末端缺口告警（task #83）：
+    # walkforward_splits 的 step=avail//(n_splits+1) 只覆盖 5*step，数据末端约 1/6
+    # 从未进入 OOS。这里显式打印每窗口 OOS 区间与末端缺口，禁止"最近一段没被验证"隐形。
+    print("[口径] walk-forward OOS 覆盖（末折止点与数据末端缺口超过 "
+          f"{_OOS_GAP_WARN_DAYS} 日历日即告警）：")
+    for w in WINDOWS:
+        pan = df.dropna(subset=[f"fwd_vol_{w}", BASELINE_FEATURE])
+        if pan.empty:
+            print(f"    w={w:>2}: 无带标签样本")
+            continue
+        dts = sorted(pan["date"].unique())
+        sp = walkforward_splits(len(dts), n_splits=N_SPLITS, embargo=EMBARGO_DAYS)
+        if not sp:
+            print(f"    w={w:>2}: 折数=0（历史不足 {len(dts)} 天）")
+            continue
+        oos_days = sum(e - s for _, s, e in sp)
+        last_end = pd.Timestamp(dts[sp[-1][2] - 1])
+        dmax = pd.Timestamp(dts[-1])
+        gap = (dmax - last_end).days
+        flag = ("  ⚠️ OOS 未覆盖到数据末端（结论仅基于 ≤ "
+                f"{last_end.date()} 的数据）") if gap > _OOS_GAP_WARN_DAYS else ""
+        print(f"    w={w:>2}: 折数={len(sp)} OOS合计={oos_days}/{len(dts)}天 "
+              f"({oos_days/len(dts):.1%}) 末折OOS={pd.Timestamp(dts[sp[-1][1]]).date()}~"
+              f"{last_end.date()} 数据末={dmax.date()} 缺口={gap}日历日{flag}")
 
     print("\n===== 门禁复核（主判据：日频截面 Spearman IC + HAC t，R² 仅参考）=====")
     res = []
