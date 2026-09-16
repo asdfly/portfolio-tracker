@@ -535,20 +535,29 @@ twr(09-02)=1.6449   twr(09-03)=1.649294   twr(09-04)=1.63387
 
 ### 6.1 本轮前置防线：脚本自带备份（**推荐，唯一正确目标**）
 
-`scripts/recompute_summary_window.py:59-64`
+`scripts/recompute_summary_window.py` 的 `backup()` —— **落点已修，落在 `data/backups/`**：
 
 ```python
-def backup(db_path: str) -> str:
+def backup(db_path: str, backup_dir=None) -> str:
+    """把整库备份到 data/backups/（config.settings.BACKUP_DIR），返回备份路径。"""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst = f"{db_path}.bak_recompute_{stamp}"
+    target_dir = Path(backup_dir) if backup_dir is not None else Path(BACKUP_DIR)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dst = str(target_dir / f"{os.path.basename(db_path)}.bak_recompute_{stamp}")
     shutil.copyfile(db_path, dst)
 ```
 
-- 加 `--backup` 后产出：`data/database/portfolio.db.bak_recompute_<YYYYmmdd_HHMMSS>`（约 141 MB）。
-- **当前 `data/database/` 下只有 `portfolio.db` 一个文件，不存在任何 `.bak_recompute_*`**
-  （已列举确认）。所以真重算必须**先**跑 `--backup`。
+- 加 `--backup` 后产出：**`data/backups/portfolio.db.bak_recompute_<YYYYmmdd_HHMMSS>`**（约 141 MB）。
+- ⚠️ **原实现写 `f"{db_path}.bak_recompute_{stamp}"`，备份会直接躺在 `data/database/` 里。**
+  本仓库约定 **`data/database/` 只允许有 `portfolio.db`**（立规理由：防 worker 连错库），
+  所以原实现**一次 `--backup` 就把这条约定破了，并留下一个"看起来能连"的库**。
+  已改为落 `BACKUP_DIR`，这一步**不再依赖任何人记得搬**（lead 2026-09-16 补的落点约束）。
+- 证据：`data/backups/portfolio.db.bak_recompute_20260915_110813` **已存在同款命名**（09-15 11:08，
+  早于本会话），说明这条路此前有人走过；同时 `data/database/` 目前**只有 `portfolio.db`**，
+  即当时被清干净了（或为手工挪动）。无论哪种，落点都不该靠手工保证 —— 故本次直接改脚本。
 - 优点：它是在 `--apply` **紧前**做的整库拷贝，因此**天然包含执行时刻的全部最新状态**
   （如果 15:30 已跑完，备份里就有 09-16），回滚语义最干净。
+- **执行后必须核验**：`data/database/` 下**只有** `portfolio.db`（把目录列表作为证据回填）。
 
 ### 6.2 独立回滚点（`data/backups/`，已在库，可直接用）
 
@@ -854,7 +863,7 @@ has_official_calendar(2026)=True ; (2025)=True ; (2023)=False
 | 6 | **闸门（G1/G2/G3）** | ⏳ **排在数据修复之后** | G1：`src/utils/history_write_guard.py`，默认 dry-run，`mode="apply"` 需 `--confirm-window`（与 G2 合并为同一个开关），审计 JSON 含**备份文件 sha256 + 备份路径**。G2：`backfill_full_history.py` / `recompute_summary_window.py` / `fetch_otc_fund_nav.py` 加 `--confirm-window`，须与实际计算出的窗口完全相等。G3：`data/reports/history_write.lock`，窗口交集需 `--force` + 理由。**"重算 09-03~09-16"作为 G1 的第一个真实用户** |
 | 7 | **G5 复发检测** | ⏳ 排在重算之后 | 写 `portfolio_summary` 前检查 `prev_dt` 与今天之间是否"有快照无汇总行"，有则**显式告警**（列出缺失日期与跨度）并往 `run_report` 丢 `summary_gap_before_write`。warn + continue（拒绝写入会让当天报告完全没有数据）。验收：pre-fix 副本必须报**两组**（09-03 一组、09-15 一组），post-fix 副本不报 |
 | 8 | **`is_suspect` 硬化** | ⏳ 最后 | 交易日跨度 `span_days` 为主判据（见 §7.5）。双向验收：pre-fix 必须同时报 09-04 与 09-16，post-fix 都不报；**两条断言缺一不可**。注意 09-16 那一半只能等今天落库后才能验 |
-| 9 | **备份** | ⏳ 执行者第一步 | 生产库当前**不存在**任何 `.bak_recompute_*`，真重算第一条命令必须是 `--backup`；执行前记录整库 `sha256`（本轮锚点 `261a4a6ed03396cd`） |
+| 9 | **备份（含落点已修）** | **✅ 落点已闭环** / ⏳ 执行者第一步 | `backup()` 已改为落 `data/backups/`（原先落 `data/database/`，会破"该目录只允许 portfolio.db"的约定，见 §6.1）。真重算第一条命令仍是 `--backup`；执行前记整库 `sha256`（本轮锚点 `261a4a6ed03396cd`），执行后核验 `data/database/` **只有** `portfolio.db`。⚠️ `--backup` 本身是写操作，不得落在 15:00–15:30 |
 | 10 | **`--rebuild-nav` 务必带上** | ⏳ 执行者 | 不加则 summary 多 2 行、nav 少 2 行，NAV/look-through 面板会读到旧口径 |
 | 11 | **不动项（明确排除）** | — | `docs/handover/07`（他人未提交改动，由 lead 统一提交）；`trading_calendar` 覆盖外年份退化（→ #66）；`is_suspect` 逻辑本身；`max_drawdown_60d/1y/all` 三列（本脚本不写，现状 NULL）；`snapshot_type` 由 `:186-187` 的 `COALESCE` 保留 |
 
@@ -866,10 +875,14 @@ has_official_calendar(2026)=True ; (2025)=True ; (2023)=False
 :: 0) 基线锚点（执行前记录）
 venv313\Scripts\python.exe -c "import hashlib,pathlib; p=pathlib.Path(r'data\database\portfolio.db'); print(hashlib.sha256(p.read_bytes()).hexdigest()[:16], p.stat().st_size)"
 
-:: 1) 备份（必须）
+:: 1) 备份（必须；落点已是 data/backups/，无需再手工 mv）
+::    先记执行前锚点
+venv313\Scripts\python.exe -c "import hashlib,pathlib; p=pathlib.Path(r'data\database\portfolio.db'); print('BEFORE', hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_size)"
 venv313\Scripts\python.exe scripts\recompute_summary_window.py --backup
+::    回填备份的 sha256（G1 审计要素）
+venv313\Scripts\python.exe -c "import hashlib,glob; f=sorted(glob.glob(r'data\backups\portfolio.db.bak_recompute_*'))[-1]; print(f, hashlib.sha256(open(f,'rb').read()).hexdigest())"
 
-:: 2) dry-run（第 1、2 项修复完成后应打印「共 9 天」并列出 09-03 / 09-15）
+:: 2) dry-run 复核（应打印「[缺口] ... ['2026-09-03','2026-09-15']」与「共 9 天（其中新增 2 天…）」）
 venv313\Scripts\python.exe scripts\recompute_summary_window.py --start-date 2026-09-03 --end-date 2026-09-16
 
 :: 3) 落地
@@ -879,10 +892,22 @@ venv313\Scripts\python.exe scripts\recompute_summary_window.py ^
 :: 4) 落实验收（期望：3479 / 3479；缺口行数 2；09-04 daily_return = -0.5821866501325468；
 ::              nav.twr_cumulative 既有行与备份逐行相同）
 venv313\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect(r'data\database\portfolio.db'); print(c.execute('SELECT COUNT(*) FROM portfolio_summary').fetchone(), c.execute('SELECT COUNT(*),MAX(date) FROM portfolio_nav').fetchone(), c.execute(\"SELECT COUNT(*) FROM portfolio_summary WHERE date IN ('2026-09-03','2026-09-15')\").fetchone(), c.execute(\"SELECT daily_return FROM portfolio_summary WHERE date='2026-09-04'\").fetchone())"
+
+:: 5) 落点核验（操作单硬性两条之一）：data/database/ 下【只有】portfolio.db
+venv313\Scripts\python.exe -c "import pathlib; print(sorted(p.name for p in pathlib.Path(r'data\database').iterdir()))"
 ```
 
-**回滚**：`copy /Y "data\database\portfolio.db.bak_recompute_<时间戳>" data\database\portfolio.db`
+**回滚**：`copy /Y "data\backups\portfolio.db.bak_recompute_<时间戳>" data\database\portfolio.db`
 （校验期望值见 §6.4）。
+
+### 10.1 操作单（lead 2026-09-16 追加的两条硬性约束）
+
+```
+① 备份产物必须落在 data/backups/ —— 已由脚本保证（backup() 落 BACKUP_DIR），不再依赖手工 mv
+② 执行完毕后核验：data/database/ 下【只有】portfolio.db（把目录列表作为证据回填）
+③ --backup 本身也是写操作 ⇒ 不能落在 15:00–15:30 只读窗口内
+④ 任何硬退出（os._exit / 外部强杀）之前必须先落痕 —— 见 §11.6
+```
 
 ---
 
@@ -898,6 +923,7 @@ venv313\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect(r'data\database
 | `compute()` 头部 | 用 `resolve_dates()` 取日期；`snaps_only` 非空时打印 `[缺口] ... 将补算`；`sums_only` 非空时打印 `[警告] ... 将被跳过（请人工确认）` |
 | `compute()` 的 `prev_dates` | 由"只查 summary"改为 **union**：避免窗口起点之前的缺口日被跨过、把缺口复制到窗口第一天。（对当前窗口行为等价，见 §11.2 逐位比对） |
 | 新增 `format_diff_table(computed, old)` + `_cell_money/_cell_float3/_cell_str` | 取代 `main()` 里内联的打印循环。`old.get(dt)` + 新增分支；新增行旧列渲染 `<无行>`、行尾标 `NEW`；列宽常量固定，行长度一致 |
+| `backup()` 落点 | 由 `f"{db_path}.bak_recompute_{stamp}"`（落在 `data/database/`，破"该目录只允许 portfolio.db"的约定）改为落 `config.settings.BACKUP_DIR`（= `data/backups/`）并自动建目录；新增可选 `backup_dir` 参数便于注入测试。文件名沿用既有惯例 |
 | `main()` 打印段 | 调 `format_diff_table()`；有新增日期时打印 `共 N 天（其中新增 M 天: [...]）` 与提示行 |
 
 **刻意不做的事**：没有用一个大 `try/except` 包住打印块（那只是把崩溃变成静默），
@@ -945,21 +971,49 @@ $ venv313/Scripts/python.exe scripts/recompute_summary_window.py --start-date 20
 
 ### 11.4 自验三：测试
 
-新增 `tests/test_recompute_summary_window.py`，**19 例全绿**，全部使用合成库（`tmp_path`），
-不触碰生产库。覆盖：
+新增 `tests/test_recompute_summary_window.py`，**28 例全绿**，全部使用合成库（`tmp_path`，
+含一个与真实布局同形的 `<tmp>/database/portfolio.db`），不触碰生产库。覆盖：
 
 - `resolve_dates`：含缺口日 / 报出反方向 / 窗口边界 / 无快照日期被警告并跳过
 - **缺口补上后次日为单日 +1.00%**；对照组（拿掉缺口日快照）退化为**两日 +2.01%**
   —— 把缺陷机理写成了可执行证据，而不是注释
 - `format_diff_table`：新增日期不崩、`<无行>`/`NEW` 可见、`None` 列与 `<无行>` 不混淆、列宽一致
+- **备份落点**：落在 `data/backups/`、不在库同目录、库目录事后仍**只有** `portfolio.db`、
+  目录不存在时自动创建、命名沿用惯例、不注入时默认取 `config.settings.BACKUP_DIR`
 - `main()` 端到端：dry-run 不写库 / apply 真的写入缺口日且 `snapshot_type` 兜底 `daily` /
   二次 apply 不再报新增
 - **护栏**：`format_diff_table` 与 `apply_summary` 抛错必须上抛 ——
   直接锁死"不许把崩溃变成静默"
 
-全量套件：**1780 passed / 4 skipped / 1 xfailed / 0 failed**（`rc=0`）。
+### 11.5 自验四：写入面未被本次改动影响
 
-### 11.5 提交与一个需要协调者知悉的插曲（诚实记录）
+改完 `backup()` 落点后，在副本上重跑同一条 dry-run 并重做逐位比对：
+
+```
+rc = 0
+[缺口] 窗口内 2 个日期只有快照、没有汇总行，将补算: ['2026-09-03', '2026-09-15']
+共 9 天（其中新增 2 天: ['2026-09-03', '2026-09-15']）
+dry-run 后 summary=3477 nav=3477 缺口行=0  ⇒ 未写库（正确）
+2026-09-03  dr 期望 +0.166127538229 实得 +0.166127538229  Δ=0.00e+00
+2026-09-04  dr 期望 -0.582186650133 实得 -0.582186650133  Δ=0.00e+00
+2026-09-15  dr 期望 -0.444696500483 实得 -0.444696500483  Δ=0.00e+00
+结论：修复后的输出与已认下的写入面逐位一致
+```
+
+⇒ 落点改动只影响"备份写到哪儿"，**`compute()`/`apply_summary()` 的输出一字未动**。
+
+### 11.6 硬约束（lead 2026-09-16 批准并要求写成**可测**形式）
+
+| 约束 | 落地要求 | 可测形式 |
+|---|---|---|
+| C-1 **任何硬退出之前必须先落痕** | G1 的 audit 落盘必须在任何 `os._exit` / `sys.exit` **之前**完成 | 测试断言：模拟退出路径时 audit 文件**已存在且完整**（不是"退出时顺手写"） |
+| C-2 **告警必须外部可读** | G5 的 `summary_gap_before_write` 必须走 `run_report`（文件），**不能只写进程内状态** | 测试断言：缺口场景下 `run_report_*.json` 里能读到该 alert，而不只是内存里有 |
+| C-3 **不用 `os._exit`** | 写脚本时避免 `os._exit`；必须用时按 C-1 先落痕 | 本脚本现状：`os._exit` 出现 **0 次**，只有一处 `sys.exit(main())` |
+
+> 立项理由见 §7.1c：`os._exit` 绕过 `finally` ⇒ `run_report` 与 `execution_logs` 终态都写不出，
+> #55 补的 `mark_run_failed` 也救不了这一路。**进程内兜底在原理上做不到，只能靠外部可读的留痕 + 外部巡检。**
+
+### 11.7 提交与一个需要协调者知悉的插曲（诚实记录）
 
 - 修复内容已进入提交 **`8a7173c`**（该提交的信息是 `docs(handover): 10 相关性复制行守卫判据决策留痕`，
   属另一位队友的文档提交）。
