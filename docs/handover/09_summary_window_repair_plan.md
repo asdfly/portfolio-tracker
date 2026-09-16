@@ -971,8 +971,24 @@ $ venv313/Scripts/python.exe scripts/recompute_summary_window.py --start-date 20
 
 ### 11.4 自验三：测试
 
-新增 `tests/test_recompute_summary_window.py`，**28 例全绿**，全部使用合成库（`tmp_path`，
-含一个与真实布局同形的 `<tmp>/database/portfolio.db`），不触碰生产库。覆盖：
+新增的 `tests/test_recompute_summary_window.py` 与本轮修复相关的用例 **全绿**。该文件**当前共 28 条**，其中：
+
+- **24 条由本次修复的作者编写**：`TestResolveDates` 4 + `TestComputeHealsGapDay` 4 + `TestFormatDiffTable` 5
+  + `TestBackupLanding` 5 + `TestMainEndToEnd` 5 + 模块级函数 1；
+- **4 条是另一位验证者独立写的 `TestBackupLandingSpot`** —— 同一文件里两套并存、未互相替代。
+
+> ⚠️ **归属口径（重要，勿再引用错）**：本轮作者对测试文件的**净增是 +1**（自建的备份落点类由 4 个方法
+> 调整为 5 个），**不是"新增 9 条"**。全量套件从 1782 到 1791 的 +9 里，只有一部分来自本次提交。
+>
+> ⚠️ **"28 collected"本身不足以证明没有用例被静默吞掉**：文件里 6 个顶层类**无重名**
+> （定义于 133 / 179 / 229 / 272 / 352 / 445 行），而这一点必须**看命中的行**才能确认 ——
+> `grep -c "class TestBackupLanding"` 会连 `TestBackupLandingSpot` 一起命中（**子串匹配**），
+> 计数**不能**当作"存在性/唯一性"的证据。若真出现同名定义两次，后定义的类会在 import 时
+> **覆盖**前者，被覆盖那套用例**不报错地不被收集**，而 pytest 的总数**不会报警**。
+> 本次是子串恰好没有造成歧义，不是设计提供了保护。
+
+全部使用合成库（`tmp_path`，其中备份落点用例含一个与真实布局同形的 `<tmp>/database/portfolio.db`），
+**不触碰生产库**。覆盖：
 
 - `resolve_dates`：含缺口日 / 报出反方向 / 窗口边界 / 无快照日期被警告并跳过
 - **缺口补上后次日为单日 +1.00%**；对照组（拿掉缺口日快照）退化为**两日 +2.01%**
