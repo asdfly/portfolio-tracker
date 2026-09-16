@@ -111,10 +111,12 @@ SPLIT_SPIKE_LOG_RET = 0.30
 #   Tier2 —— 横截面广度（**仅场外篮子内**，用 config.settings.is_otc_fund）
 #     对每个日期 D：在场外标的中，统计有多少只满足「它在 D 行的 key == 它自己上一行的
 #     key」，记为 c；分母 n = 「在 D 行存在、且它自己的上一行也存在」的可比较场外标的数。
-#     若 `n >= COPY_BREADTH_MIN_N(3)` 且 `c / n >= COPY_BREADTH_MIN_RATIO(0.5)` ⇒ 这 c 只
-#     在 D 的那些行都不是观测。
+#     若 `n >= COPY_BREADTH_MIN_N(3)` 且 `c * 2 >= n`（即占比 `>= COPY_BREADTH_MIN_RATIO`）
+#     ⇒ 这 c 只在 D 的那些行都不是观测。
+#     ⚠ 判据只约束**分母** n，不额外约束命中只数 c（例如 n=4、c=2 恰好 50% 即命中）；
+#     误把下限定在 c 上会漏掉小篮子上的横截面事件。
 #     依据：覆盖只有 2 行的全市场事件（2026-09-14 -> 09-15，12 只场外与上一行同值 ⇒
-#     12/12 = 100% >= 50%、c = 12 >= 3），段长性质抓不到它，只能靠横截面广度。
+#     12/12 = 100% >= 50%、n = 12 >= 3），段长性质抓不到它，只能靠横截面广度。
 #
 # 刻意**不**采用的两条替代判据（工作区旧实现，已偏离裁定）：
 #   * `is_otc_fund(code)` 门控整体判据 —— 该门控只有 Tier2 需要；
@@ -216,12 +218,13 @@ def _scan_replica_rows(series: List[Tuple[str, str, List[Dict[str, Any]]]]
     for d, flats in flat.items():
         n = len(comparable.get(d, ()))
         c = len(flats)
-        if n < COPY_BREADTH_MIN_N or c < COPY_BREADTH_MIN_N:
+        if n < COPY_BREADTH_MIN_N:      # 分母下限：可比较场外标的太少 ⇒ 不构成横截面证据
             continue
-        if c / n < COPY_BREADTH_MIN_RATIO:
+        if c * 2 < n:                   # 占比 < COPY_BREADTH_MIN_RATIO(50%) ⇒ 不构成证据
             continue
-        logger.info("复制行横截面判据命中：%s 场外 %d/%d 只与各自上一行同 key（>=%.0f%%），"
-                    "该日这些行按非观测处置", d, c, n, COPY_BREADTH_MIN_RATIO * 100)
+        logger.info("复制行横截面判据命中：%s 场外 %d/%d 只与各自上一行同 key（%.0f%% >= %.0f%%），"
+                    "该日这些行按非观测处置", d, c, n, 100.0 * c / n,
+                    COPY_BREADTH_MIN_RATIO * 100)
         for code in flats:
             hit = out.setdefault(code, {})
             if d in hit:
@@ -390,7 +393,8 @@ class PortfolioRiskAnalyzer:
              它们既让块内「单日收益」恒为 0，又让块后第一天变成多日收益却挂着 1 个
              交易日的标签。判据为**两级**（定义与实测依据见文件顶部 COPY_* 常量注释）：
              Tier1 段长 `>= 5`（数据驱动，不加场外 gate）、Tier2 场外篮子内同 key 占比
-             `>= 50%` 且绝对数 `>= 3`。命中行收益记 NaN 且**不刷新**有效基期。
+             `>= 50%` 且可比较场外标的数 `n >= 3`（判据只约束分母，不额外约束命中只数）。
+             命中行收益记 NaN 且**不刷新**有效基期。
              两级判据都要跨标的/跨行统计 ⇒ 先由 `_scan_replica_rows` 预扫描出待作废的
              `(date, code)` 集合，逐标的循环里只做「命中即跳过」。
           1) 跨期不产出收益：相邻快照自然日间隔 > MAX_SINGLE_SESSION_GAP_DAYS 时，
@@ -489,6 +493,14 @@ class PortfolioRiskAnalyzer:
             #      时**一起**前移，复制行 `continue` 掉（否则 06-30 的伪收益 gap 会缩到 1 天）；
             #   c) 算 gap 用 last_real_date、算收益的被减数用 last_real_value（不是
             #      `values[k-1]` —— 它在复制段内是陈旧值）。
+            # 窗口首行也可能落在复制段内（长复制段的段首正好被窗口边界截到第一行）：
+            # 它只当基期、没有对应的收益位置，但仍必须留痕 —— 否则「段首装的也是陈旧值」
+            # 就静默了（实测 001323/001407/001437/002152/519770 的 06-15 段首即此类；
+            # 段首值 = 该段各行的值，故以它立基期与「以最近真值观测立基期」等价）。
+            head_hit = void_map.get(dates[0])
+            if head_hit is not None:
+                copied_dates.append('%s Tier%d 段长=%d（窗口首行=基期，无收益位置）'
+                                    % (dates[0], head_hit[0], head_hit[1]))
             last_real_date = dates[0]
             last_real_value = values[0]
             for k in range(1, len(values)):
