@@ -1107,12 +1107,30 @@ def main(argv=None):
 
 
         # === 阶段0: 场外基金净值采集（必须先于阶段一，否则当天日报仍用昨日净值）===
+        _otc_res = None
         try:
-            run_stage0_otc_nav(backfill_date)
+            _otc_res = run_stage0_otc_nav(backfill_date)
             _reporter.stage("otc_nav", "ok")
         except Exception as e:
             logger.warning(f"场外基金净值采集失败(不影响主流程): {e}")
             _reporter.stage("otc_nav", "error", note=str(e)[:160])
+
+        # #116 契约1: 场外当日无净值 ⇒ **禁止静默跳过**，必须落 error 级告警。
+        # 09-16 的整篮子跳过在日志里只留了 13 行 "待插入 0 行"（INFO 级），
+        # 阶段状态仍是 ok、告警为空 —— 这就是"静默"的定义。
+        if _otc_res:
+            try:
+                from src.analysis.snapshot_gate import (
+                    check_otc_nav_coverage, record_error_alert, OTC_NAV_MISSING_KIND)
+                _cov = check_otc_nav_coverage(DATABASE_PATH, analyzer.today,
+                                              _otc_res.get("per_code"))
+                if not _cov["ok"]:
+                    logger.error(_cov["message"])
+                    record_error_alert(DATABASE_PATH, OTC_NAV_MISSING_KIND,
+                                       _cov["message"])
+                    _reporter.alert("error", OTC_NAV_MISSING_KIND, _cov["message"])
+            except Exception as e:
+                logger.warning(f"场外净值覆盖度检查失败(不影响主流程): {e}")
 
         # === 阶段0b: 观察名单行情补采（已清仓标的保持关注，同样须先于阶段一）===
         try:
@@ -1125,6 +1143,22 @@ def main(argv=None):
         # === 阶段一: 基础分析 ===
         results = run_stage1_basic(analyzer)
         _reporter.stage("basic", "ok")
+
+        # #116 契约2/3: 快照基线闸门拒绝写 summary ⇒ 本次运行**不得**记 ok。
+        # 这是"残缺 total_value 已写库并进日报"的最后一道路径闸门：
+        # 拒绝只发生在 portfolio.py 的写库前，若不让 run_status 跟着降级，
+        # 日报会照旧发出（send_report_email 的 run_status 判据是拦它的唯一手段；
+        # 而 09-17 08:59 那种回填运行里，库内当日的 summary 行本就存在，
+        # "summary 日期 != 今天" 这道闸门也拦不住它）。
+        _gate = (results or {}).get("snapshot_gate") or {}
+        if _gate and not _gate.get("ok", True):
+            try:
+                from src.analysis.snapshot_gate import SUMMARY_REFUSED_KIND
+            except Exception:
+                SUMMARY_REFUSED_KIND = "summary_refused_snapshot_incomplete"
+            _msg = _gate.get("reason") or "快照不覆盖基线标的域"
+            logger.error("[快照闸门] %s", _msg)
+            _reporter.alert("error", SUMMARY_REFUSED_KIND, _msg[:900])
 
         # === 阶段二: 风险分析 ===
         risk_data = run_stage2_risk(analyzer, results)

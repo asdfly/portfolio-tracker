@@ -1,0 +1,297 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""#116 契约 1/2/3 的反证用例：闸门**确实**拒绝，且拒绝**确实**落了 error 告警。
+
+现场（2026-09-16 15:30，日志 logs/portfolio_20260916.log:10592-10638）::
+
+    [001194] 最新净值 2026-09-15 | 待插入 0 行      ← 13 只逐一同形
+    场外净值: 成功 13 只, 失败 0 只, 跳过(无净值源) 0 只, 新增 0 行
+    保存持仓快照: 2026-09-16, 22条记录
+    持仓数量: 22 / 总市值: 933,195.10 / 当日收益: -0.07%
+
+即：场外源当日只到 D-1（T+1 披露）+ 库内 D-1 行已存在 ⇒ 采集器判「待插入 0 行」
+⇒ 整篮子静默跳过 ⇒ 当日快照只有场内 22 行 ⇒ total_value 只剩 933,195.10
+（真实 1,527,928.85，少 38.1%），而 run_status 仍是 "ok"。
+
+本文件构造该场景（以及 09-17 08:59 的"覆盖"变体），证明：
+  A) 行数 22 != 基线 34 ⇒ 拒绝生成 summary + alerts 表落 error 级告警；
+  B) 行数虽为 34、但本次 positions 只覆盖 22 行 ⇒ 同样拒绝
+     （**单看行数会放行**——2026-09-17 08:59 的无人值守回填运行就是这样把
+      08:5x 刚修好的 09-16 summary 打回 933,195.10 的）；
+  C) 周五 35 行（34 + 027293）**不得**被判为异常；
+  D) 场外当日无净值 ⇒ otc_nav_missing 告警；
+  E) error 级告警 ⇒ run_status 降级为 degraded，且该状态被邮件闸门拦下。
+
+全程只在 tmp_path 造库，绝不触碰 data/database/portfolio.db。
+"""
+from __future__ import annotations
+
+import datetime as dt
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.analysis.snapshot_gate import (          # noqa: E402
+    OTC_NAV_MISSING_KIND,
+    SUMMARY_REFUSED_KIND,
+    check_otc_nav_coverage,
+    check_snapshot_baseline,
+    expected_universe,
+)
+
+# 2026-09-16 实况的标的域：场内 22 + 场外 12 = 34；027293 只在周五多 1 行。
+ETF_CODES = ["159220", "159267", "159300", "159650", "159770", "159796",
+             "159819", "159949", "159992", "510300", "510500", "511380",
+             "511520", "512010", "512100", "512810", "515010", "515120",
+             "516160", "561910", "563020", "588000"]
+OTC_CODES = ["001194", "001323", "001407", "001437", "001765", "002152",
+             "007994", "008269", "100032", "166301", "519770", "880013"]
+FRI_EXTRA = ["027293"]
+BASE_CODES = ETF_CODES + OTC_CODES            # 34
+TARGET_WED = "2026-09-16"                     # 周三
+TARGET_FRI = "2026-09-18"                     # 周五
+
+
+def _weekdays_back(end_date: str, n: int):
+    """返回 end_date 之前（不含）最近的 n 个工作日，升序。"""
+    d = dt.date.fromisoformat(end_date)
+    out = []
+    while len(out) < n:
+        d -= dt.timedelta(days=1)
+        if d.weekday() < 5:
+            out.append(d.isoformat())
+    return sorted(out)
+
+
+def _make_db(tmp_path: Path, target: str, history_n: int = 30) -> Path:
+    db = tmp_path / "data" / "database" / "portfolio.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db))
+    conn.execute("""CREATE TABLE portfolio_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, code TEXT NOT NULL,
+        name TEXT, quantity REAL, cost_price REAL, current_price REAL,
+        market_value REAL, pnl REAL, pnl_rate REAL, ytd_return REAL, beta REAL,
+        UNIQUE(date, code))""")
+    for d in _weekdays_back(target, history_n):
+        codes = list(BASE_CODES) + (FRI_EXTRA if dt.date.fromisoformat(d).weekday() == 4 else [])
+        for c in codes:
+            conn.execute("INSERT INTO portfolio_snapshots "
+                         "(date, code, quantity, cost_price, current_price, market_value) "
+                         "VALUES (?,?,100.0,1.0,1.0,100.0)", (d, c))
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _write_rows(db: Path, date_str: str, codes) -> None:
+    conn = sqlite3.connect(str(db))
+    for c in codes:
+        conn.execute("INSERT OR REPLACE INTO portfolio_snapshots "
+                     "(date, code, quantity, cost_price, current_price, market_value) "
+                     "VALUES (?,?,100.0,1.0,1.0,100.0)", (date_str, c))
+    conn.commit()
+    conn.close()
+
+
+def _positions(codes):
+    return [{"code": c, "quantity": 100.0, "cost_price": 1.0,
+             "current_price": 1.0, "market_value": 100.0} for c in codes]
+
+
+def _alerts(db: Path):
+    conn = sqlite3.connect(str(db))
+    try:
+        return conn.execute(
+            "SELECT rule_name, level, message FROM alerts ORDER BY id").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------- 基线口径 ---
+
+def test_baseline_is_34_weekday_and_35_friday(tmp_path):
+    """基线必须数据驱动：非周五 34、周五 35，且 027293 归入 friday_extra。"""
+    db = _make_db(tmp_path, TARGET_WED)
+    conn = sqlite3.connect(str(db))
+    try:
+        wed = expected_universe(conn, TARGET_WED)
+        fri = expected_universe(conn, TARGET_FRI)
+    finally:
+        conn.close()
+
+    assert len(wed["base"]) == 34 and wed["friday_extra"] == set(FRI_EXTRA)
+    assert len(wed["expected_codes"]) == 34          # 周三 = 34
+    assert len(fri["expected_codes"]) == 35          # 周五 = 34 + 027293
+    assert wed["n_dates"] == 30
+
+
+# ---------------------------------------------- A. 反证：场外整篮子被跳过 ---
+
+def test_otc_basket_dropped_is_refused_and_alerts(tmp_path):
+    """A) 当日只落场内 22 行（09-16 现场）⇒ ok=False + 缺失 12 只 + error 告警。"""
+    db = _make_db(tmp_path, TARGET_WED)
+    _write_rows(db, TARGET_WED, ETF_CODES)           # 场外整篮子被跳过
+
+    res = check_snapshot_baseline(db, TARGET_WED, _positions(ETF_CODES),
+                                 computed_total_value=933195.10)
+
+    assert res["ok"] is False
+    assert res["expected_n"] == 34 and res["actual_n"] == 22
+    assert sorted(res["missing"]) == sorted(OTC_CODES)
+    assert res["alert_written"] is True
+
+    rows = _alerts(db)
+    assert len(rows) == 1
+    rule, level, msg = rows[0]
+    assert rule == SUMMARY_REFUSED_KIND and level == "error"
+    assert "行数 22 != 基线 34" in msg
+    for c in OTC_CODES:                              # 缺失 code 清单必须落进告警
+        assert c in msg
+    assert "933195.10" in msg                        # 残缺 total_value 一并留证
+
+
+# ------------------------------------- B. 反证：行数够但 positions 不够 ---
+
+def test_row_count_alone_cannot_pass_when_positions_is_narrower(tmp_path):
+    """B) 09-17 08:59 的覆盖场景：库内 34 行齐、positions 只 22 只 ⇒ 仍拒绝。
+
+    这是"只校验行数"的漏网口：当日 12 行场外曾被别的路径补过，行数等于基线，
+    但本次真正参与汇总的 positions 仍只有 22 只 ⇒ total_value 又是 933,195.10。
+    """
+    db = _make_db(tmp_path, TARGET_WED)
+    _write_rows(db, TARGET_WED, BASE_CODES)          # 34 行齐（曾被补过）
+
+    res = check_snapshot_baseline(db, TARGET_WED, _positions(ETF_CODES),
+                                 computed_total_value=933195.10)
+
+    assert res["ok"] is False
+    assert res["missing"] == []                      # 行数判据此处**看不见**问题
+    assert res["actual_n"] == 34
+    assert sorted(res["not_summarized"]) == sorted(OTC_CODES)
+    assert "本次 positions 未覆盖当日快照行 12 只" in res["reason"]
+    assert _alerts(db)[0][1] == "error"
+
+
+# ------------------------------------------- C. 反证：周五 35 行不得误判 ---
+
+def test_friday_35_rows_is_not_an_anomaly(tmp_path):
+    """C) 周五 35 行（含 027293）必须放行。"""
+    db = _make_db(tmp_path, TARGET_FRI)
+    _write_rows(db, TARGET_FRI, BASE_CODES + FRI_EXTRA)
+
+    res = check_snapshot_baseline(db, TARGET_FRI, _positions(BASE_CODES + FRI_EXTRA))
+
+    assert res["ok"] is True, res["reason"]
+    assert res["expected_n"] == 35 and res["actual_n"] == 35
+    assert _alerts(db) == []
+
+
+def test_clean_34_row_day_passes(tmp_path):
+    """D) 正常日（34 行 + 34 只 positions）放行，且不写任何告警。"""
+    db = _make_db(tmp_path, TARGET_WED)
+    _write_rows(db, TARGET_WED, BASE_CODES)
+
+    res = check_snapshot_baseline(db, TARGET_WED, _positions(BASE_CODES))
+
+    assert res["ok"] is True, res["reason"]
+    assert res["missing"] == [] and res["not_summarized"] == []
+    assert _alerts(db) == []
+
+
+def test_baseline_unavailable_does_not_block(tmp_path):
+    """新库（历史不足 5 天）基线不可判定 ⇒ 不拦，但显式标注 baseline_available=False。"""
+    db = _make_db(tmp_path, TARGET_WED, history_n=3)
+    _write_rows(db, TARGET_WED, ETF_CODES)
+
+    res = check_snapshot_baseline(db, TARGET_WED, _positions(ETF_CODES))
+
+    assert res["ok"] is True and res["baseline_available"] is False
+    assert _alerts(db) == []
+
+
+# ------------------------------------------------- 契约1：场外净值缺失 ---
+
+def _per_code(rows):
+    return [{"code": c, "status": "OK", "nav_latest_date": d} for c, d in rows]
+
+
+def test_otc_nav_missing_raises_error_alert(tmp_path):
+    """D) 场外源当日只到 D-1 ⇒ 12 只基线标的缺失、027293 记为延后披露（不拦）。"""
+    db = _make_db(tmp_path, TARGET_WED)
+    per_code = _per_code([(c, "2026-09-15") for c in OTC_CODES])
+    per_code.append({"code": FRI_EXTRA[0], "status": "OK",
+                     "nav_latest_date": "2026-09-11"})
+
+    res = check_otc_nav_coverage(db, TARGET_WED, per_code)
+
+    assert res["ok"] is False
+    assert sorted(r["code"] for r in res["missing"]) == sorted(OTC_CODES)
+    assert [r["code"] for r in res["deferred"]] == FRI_EXTRA   # 非当日基线标的
+    assert res["missing"][0]["lag_days"] == 1                  # 滞后 1 个自然日
+    assert OTC_NAV_MISSING_KIND in res["message"]
+    assert "001194" in res["message"] and "027293" not in res["missing"][0]["code"]
+
+
+def test_otc_nav_present_is_silent(tmp_path):
+    """场外当日净值齐 ⇒ 不告警。"""
+    db = _make_db(tmp_path, TARGET_WED)
+    per_code = _per_code([(c, TARGET_WED) for c in OTC_CODES])
+
+    res = check_otc_nav_coverage(db, TARGET_WED, per_code)
+
+    assert res["ok"] is True and res["missing"] == [] and res["message"] == ""
+
+
+# ------------------------------------------- 契约3：error 告警 ⇒ 降级 ---
+
+def test_error_alert_degrades_run_status(tmp_path):
+    """E) 有 error 级告警 ⇒ run_status=degraded（不再是 ok）。"""
+    from src.data_sources.collect_core import (
+        RUN_STATUS_DEGRADED, RUN_STATUS_OK, RunReporter)
+
+    rep = RunReporter("2026-09-16", reports_dir=str(tmp_path))
+    for s in ("basic", "risk", "monitor", "dq_check"):
+        rep.stage(s, "ok")
+
+    assert rep.evaluate_run_status()[0] == RUN_STATUS_OK
+
+    rep.alert("error", SUMMARY_REFUSED_KIND, "快照不完整，已拒绝生成 summary")
+    report, _ = rep.finalize_and_write(reports_dir=str(tmp_path))
+
+    assert report["run_status"] == RUN_STATUS_DEGRADED
+    assert report["dq_score"] is None            # 不可信运行不得拿漂亮 dq_score
+    assert any(a["kind"] == SUMMARY_REFUSED_KIND for a in report["alerts"])
+
+
+def test_degraded_is_blocked_by_email_gate(tmp_path):
+    """E) degraded 必须与 partial/failed 同列拒发（否则残缺值仍会进日报）。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sre_gate_probe", str(PROJECT_ROOT / "scripts" / "send_report_email.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    assert "degraded" in mod._RUN_STATUS_BLOCKING
+
+
+# ------------------------------- 契约2：闸门确实在写库之前被调用 ---
+
+def test_gate_runs_before_saving_summary():
+    """源码顺序断言：拒绝判据必须位于 save_portfolio_summary 之前且在其前 return。"""
+    src = (PROJECT_ROOT / "src" / "analysis" / "portfolio.py").read_text(encoding="utf-8")
+    gate_at = src.index("check_snapshot_baseline(self.db.db_path")
+    save_at = src.index("self.db.save_portfolio_summary(self.today")
+    assert gate_at < save_at
+    # 拒绝分支必须在保存之前 return，而不是"先写再校验"
+    between = src[gate_at:save_at]
+    assert 'if not gate["ok"]:' in between
+    assert "return results" in between

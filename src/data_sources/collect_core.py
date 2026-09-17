@@ -517,6 +517,14 @@ CRITICAL_STAGES = ("basic",)
 RUN_STATUS_OK = "ok"
 RUN_STATUS_PARTIAL = "partial"
 RUN_STATUS_FAILED = "failed"
+# "degraded": 必需阶段齐全且无一 error，但本次运行**产出过 error 级告警**
+# （如 #116 的快照基线闸门拒绝写 summary / 场外当日无净值）。
+# 为什么必须与 "ok" 分开：09-16 的残缺 total_value（少 38.1%）正是
+# "阶段全绿 + dq_score=94.1 + run_status=ok" 三件套一起把它送进日报的；
+#   "跑完了" ≠ "结果是可信的"，两者必须能分别表达。
+# 消费方：send_report_email._RUN_STATUS_BLOCKING（拒发日报）、
+#         run_supplemental（!= "ok" 即进补采巡检告警）。
+RUN_STATUS_DEGRADED = "degraded"
 
 # 告警事件名: 必须同步登记到 config/notification.json 的 events 白名单。
 PIPELINE_INCOMPLETE_KIND = "pipeline_incomplete"
@@ -575,13 +583,14 @@ class RunReporter:
         self.run_failed_reason = (str(reason).strip()[:300] or "run aborted")
 
     def evaluate_run_status(self):
-        """按阶段完整性推导运行状态。
+        """按阶段完整性 + error 级告警推导运行状态。
 
         Returns:
             (run_status, missing_stages, errored_stages)
-            - "failed" : 被显式标记运行失败, 或关键阶段(CRITICAL_STAGES)缺失/error
-            - "partial": 有必需阶段缺失或 status == "error"
-            - "ok"     : 必需阶段齐全且无一 error
+            - "failed"  : 被显式标记运行失败, 或关键阶段(CRITICAL_STAGES)缺失/error
+            - "partial" : 有必需阶段缺失或 status == "error"
+            - "degraded": 阶段齐全无 error, 但本次运行产出过 error 级告警
+            - "ok"      : 阶段齐全无 error, 且无 error 级告警
         """
         missing = [s for s in REQUIRED_STAGES if s not in self.stages]
         errored = [s for s in REQUIRED_STAGES
@@ -595,6 +604,13 @@ class RunReporter:
             return RUN_STATUS_FAILED, missing, errored
         if missing or errored:
             return RUN_STATUS_PARTIAL, missing, errored
+        # #116 契约3: 把 error 级告警纳入判据。
+        # 09-16 的 alerts 表里躺着一条 (124, 'total_value_drop', 'error', ...)
+        # 「总市值大幅下降(>-5.0%): -38.4%」，但 run_status 仍是 "ok" ——
+        # 因为原判据只看"阶段是否都执行" + dq_score，与"告警说了什么"完全解耦。
+        # 运行结束还把 error 级问题留在台面上 ⇒ 本次运行至少是 degraded。
+        if any(str(a.get("level", "")).lower() == "error" for a in self.alerts):
+            return RUN_STATUS_DEGRADED, missing, errored
         return RUN_STATUS_OK, missing, errored
 
     def _incomplete_reason(self, run_status, missing, errored):
@@ -643,8 +659,8 @@ class RunReporter:
         """汇总并写 run_report_<date>.json; 计算 dq_score 与三类告警; 触发推送。
 
         写入字段除原有内容外新增:
-          run_status      "ok"|"partial"|"failed" —— 由阶段完整性推导(含
-                          mark_run_failed() 的显式失败标记)
+          run_status      "ok"|"partial"|"failed"|"degraded" —— 由阶段完整性
+                          (含 mark_run_failed() 的显式失败标记) + error 级告警推导
           dq_score_reason 分数来源 / 为何为 null(运行不完整时 dq_score 恒为 null)
 
         Args:
@@ -726,7 +742,8 @@ class RunReporter:
             "run_date": self.run_date,
             "mode": self.mode,
             "duration_s": duration_s,
-            # 运行是否完整: "ok" | "partial" | "failed"(见 REQUIRED_STAGES/CRITICAL_STAGES)
+            # 运行是否完整/可信: "ok" | "degraded" | "partial" | "failed"
+            # (见 REQUIRED_STAGES/CRITICAL_STAGES 与 evaluate_run_status 的 error 告警判据)
             "run_status": run_status,
             "sources": [dict(name=k, **v) for k, v in self.sources.items()],
             "stages": self.stages,

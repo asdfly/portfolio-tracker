@@ -13,6 +13,9 @@
     "data_distortion_blocked",
     "stale_over_threshold",
     "dq_low_score",
-    "pipeline_incomplete"
+    "pipeline_incomplete",
+    "otc_nav_missing",
+    "summary_refused_snapshot_incomplete",
+    "fund_flow_empty_metrics"
   ]
 }

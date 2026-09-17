@@ -61,7 +61,11 @@ from src.utils.enhanced_report import DEGRADED_MARKER  # noqa: E402
 CLOSE_HOUR = 15
 
 # run_status 取值（与 src/data_sources/collect_core.py 的 RUN_STATUS_* 常量同义）。
-_RUN_STATUS_BLOCKING = ("partial", "failed")
+# "degraded"（#116 契约3）：阶段齐全但本次运行产出过 error 级告警
+# （如快照基线闸门拒绝写 portfolio_summary、场外当日无净值）。
+# 这种运行"跑完了但结果不可信"，日报必须和 partial/failed 一样拒发 ——
+# 09-16 的 933,195.10（少 38.1%）正是以 run_status="ok" 发出去的。
+_RUN_STATUS_BLOCKING = ("partial", "failed", "degraded")
 
 # 监控账本任务名：日报"没送达用户"（被闸门拒绝 / 正文降级 / 与数据日期不符 / SMTP 失败）
 # 时写入 execution_logs。与 portfolio_daily_analysis 同表，便于按时间对齐排查。
