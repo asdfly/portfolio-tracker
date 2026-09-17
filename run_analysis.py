@@ -1115,34 +1115,6 @@ def main(argv=None):
             logger.warning(f"场外基金净值采集失败(不影响主流程): {e}")
             _reporter.stage("otc_nav", "error", note=str(e)[:160])
 
-        # #116 契约1: 场外当日无净值 ⇒ **禁止静默跳过**，必须显式告警。
-        # 09-16 的整篮子跳过在日志里只留了 13 行 "待插入 0 行"（INFO 级），
-        # 阶段状态仍是 ok、告警为空 —— 这就是"静默"的定义。
-        # 但「源只到 D-1」本身是 T+1 披露的结构性常态（周一 lag=3，节后更长），
-        # 是否升级为 error 由 check_otc_nav_coverage 按**当日快照是否已覆盖这些 code**
-        # 判定，本处只负责按 alert_level 分流：
-        #   uncovered(当日快照缺行 ⇒ 整篮子未落库，09-16 事故形态) ⇒ error 级告警；
-        #   filled(合并路径已用上一可用净值补位并落行) ⇒ warning，**不写 alerts 表、
-        #   不降级 run_status** —— 否则每个交易日都会把日报邮件永久拦死。
-        if _otc_res:
-            try:
-                from src.analysis.snapshot_gate import (
-                    check_otc_nav_coverage, record_error_alert, OTC_NAV_MISSING_KIND)
-                _cov = check_otc_nav_coverage(DATABASE_PATH, analyzer.today,
-                                              _otc_res.get("per_code"))
-                _level = _cov.get("alert_level") or ""
-                if _level == "error":
-                    logger.error(_cov["message"])
-                    # record_error_alert 把 level 硬编码为 "error"，只应在 error 形态调用
-                    record_error_alert(DATABASE_PATH, OTC_NAV_MISSING_KIND,
-                                       _cov["message"])
-                    _reporter.alert("error", OTC_NAV_MISSING_KIND, _cov["message"])
-                elif _level == "warning":
-                    logger.warning(_cov["message"])
-                    _reporter.alert("warning", OTC_NAV_MISSING_KIND, _cov["message"])
-            except Exception as e:
-                logger.warning(f"场外净值覆盖度检查失败(不影响主流程): {e}")
-
         # === 阶段0b: 观察名单行情补采（已清仓标的保持关注，同样须先于阶段一）===
         try:
             run_stage0b_watchlist(backfill_date)
@@ -1170,6 +1142,45 @@ def main(argv=None):
             _msg = _gate.get("reason") or "快照不覆盖基线标的域"
             logger.error("[快照闸门] %s", _msg)
             _reporter.alert("error", SUMMARY_REFUSED_KIND, _msg[:900])
+
+        # #116 契约1: 场外当日无净值 ⇒ **禁止静默跳过**，必须显式告警。
+        # 09-16 的整篮子跳过在日志里只留了 13 行 "待插入 0 行"（INFO 级），
+        # 阶段状态仍是 ok、告警为空 —— 这就是"静默"的定义。
+        # 但「源只到 D-1」本身是 T+1 披露的结构性常态（周一 lag=3，节后更长），
+        # 是否升级为 error 由 check_otc_nav_coverage 按**当日快照是否已覆盖这些 code**
+        # 判定，本处只负责按 alert_level 分流：
+        #   uncovered(当日快照缺行 ⇒ 整篮子未落库，09-16 事故形态) ⇒ error 级告警；
+        #   filled(合并路径已用上一可用净值补位并落行) ⇒ warning，**不写 alerts 表、
+        #   不降级 run_status** —— 否则每个交易日都会把日报邮件永久拦死。
+        #
+        # ⚠️ 评估时刻是这段检查的**语义前提**，不得再挪回阶段一之前：
+        # `filled`（常态）只能在同一日的 portfolio_snapshots 行**落库之后**才可观测，
+        # 而写当日快照的正是**阶段一**（`run_stage1_basic` → `src/analysis/portfolio.py`
+        # 的持仓合并路径，日志留痕 "保存持仓快照: <今天>, <N>条记录"）。
+        # 本检查原先紧跟阶段0（`run_stage0_otc_nav` 之后、`run_stage1_basic` 之前），
+        # 那一刻当日快照**一行都没有** ⇒ 必然 filled=0 / uncovered=全部
+        # ⇒ alert_level='error' ⇒ run_status=degraded ⇒ 日报被拦死，且**每个交易日
+        # 都会复现**（实测 2026-09-17 15:30 日频首跑：契约1 于 15:30:43 评估，
+        # "保存持仓快照: 2026-09-17, 34条记录" 于 15:30:45 才发生）。
+        # 故它与紧随其后的契约2 同属"快照闸门"，必须一并排在阶段一之后。
+        if _otc_res:
+            try:
+                from src.analysis.snapshot_gate import (
+                    check_otc_nav_coverage, record_error_alert, OTC_NAV_MISSING_KIND)
+                _cov = check_otc_nav_coverage(DATABASE_PATH, analyzer.today,
+                                              _otc_res.get("per_code"))
+                _level = _cov.get("alert_level") or ""
+                if _level == "error":
+                    logger.error(_cov["message"])
+                    # record_error_alert 把 level 硬编码为 "error"，只应在 error 形态调用
+                    record_error_alert(DATABASE_PATH, OTC_NAV_MISSING_KIND,
+                                       _cov["message"])
+                    _reporter.alert("error", OTC_NAV_MISSING_KIND, _cov["message"])
+                elif _level == "warning":
+                    logger.warning(_cov["message"])
+                    _reporter.alert("warning", OTC_NAV_MISSING_KIND, _cov["message"])
+            except Exception as e:
+                logger.warning(f"场外净值覆盖度检查失败(不影响主流程): {e}")
 
         # === 阶段二: 风险分析 ===
         risk_data = run_stage2_risk(analyzer, results)

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """#116 契约 1/2/3 的反证用例：闸门**确实**拒绝，且拒绝**确实**落了 error 告警。
 
-现场（2026-09-16 15:30，日志 logs/portfolio_20260916.log:10592-10638）::
+现场（2026-09-16 15:30，日志 logs/portfolio_20260916.log）::
 
     [001194] 最新净值 2026-09-15 | 待插入 0 行      ← 13 只逐一同形
     场外净值: 成功 13 只, 失败 0 只, 跳过(无净值源) 0 只, 新增 0 行
@@ -23,9 +23,16 @@
   E) error 级告警 ⇒ run_status 降级为 degraded，且该状态被邮件闸门拦下；
   F) 场外当日无净值 **但当日快照已含这 12 行**（并集合并路径已用上一可用净值补位，
      即 T+1 披露的结构性常态）⇒ filled ⇒ warning、**不写 alerts 表、不降级**、
-     日报闸门放行。否则 2026-09-17 15:30 起，这条误报会**每一个交易日**都把
-     日报邮件拦死（logs/scheduled_run.log:17290 `[CRITICAL] run_status=degraded`
-     + 17292 `[WARN] report email send FAILED, rc=1`）。
+    日报闸门放行。否则 2026-09-17 15:30 起，这条误报会**每一个交易日**都把
+    日报邮件拦死（logs/scheduled_run.log 原文锚：
+    `[EMAIL] [CRITICAL] 数据未就绪，拒绝生成/发送今日…日报：… run_status=degraded`
+    + `report email send FAILED, rc=1`。**不写行号**：该日志是长跑追加文件，行号会漂）。
+
+G) 时序守卫（`test_contract1_check_must_run_after_snapshot_write`）：上面 F 的两条用例
+   都**预置了目标日的快照行**，因此只证明「函数在给定输入下的行为」，对**这个检查在
+   管线里的评估时刻**完全失明 —— 上一轮正是如此：用例全绿，而生产里 `filled` 分支
+   **永不可达**（检查排在阶段一之前 ⇒ 当日快照尚未落库 ⇒ 必然 uncovered/error）。
+   故新增一条读源码做顺序断言的用例，把"评估点必须在当日快照落库之后"钉死。
 
 全程只在 tmp_path 造库，绝不触碰 data/database/portfolio.db。
 """
@@ -329,7 +336,7 @@ def _load_send_report_email():
 
 def _run_status_after_coverage_alert(reports_dir: Path, target: str,
                                     alert_level: str, message: str) -> str:
-    """复刻 run_analysis.py:1118-1141 的 alert_level 分流，返回本次运行的 run_status。
+    """复刻 run_analysis.py 里契约1 调用点的 alert_level 分流，返回本次运行的 run_status。
 
     这里是"被测语义"而非"被测实现"的镜像：它只断言
     「error 告警 ⇒ 降级 / warning 或空 ⇒ 不降级」这一 collect_core 的既有规则
@@ -349,8 +356,9 @@ def _run_status_after_coverage_alert(reports_dir: Path, target: str,
 def test_otc_nav_filled_is_warning_and_does_not_degrade(tmp_path):
     """F) 12 只无 D 净值、但当日快照已含这 12 行（合并路径补位）⇒ warning，不降级。
 
-    2026-09-17 15:30 实况：16901 那句「不落快照行 ⇒ error」与 16945
+    2026-09-17 15:30 实况：日志里「这些标的本日不落快照行(禁止静默跳过)」那句与
     「保存持仓快照: 2026-09-17, 34条记录」直接矛盾 ⇒ 应是常态告警。
+    ⚠️ 本用例预置了当日快照行，只测函数行为；评估时刻由 G 的源码顺序用例守。
     """
     from src.data_sources.collect_core import RUN_STATUS_OK
 
@@ -436,3 +444,42 @@ def test_otc_two_forms_are_distinguished_end_to_end(tmp_path):
 
     assert observed["filled"][:3] == ("warning", "ok", True), observed
     assert observed["uncovered"][:3] == ("error", "degraded", False), observed
+
+
+# ------------------- G. 契约1 的**评估时刻**：必须晚于当日快照落库 ---
+
+def test_contract1_check_must_run_after_snapshot_write():
+    """源码顺序断言：契约1 必须在阶段一（= 写当日快照的那一步）**之后**评估。
+
+    这条断言防的是「检查点放得太早」。上面 F 那三条用例**抓不到**它：它们都预置了
+    目标日的快照行，只证明"函数在给定输入下的行为"，对**这个检查在管线里的评估时刻**
+    完全失明 —— 上一轮就是这样：用例全绿，生产里 `filled` 分支却**永不可达**。
+
+    为什么早一步必然误报（2026-09-17 15:30 日频首跑实测）：
+      * 当日 `portfolio_snapshots` 行是**阶段一**写进去的：
+        `run_stage1_basic` → `src/analysis/portfolio.py` 的持仓合并路径，
+        日志留痕「保存持仓快照: <今天>, <N>条记录」；
+      * 契约1 原先紧跟阶段0（`run_stage0_otc_nav` 之后、`run_stage1_basic` 之前），
+        那一刻当日快照一行都没有 ⇒ filled 恒为 0、uncovered = 全部
+        ⇒ alert_level='error' ⇒ run_status=degraded ⇒ 日报**每个交易日**都被拦死；
+      * 实测时间戳：契约1 告警 15:30:43,930 早于「保存持仓快照: 2026-09-17, 34条记录」
+        的 15:30:45,386。
+    """
+    src = (PROJECT_ROOT / "run_analysis.py").read_text(encoding="utf-8")
+
+    stage0_anchor = "run_stage0_otc_nav(backfill_date)"
+    stage1_anchor = "results = run_stage1_basic(analyzer)"
+    cov_anchor = "check_otc_nav_coverage(DATABASE_PATH"
+    for anchor in (stage0_anchor, stage1_anchor, cov_anchor):
+        assert src.count(anchor) == 1, f"锚点不唯一，顺序断言会失真: {anchor!r}"
+
+    stage0_at = src.index(stage0_anchor)
+    stage1_at = src.index(stage1_anchor)
+    cov_at = src.index(cov_anchor)
+
+    assert stage1_at < cov_at, (
+        "契约1 的评估点必须晚于阶段一：当日 portfolio_snapshots 行由 run_stage1_basic "
+        "写入；早于它评估则当日快照尚不存在 ⇒ filled 永远为空 ⇒ 每个交易日都误报 "
+        "error ⇒ 日报被 run_status=degraded 拦死")
+    # 兜底：也不得被挪到阶段0 之前或阶段0/阶段一之间
+    assert stage0_at < stage1_at, "阶段0 必须早于阶段一（阶段0 的值是后续分析的基础）"
