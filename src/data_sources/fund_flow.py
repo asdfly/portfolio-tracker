@@ -501,7 +501,8 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
       机制：本函数的 UPDATE 分支原先**无条件覆盖** `net_inflow/buy_amount/
       sell_amount` 与各扩展列，df 为 NaN 时 `_float()` 得到 None 就直接写进去
       ⇒ 用 NULL 把 18:02 还是好的真值原地清零；而且 UPDATE **不刷新
-      `created_at`**（`:521-526` 只对显式带标签的批次覆盖三个标签列），所以这次
+      `created_at`**（见下方 `for mc in meta_cols` 循环：只对显式带标签的批次
+      覆盖三个标签列），所以这次
       清零在时间戳上完全看不见。任何按 `confidence` 加权的下游都会把空行当真值。
 
     本守卫的三条判据：
@@ -509,16 +510,21 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
          并落一条 error 级告警（项目准则：要么显式标记、要么显式拒绝，不许静默）；
       2. **不得用 NULL 覆盖非 NULL**：UPDATE 的 SET 列表只纳入**非空**的新值，
          既有真值不会被一个部分为空的 payload 抹掉；
-  3. **拒绝关键列为空的 INSERT**：判据 1 只挡「**payload 里给出的**指标列全空」。
-     ⚠️ 精确说法是「给出的」，**不是**「12 个指标列全空」：`:544-547` 的
-     `metric_names` 只收 `row.index` 里**存在**的列 ⇒ 一份只带
-     `{"net_inflow": NaN}` 的 payload 与一份 12 列全 NaN 的 payload
-     **落到同一条 `all(v is None)` 路径**（行为一致，故无需为前者另写判据）。
-     而当 `net_inflow` 为空、`buy_amount` 等**别的列有值**时，判据 1 放行，于是
-     仍会落一行 `net_inflow IS NULL` + 缺省 `confidence=1.0` 的「自称完全可信
-     的空值行」—— 与 09-16 那次**同型**，只是靠读取端的 NULL 过滤兜住。
-     （实测于 `#135`，见 `audit/_v130_verdict.md` §3.1；「给出 vs 全列」这层语义差
-     由 `verify-p1-batch` 在 09-17 指出并已按精确说法更正。）
+      3. **拒绝关键列为空的 INSERT**：判据 1 只挡「**payload 里给出的**指标列全空」。
+         ⚠️ 精确说法是「给出的」，**不是**「12 个指标列全空」：见下方三行原文
+         （刻意不给行号 —— 本 docstring 自己的改动就会让它漂：实测同一段
+         `metric_names` 在 `43d06ce` 后先漂 `:544`→`:549`，改这段注释后 `:549`→`:554`）：
+             metric_names = [c for c in (['net_inflow','buy_amount','sell_amount'] + extra_cols)
+                             if c in row.index]
+             if not metric_names or all(v is None for v in metric_vals.values()):
+         的 `metric_names` 只收 `row.index` 里**存在**的列 ⇒ 一份只带
+         `{"net_inflow": NaN}` 的 payload 与一份 12 列全 NaN 的 payload
+         **落到同一条 `all(v is None)` 路径**（行为一致，故无需为前者另写判据）。
+         而当 `net_inflow` 为空、`buy_amount` 等**别的列有值**时，判据 1 放行，于是
+         仍会落一行 `net_inflow IS NULL` + 缺省 `confidence=1.0` 的「自称完全可信
+         的空值行」—— 与 09-16 那次**同型**，只是靠读取端的 NULL 过滤兜住。
+         （实测于 `#135`，见 `audit/_v130_verdict.md` §3.1；「给出 vs 全列」这层语义差
+         由 `verify-p1-batch` 在 09-17 指出并已按精确说法更正。）
          故 INSERT 分支对 `net_inflow is None` 也**拒绝**并落同一条 error 告警。
          ⚠️ 本判据只作用于 INSERT：已有行的部分为空仍走判据 2（保留真值），
          不能把「部分更新」也一并拒绝。

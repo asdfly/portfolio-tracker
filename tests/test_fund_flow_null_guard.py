@@ -363,8 +363,10 @@ def test_etf_flow_typo_literal_is_gone_from_source():
 #       metric_names = [c for c in (['net_inflow','buy_amount','sell_amount'] + extra_cols)
 #                       if c in row.index]
 #       if not metric_names or all(v is None for v in metric_vals.values()): ...
-#   （取证：2026-09-17，当时工作区版 `src/data_sources/fund_flow.py:544-547`（含守卫三）。
-#     行号会随 `src/` 改动漂移，故以**上面两行原文**为准，行号仅供参考。）
+#   （取证：2026-09-17，`save_fund_flows` 含守卫三（该版已随 `43d06ce` 入库）。
+#     🔴 **此处刻意不给行号**：实测同一段 `metric_names` 在 `43d06ce` 后先漂 `:544`→`:549`
+#     （一次措辞更正），紧接着改那段注释又漂 `:549`→`:554` —— 裸行号在本例里**活不过一轮编辑**。
+#     引用请 grep 上面三行原文；`src/` 侧的同一处也已按同样理由去掉行号。）
 #   ⇒ 判据 1 的真实语义是「**payload 里给出的指标列全为空**」，而不是字面的「表里 12 列全空」。
 #   所以 A 例（net_inflow 空 + buy 有值）才会被判据 1 放行、必须由守卫三兜住。
 #
