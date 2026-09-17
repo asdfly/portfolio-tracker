@@ -1,8 +1,8 @@
 {
   "date": "2026-09-16",
-  "run_date": "2026-09-16",
-  "mode": "daily",
-  "duration_s": 285.02,
+  "run_date": "2026-09-17",
+  "mode": "backfill",
+  "duration_s": 422.48,
   "run_status": "ok",
   "sources": [
     {
@@ -47,7 +47,7 @@
     },
     {
       "name": "ME_block_trade",
-      "ok": 4,
+      "ok": 0,
       "fail": 0,
       "timeout": 0,
       "source_used": "akshare",
@@ -55,7 +55,7 @@
     },
     {
       "name": "ETF_FUNDAMENTAL",
-      "ok": 822,
+      "ok": 792,
       "fail": 0,
       "timeout": 0,
       "source_used": "em_spot+sina_fallback",
@@ -164,22 +164,16 @@
   },
   "data_quality_issues": [
     {
-      "issue_type": "spot_stale",
+      "issue_type": "spot_historical",
       "source": "etf_fundamental",
-      "n_affected": 20,
-      "action": "flagged",
-      "detail": "实时快照源数据日期(data_date)与目标(2026-09-16)不一致，可能源未刷新；已落库但标记待核查"
+      "n_affected": 25,
+      "action": "rejected",
+      "detail": "实时快照类源无法回溯历史日期；请求 2026-09-16 但数据实为最新(2026-09-17)，已整体排除，避免重标失真"
     }
   ],
-  "dq_score": 94.1,
+  "dq_score": 97.6,
   "dq_score_reason": "from DataQualityChecker (stage dq_check)",
-  "retry_queue_pending": 1,
-  "alerts": [
-    {
-      "level": "warning",
-      "kind": "stale_over_threshold",
-      "message": "源数据滞后 20 行(≥阈值5), 需核查源刷新"
-    }
-  ],
-  "generated_at": "2026-09-16 15:34:52"
+  "retry_queue_pending": 2,
+  "alerts": [],
+  "generated_at": "2026-09-17 09:06:04"
 }

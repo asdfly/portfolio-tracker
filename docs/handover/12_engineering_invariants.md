@@ -605,5 +605,36 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
 | 2 | `portfolio_summary` 至少**两个写入者 + 两套精度**（管线 `round(2)` vs 回填全精度）⇒ 序列存在精度断点 | 改 `round(2)` 是**口径改动**，与裁定 B 同类，须先拍板；且**不能**用「历史都是 17 位」当理由去动它 |
 | 3 | 守卫基线口径：`expected_universe` 取 30 日回看交集，跨扩编边界会**回落旧朝代**；`2026-07-31` 因已清仓的 `159732` **误拒** | 属闸门语义，非阻断项；今天改会让闸门在无人值守时段行为变动 |
 | 4 | `docs/handover/07_`、`11_`、`12_` 的**行号层重写**（`#115`/`#116` 已提交，文档里「工作区行号」与「`+20`/`+234` 位移」整套先验已失效） | 纯机械活；**锚点以可 `grep` 原文为准**这一条已先行保证可读，故不紧急 |
+| 5 | **运行账本 `run_report_<date>.json` 会被回填就地覆盖**（详见 §17.7） | 改名/加字段会**打断邮件闸门**（`send_report_email.py:112` 按 `run_report_<today>.json` 读 `run_status`）⇒ 属写产物侧 + 兼容性改动，须先拍板 |
+
+### 17.7 🔴 运行账本被回填**就地覆盖**，且文件名看不出换了来源（09-17 实测）
+
+**逐行读到的代码事实**：
+- `src/data_sources/collect_core.py:540-543` —— `RunReporter(date_str, mode="daily", reports_dir=None, run_date=None)`；`self.date = date_str  # 业务日期(目标日/回填日)`；`self.run_date = run_date or datetime.now()...`。
+- `:765-767` —— **落盘名只用业务日期**：`path = os.path.join(out_dir, f"run_report_{self.date}.json")`，紧跟 `open(path, "w", ...)` ⇒ **截断式覆盖，无备份、无 run_id、无 mode 后缀**。
+- `:742` —— 文件**内容里**有 `"run_date": self.run_date`；`mode` 也写进了内容（`run_analysis.py:1005` 取 `mode=("backfill" if backfill_date else "daily")`）。
+  ⇒ **内容能区分来源，文件名不能。**
+
+**实测现场**（`git diff HEAD -- data/reports/run_report_2026-09-16.json`，`09-17`）：
+
+| 字段 | HEAD（09-16 `daily` 运行） | 工作区（09-17 `backfill` 运行） |
+|---|---|---|
+| `run_date` | `2026-09-16` | **`2026-09-17`** |
+| `mode` | `daily` | **`backfill`** |
+| `dq_score` | `94.1` | `97.6` |
+| `data_quality_issues` | `spot_stale` / `n_affected=20` / `action=flagged` | **`spot_historical` / `n_affected=25` / `action=rejected`** |
+| `alerts` | `[stale_over_threshold: 源数据滞后 20 行(≥阈值5)]` | `[]` |
+| `retry_queue_pending` | `1` | `2` |
+| `generated_at` | `2026-09-16 15:34:52` | `2026-09-17 09:06:04` |
+
+⇒ **事实**：对历史日期 `D` 跑一次 `--date D` 回填，会以 `mode="backfill"` 覆盖 `run_report_D.json`；该日 `daily` 运行的账本**在磁盘上不复存在**（此例仍可由 git 取回：`index e1087dc..265d197`，即 HEAD blob `e1087dc`）。
+
+🔴 **它对本仓既有论证的影响（必须一并记住）**：
+- 「读 `run_report_<date>.json` 的 `dq_score` 判断那天跑通没有」这一用法，**前提是「那天之后再没人对它跑过回填」** —— 该前提**没有任何机制保证**（本例就是反例：09-16 曾被回填）。
+- 因此**不得**把某日的账本内容当作「那一天的不可变物证」；引用时必须同时给 `run_date` + `mode` + `generated_at`，**只引用 `run_report_<date>.json` 这个名字是不合格引用**（同 §17.4「空锚」类）。
+
+🔴 **修法方向（本轮不做，仅登记）**：候选 ① 文件名加 `mode` 或 `run_date` 后缀；② 写入前检测同名账本已存在且 `mode != 当前 mode` ⇒ 拒绝或另存；③ 引入 `run_id`。
+**三条都会触及 `send_report_email.py:112` 的 `run_report_<today_str>.json` 读取点**（那是邮件闸门读 `run_status` 的唯一通道）⇒ 属兼容性改动，**须先拍板再动**，不能今天顺手改。
+
 
 
