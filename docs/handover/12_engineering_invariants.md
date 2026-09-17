@@ -545,7 +545,10 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
 - **报告必须并列印出** `daily_return`（22 只 / 61.08%）与 `total_value`（34 只 / 全量），并声明 **「两者口径不同，不可相乘」**（读者拿 `1,527,929 × daily_return` 会算出错金额；实测当日盈亏 `+¥20,123` 而 `1,527,929 × 1.33% = 20,321 ≠ 20,123`）。
 - ✅ **标注已落地**：`src/utils/enhanced_report.py` 新增模块级 `_fmt_dr_coverage()`，并**无条件**在「当日盈亏」卡片与其后印出收窄口径声明。读不到覆盖度时印 **「覆盖度未记录」**，不许静默省略 —— 因为**声明本身就与数据可得性无关**（见 §17.6 第 1 条：邮件路径拿不到数字）。
 - 🔴 **T+1 回填不得把某日 `daily_return` 改写成「全 34 名」口径** —— 否则单调序列会断在那里，裁定 B 即失效。
-- 落地位置 = 工作区 `src/analysis/portfolio.py` 的 `common_codes = set(curr_codes.keys()) & set(prev_snapshots.keys())`（口径收窄只在这一层；**不动** `:569-571` 那三条分母分支的既有语义）。
+- 落地位置 = 工作区 `src/analysis/portfolio.py` 的 **两层收敛**（口径收窄只在这两层）：
+  - 第一层 `comparable_codes = set(curr_codes.keys()) & set(prev_snapshots.keys())`（当日持仓 ∩ 前日快照）；
+  - 第二层 `common_codes = comparable_codes & fresh_codes`（再收窄到「当日价新鲜」）。
+  ⚠️ **不得把裸锚 `common_codes = set(curr_codes.keys()) & ...` 当定位手段**——那行在 HEAD 里已改名/拆分，grep 命中 0；真实锚是上面两句**连左值一起给**。同时 `:569-571` 是价格异常告警，与口径 B 无关，引用时不要带上「不动 :569-571 分母分支」这类误指。
 - ⚠️ **待证的推论**（勿引用为结论）：由 09-16 反证 A（22 只 `total_value = 1,513,844.88`）反推 `w_ETF·r_ETF = −0.05%`、`w_OTC·r_OTC = +1.3846pp`，取 `w_OTC = 0.388` ⇒ `r_ETF ≈ −0.08%`、`r_OTC ≈ +3.57%`。**若**成立，则 09-16 存值 `+1.334557%` 属**全 34 名**口径、B 的首个断点就在 09-16。**尚待 `audit/_res1_return_decomp.json` 证伪或证实。**
 
 ### 17.3 `#135` 对 `#124` §7.4 的机制更正（重要，结论不变）
@@ -589,7 +592,9 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
   ⇒ 实测支撑（行号为什么必须去掉）：同一段 `metric_names` 在本轮内漂两次（`:544`→`:549`→`:554`），**两次都源于该 docstring 自身的增删**。
 - 🔴 **跨编码管道读源码做中文匹配 = 静默假阴性**（09-17，`verify-p1-batch` 实测）：同一份源码经 **PowerShell 管道（GBK 解码）** 读时中文匹配失败，遂使它对**我报的行号**先怀疑再撤回；用 **Read（UTF-8）** 复核则行数与 blob hash 全对。
   ⇒ **自检线索：连纯 ASCII 的行数也变少** ⇒ 不是"内容不同"，是**解码坏了**。
-  ⇒ **双证**：`行数` + `git hash-object` 同时给。凡"我读不到某行"的结论，**先证自己读到的是同一份字节**。
+   ⇒ **双证**：`行数` + `git hash-object` 同时给。凡"我读不到某行"的结论，**先证自己读到的是同一份字节**。
+- 🔑 **锚会改名（静默）比行号漂移更危险**（risk-manager 提出，lead 于 09-17 独立核实）。行号漂移至少让 `grep` 失败并显式报错；若只锚右值（如 `common_codes = set(...)` 的右半边），而作者把左边的变量名改了（`common_codes → comparable_codes`），该锚就会在 **HEAD 下命中 0**，且**没有任何报错**，读者会被静默带到错误位置或放弃追踪。**硬规则：引用赋值语句时必须连左值一起作为原文锚**——`comparable_codes = set(curr_codes.keys()) & set(prev_snapshots.keys())`，`common_codes = comparable_codes & fresh_codes`。仅凭右值做锚 = 留一个会静默断裂的引用。
+- 🔑 **核对锚的唯一性必须在 HEAD 下实测**（不是在工作区）。工作区可能被并发修改，引用目标应为 `git show HEAD:<file>` 输出的字节。
 
 ### 17.5 `portfolio_summary.daily_return` 有**不止一个写入者**，且精度不同（09-17 实测）
 
