@@ -1435,7 +1435,30 @@ def _render_rebalance_engine_panel():
             as_of = str(last_trading_day_on_or_before(date.today()))
             strat = st.radio("目标策略", ["threshold", "equal_weight", "periodic"],
                              horizontal=True, key="rb_engine_strategy")
-            plan = compute_rebalance_suggestion(conn, as_of_date=as_of, strategy=strat)
+            # task #77 修法 (b)：periodic 的基期必须**显式传入**。缺前提时**显式可见**，
+            # 不再静默退化成「永远立即再平衡」（旧行为：选 periodic 实际做的是立即再平衡）。
+            lrd = None
+            if strat == "periodic":
+                from src.analysis.rebalance_engine import resolve_last_rebalance_date
+                lrd = resolve_last_rebalance_date(conn, as_of_date=as_of)
+                if lrd is None:
+                    st.warning(
+                        "**周期调仓缺少「上次再平衡日」**：本系统尚无「实际调仓」的执行台账"
+                        "（`rebalance_history` 表不存在；`execution_logs` 为任务级；"
+                        "`trade_records` 为含转账的全账本流水；`advice_history` 记的是建议推送日），"
+                        "故无法计算「距上次再平衡的交易日数」。"
+                        "请手工指定上次调仓日——**系统不会替你按「立即再平衡」处理**。"
+                    )
+                    _picked = st.date_input("上次调仓日（手工指定）", value=None,
+                                            key="rb_engine_last_rebalance")
+                    lrd = str(_picked) if _picked else None
+            try:
+                plan = compute_rebalance_suggestion(
+                    conn, as_of_date=as_of, strategy=strat, last_rebalance_date=lrd)
+            except ValueError as e:
+                # 显式拒绝：把前提缺失直接摆在界面上，绝不给出一份「看起来正常」的方案
+                st.error(f"无法生成方案（前提缺失，已拒绝而非降级）：{e}")
+                return
             if not plan.action_needed:
                 st.success(f"截至 {plan.as_of_date}：{plan.reason}（T+1 执行日 {plan.execution_date}）")
             else:

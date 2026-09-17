@@ -83,8 +83,16 @@ def test_generate_rebalance_plan_wraps_cooling():
     mod_name = "src.analysis.rebalance_engine"
     saved = sys.modules.get(mod_name)
     fake_mod = types.ModuleType(mod_name)
-    fake_mod.compute_rebalance_suggestion = \
-        staticmethod(lambda db, as_of_date=None, strategy="layered": FakePlan())
+    seen_kwargs = []
+
+    def _fake_compute(db, as_of_date=None, strategy="layered", **kw):
+        seen_kwargs.append(kw)
+        return FakePlan()
+
+    fake_mod.compute_rebalance_suggestion = staticmethod(_fake_compute)
+    # task #77 (b)：生产调用方（advisor）现在会先 resolve 基期、再**显式**传给引擎。
+    # 假模块必须一并暴露该符号，否则 ImportError 会被 advisor 的宽 except 吞成 None。
+    fake_mod.resolve_last_rebalance_date = staticmethod(lambda db, as_of_date=None: None)
     sys.modules[mod_name] = fake_mod
 
     adv = SmartAdvisor(None)
@@ -99,3 +107,5 @@ def test_generate_rebalance_plan_wraps_cooling():
 
     assert r1 is not None
     assert r2 is None          # 第二次相同结构被冷却抑制
+    # 锁住 #77 (b) 的契约①：调用方**显式**传 last_rebalance_date（不靠引擎默认值）
+    assert seen_kwargs and all("last_rebalance_date" in kw for kw in seen_kwargs), seen_kwargs

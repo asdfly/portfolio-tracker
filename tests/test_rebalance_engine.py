@@ -172,13 +172,32 @@ class TestPeriodic:
         assert plan.action_needed is False
         assert "未到" in plan.reason
 
-    def test_no_history_treated_as_due(self):
+    def test_no_history_is_rejected_not_silently_due(self):
+        """task #77 (b)：`last_rebalance_date=None` + `periodic` ⇒ **显式拒绝**。
+
+        反证（改前的旧行为）：本用例原为 `test_no_history_treated_as_due`，
+        断言 `plan.action_needed is True` —— 即「无历史 → 视为立即再平衡」。
+        这正是「UI 选 periodic，系统实际做的是立即再平衡」的根因：策略 A 的皮、
+        策略 B 的里，且盘上无任何提示。旧实现见 git 历史：
+        `if last_rebalance_date is None: return self.propose(..., threshold=0.0)`。
+        因该提前返回，`propose_periodic` 中 `uncovered_years` 的日历退化留痕**永不执行**。
+        """
+        import pytest
         conn = _make_db()
-        plan = compute_rebalance_suggestion(
-            conn, as_of_date=AS_OF, strategy="periodic",
-            period_days=20, last_rebalance_date=None,
-        )
-        assert plan.action_needed is True
+        with pytest.raises(ValueError) as ei:
+            compute_rebalance_suggestion(
+                conn, as_of_date=AS_OF, strategy="periodic",
+                period_days=20, last_rebalance_date=None,
+            )
+        msg = str(ei.value)
+        assert "last_rebalance_date" in msg and "periodic" in msg
+        assert "禁止" in msg          # 明示「不得静默按立即再平衡处理」
+
+    def test_resolve_last_rebalance_date_returns_none(self):
+        """`resolve_last_rebalance_date` 当前恒 None（本仓无合格执行台账），且原因可日志。"""
+        from src.analysis.rebalance_engine import resolve_last_rebalance_date
+        conn = _make_db()
+        assert resolve_last_rebalance_date(conn, as_of_date=AS_OF) is None
 
 
 class TestCustomTarget:

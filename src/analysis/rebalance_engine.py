@@ -404,8 +404,19 @@ class RebalanceEngine:
             target_weights = self._equal_weight_target(weights)
         exec_date = str(next_trading_day(as_of_date))
         if last_rebalance_date is None:
-            # 无历史记录 → 视为需要再平衡
-            return self.propose(as_of_date, target_weights, threshold=0.0, strategy="periodic")
+            # 🔴 (b) 显式拒绝（项目所有者 2026-09-16 裁定）：**不得**静默退化成「立即再平衡」。
+            # 原实现是 `return self.propose(..., threshold=0.0, strategy="periodic")` ——
+            # 后果：用户在 UI 选 periodic 时，系统做的是「永远立即再平衡」（策略 A 的皮、
+            # 策略 B 的里），且盘上没有任何提示；同时下面 :409-438 的「交易日历退化留痕」
+            # 整条链因提前返回而**永不执行**（task #66 的留痕在现网不可达）。
+            # 现在改为抛错：缺前提必须显式可见，由调用方处置
+            # （生产调用方一律先走 resolve_last_rebalance_date）。
+            raise ValueError(
+                "strategy='periodic' 缺少 last_rebalance_date：无法计算「距上次再平衡的交易日数」，"
+                "因此也无法判定是否到期。本仓目前**没有**「实际调仓日」数据源"
+                "（候选与否决理由见 resolve_last_rebalance_date 的文档串），"
+                "该基期必须由调用方显式提供；**禁止**静默按「立即再平衡」处理。"
+            )
         days = get_trading_days(last_rebalance_date, as_of_date)
         elapsed = max(len(days) - 1, 0)        # 间隔交易日数
         # 退化口径留痕（task #66）：区间跨无官方休市表的年份时，get_trading_days 用的是
@@ -718,6 +729,65 @@ class RebalanceEngine:
             "equity_weight": round(equity_weight, 4),
             "warnings": warnings,
         }
+
+
+# ---------------------------------------------------------------------------
+# 「上次再平衡日」(last_rebalance_date) 的解析 —— task #77 修法 (b)
+# ---------------------------------------------------------------------------
+# 🔴 结论：本仓**没有**合格的「实际调仓日」数据源。本函数当前**恒返回 None**。
+#    这是**显式**的「没有来源」，不是漏改。候选与否决理由（2026-09-16 生产库实测，只读）：
+#
+#   1. `rebalance_history`           —— **表不存在**（全库 42 张表，无此表）。裁定候选 (a) 即为此路，已排除。
+#   2. `execution_logs`              —— 任务级日志（`task_name`/`status`/`message`/`created_at`），
+#                                       粒度是「某任务某次是否成功」，**无任何「调仓」语义**。
+#   3. `trade_records`               —— 达信**全账本流水**，1256 行 / 2023-06-28~2026-08-31。
+#                                       action 共 8 类，只有「证券买入」(548) 与「证券卖出」(32) 是证券交易，
+#                                       其余为「产品定时定额投资确认」(210)、「产品赎回确认」(155)、
+#                                       「产品申购确认」(133)、「银行转存」(94) 等。
+#                                       取 `MAX(date)` 会把**银行转存日**当成调仓日 ⇒ 语义错误。
+#   4. `advice_history`(advice_type='rebalance') —— 有 219 行（最新 2026-09-14），
+#                                       但那是**建议推送日**、不是**执行日**：管线几乎每个交易日都可能推。
+#                                       用它当基期 ⇒ `elapsed` 恒为 1 ⇒ 周期策略**永不触发**，
+#                                       只是把「永远立即再平衡」换成「永远不再平衡」，**同样静默**。
+#
+# ⇒ 在引入真正的「执行台账」之前，periodic 的基期**只能由调用方显式提供**（UI 输入 / 上游传入）。
+#    调用方拿到 None 时**必须显式告警**，不得回退到「立即再平衡」。
+_REBALANCE_HISTORY_TABLE = "rebalance_history"
+
+
+def resolve_last_rebalance_date(db_connection,
+                                as_of_date: Optional[str] = None) -> Optional[str]:
+    """尝试解析「上次再平衡日」；当前**恒返回 None**（理由见本区块顶部注释）。
+
+    存在的意义有两条，都为了对抗静默：
+      1. 把「没有来源」这件事**变成一个可调用、可测试、可日志**的事实，
+         而不是散落在各调用点的 `None` 默认值；
+      2. 将来若新增真正的执行台账，**只需改这一处**，所有调用点自动生效。
+
+    调用方契约：返回 None 且 `strategy == "periodic"` ⇒ **必须显式可见**。
+    见 `SmartAdvisor.generate_rebalance_plan` 与 `tabs/tab8_advice.py` 的处置。
+    """
+    candidates = []
+    try:
+        cur = db_connection.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (_REBALANCE_HISTORY_TABLE,))
+        candidates.append(_REBALANCE_HISTORY_TABLE if cur.fetchone() else None)
+    except Exception:                                    # 连接不可用 / 空库
+        candidates.append(None)
+    if candidates and candidates[0]:
+        # 走到这里说明有人建了目标表：**先不要猜列名**，显式留痕让人来定口径。
+        logger.error(
+            "[periodic] 检测到 %s 表存在，但本函数尚未定义其「调仓日」列口径；"
+            "仍按「无来源」处理（返回 None）。请补口径后再启用。",
+            _REBALANCE_HISTORY_TABLE)
+    logger.warning(
+        "[periodic] 无法解析「上次再平衡日」(as_of=%s)：本仓无合格的执行台账"
+        "（rebalance_history 表不存在；execution_logs 为任务级；trade_records 为全账本流水含转账；"
+        "advice_history 记的是建议推送日而非执行日）⇒ 返回 None。"
+        "调用方必须显式处置，禁止回退到「立即再平衡」。",
+        as_of_date or "(未指定)")
+    return None
 
 
 def compute_rebalance_suggestion(db_connection: sqlite3.Connection,

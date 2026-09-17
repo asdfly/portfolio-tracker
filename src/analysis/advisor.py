@@ -188,8 +188,18 @@ class SmartAdvisor:
         P1-4 冷却指纹去重：若本次方案结构与"最近已推送"方案相同，则抑制重复推送。
         """
         try:
-            from src.analysis.rebalance_engine import compute_rebalance_suggestion
-            plan = compute_rebalance_suggestion(self.db, as_of_date=as_of, strategy=strategy)
+            from src.analysis.rebalance_engine import (
+                compute_rebalance_suggestion, resolve_last_rebalance_date,
+            )
+            # task #77 修法 (b)：periodic 的基期**必须显式传入**，不得依赖默认 None。
+            # 本仓暂无合格的执行台账 ⇒ resolve 返回 None ⇒ 若 strategy 为 periodic，
+            # 引擎会**抛错**（显式拒绝），由下方 except 转成可见告警 —— 而不是静默
+            # 退化成「立即再平衡」再产出一份看似正常的方案。
+            lrd = resolve_last_rebalance_date(self.db, as_of_date=as_of)
+            plan = compute_rebalance_suggestion(
+                self.db, as_of_date=as_of, strategy=strategy,
+                last_rebalance_date=lrd,
+            )
         except Exception as e:  # 引擎依赖持仓快照/日历，缺表或空库时静默降级
             logger.warning(f"再平衡引擎调用失败，跳过: {e}")
             return None
