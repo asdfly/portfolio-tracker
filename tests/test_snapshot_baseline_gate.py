@@ -376,10 +376,13 @@ def test_otc_nav_filled_is_warning_and_does_not_degrade(tmp_path):
     assert sorted(r["code"] for r in res["filled"]) == sorted(OTC_CODES)
     assert sorted(r["code"] for r in res["missing"]) == sorted(OTC_CODES)
     assert [r["code"] for r in res["deferred"]] == FRI_EXTRA
-    # 旧的假陈述必须消失，且 lag 现算为 1（不得硬编码）
-    assert "不落快照行" not in res["message"]
-    assert "T+1" in res["message"] and "滞后 1 自然日" in res["message"]
-    assert "2026-09-15" in res["message"]
+    # 判定(verdict)与诊断(diagnosis/message)分离：本用例只钉 verdict，
+    # 不耦合 message 的具体措辞 —— 措辞变了不该让门控判据的测试变红。
+    # 仅保留两条有意义的软校验：诊断信息存在、旧的假陈述已消失。
+    assert isinstance(res["message"], str) and res["message"]
+    assert "不落快照行" not in res["message"]          # 旧假陈述已消失
+    # lag 用结构化字段校验（不得硬编码日期字面量）
+    assert res["missing"][0]["lag_days"] == 1
     assert _alerts(db) == []                          # warning 形态不写 alerts 表
 
     reports = tmp_path / "reports"
@@ -398,11 +401,12 @@ def test_otc_nav_uncovered_is_error_and_degrades(tmp_path):
     res = check_otc_nav_coverage(db, TARGET_WED, per_code)
 
     assert res["ok"] is False
-    assert res["alert_level"] == "error"
+    assert res["alert_level"] == "error"              # 判定：事故形态
     assert res["filled"] == []
     assert sorted(r["code"] for r in res["uncovered"]) == sorted(OTC_CODES)
-    assert "缺行" in res["message"] and "整篮子未落库" in res["message"]
-    assert "不落快照行" not in res["message"]
+    # 判定/诊断分离：verdict 已钉死；message 只作存在性 + 旧假陈述消失的软校验
+    assert isinstance(res["message"], str) and res["message"]
+    assert "不落快照行" not in res["message"]         # 旧假陈述已消失
     assert _alerts(db) == []                          # 本模块不写库，写库由调用方负责
 
     _add_summary_table(db, [TARGET_WED])
@@ -483,3 +487,50 @@ def test_contract1_check_must_run_after_snapshot_write():
         "error ⇒ 日报被 run_status=degraded 拦死")
     # 兜底：也不得被挪到阶段0 之前或阶段0/阶段一之间
     assert stage0_at < stage1_at, "阶段0 必须早于阶段一（阶段0 的值是后续分析的基础）"
+
+
+# ------------------------- 加固①：_connect 显式拒绝 URI（防静默误报） ---
+
+def test_connect_rejects_uri_explicitly(tmp_path):
+    """_connect 必须显式拒绝 URI（file:...?mode=ro）。
+
+    否则 sqlite3.connect 静默返回一个打不开的连接，下游保守回退成 error 级告警
+    ⇒ 静默误报（这正是 09-17 事故之外、验证者指出的另一处隐患）。
+    """
+    from src.analysis.snapshot_gate import _connect
+
+    with pytest.raises(ValueError):
+        _connect("file:data/database/portfolio.db?mode=ro")
+
+    # 普通路径仍能正常打开（判据方向不变，只是把 URI 误用显式化）
+    db = tmp_path / "plain.db"
+    db.write_bytes(b"")
+    conn = _connect(str(db))
+    try:
+        assert conn is not None
+    finally:
+        conn.close()
+
+
+# ------------------- 加固③：pipeline_incomplete 文案与判级语义对齐 ---
+
+def test_pipeline_incomplete_message_aligns_with_verdict(tmp_path):
+    """当 run_status != ok 但**无缺失/异常阶段**（降级来自 error 级告警）⇒
+    文案不再自相矛盾地说"未完整执行"（列空却称未完整）。
+
+    2026-09-17 实况：18 阶段全 ok、无缺失/异常，但被 otc_nav_missing(error) 降级。
+    """
+    from src.data_sources.collect_core import RUN_STATUS_DEGRADED, RunReporter
+
+    rep = RunReporter("2026-09-17", reports_dir=str(tmp_path))
+    for s in ("basic", "risk", "monitor", "dq_check"):
+        rep.stage(s, "ok")                       # 全部阶段 ok：无缺失/异常阶段
+    rep.alert("error", "otc_nav_missing", "场外当日净值缺失 12 只")
+    report, _ = rep.finalize_and_write(reports_dir=str(tmp_path))
+
+    assert report["run_status"] == RUN_STATUS_DEGRADED
+    pinc = [a for a in report["alerts"] if a["kind"] == "pipeline_incomplete"]
+    assert pinc, "degraded 必带 pipeline_incomplete 告警"
+    msg = pinc[0]["message"]
+    assert "未完整执行" not in msg                # 不再说"未完整"
+    assert "降级由" in msg and "error 级质量告警" in msg

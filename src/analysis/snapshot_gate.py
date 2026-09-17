@@ -124,7 +124,16 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 
 def _connect(db_path):
-    conn = sqlite3.connect(str(db_path))
+    s = str(db_path)
+    # SQLite URI（如 ``file:...?mode=ro``）需要 ``sqlite3.connect(s, uri=True)`` 才能正确打开。
+    # 本模块所有调用点都传**普通路径**；若误传 URI，``sqlite3.connect`` 会静默返回一个
+    # 无法查询的连接（打不开），下游再把它保守回退成 error 级告警 ⇒ **静默误报**。
+    # 故在此显式报错，让误用立即暴露，而不是静默误判。判据方向本身不变。
+    if s.startswith("file:"):
+        raise ValueError(
+            f"_connect 只接受普通 db 路径，不应传 URI（收到 {s!r}）。"
+            "需要只读请改用 sqlite3.connect(path, uri=True) 并显式处理打开结果。")
+    conn = sqlite3.connect(s)
     conn.execute("PRAGMA busy_timeout=15000")
     return conn
 
