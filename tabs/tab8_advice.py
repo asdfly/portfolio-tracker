@@ -1636,10 +1636,17 @@ def _render_pre_market_panel():
                 st.markdown(f"{icon} **{a.indicator_name}**: {a.description}")
         if report.etf_signals:
             st.markdown("**持仓信号预览**")
-            sig_data = [{"名称": es.name, "代码": es.code, "趋势": es.trend,
-                         "MACD": es.macd_signal, "RSI": f"{es.rsi_value:.0f}",
-                         "技术评分": f"{es.signal_score:.0f}", "风险评分": f"{es.risk_score:.0f}",
-                         "资金流(万)": f"{es.fund_flow_net:+.0f}"} for es in report.etf_signals]
+            today = report.report_date
+            sig_data = []
+            for es in report.etf_signals:
+                ff = f"{es.fund_flow_net:+.0f}"
+                # 裁定 (ii)：资金流 as-of ≠ 当日 → 必须在数值旁标注 as-of 日期
+                if es.fund_flow_asof and es.fund_flow_asof != today:
+                    ff += f" (as-of {es.fund_flow_asof})"
+                sig_data.append({"名称": es.name, "代码": es.code, "趋势": es.trend,
+                                 "MACD": es.macd_signal, "RSI": f"{es.rsi_value:.0f}",
+                                 "技术评分": f"{es.signal_score:.0f}", "风险评分": f"{es.risk_score:.0f}",
+                                 "资金流(万)": ff})
             st.dataframe(sig_data, width="stretch", hide_index=True,
                          height=min(200 + len(sig_data) * 28, 500))
         ns = report.news_sentiment
@@ -1719,9 +1726,19 @@ def _render_post_market_panel():
                     st.markdown(f"- **{sc['code']}** {ch['dimension']}: {ch['from']} → {ch['to']}")
         if report.fund_flow_changes:
             with st.expander("资金流向变化", expanded=False):
-                flow_data = [{"代码": fc["code"], "今日(万)": round(fc["today_flow"]),
-                              "昨日(万)": round(fc["yesterday_flow"]),
-                              "变化(万)": round(fc["flow_change"])} for fc in report.fund_flow_changes[:20]]
+                today = report.report_date
+                flow_data = []
+                for fc in report.fund_flow_changes[:20]:
+                    today_val = round(fc["today_flow"])
+                    # 裁定 (ii)：今日资金流 as-of ≠ 当日 → 标注
+                    if fc.get("today_date") and fc["today_date"] != today:
+                        today_val = f"{today_val} (as-of {fc['today_date']})"
+                    yest_val = round(fc["yesterday_flow"])
+                    if fc.get("yesterday_date") and fc["yesterday_date"] != today:
+                        yest_val = f"{yest_val} (as-of {fc['yesterday_date']})"
+                    flow_data.append({"代码": fc["code"], "今日(万)": today_val,
+                                      "昨日(万)": yest_val,
+                                      "变化(万)": round(fc["flow_change"])})
                 st.dataframe(flow_data, width="stretch", hide_index=True)
         if report.news_highlights:
             with st.expander("今日重大新闻", expanded=False):

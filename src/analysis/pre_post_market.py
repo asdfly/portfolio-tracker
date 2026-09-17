@@ -392,6 +392,7 @@ def _load_fund_flow_changes(conn) -> List[Dict]:
       2) 所以把字面量改对（`'etf'`）时**必须同时补 NULL 过滤**，否则立刻把
          `float(None)` 引进盘后报告（就是盘前那个 TypeError 的同类）。
          CTE 里加 `AND net_inflow IS NOT NULL` 后，取到的恒是"最近一行**有值**的"。
+    #130 裁定 (ii)：资金流 as-of ≠ 当日 → 必须在 UI 标注 as-of 日期。
     """
     df = pd.read_sql_query("""
         WITH latest AS (
@@ -400,7 +401,8 @@ def _load_fund_flow_changes(conn) -> List[Dict]:
             FROM fund_flows
             WHERE category IN ('etf','sector') AND net_inflow IS NOT NULL
         )
-        SELECT l1.code, l1.net_inflow as today_flow, l2.net_inflow as yesterday_flow,
+        SELECT l1.code, l1.date as today_date, l1.net_inflow as today_flow,
+               l2.date as yesterday_date, l2.net_inflow as yesterday_flow,
                l1.net_inflow - COALESCE(l2.net_inflow,0) as flow_change
         FROM latest l1 LEFT JOIN latest l2 ON l1.code=l2.code AND l2.rn=2
         WHERE l1.rn=1 ORDER BY flow_change DESC
@@ -415,7 +417,9 @@ def _load_fund_flow_changes(conn) -> List[Dict]:
         chg = r.get("flow_change")
         out.append({"code": str(r["code"]),
                     "today_flow": float(today) / 1e4,
+                    "today_date": str(r.get("today_date", ""))[:10] or None,
                     "yesterday_flow": float(yest) / 1e4 if (yest is not None and not pd.isna(yest)) else 0.0,
+                    "yesterday_date": str(r.get("yesterday_date", ""))[:10] or None,
                     "flow_change": float(chg) / 1e4 if (chg is not None and not pd.isna(chg)) else 0.0})
     return out
 
