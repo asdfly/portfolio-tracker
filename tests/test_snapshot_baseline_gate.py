@@ -19,8 +19,13 @@
      （**单看行数会放行**——2026-09-17 08:59 的无人值守回填运行就是这样把
       08:5x 刚修好的 09-16 summary 打回 933,195.10 的）；
   C) 周五 35 行（34 + 027293）**不得**被判为异常；
-  D) 场外当日无净值 ⇒ otc_nav_missing 告警；
-  E) error 级告警 ⇒ run_status 降级为 degraded，且该状态被邮件闸门拦下。
+  D) 场外当日无净值 **且当日快照缺这些 code**（09-16 事故形态）⇒ uncovered ⇒ error 告警；
+  E) error 级告警 ⇒ run_status 降级为 degraded，且该状态被邮件闸门拦下；
+  F) 场外当日无净值 **但当日快照已含这 12 行**（并集合并路径已用上一可用净值补位，
+     即 T+1 披露的结构性常态）⇒ filled ⇒ warning、**不写 alerts 表、不降级**、
+     日报闸门放行。否则 2026-09-17 15:30 起，这条误报会**每一个交易日**都把
+     日报邮件拦死（logs/scheduled_run.log:17290 `[CRITICAL] run_status=degraded`
+     + 17292 `[WARN] report email send FAILED, rc=1`）。
 
 全程只在 tmp_path 造库，绝不触碰 data/database/portfolio.db。
 """
@@ -295,3 +300,139 @@ def test_gate_runs_before_saving_summary():
     between = src[gate_at:save_at]
     assert 'if not gate["ok"]:' in between
     assert "return results" in between
+
+
+# ------------------------- F. 契约1 的两种形态：常态(warning) / 事故(error) ---
+
+def _add_summary_table(db: Path, dates) -> None:
+    """把 portfolio_summary 写到目标日（data_readiness_gate 的判据 1）。"""
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE IF NOT EXISTS portfolio_summary "
+                 "(date TEXT, total_value REAL)")
+    for d in dates:
+        conn.execute("INSERT INTO portfolio_summary (date, total_value) VALUES (?,?)",
+                     (d, 100.0))
+    conn.commit()
+    conn.close()
+
+
+def _load_send_report_email():
+    """按 main() 的同一方式加载 scripts/send_report_email.py（不执行 main / 不发信）。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sre_gate_probe", str(PROJECT_ROOT / "scripts" / "send_report_email.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _run_status_after_coverage_alert(reports_dir: Path, target: str,
+                                    alert_level: str, message: str) -> str:
+    """复刻 run_analysis.py:1118-1141 的 alert_level 分流，返回本次运行的 run_status。
+
+    这里是"被测语义"而非"被测实现"的镜像：它只断言
+    「error 告警 ⇒ 降级 / warning 或空 ⇒ 不降级」这一 collect_core 的既有规则
+    （该规则本次**未改动**），用来证明分流本身不会再误伤日报。
+    """
+    from src.data_sources.collect_core import RunReporter
+
+    rep = RunReporter(target, reports_dir=str(reports_dir))
+    for s in ("basic", "risk", "monitor", "dq_check"):
+        rep.stage(s, "ok")
+    if alert_level:
+        rep.alert(alert_level, OTC_NAV_MISSING_KIND, message)
+    report, _ = rep.finalize_and_write(reports_dir=str(reports_dir))
+    return report["run_status"]
+
+
+def test_otc_nav_filled_is_warning_and_does_not_degrade(tmp_path):
+    """F) 12 只无 D 净值、但当日快照已含这 12 行（合并路径补位）⇒ warning，不降级。
+
+    2026-09-17 15:30 实况：16901 那句「不落快照行 ⇒ error」与 16945
+    「保存持仓快照: 2026-09-17, 34条记录」直接矛盾 ⇒ 应是常态告警。
+    """
+    from src.data_sources.collect_core import RUN_STATUS_OK
+
+    db = _make_db(tmp_path, TARGET_WED)
+    _write_rows(db, TARGET_WED, BASE_CODES)          # 合并路径已补位并落当日行
+    per_code = _per_code([(c, "2026-09-15") for c in OTC_CODES])
+    per_code.append({"code": FRI_EXTRA[0], "status": "OK",
+                     "nav_latest_date": "2026-09-11"})
+
+    res = check_otc_nav_coverage(db, TARGET_WED, per_code)
+
+    assert res["ok"] is True
+    assert res["alert_level"] == "warning"
+    assert res["uncovered"] == []
+    assert sorted(r["code"] for r in res["filled"]) == sorted(OTC_CODES)
+    assert sorted(r["code"] for r in res["missing"]) == sorted(OTC_CODES)
+    assert [r["code"] for r in res["deferred"]] == FRI_EXTRA
+    # 旧的假陈述必须消失，且 lag 现算为 1（不得硬编码）
+    assert "不落快照行" not in res["message"]
+    assert "T+1" in res["message"] and "滞后 1 自然日" in res["message"]
+    assert "2026-09-15" in res["message"]
+    assert _alerts(db) == []                          # warning 形态不写 alerts 表
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    assert _run_status_after_coverage_alert(
+        reports, TARGET_WED, res["alert_level"], res["message"]) == RUN_STATUS_OK
+
+
+def test_otc_nav_uncovered_is_error_and_degrades(tmp_path):
+    """F) 当日快照**缺**这些行（09-16 事故形态）⇒ uncovered ⇒ error ⇒ 降级 + 被邮件闸门拦下。"""
+    from src.data_sources.collect_core import RUN_STATUS_DEGRADED
+
+    db = _make_db(tmp_path, TARGET_WED)              # 当日快照一行都没有
+    per_code = _per_code([(c, "2026-09-15") for c in OTC_CODES])
+
+    res = check_otc_nav_coverage(db, TARGET_WED, per_code)
+
+    assert res["ok"] is False
+    assert res["alert_level"] == "error"
+    assert res["filled"] == []
+    assert sorted(r["code"] for r in res["uncovered"]) == sorted(OTC_CODES)
+    assert "缺行" in res["message"] and "整篮子未落库" in res["message"]
+    assert "不落快照行" not in res["message"]
+    assert _alerts(db) == []                          # 本模块不写库，写库由调用方负责
+
+    _add_summary_table(db, [TARGET_WED])
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    status = _run_status_after_coverage_alert(
+        reports, TARGET_WED, res["alert_level"], res["message"])
+    assert status == RUN_STATUS_DEGRADED
+
+    gate = _load_send_report_email()
+    ok, reason, _summary_date = gate.data_readiness_gate(
+        str(db), TARGET_WED, reports_dir=str(reports))
+    assert ok is False and "degraded" in reason
+
+
+def test_otc_two_forms_are_distinguished_end_to_end(tmp_path):
+    """F) 端到端区分：同一份 per_code，仅"当日快照是否已覆盖"不同 ⇒ 日报放行/拦截必须相反。
+
+    两种形态各自独立造数据（同一实现下结果若相同，就只能得出"无法判定"）。
+    """
+    gate = _load_send_report_email()
+    per_code = _per_code([(c, "2026-09-15") for c in OTC_CODES])
+
+    db_filled = _make_db(tmp_path / "filled", TARGET_WED)
+    _write_rows(db_filled, TARGET_WED, BASE_CODES)    # 形态一：已补位落行
+    db_uncovered = _make_db(tmp_path / "uncovered", TARGET_WED)  # 形态二：整篮子缺行
+
+    observed = {}
+    for tag, db in (("filled", db_filled), ("uncovered", db_uncovered)):
+        cov = check_otc_nav_coverage(db, TARGET_WED, per_code)
+        _add_summary_table(db, [TARGET_WED])
+        reports = tmp_path / tag / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        status = _run_status_after_coverage_alert(
+            reports, TARGET_WED, cov["alert_level"], cov["message"])
+        ok, reason, _summary_date = gate.data_readiness_gate(
+            str(db), TARGET_WED, reports_dir=str(reports))
+        observed[tag] = (cov["alert_level"], status, ok, reason[:40])
+
+    assert observed["filled"][:3] == ("warning", "ok", True), observed
+    assert observed["uncovered"][:3] == ("error", "degraded", False), observed

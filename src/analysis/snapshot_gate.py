@@ -14,10 +14,40 @@
 `portfolio_summary.total_value` 只剩场内 ETF 的 933,195.10，
 而当日快照真实合计 1,527,928.85 —— 少 38.1%，run_status 却仍是 "ok"、日报照发。
 
+修复（2026-09-17 10:49，7ee4cf5）: `src/analysis/portfolio.py` 落地「场内台账 +
+库内场外」并集合并 —— 对当日无净值的场外标的，以上一可用净值补位**并落当日快照行**。
+故 09-16 那种「整篮子缺行」的形态在合并路径上线后已不复存在；剩下的「源只到 D-1」
+只是 T+1 披露的**结构性常态**（周一是 lag=3，节后更长）。
+
+09-17 15:30 实测（logs/scheduled_run.log，18 个阶段全部 status=ok）::
+
+    16886-16898  13 只场外逐一行「最新净值 2026-09-16 | 待插入 0 行」
+    16900        [otc_nav_missing] 场外当日净值缺失 12 只(目标日 2026-09-17)
+                 …这些标的本日**不落快照行**(禁止静默跳过)   ← 此句与事实不符
+    16924        [持仓合并] 这 12 只取自 2026-09-16（价格沿用该日净值）
+    16944        保存持仓快照: 2026-09-17, 34条记录     ← code 集合与 09-16 完全相同
+    16967        [口径B] daily_return 排除 12 只价格非当日的标的，共 22/34 只，61.08%
+    17289        [EMAIL] [CRITICAL] … run_status=degraded
+    17291        [WARN] report email send FAILED, rc=1
+    最终         总市值 1,524,395.24 / 当日收益 -0.38%，portfolio_summary 已正常落库
+    未生成       data/reports/email_report_20260917_light.html
+
+即：这 12 只**确实落了当日快照行**（16944 的 code 集合与 09-16 相同），却被 16900 那句
+「不落快照行 ⇒ error」打进 degraded ⇒ `scripts/send_report_email.py:68` 的
+`_RUN_STATUS_BLOCKING` 会**每一个交易日**都拒发日报。真正代表 09-16 事故形态的
+契约 2（check_snapshot_baseline）当天反而是**通过**的（告警里没有
+summary_refused_snapshot_incomplete）。
+
 本模块提供两道**互相独立**的闸门，判据都不依赖"阶段是否执行"这类间接信号：
 
-  1. check_otc_nav_coverage —— 场外当日无净值 ⇒ 不写行，但**必须**落一条
-     error 级告警（含缺失 code 清单与原因），禁止静默跳过。
+  1. check_otc_nav_coverage —— 「场外源当日无净值」按**目标日快照是否已覆盖这些
+     code** 分成两种形态（这是唯一能区分"T+1 常态"与"09-16 整篮子缺行事故"的信号）：
+       * filled    —— 该 code 已存在于 `portfolio_snapshots WHERE date=D`
+                      ⇒ 合并路径已用上一可用净值补位并落行 ⇒ T+1 常态
+                      ⇒ 告警级别 warning、ok=True（**不写 alerts 表、不降级 run_status**）；
+       * uncovered —— 该 code 不存在于 `portfolio_snapshots WHERE date=D`
+                      ⇒ 该篮子本日未落库 ⇒ 09-16 事故形态
+                      ⇒ 告警级别 error、ok=False。
   2. check_snapshot_baseline —— 生成 portfolio_summary **之前**校验当日
      portfolio_snapshots 是否覆盖基线标的域，不覆盖则拒绝生成 summary。
 
@@ -39,7 +69,9 @@
     打回 933,195.10 / +0.65%，并二次发出日报。
     故判据 = 「当日快照覆盖基线标的域」**且**「本次 positions 覆盖当日全部快照行」。
 
-纪律：本模块只读快照数据；唯一的写操作是**失败时**往 alerts 表落一条 error 告警。
+纪律：本模块只读快照数据；唯一的写操作是契约 2 拒绝时往 alerts 表落一条 error 告警。
+契约 1 的 filled(warning) 形态**不写库、不降级** run_status —— 它只是把 T+1 披露的
+常态留在报告里可见；只有 uncovered(error) 形态才由调用方落 alerts 表。
 """
 from __future__ import annotations
 
@@ -157,7 +189,15 @@ def record_error_alert(db_path, rule_name, message):
 
 
 def check_otc_nav_coverage(db_path, date_str, per_code, otc_codes=None):
-    """契约 1：场外当日无净值 ⇒ 汇总缺失清单（不写行，但必须显式告警）。
+    """契约 1：场外当日无来源净值 ⇒ 按**当日快照是否已覆盖**区分常态/事故形态。
+
+    判据（唯一能区分两者的信号，不是"阶段是否执行"）:
+      * filled    —— 该 code 已存在于 `portfolio_snapshots WHERE date=date_str`
+                     ⇒ 「场内台账 + 库内场外」并集合并路径已用上一可用净值补位
+                     并落当日快照行 ⇒ 场外源 T+1 披露的**结构性常态**
+                     ⇒ alert_level="warning"、ok=True（不写 alerts 表、不降级 run_status）；
+      * uncovered —— 该 code 不存在于当日快照 ⇒ 该篮子本日未落库
+                     ⇒ 2026-09-16 事故形态 ⇒ alert_level="error"、ok=False。
 
     Args:
         db_path: 库路径。
@@ -167,17 +207,26 @@ def check_otc_nav_coverage(db_path, date_str, per_code, otc_codes=None):
         otc_codes: 可选的场外 code 全集，用于过滤非场外记录。
 
     Returns:
-        dict(ok, missing, deferred, expected, message)
-        - ok=False 仅当**基线标的**里有标的当日无净值（deferred 只报不拦：
-          它本就不属于当日应有标的域，如 027293 只在周五有行）。
+        dict(ok, missing, deferred, expected, filled, uncovered, alert_level, message)
+        - ok=False 仅当**基线标的**里有标的当日无净值**且当日快照缺该行**；
+          deferred 只报不拦（它本就不属于当日应有标的域，如 027293 只在周五有行）；
+        - alert_level ∈ {"error", "warning", ""}，调用方据此分流告警级别。
+
+    读快照失败时按**保守方向**回退：视为全部 uncovered(error)，绝不因为读不到
+    覆盖信息就把事故形态降级成 warning。
     """
     conn = None
+    covered = set()
     try:
         conn = _connect(db_path)
         uni = expected_universe(conn, date_str)
+        covered = {r[0] for r in conn.execute(
+            "SELECT DISTINCT code FROM portfolio_snapshots WHERE date = ?",
+            (str(date_str),))}
     except sqlite3.Error as e:
-        logger.warning("[场外净值] 基线读取失败(%s)，本次只做逐只比对", e)
+        logger.warning("[场外净值] 基线/当日快照读取失败(%s)，按保守方向判为未覆盖", e)
         uni = None
+        covered = set()
     finally:
         if conn is not None:
             conn.close()
@@ -209,7 +258,11 @@ def check_otc_nav_coverage(db_path, date_str, per_code, otc_codes=None):
 
     if not missing:
         return {"ok": True, "missing": [], "deferred": deferred,
-                "expected": sorted(expected), "message": ""}
+                "expected": sorted(expected), "filled": [], "uncovered": [],
+                "alert_level": "", "message": ""}
+
+    filled = [r for r in missing if r["code"] in covered]
+    uncovered = [r for r in missing if r["code"] not in covered]
 
     detail = ", ".join(
         "%s(最新 %s%s)" % (r["code"], r["latest"] or "无",
@@ -217,17 +270,38 @@ def check_otc_nav_coverage(db_path, date_str, per_code, otc_codes=None):
         for r in missing[:20])
     if len(missing) > 20:
         detail += " …(共 %d 只)" % len(missing)
-    message = (
-        "[%s] 场外当日净值缺失 %d 只(目标日 %s): %s；"
-        "原因=场外源当日只到前一交易日(T+1 披露)、库内该行已存在，"
-        "采集器判「待插入 0 行」；这些标的本日**不落快照行**(禁止静默跳过)。"
-        % (OTC_NAV_MISSING_KIND, len(missing), date_str, detail)
-    )
+
+    # lag 一律现算（周一 lag=3、节后更长），**不得**硬编码成 1。
+    _latest_dates = sorted({r["latest"] for r in missing if r["latest"]})
+    latest_max = _latest_dates[-1] if _latest_dates else None
+    lag = _lag_days(latest_max, date_str) if latest_max else None
+
+    if uncovered:
+        message = (
+            "[%s] 场外当日净值缺失 %d 只(目标日 %s)，其中 %d 只当日快照**缺行**"
+            "⇒ 整篮子未落库(2026-09-16 事故形态): %s；"
+            "原因=场外源当日只到前一交易日(T+1 披露)、库内该行已存在，采集器判"
+            "「待插入 0 行」，且「场内台账+库内场外」合并路径也未为这些标的落当日快照行。"
+            % (OTC_NAV_MISSING_KIND, len(missing), date_str, len(uncovered),
+               ", ".join(r["code"] for r in uncovered[:20]))
+        )
+    else:
+        message = (
+            "[%s] 场外源 T+1 披露：%d 只标的当日(%s)无来源净值(最新 %s%s)；"
+            "这 %d 只已由「场内台账+库内场外」并集合并路径以上一可用净值(%s)补位"
+            "并落当日快照行；已按 daily_return 口径B 从分子/分母排除 ⇒ "
+            "不构成 2026-09-16 事故形态(整篮子未落库)。"
+            % (OTC_NAV_MISSING_KIND, len(missing), date_str, latest_max or "无",
+               "" if lag is None else "，滞后 %d 自然日" % lag,
+               len(filled), latest_max or "无")
+        )
+    message += " 明细: " + detail
     if deferred:
         message += " 非当日基线标的(延后披露，不拦): %s" % ", ".join(
             r["code"] for r in deferred)
-    return {"ok": False, "missing": missing, "deferred": deferred,
-            "expected": sorted(expected), "message": message}
+    return {"ok": not uncovered, "missing": missing, "deferred": deferred,
+            "expected": sorted(expected), "filled": filled, "uncovered": uncovered,
+            "alert_level": "error" if uncovered else "warning", "message": message}
 
 
 def check_snapshot_baseline(db_path, date_str, positions,

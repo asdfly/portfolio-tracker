@@ -1115,20 +1115,31 @@ def main(argv=None):
             logger.warning(f"场外基金净值采集失败(不影响主流程): {e}")
             _reporter.stage("otc_nav", "error", note=str(e)[:160])
 
-        # #116 契约1: 场外当日无净值 ⇒ **禁止静默跳过**，必须落 error 级告警。
+        # #116 契约1: 场外当日无净值 ⇒ **禁止静默跳过**，必须显式告警。
         # 09-16 的整篮子跳过在日志里只留了 13 行 "待插入 0 行"（INFO 级），
         # 阶段状态仍是 ok、告警为空 —— 这就是"静默"的定义。
+        # 但「源只到 D-1」本身是 T+1 披露的结构性常态（周一 lag=3，节后更长），
+        # 是否升级为 error 由 check_otc_nav_coverage 按**当日快照是否已覆盖这些 code**
+        # 判定，本处只负责按 alert_level 分流：
+        #   uncovered(当日快照缺行 ⇒ 整篮子未落库，09-16 事故形态) ⇒ error 级告警；
+        #   filled(合并路径已用上一可用净值补位并落行) ⇒ warning，**不写 alerts 表、
+        #   不降级 run_status** —— 否则每个交易日都会把日报邮件永久拦死。
         if _otc_res:
             try:
                 from src.analysis.snapshot_gate import (
                     check_otc_nav_coverage, record_error_alert, OTC_NAV_MISSING_KIND)
                 _cov = check_otc_nav_coverage(DATABASE_PATH, analyzer.today,
                                               _otc_res.get("per_code"))
-                if not _cov["ok"]:
+                _level = _cov.get("alert_level") or ""
+                if _level == "error":
                     logger.error(_cov["message"])
+                    # record_error_alert 把 level 硬编码为 "error"，只应在 error 形态调用
                     record_error_alert(DATABASE_PATH, OTC_NAV_MISSING_KIND,
                                        _cov["message"])
                     _reporter.alert("error", OTC_NAV_MISSING_KIND, _cov["message"])
+                elif _level == "warning":
+                    logger.warning(_cov["message"])
+                    _reporter.alert("warning", OTC_NAV_MISSING_KIND, _cov["message"])
             except Exception as e:
                 logger.warning(f"场外净值覆盖度检查失败(不影响主流程): {e}")
 
