@@ -657,5 +657,16 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
 🔴 **修法方向（本轮不做，仅登记）**：候选 ① 文件名加 `mode` 或 `run_date` 后缀；② 写入前检测同名账本已存在且 `mode != 当前 mode` ⇒ 拒绝或另存；③ 引入 `run_id`。
 **三条都会触及 `send_report_email.py:112` 的 `run_report_<today_str>.json` 读取点**（那是邮件闸门读 `run_status` 的唯一通道）⇒ 属兼容性改动，**须先拍板再动**，不能今天顺手改。
 
+### 17.8 已知的「用户可见」变化（**勿当成回归**）
+
+| 变化 | 位置 | 机制（实测） |
+|---|---|---|
+| 盘后复盘「资金流变化」表 **91 行 → 116 行** | `tabs/tab8_advice.py` 的 `_load_fund_flow_changes`，`"FROM fund_flows WHERE category='etf' AND date >= date('now','-7 days')"` | 该查询此前用的字面量**从未取到 ETF 资金流**（全库 `fund_flows` 只有 `sector`/`etf`/`main_fund` 三种 category）。改对后**新纳入 ETF 行**。数字自洽性我已独立复核：`sector` 有 **91 个不同 code**、`etf` 有 **25 个** ⇒ **91 + 25 = 116**，与实测行数吻合。**非缺陷**。 |
+| 报告新增「覆盖度」行 + 口径声明 | `src/utils/enhanced_report.py`（`f053ccb`） | 「当日盈亏」卡片下多一行「覆盖度未记录 / 覆盖 N/M 只…」；卡片组后多一段「两者口径不同，不可相乘」。**预期内**。 |
+| Tab8 持仓信号预览将出现资金流 as-of 日期标注 | 待做（裁定 (ii)，**排 15:30 之后**） | 现值 ≠ 当日时必须标日期，否则「D-2 的资金流」在 UI 上与「今天的」逐字符相同。**预期内**。 |
+
+⚠️ **留痕缺口（本轮自曝）**：上表第 1 条的副作用**没有写进 `1864589` 的提交信息**（当时那条信息只覆盖 `#77` 的部分）。**用户可见的变化必须写进提交信息**，否则日后必被当成回归 —— 故在此补记，并由本表承担留痕职责。
+
+
 
 
