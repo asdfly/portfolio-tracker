@@ -69,6 +69,49 @@ cur.execute('''SELECT total_value,total_cost,total_pnl,daily_pnl,daily_return,vs
 S = cur.fetchone()
 tot_val, tot_cost, tot_pnl, d_pnl, d_ret, vs300, pc, lc, sharpe, mdd, vol = S
 
+# ---------- 1b. etf_price_history 新鲜度（**真值**，禁止写死日期/天数）----------
+# 🔴 历史缺陷（2026-09-17 发现）：本文件曾把「最新仅至 2026-08-19（滞后 12 个交易日）」
+#    **写死在模板里**。该断言在数据表补采到最新之后仍是原样，于是从"当时的实情"变成
+#    **假陈述**（实测 etf_price_history MAX(date)=2026-09-16，早已覆盖），且**永远不会自我纠正**。
+#    ⇒ 改为按库实时计算；不新鲜时才出「滞后」措辞，新鲜时不得再出现「滞后/未使用」的暗示。
+cur.execute('SELECT MAX(date) FROM etf_price_history'); EPH_DATE = cur.fetchone()[0]
+EPH_STALE = bool(EPH_DATE) and bool(DATA_DATE) and (EPH_DATE < DATA_DATE)
+EPH_LAG_TD = None
+if EPH_STALE:
+    # 滞后天数用**库内自有的交易日轴**（index_quotes 每交易日由采集器写入，DISTINCT date
+    # 即交易日集合）来数，**故意不 import** `src.utils.trading_calendar`：
+    #   本脚本由无人值守自动化以 `python scripts/gen_combo_report.py` 方式调用，
+    #   此时 sys.path[0] 是 `scripts/` 而非项目根 ⇒ `import src...` 必然失败，
+    #   加这个依赖等于给日报引入一个新的静默失败面（且实测确实失败，回落成了「若干交易日」）。
+    #   index_quotes 与 EPH 同库同源，无跨包依赖、无路径假设。
+    # 取不到就保持 None ⇒ 措辞回落为「若干交易日」，**不臆造数字**。
+    try:
+        EPH_LAG_TD = cur.execute(
+            'SELECT COUNT(DISTINCT date) FROM index_quotes WHERE date > ? AND date <= ?',
+            (EPH_DATE, DATA_DATE)).fetchone()[0]
+    except Exception:
+        EPH_LAG_TD = None
+EPH_LAG_TXT = f'{EPH_LAG_TD} 个交易日' if EPH_LAG_TD else '若干交易日'
+# 新鲜度短语：用于各处内联说明（保证同一次运行里全篇措辞一致）
+EPH_STATE_TXT = (f'滞后至 {EPH_DATE}' if EPH_STALE
+                 else f'已覆盖至 {EPH_DATE or "—"}')
+# 数据源清单里的一行：无论新鲜与否都注明「未用于当日逐 ETF 归因」（该能力本报告未实现，
+# 不得因数据变新就暗示已启用）
+EPH_SRC_LINE = (f'⚠ etf_price_history {EPH_STATE_TXT}，未用于当日逐 ETF 归因' if EPH_STALE
+                else f'etf_price_history {EPH_STATE_TXT}，未用于当日逐 ETF 归因')
+# 1.x 锚定规则里的 caveat 句（新鲜时给一句正向陈述，不留任何"滞后"残留）
+EPH_CAVEAT_884 = ((f'项目 etf_price_history 最新仅至 {EPH_DATE}（滞后 {EPH_LAG_TXT}），'
+                   f'<b>禁止</b>用其估算当日逐 ETF 损益。') if EPH_STALE
+                  else f'项目 etf_price_history 已覆盖至 {EPH_DATE}。')
+# 「④ 数据修复」里的补采建议条：仅在不新鲜时才是真问题
+EPH_FIX_BULLET = (f'<li>etf_price_history 数据滞后至 {EPH_DATE}（{EPH_LAG_TXT}），'
+                  f'影响逐 ETF 当日归因能力，建议补采。</li>') if EPH_STALE else ''
+# 盘前/盘后「场外无当日涨跌口径」的佐证子句：数据新鲜后该佐证不再成立，须整句去掉
+EPH_INLINE_PAREN = (f'（etf_price_history {EPH_STATE_TXT}）' if EPH_STALE else '')
+# 🔴 统一当日回报文案（2 位小数）。裸 {d_ret} 会把 DB 原值（如 1.33455691515695）直接印进正文，
+#   与本篇卡片 {chg(d_ret)} 的 +1.33% 自相矛盾 —— 见 §17.5「两套精度」同类缺陷。
+DRET_TXT = '—' if d_ret is None else f'{d_ret:+.2f}'
+
 # ---------- 2. 指数（本地 index_quotes，取最新可得交易日，通常为 RUN_DATE 当日）----------
 cur.execute('SELECT MAX(date) FROM index_quotes'); IDX_DATE = cur.fetchone()[0]
 cur.execute('SELECT name,close,change_pct,amount FROM index_quotes WHERE date=?', (IDX_DATE,))
@@ -293,7 +336,8 @@ PROXY = {
  '512100': idx['中证1000'][1], '510300': idx['沪深300'][1], '510500': idx['中证500'][1],
  '588000': idx['科创50'][1], '159300': idx['沪深300'][1], '159949': idx['创业板50'][1],
 }
-# 场外基金无当日板块/指数代理口径：场外净值 T+1 披露，本地亦无其当日涨跌（etf_price_history 滞后至 2026-08-19），
+# 场外基金无当日板块/指数代理口径：场外净值 T+1 披露，且本地 etf_price_history 只收 ETF 日线、
+# 不含场外基金（属结构性缺行，与采集是否及时无关），故场外**没有**当日涨跌口径可用。
 # 不做臆造替代 -> 显式排除，并在产物 3.2 表中标注 est 的实际覆盖范围与未覆盖权重。
 # 旧版对未覆盖标的按 0 贡献静默计入 est，等于默认「这部分仓位当日不涨不跌」，属隐性失真。
 _PROXY_UNC = [(c, n, mv) for c, n, mv, _, _, _ in hold if c not in PROXY]
@@ -881,7 +925,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 {HOLD_N} 只</div></div>
 <div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{sharpe:.2f} / {mdd:.2f}% / {vol:.2f}%</div><div class="n">滚动统计口径</div></div>
 </div>
-<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {d_ret}%，{('跑赢' if vs300>=0 else '跑输')}沪深300 {abs(vs300):.2f}pct）。项目 etf_price_history 最新仅至 2026-08-19（滞后），<b>禁止</b>用其估算当日逐 ETF 损益。</div>
+<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {DRET_TXT}%，{('跑赢' if vs300>=0 else '跑输')}沪深300 {abs(vs300):.2f}pct）。{EPH_CAVEAT_884}</div>
 </div>
 
 <div class="card">
@@ -912,7 +956,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <table><thead><tr><th>代码</th><th>名称</th><th class="num">市值</th><th class="num">占比</th><th class="num">记录盈亏率</th><th class="num">成本价</th><th>触发规则</th></tr></thead>
 <tbody>{rows_bad}</tbody></table>
 <div class="note">命中 <b>{len(bad)}</b> 只，合计市值 ¥{bad_mv:,.0f}（<b>{pct(bad_mv):.2f}%</b> 权重）。其中创业板50ETF华安（cost -2.72）与人工智能ETF易方达（cost -0.292）为<b>负成本价</b>，属明确的成本记录错误，应回溯交易流水修正。<br>
-影响范围：组合层面「累计盈亏 +¥{tot_pnl:,.0f}（+{tot_pnl/tot_cost*100:.2f}%）」因包含这 {len(bad)} 只失真数据而<b>不可靠</b>；当日回报 {d_ret}% 由市值变动计算，<span class="ok">不受成本失真影响，可采信</span>。</div>
+影响范围：组合层面「累计盈亏 +¥{tot_pnl:,.0f}（+{tot_pnl/tot_cost*100:.2f}%）」因包含这 {len(bad)} 只失真数据而<b>不可靠</b>；当日回报 {DRET_TXT}% 由市值变动计算，<span class="ok">不受成本失真影响，可采信</span>。</div>
 </div>
 
 <div class="card">
@@ -933,12 +977,12 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <h3>3.1 净风向结论</h3>
 <p style="font-size:13.2px;color:#c9d1d9">组合 <b>{len(CROSS)} 个方向中 {n_up} 个顺风/微顺风、{n_dn} 个逆风/强逆风、{n_mid} 个弱逆风</b>。顺风权重合计约 <b class="up">{up_w:.1f}%</b>（红利+债券+军工+科技+宽基），逆风（医药+新能源+证券）合计约 <b class="down">{inv_w:.1f}%</b>；上述两项<b>均不含场外主动权益/场外指数/货币合计 {otc_w:.1f}%</b>——这部分是场内 ETF 之外的仓位，无当日板块风向口径，故不纳入顺逆风统计，两者相加不等于 100%。</p>
-<p style="font-size:13.2px;color:#c9d1d9;margin-top:8px">真实当日回报 <b>{d_ret}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。当日领涨方向为{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%；超配的军工/医药/证券/红利普遍逆风（军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%），防御端（债券+红利 {def_w:.1f}%）提供缓冲，组合与大盘呈现「指数涨、组合跌」的结构性背离。</p>
+<p style="font-size:13.2px;color:#c9d1d9;margin-top:8px">真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。当日领涨方向为{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%；超配的军工/医药/证券/红利普遍逆风（军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%），防御端（债券+红利 {def_w:.1f}%）提供缓冲，组合与大盘呈现「指数涨、组合跌」的结构性背离。</p>
 <h3>3.2 代理加权估算 vs 真值（方法学诊断）</h3>
 <table><thead><tr><th>口径</th><th class="num">数值</th><th>说明</th></tr></thead>
 <tbody>
 <tr><td>板块/指数代理加权估算</td><td class="num">{chg(est, ' pct')}</td><td>逐持仓 × 对应板块或指数当日涨跌幅，按权重加总；<b>仅覆盖 {PROXY_N} 只场内 ETF（合计权重 {PROXY_W:.2f}%）</b></td></tr>
-<tr><td>&nbsp;&nbsp;↳ 未覆盖部分（场外基金）</td><td class="num"><span class="flat">{PROXY_UNC_N} 只 / {PROXY_UNC_W:.2f}%</span></td><td>场外净值 T+1 披露、本地无当日涨跌口径（etf_price_history 滞后至 2026-08-19），<b>未做臆造替代，按 0 贡献计入上式</b>——即 est 天然缺失这 {PROXY_UNC_W:.2f}% 仓位的当日贡献，<b>不等于该部分真实为 0</b></td></tr>
+<tr><td>&nbsp;&nbsp;↳ 未覆盖部分（场外基金）</td><td class="num"><span class="flat">{PROXY_UNC_N} 只 / {PROXY_UNC_W:.2f}%</span></td><td>场外净值 T+1 披露、本地无当日涨跌口径{EPH_INLINE_PAREN}，<b>未做臆造替代，按 0 贡献计入上式</b>——即 est 天然缺失这 {PROXY_UNC_W:.2f}% 仓位的当日贡献，<b>不等于该部分真实为 0</b></td></tr>
 <tr><td><b>真实当日回报（锚）</b></td><td class="num"><b>{chg(d_ret)}</b></td><td>portfolio_summary.daily_return，市值口径真值</td></tr>
 <tr><td>偏离</td><td class="num"><span class="mid">{est-d_ret:+.2f} pct</span></td><td>代理与真值偏差 {abs(est-d_ret):.2f}pct，方向{'一致' if (est<0)==(d_ret<0) else '背离'}（代理{est:+.2f}%、实际{d_ret:+.2f}%）</td></tr>
 </tbody></table>
@@ -949,7 +993,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 
 <div class="op"><div class="t">① 持有（维持现状）—— 军工超配 + 红利/债券防御底仓 {def_w+sec_w:.1f}%</div>
 <ul>
-<li>当日已验证其价值：全组合 {d_ret}%、{_perf_word}沪深300 {abs(vs300):+.2f}pct；{_oper_hold_txt}。</li>
+<li>当日已验证其价值：全组合 {DRET_TXT}%、{_perf_word}沪深300 {abs(vs300):+.2f}pct；{_oper_hold_txt}。</li>
 <li><span class="cond">维持条件</span>：市场停留在路径 A（箱体震荡）—— 上证守住 MA20 3921、量能 1.7–2.0 万亿。</li>
 <li><span class="cond">加码触发</span>：若出现路径 C 的两条确认信号（破 MA20 + 量能萎缩至 1.5 万亿以下），防御仓位的战略价值上升。</li>
 </ul></div>
@@ -973,7 +1017,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <ul>
 <li>{len(bad)} 只标的（{pct(bad_mv):.2f}% 权重）盈亏率失真，其中 2 只为负成本价。<b>在成本数据修正前，组合层面的累计收益率不具备决策参考价值</b>。</li>
 <li>建议回溯交易流水重建成本：创业板50ETF华安（cost -2.72）、人工智能ETF易方达（cost -0.292）优先。</li>
-<li>etf_price_history 数据滞后至 2026-08-19（12 个交易日），影响逐 ETF 当日归因能力，建议补采。</li>
+{EPH_FIX_BULLET}
 </ul></div>
 
 <div class="op"><div class="t">⑤ 跨日跟踪（读结构化历史库，非买卖指令）</div>
@@ -989,12 +1033,12 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <h2>五、数据源与可用性</h2>
 <div class="src">
 <b>✓ 项目本地数据层</b>（data/database/portfolio.db）—— 本次为主数据源<br>
-&nbsp;&nbsp;· portfolio_snapshots / portfolio_summary：{SNAP}（{HOLD_N} 只持仓 = 场内 ETF {ETF_N} + 场外 {OTC_N}；当日真实回报 {d_ret}%）<br>
+&nbsp;&nbsp;· portfolio_snapshots / portfolio_summary：{SNAP}（{HOLD_N} 只持仓 = 场内 ETF {ETF_N} + 场外 {OTC_N}；当日真实回报 {DRET_TXT}%）<br>
 &nbsp;&nbsp;· index_quotes：{IDX_DATE}（11 个指数收盘/涨跌/成交额）{f'　⚠ 较组合基准 {DATA_DATE} 更新（采集器滞后）' if IDX_DATE != DATA_DATE else ''}<br>
 &nbsp;&nbsp;· fund_flows：{DATA_DATE}（90 个申万板块 + 23 只 ETF；main_fund 行缺失，主资金以 90 板块合计代理）<br>
 &nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币，PMI 仍缺）<br>
 &nbsp;&nbsp;· market_breadth：{BL.get('date','—')}（zt={loc_zt}/dt={loc_dt} 已采集）<br>
-&nbsp;&nbsp;· <span class="mid">⚠ etf_price_history 滞后至 2026-08-19，未使用</span><br>
+&nbsp;&nbsp;· <span class="mid">{EPH_SRC_LINE}</span><br>
 <b>✓ NeoData 金融搜索</b> —— 本次可用（查询时间 {MKT_NEO['query_time']}，凭证经 connect_cloud_service 重取）<br>
 &nbsp;&nbsp;· 三大指数统一行情（与本地交叉核对一致）、大盘市场宽度（涨跌 {BR['up']}:{BR['down']}）<br>
 &nbsp;&nbsp;· 板块涨跌排行（{top_gain_names} 等）+ 申万板块当日涨跌幅（航天装备/生物制品/半导体 等完整召回）<br>
