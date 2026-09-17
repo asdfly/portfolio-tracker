@@ -167,6 +167,33 @@ def _pick(d, *keys, default=None):
             return v
     return default
 
+
+def _fmt_dr_coverage(cov) -> str:
+    """把 `daily_return_coverage` 渲染成一句**可核事实**文案（口径 B，2026-09-17）。
+
+    只用可核字段（纳入只数 / 可比只数 / 前日可比市值占比）拼装，**不写任何推断句** ——
+    涉及未知定义的因果（例如「因此与历史不可比」）一律不写：那是推断，而这里只允许放
+    能逐项核对的代码事实。
+
+    读不到时必须返回「覆盖度未记录」，**不许静默省略**：离线「只读库 + 独立重渲染」
+    路径拿不到运行时的覆盖度，那正是最容易被悄悄省掉的地方。
+    """
+    if not isinstance(cov, dict):
+        return "覆盖度未记录"
+    parts = []
+    inc, cmp_n = cov.get("included_n"), cov.get("comparable_n")
+    if inc is not None and cmp_n is not None:
+        parts.append(f"覆盖 {inc}/{cmp_n} 只")
+    share = cov.get("value_share")
+    if share is not None:
+        try:
+            parts.append(f"占前日可比市值 {float(share) * 100:.2f}%")
+        except (TypeError, ValueError):
+            pass
+    if cov.get("caliber") == "total_value_fallback":
+        parts.append("口径回退：全持仓 total_value/prev_value")
+    return " · ".join(parts) if parts else "覆盖度未记录"
+
 _CSS_DARK = (
     "body{margin:0;padding:0;background:#0a1628;font-family:-apple-system,BlinkMacSystemFont,"
     "'Segoe UI',Roboto,Arial,sans-serif;}"
@@ -293,6 +320,20 @@ class EnhancedReportBuilder:
         date_str, weekday = self._fmt_data_date(report_date)
 
         dr = _pick(summary, 'daily_return', '日收益率', default=0) or 0
+        # 口径 B（2026-09-17 裁定）：`daily_return` 只覆盖「当日价新鲜」的标的，
+        # 而 `total_value` 是全持仓 ⇒ 两者**口径不同，必须并列印出并显式声明不可相乘**
+        # （读者拿 1,527,929 × daily_return 会算出错金额）。读不到覆盖度时印
+        # 「覆盖度未记录」，不许静默省略。
+        dr_cov = summary.get('daily_return_coverage') if isinstance(summary, dict) else None
+        dr_cov_note = _fmt_dr_coverage(dr_cov)
+        _cov_total_n = dr_cov.get('total_n') if isinstance(dr_cov, dict) else None
+        _tv_scope = ("全部持仓 " + str(_cov_total_n) + " 只") if _cov_total_n else "全部持仓"
+        dr_caliber_note = (
+            '注：「当日盈亏 / 日收益率」按<strong>当日有行情价的标的</strong>计算（'
+            + dr_cov_note + '）；「总市值」为' + _tv_scope
+            + '。两者口径不同，<strong>不可相乘</strong>。'
+            '「基准指数对比」中的「跑赢/跑输」同样基于前者。'
+        )
         tp = _pick(summary, 'total_pnl', '总盈亏', default=0) or 0
         tc = _pick(summary, 'total_cost', '总成本', default=1) or 1
         total_ret = tp / tc * 100 if tc > 0 else 0
@@ -408,9 +449,11 @@ class EnhancedReportBuilder:
             + now.strftime('%Y-%m-%d %H:%M:%S') + '</p></div>'
             '<div class="ms">'
             '<div class="m"><div class="l">总市值</div><div class="v" style="color:#1a73e8;">¥' + f"{summary['total_value']:,.0f}" + '</div></div>'
-            '<div class="m"><div class="l">当日盈亏</div><div class="v" style="color:' + clr(dr) + ';">' + sign(dr) + '¥' + f"{dp:,.0f}" + '</div><div class="s">' + sign(dr) + f"{dr:.2f}" + '%</div></div>'
+            '<div class="m"><div class="l">当日盈亏</div><div class="v" style="color:' + clr(dr) + ';">' + sign(dr) + '¥' + f"{dp:,.0f}" + '</div><div class="s">' + sign(dr) + f"{dr:.2f}" + '%</div><div class="s" style="font-size:9px;">' + dr_cov_note + '</div></div>'
             '<div class="m"><div class="l">累计盈亏</div><div class="v" style="color:' + clr(tp) + ';">' + sign(tp) + '¥' + f"{tp:,.0f}" + '</div><div class="s">' + sign(tp) + f"{total_ret:.2f}" + '%</div></div>'
             '</div>'
+            '<div style="font-size:9px;line-height:1.6;color:' + T['sub'] + ';padding:6px 2px 0;">'
+            + dr_caliber_note + '</div>'
             '<div class="sec"><div class="st">⚠️ 风险指标</div>'
             '<div class="rg">'
             '<div class="rc" style="background:' + T['risk_green'] + ';"><div class="rl">夏普比率</div><div class="rv" style="color:' + sc + ';">' + ss + '</div></div>'
