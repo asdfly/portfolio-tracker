@@ -59,6 +59,11 @@ SELECT date, total_value FROM portfolio_summary ORDER BY date;   -- 3477 行，m
 `data/backups/portfolio_PRE_P05_20260915_1028.db` 的 09-14 `total_value = 933,891.5` ⇒ 一致。
 这证明 `DIFFER` 组捕获的是**改写前的旧世界**，而不是抽取错误。
 
+> ⚠️ **上句引用的副本已不可就地取用（注于 2026-09-17；不改写上述实测结论）**：
+> `portfolio_PRE_P05_20260915_1028.db` 已按备份保留策略**移入系统回收站**（**不在** `archive/` 内）
+> —— 如需取回请**从回收站还原**。原件 sha256 `0945614d7a74683c…` 见
+> `data/backups/archive/_prune_manifest_20260917.json`。
+
 ---
 
 ## 二、根因：`2026-08-03 ~ 2026-09-14` 的 29 份，是 09-15 上午两次人工实写的产物
@@ -83,6 +88,15 @@ SELECT date, total_value FROM portfolio_summary ORDER BY date;   -- 3477 行，m
 09-15 14:09:53  140,623,872  portfolio.db.bak_watchlist_20260915
 09-15 15:30:06  140,845,056  portfolio_20260915_153004.db                 ← 定时管线自动备份
 ```
+
+> ⚠️ **上表 8 个副本已按保留策略移入系统回收站（注于 2026-09-17；上表为清理前的原始 `ls -l` 输出，不改写）**：
+> `portfolio_PRE_P0FIX_20260915.db`、`portfolio_PRE_BACKFILL_20260915_1021.db`、
+> `portfolio_PRE_P05_20260915_1028.db`、`portfolio.db.bak_otcnav_20260915`、
+> `portfolio.db.bak_recompute_20260915_110813`、`portfolio.db.bak_880013_20260915`、
+> `portfolio.db.bak_watchlist_20260915`、`portfolio_20260915_153004.db`。
+> **均不在 `archive/` 内** —— 如需取回请**从回收站还原**；清点与逐件 sha256 见
+> `data/backups/archive/_prune_manifest_20260917.json`。**结论不受影响**：本节的判断只依赖它们的
+> `mtime` + 字节数（上表），而这些字段已随清单落盘。
 
 ⇒ 改写发生在 **10:28 之后、11:08 前后**的两个手动脚本里：
 

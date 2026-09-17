@@ -13,6 +13,11 @@
 > 基线可信度：当前生产库与该 sha256 逐字节相同的副本存在于
 > `data/backups/portfolio.db.bak_verify_corr_20260916_095652.db`，
 > 说明 **09:09:04 之后没有任何进程写过生产库**。本计划的 before 数值全部以此为准。
+>
+> ⚠️ **该副本已归档（注于 2026-09-17；不改写上述结论）**：现路径为
+> `data/backups/archive/portfolio.db.bak_verify_corr_20260916_095652.db.gz`
+> （141,017,088 B → 46,520,636 B；解压后 sha256 与原件**逐字节一致**，`261a4a6ed03396cd…`）。
+> 比对基线前请先解压到 `data/backups/`。
 
 ---
 
@@ -576,6 +581,17 @@ def backup(db_path: str, backup_dir=None) -> str:
 
 第二个（`bak_verify_corr_20260916_095652.db`）与**当前生产库 sha256 完全相同**，
 可作为"确认基线未被改动"的比对基准。
+
+> ⚠️ **本小节的三个副本在 `data/backups/` 顶层已不存在（注于 2026-09-17，按保留策略清理；不改写上述校验结论）**：
+> - `portfolio.db.bak_verify_corr_20260916_095652.db` ⇒ **gzip 归档**，
+>   现路径 `data/backups/archive/portfolio.db.bak_verify_corr_20260916_095652.db.gz`
+>   （解压后 sha256 与原件逐字节一致）；
+> - `portfolio_20260915_153004.db`、`portfolio.db.bak_recompute_20260915_110813` ⇒ **已移入系统回收站**
+>   （**不在** `archive/` 内，如需取回请**从回收站还原**）。
+>
+> 另：本节开头「`data/backups/` 现有 **23 个**备份、合计 **2,801.4 MB**」为**清理前**实测值；
+> 清理后顶层只保留最近 7 个（≈0.93 GB）。清单与逐件 sha256：
+> `data/backups/archive/_prune_manifest_20260917.json`。
 
 ### 6.3 恢复命令
 

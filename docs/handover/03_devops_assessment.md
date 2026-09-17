@@ -255,6 +255,13 @@ data/backups/archive/portfolio_db_PRE_QA_20260805.db  88,764,416 B (一次性)
 磁盘：D: 554G，已用 255G，可用 300G（46%）
 ```
 
+> ⚠️ **路径已过期（注于 2026-09-17，不改写上述实测记录）**：上表中的
+> `data/database/portfolio.db.backup_phase0` 已按备份保留策略
+> **gzip 归档**，现路径为 **`data/backups/archive/portfolio.db.backup_phase0.gz`**
+> （30,642,176 B → 7,997,649 B；解压后 sha256 与原件逐字节一致，`e06a4d9ee3fe0597…`）。
+> 同一批清理另将 18 个副本移入**系统回收站**（清单 + 每个文件 sha256：
+> `data/backups/archive/_prune_manifest_20260917.json`）。上文数字为**清理前**的实测值，保留原样。
+
 备份机制本身**实现得不错**，先说对的部分：
 
 - `scripts/backup_db.py:32-38` 用 **SQLite 在线备份 API**（`source.backup(dest)`），而不是文件 `cp`。这保证了备份的事务一致性，即使备份瞬间有写入也不会拿到撕裂的库。这是正确做法。
@@ -522,6 +529,11 @@ QS   = r'C:\Users\HUAWEI\.workbuddy\skills\neodata-financial-search\scripts\quer
 | 9 | `data/backups/` 目录未显式忽略 | `.gitignore` 只靠 `*.db`(:85) 兜住备份文件 | 补一行 `data/backups/`，防止将来非 .db 产物入库 |
 | 10 | `portfolio.db.backup_phase0` | 30,642,176 B，5/21 遗留在 `data/database/` 内 | 移入 `data/backups/archive/` 或删除 |
 | 11 | SQLite 单写者与并发窗口 | 16:30 与 16:40 两个自动化写同一个库，仅隔 10 分钟 | **实测 `logs/` 中 `database is locked` 出现 0 次**，风险尚未发生。但 16:30 巡检若超时 10 分钟就会撞上。建议把 16:40 后移到 17:10，或统一开 WAL |
+
+> ⚠️ **第 10 项已照本表建议执行（注于 2026-09-17，不改写上述结论）**：
+> `portfolio.db.backup_phase0` 走的是「移入 `data/backups/archive/`」这一支，且为**压缩归档**，
+> 现路径 **`data/backups/archive/portfolio.db.backup_phase0.gz`**（7,997,649 B；解压后 sha256
+> 与原件逐字节一致）。**未删除**，仍可取证。
 
 ---
 

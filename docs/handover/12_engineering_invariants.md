@@ -860,6 +860,130 @@ SELECT source, is_estimated, confidence, COUNT(*) FROM fund_flows
 作为**历史产物**存在；修复的价值体现在**从今晚起**的产物上。
 （口径 B 是**面向未来**的报告特性，不回填历史产物 —— 历史产物应保持其被投递时的样貌。）
 
+---
+
+### 17.11 🔴 日报全站停发：契约1 判级误报 + 评估时刻错位（2026-09-17 实测，当日两次修复）
+
+> **一句话**：18 个阶段全绿、五份产物全齐、`Σmarket_value ≡ total_value` 成立 ——
+> 但 `run_status=degraded` ⇒ 邮件闸门拒发日报。**误报的代价等于漏报**：
+> 把结构性的 T+1 常态判成 `error`，等于**从今天起每天停发**。
+>
+> **本节所有代码/日志位置一律给「可 `grep` 的原文锚」，不给行号** ——
+> `logs/scheduled_run.log` 行号实测会漂（同一段原文，先读到约 1.69 万行处、数小时后读到的刻度不同）。
+
+#### (1) 现象（逐条实测，证据可 grep）
+
+| 事实 | 可 `grep` 的原文锚 / 核验方式 |
+|---|---|
+| 18 个阶段**全部** `status=ok` | `data/reports/run_report_2026-09-17.json` 的 `"stages"`（18 项逐项 `"status": "ok"`） |
+| 产物全部正常产出 | `enhanced_report_20260917.html`（170,743 B）、`latest_report.html`、`smart_report_20260917.md`、`组合大盘综合视角_2026-09-17.html`、`data/reports/run_report_2026-09-17.json` |
+| 组合汇总正常 | 只读查 `portfolio_summary` 的 `2026-09-17` ⇒ `total_value = 1,524,395.24`、`daily_return = -0.38` |
+| 但账本被降级 | 同一账本内 `"run_status": "degraded"`、`"dq_score": null`、`"alerts"` 计 3 条 |
+| 真分被**压制**（不是丢失） | `"dq_score_reason": "run incomplete (run_status=degraded); real dq_score 97.6 suppressed"` |
+| 日报被拒 | `logs/scheduled_run.log`（**GBK**）原文 `[EMAIL] [CRITICAL] 数据未就绪，拒绝生成/发送今日(2026-09-17)日报` + `run_status=degraded（本次运行不完整）`；紧跟一行 `[WARN] report email send FAILED, rc=1` |
+| 浅色版未生成 | `data/reports/` 下**无** `email_report_20260917_light.html` |
+
+⚠️ **「收到邮件」≠「日报发出」**：阶段三的 `src/utils/notification.py` → `send_portfolio_report`
+是**另一条通道**，它不读 `run_status`、**不受闸门管** ⇒ 当天用户仍收到**简版摘要邮件**。
+**唯一正式日报出口是 `scripts/send_report_email.py`**；判「日报发没发」只能看它，**不能看「有没有邮件」**。
+
+闸门定义（`grep` 点）：`scripts/send_report_email.py` 的
+`_RUN_STATUS_BLOCKING = ("partial", "failed", "degraded")`。
+
+#### (2) 根因链（三层，逐层实测 —— **三层缺一不可，只修前两层不生效**）
+
+**① 判级：把结构性常态判成 `error`。**
+`src/analysis/snapshot_gate.py` 的 `check_otc_nav_coverage()`（`#116` 契约1，`10d3ec2` 于 09-17 10:48 入库）
+最初把「**场外源当日只到 D-1**」**无条件**判成 `error` 级。
+而**场外净值 T+1 披露是结构性常态**（15:30 时源永远只到 D-1）⇒ 该 `error` **每个交易日都必然出现**。
+
+采集侧同一事实的原话（勿把「无值可插」读成「采集失败」）：
+`场外净值: 成功 13 只, 失败 0 只, 跳过(无净值源) 0 只, 新增 0 行`、
+`[519770] 最新净值 2026-09-16 | 待插入 0 行`。
+
+**② 传播：一条 `error` ⇒ 整轮 `degraded`。**
+`src/data_sources/collect_core.py` 的 `evaluate_run_status()`，其 docstring 自带判据原文：
+`"degraded": 阶段齐全无 error, 但本次运行产出过 error 级告警`。
+⇒ 只要有一条 `error` 级告警，`run_status=degraded`；`degraded` 又使 `dq_score` 置 null
+（源码原文：`运行不完整时 dq_score 必须为 null`），**真分只写进 `dq_score_reason`**。
+⇒ 后果**不是**「今天发不出」，而是**从今天起每天都发不出**。
+
+**③ 🔴 时序错位（真正的致命点）—— 只修①、② 仍不生效。**
+契约1 的调用点原本紧跟**阶段0（场外采集）**之后、**阶段一之前**；
+而**当日 `portfolio_snapshots` 行是在阶段一里才写入的**
+（`src/analysis/portfolio.py` 的「持仓合并」路径，把 12 只场外以**上一可用净值**补位落行；
+源码注释原文 `# 保存持仓快照（新持仓数据写入数据库）`）。
+⇒ 检查那一刻当日快照**一行都没有** ⇒ 「快照是否已覆盖这些 code」的判据**恒为 `filled=0 / uncovered=12`**
+⇒ 修法①给出的 `warning` 分支**在生产里不可达**。
+
+时序证据（`logs/scheduled_run.log`，**只给原文与时钟，不给行号**）：
+
+| 时刻（本机） | 原文锚 |
+|---|---|
+| `15:30:43,930` | `ERROR - [otc_nav_missing] 场外当日净值缺失 12 只(目标日 2026-09-17)` |
+| `15:30:45,386` | `INFO - 保存持仓快照: 2026-09-17, 34条记录`（logger `src.utils.database`） |
+
+⇒ **告警比落库早约 1.5 秒**。契约1 自己的 docstring 已写明该前提：
+`filled` 形态只能在同一日的 `portfolio_snapshots` 行**落库之后**才可观测。
+
+⚠️ **「这是误报」的另一半证据（必须一起写，否则等于只说了半句）** ——
+**09-16 的真事故形态当天并不存在**：
+- 09-17 快照 **34 行**、code 集合与 09-16 **完全相同**（只读核过两日均 34 行）；
+- 契约2 `check_snapshot_baseline()`（`src/analysis/snapshot_gate.py`，**真事故主防线**）**通过了**；
+- `daily_return` 口径 B 已把这 12 只**从分子/分母排除**（口径 B 定义见 §17.2；
+  覆盖度**不落库**，报告里印的是「覆盖度未记录」，见 §17.6 第 1 条与 §17.8）。
+
+⇒ 该 `error` 是**误报**；09-16 那种「整篮子缺行 ⇒ 当日只有 22 行 ⇒ `total_value` 少 38.1%」（§16.2）
+**当天没有发生**。
+
+#### (3) 两次修法（都记；**第二次才是对的**）
+
+| 序 | commit | 改了什么 | 判定 |
+|---|---|---|---|
+| ① | `055bbfe` | 判据由「源当日无净值」改为「**当日快照是否已覆盖这些 code**」并**分流**：`filled`(已落行) ⇒ `alert_level="warning"` + `ok=True`；`uncovered`(缺行 = 09-16 形态) ⇒ `"error"` + `ok=False`；**读快照失败时保守回退为 uncovered** | 判据**本身是对的**；但**评估时刻错** ⇒ 生产不生效 |
+| ② | `10ed187` | 把契约1 整段**移到阶段一之后**（`_reporter.stage("basic", "ok")` 与契约2 之后）。**分流逻辑、`evaluate_run_status`、契约2 均未动** | ✅ **这才是修复** |
+
+两次都顺带删掉/修正了契约1 旧文案里那句**假陈述**：
+「…这些标的本日**不落快照行**(禁止静默跳过)」（`src/analysis/snapshot_gate.py` 的 docstring 内
+以 `← 此句与事实不符` 标注）。**合并路径确实落了行。**
+⇒ 教训：**告警文案必须与写入方行为对账** —— 文案是假陈述时，它既误导读者，
+也让「判据到底可不可达」无从判断。
+
+#### (4) 验证数字
+
+- **全量回归**：`1858 collected / 1854 passed / 4 skipped / 0 failed`
+  （修前基线 `1854/1850/4/0`，**差值全部来自新增用例**）。
+- **真实数据两点复现**（调**生产实现的同一入口函数**，不另写 SQL —— 见 §17.9(4) 同一条纪律）：
+  旧时刻 ⇒ `ok=False` / `error` / `filled=0` / `uncovered=12`；
+  新时刻 ⇒ `ok=True` / `warning` / `filled=12` / `uncovered=0`。
+- **反证是「用例级」而非「探针级」**：拆掉判据 / 倒回时序，
+  **直接调用 CI 里的用例函数本身**（不改源码）⇒ FAIL。
+
+⚠️ **附一条未复核的记账差异**：`MEMORY.md` 的「当前全量基线」行仍写
+`1857 collected / 1853 passed / 4 skipped / 0 failed`，与本节的 `1858/1854/4/0` **相差 1 条**。
+**哪个最新未复核**，故两边各自保留原文，引用时勿混用。
+
+#### (5) 三条可复用教训
+
+**教训 1：闸门的判据必须在「数据可观测的时刻」求值，否则分支不可达 —— 而不可达的守卫会以「全绿」的面目存在。**
+契约1 的 `warning` 分支写得很对，但它在生产里**永远走不到**。表上看「守卫已就位」，
+实际「守卫是装饰」。⇒ **判据正确性 ≠ 判据可达性**，二者要分开验收。
+
+**教训 2：单测若预置了输入状态，就对「评估时刻」完全失明。**
+上一轮 3 条新用例**全部预置了目标日快照行** ⇒ 全部走 `filled` 分支 ⇒ 全绿，
+恰好把「生产不可达」掩盖掉。**预置状态 = 把被测对象的时间维抽掉。**
+⇒ 硬要求：**时序守卫必须独立存在**（断言调用点在快照落库之后），不能靠「用例绿不绿」代替。
+
+**教训 3：误报的代价等于漏报。**
+把「结构性常态」判成 `error` ⇒ 日报**永久停发**，且它**伪装成「质量闸门在正常工作」**。
+⇒ **分级必须能区分「常态」与「异常」**：判据要能回答「这条告警是不是每个交易日都会出现」。
+
+**附带（跨层推演纪律，已由源码坐实）**：`pipeline_incomplete` 是 `run_status != ok` **派生**的，
+不是成因 —— `collect_core.py` 内条件即 `if run_status != RUN_STATUS_OK:` 才追加
+`_alert_pipeline_incomplete(...)`。**把它当 `run_status` 的输入会自我循环。**
+本案例账本里三类告警同时出现，但因果只有**一条**：
+`otc_nav_missing(error)` ⇒ `degraded` ⇒ `pipeline_incomplete(critical)`。
+
 
 
 
