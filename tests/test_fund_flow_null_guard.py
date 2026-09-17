@@ -345,21 +345,32 @@ def test_etf_flow_typo_literal_is_gone_from_source():
 # ============ (g) 守卫三：拒绝「关键列 net_inflow 为空」的 INSERT ---
 #
 # 本节是对上面 (a)~(f) 的**追加**（原本 module docstring 只列了 (a)~(f)，未改），
-# 来源 = `audit/_guard3_verify.py` 的探针五例（判别力实测 `audit/_guard3_falsify.py`）。
+# 来源 = `audit/_guard3_verify.py` 的探针五例。
+# 🔑 判别力证据有两级，**以用例级为准**：
+#   · **用例级**（最强）：`audit/_g3_pytest_falsify.py` → `.txt` —— 拆掉守卫三后
+#     **直接调用下面这四个用例函数本身**（`module.save_fund_flows = broken`，
+#     不改源码）⇒ A / E 红、B / C 绿。
+#     ⚠️ 为什么必须做用例级：把 `src/` 换成坏版再跑 pytest 在本机走不通
+#     （真实代码库是 grep 出来的、不是 import 包），所以「跑不了就只做探针」会让
+#     「自称反证」的用例**从未被真正证伪过**。
+#   · **探针级**（较弱）：`audit/_guard3_falsify.py` → `.txt` —— 自己复刻判据逻辑后摘掉
+#     守卫三 4 行。探针可能与用例不一致（判据复刻走样、夹具差异），**故只作旁证**。
 #
 # 判据 1 **已有等价覆盖**，故本节**不加**「12 列全空」那一例：
 #   `test_all_empty_row_is_not_inserted_and_raises_error_alert`（文件开头，payload 只给
 #   `net_inflow=NAN`）与「12 列全给 NaN」**落到同一条拒绝路径**。源码依据：
-#   `save_fund_flows` 的 `metric_names` 只收 `row.index` 里存在的列
-#   （`src/data_sources/fund_flow.py:544-547`）：
+#   `save_fund_flows` 的 `metric_names` 只收 `row.index` 里存在的列，可 grep 原文：
 #       metric_names = [c for c in (['net_inflow','buy_amount','sell_amount'] + extra_cols)
 #                       if c in row.index]
 #       if not metric_names or all(v is None for v in metric_vals.values()): ...
+#   （取证：2026-09-17，当时工作区版 `src/data_sources/fund_flow.py:544-547`（含守卫三）。
+#     行号会随 `src/` 改动漂移，故以**上面两行原文**为准，行号仅供参考。）
 #   ⇒ 判据 1 的真实语义是「**payload 里给出的指标列全为空**」，而不是字面的「表里 12 列全空」。
 #   所以 A 例（net_inflow 空 + buy 有值）才会被判据 1 放行、必须由守卫三兜住。
 #
 # ⚠️ 本节的判别力**不对称**，不要一视同仁：
-#   A / E —— **守卫三的反证**：把守卫三那 4 行拆掉 ⇒ 本两例会红（见 _guard3_falsify.txt）。
+#   A / E —— **守卫三的反证**：把守卫三那 4 行拆掉 ⇒ 本两例会红。
+#            **用例级实测**见 `audit/_g3_pytest_falsify.txt`（探针级见 `_guard3_falsify.txt`）。
 #   B / C —— **「不误伤」型**：拆掉守卫三后**仍然通过**。它们防的是守卫三被写成过宽判据
 #            （例如按 payload 里是否**出现** `net_inflow` 键来判断），那会把
 #            「已有行的部分更新」和「正常新行」一起拒掉。**不得把它们当成反证引用。**
@@ -422,7 +433,8 @@ def test_guard3_does_not_shadow_guard2_update_path(tmp_path):
     """(g) 守卫三**不误伤**判据 2：已有行的部分为空仍走 UPDATE，既有真值不被拒掉。
 
     ⚠️ 本例证的是「**不误伤**」，**不是**「守卫三存在」——把守卫三整段拆掉后，
-    本例**仍然通过**（判别力见 `audit/_guard3_falsify.txt`）。它防的是守卫三被写成
+    本例**仍然通过**（**用例级**实测见 `audit/_g3_pytest_falsify.txt`，探针级见
+    `_guard3_falsify.txt`）。它防的是守卫三被写成
     过宽判据（例如按 payload 里是否**出现** `net_inflow` 键来判断），那样会把
     「已有行的部分更新」也一并拒绝，把一次正常更新变成整行丢弃。
     守卫三只作用于 INSERT 分支，已有行继续走判据 2。
