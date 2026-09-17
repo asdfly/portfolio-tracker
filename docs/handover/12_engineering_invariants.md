@@ -668,9 +668,121 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
 |---|---|---|
 | 盘后复盘「资金流变化」表 **91 行 → 116 行** | `tabs/tab8_advice.py` 的 `_load_fund_flow_changes`，`"FROM fund_flows WHERE category='etf' AND date >= date('now','-7 days')"` | 该查询此前用的字面量**从未取到 ETF 资金流**（全库 `fund_flows` 只有 `sector`/`etf`/`main_fund` 三种 category）。改对后**新纳入 ETF 行**。数字自洽性我已独立复核：`sector` 有 **91 个不同 code**、`etf` 有 **25 个** ⇒ **91 + 25 = 116**，与实测行数吻合。**非缺陷**。 |
 | 报告新增「覆盖度」行 + 口径声明 | `src/utils/enhanced_report.py`（`f053ccb`） | 「当日盈亏」卡片下多一行「覆盖度未记录 / 覆盖 N/M 只…」；卡片组后多一段「两者口径不同，不可相乘」。**预期内**。 |
-| Tab8 持仓信号预览将出现资金流 as-of 日期标注 | 待做（裁定 (ii)，**排 15:30 之后**） | 现值 ≠ 当日时必须标日期，否则「D-2 的资金流」在 UI 上与「今天的」逐字符相同。**预期内**。 |
+| Tab8 持仓信号预览出现资金流 as-of 日期标注 | `tabs/tab8_advice.py`（`f09983a`，已完成） | 现值 ≠ 当日时标日期，否则「D-2 的资金流」在 UI 上与「今天的」逐字符相同。盘前「持仓信号预览」与盘后「资金流向变化」两处均已标注。**预期内**。 |
 
 ⚠️ **留痕缺口（本轮自曝）**：上表第 1 条的副作用**没有写进 `1864589` 的提交信息**（当时那条信息只覆盖 `#77` 的部分）。**用户可见的变化必须写进提交信息**，否则日后必被当成回归 —— 故在此补记，并由本表承担留痕职责。
+
+### 17.9 🔴 D 修复：`fund_flows` 的「自称完全可信的空值行」已诚实化（09-17 执行并验证）
+
+#### (1) 事件与根因
+
+生产库 `fund_flows` 里，`date='2026-09-16'` 且 `category='etf'` 的 **20 行**（`id` 30796–30815）
+**12 个指标列全部 NULL**，却带着 `source='em_spot' / is_estimated=0 / confidence=1.0`
+—— 元数据在宣称「这是完全可信的真值」，而值已被清零。全库仅此 20 行如此
+（按 `source` 分组统计「12 列全 NULL」：**只有 `em_spot` 命中，且恰为 20**）。
+
+🔑 **根因是一个 NaN-blind 的「or 0」惯用法**（已用 `venv313` + pandas **实测复现**，非推断）：
+写方 `fetch_etf_fund_flow_spot_em`（`src/data_sources/fund_flow.py`）对每个指标列都写成
+`float(row.get('<列名>', 0) or 0)`。而 **Python 里 `NaN` 是 truthy**，故：
+
+- 列**不存在** ⇒ `row.get(col, 0)` 得 `0` ⇒ `or 0` 得 `0.0`（**这是该写法唯一生效的情形**）；
+- 列**存在但为 NaN** ⇒ `row.get(col, 0)` 得 `nan` ⇒ `float(nan) or 0` **返回 `nan`**（不是 0）；
+- `save_fund_flows._float(nan)` 映射为 `None` ⇒ **NULL 落库**。
+
+实测输出：`float(pd_row.get(col,0) or 0)` 在 NaN 单元格上得 `nan`，`_float()` 得 `None`。
+⇒ **「or 0」只防「列缺失」，完全防不住「列存在但为 NaN」**。EM 当日尚未发布资金流
+（或该 ETF 无资金流）时返回的正是 NaN，于是整行 12 列全空却被贴上 `confidence=1.0`。
+
+⚠️ **本条的处置是「文档化 + 守卫兜住」，不是改 `or 0`**：把它硬改成「NaN→0.0」会**更坏**
+（伪造一个看起来合法的「零流量」真值）。当前「NaN→NULL→被守卫 3 拒绝 + 落 error 告警」
+才是诚实结果。**故 `or 0` 保持原样，属已知机制**。
+
+#### (2) 修复目标态与裁定理由
+
+| 列 | 原值 | 新值 | 理由 |
+|---|---|---|---|
+| `source` | `em_spot` | `em_spot_empty` | 命名真实条件（EM spot 返回了行但指标为空）；关键是**从此可与真 `em_spot` 行区分** |
+| `is_estimated` | `0` | `1` | 保持本表既有不变量：`is_estimated=0 ⇒ confidence ∈ {NULL, 1.0}`（实测该不变量在本表**当前严格成立**）。若留 0 会造出全表唯一一个「`is_estimated=0` 且 `confidence=0.0`」的组合，任何未来「取真实数据」的过滤都会把它扫进去 |
+| `confidence` | `1.0` | `0.0` | 信任旋钮归零 |
+| 12 个指标列 | NULL | **仍 NULL** | 🔴 **严禁置 0**：`0.0` 是「看起来合法的零流量」，会被下游当真值 |
+
+🔴 **这 20 行必须保留，绝不 DELETE**：其 `id`（30796–30815）已被写方自己的 docstring
+当作事故取证引用（`save_fund_flows` 的 docstring 内明写该 id 区间），删掉即毁证。
+
+#### (3) 可复现的规范 SQL（`audit/` 不入库，故命令在此留档）
+
+```sql
+-- 目标：恰 20 行；rowcount 必须 == 20，否则回滚
+UPDATE fund_flows
+   SET source='em_spot_empty', is_estimated=1, confidence=0.0
+ WHERE date='2026-09-16' AND category='etf' AND source='em_spot'
+   AND id BETWEEN 30796 AND 30815
+   AND net_inflow IS NULL AND buy_amount IS NULL AND sell_amount IS NULL
+   AND net_inflow_pct IS NULL AND super_large_inflow IS NULL AND super_large_pct IS NULL
+   AND large_inflow IS NULL AND large_pct IS NULL AND medium_inflow IS NULL
+   AND medium_pct IS NULL AND small_inflow IS NULL AND small_pct IS NULL;
+```
+
+验收查询（四条，必须全部满足）：
+
+```sql
+-- ① 目标态：应恰为 (em_spot_empty, 1, 0.0) × 20
+SELECT source, is_estimated, confidence, COUNT(*) FROM fund_flows
+ WHERE id BETWEEN 30796 AND 30815 GROUP BY 1,2,3;
+-- ② 空值行不得再自称 em_spot：应为 0
+SELECT COUNT(*) FROM fund_flows WHERE source='em_spot'
+   AND net_inflow IS NULL AND buy_amount IS NULL AND sell_amount IS NULL
+   AND net_inflow_pct IS NULL AND super_large_inflow IS NULL AND super_large_pct IS NULL
+   AND large_inflow IS NULL AND large_pct IS NULL AND medium_inflow IS NULL
+   AND medium_pct IS NULL AND small_inflow IS NULL AND small_pct IS NULL;
+-- ③ 不变量未被破坏：应为 0
+SELECT COUNT(*) FROM fund_flows
+ WHERE is_estimated=0 AND confidence IS NOT NULL AND confidence<>1.0;
+-- ④ 只动这 20 行：总行数不变 + 计数 −20/+20 配平
+SELECT COUNT(*) FROM fund_flows;   -- 27842（前后一致）
+SELECT source, is_estimated, confidence, COUNT(*) FROM fund_flows
+ GROUP BY 1,2,3;                   -- em_spot 307→287；新增 em_spot_empty 20
+```
+
+**实测结果（当轮）**：`rowcount=20`；① `(em_spot_empty,1,0.0,20)` ✓；② `0` ✓；③ `0` ✓；
+④ 总行数 27842→27842、`em_spot` 307→287 ✓。备份：
+`data/backups/portfolio_PRE_D_SPOT_EMPTY_20260917.db`（143,114,240 B，`integrity_check=ok`）。
+
+#### (4) 读中性证明（跑了生产实现的同一入口）
+
+🔑 纪律：**复现某口径的探针必须调用生产实现的同一入口**，不得自己复刻 SQL。
+故直接 `import` 并调用 `src.analysis.pre_post_market._load_fund_flow_changes`，
+分别在【修复前备份库】与【修复后生产库】上跑并逐字段比较：
+
+**结果：两侧均 116 行，逐行逐字节完全一致 ✓** ⇒ **D 修复是读中性的**。
+与「两处读者（`_load_fund_flow_changes`、`_load_etf_signal_previews`）都以
+`net_inflow IS NOT NULL` 为硬条件，而这 20 行的 `net_inflow` 从来就是 NULL」的推理一致。
+（该 116 = `sector` 91 个 code + `etf` 25 个 code，与 §17.8 第 1 条互相印证。）
+
+#### (5) 🔴 我在本次**自己写错了三条检查器断言**（数据没错，是验证器错）
+
+记下来是因为这两类错**每次都会重犯**：
+
+| # | 我最初写的断言 | 为什么是错的 | 正确写法 |
+|---|---|---|---|
+| a | 「全库『12 列全 NULL』行数 = 0」 | 与本修复的**设计自相矛盾**：指标列被**刻意保留 NULL**（置 0 会伪造零流量真值）⇒ 永远为 20。**断言在拿一个必然为假的条件去证明成功** | 「`source='em_spot'` 且 12 列全 NULL 的行数 = 0」（即**未标注的空值行**归零） |
+| b | 把 `COUNT(*)` 放进 `GROUP BY` 结果做**集合差集** | 纯计数变化（307→287）会同时表现为「新增一条组合」+「消失一条组合」⇒ 误报不符。**集合的身份只应是标签本身** | 身份用**标签三元组**做差集；计数另列相减并断言配平（−20/+20） |
+| c | `sorted(deltas.items())` | 计数 key 含 `None`（legacy `source=None` 组，23,090 行）⇒ **混合类型不可比**，`TypeError: '<' not supported between NoneType and str` | `sorted(..., key=lambda kv: str(kv[0]))` |
+
+⇒ 沉淀：**(i) 断言不得与自己的设计意图相矛盾；(ii) 集合的身份与计数必须分离；
+(iii) 对含 `NULL` 分组键的结果排序一律加 `str()` 兜底。**
+（(ii) 与 §17.4 已有条目「集合计数自洽」同族，本次是它在**检查器反方向**上的重犯。）
+
+⇒ 另一条流程收获：**修复脚本要同时支持「首次写入」与「仅校验」两条路径**。
+第一次跑完后再跑一次，走的正是「命中 0 行 ⇒ 不写入、但仍跑全部事后校验」的分支，
+才把上面 (b)(c) 两个检查器缺陷暴露出来 —— 若脚本在「无事可做」时直接 `exit(0)`，
+这两个错就永远测不出来。
+
+#### (6) 回归
+
+`tests/` 全量：**`1850 passed, 4 skipped, 0 failed`**（`collected 1854` = 1850 + 4，
+117.95s，`audit/_lead_pytest_full5_0917.txt`）—— 与本次修复前的基线**逐数一致**，
+即 D 修复对测试面零影响。
 
 
 
