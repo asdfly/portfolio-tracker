@@ -511,21 +511,24 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
       2. **不得用 NULL 覆盖非 NULL**：UPDATE 的 SET 列表只纳入**非空**的新值，
          既有真值不会被一个部分为空的 payload 抹掉；
       3. **拒绝关键列为空的 INSERT**：判据 1 只挡「**payload 里给出的**指标列全空」。
-         ⚠️ 精确说法是「给出的」，**不是**「12 个指标列全空」：见下方三行原文
-         （刻意不给行号 —— 本 docstring 自己的改动就会让它漂：实测同一段
-         `metric_names` 在 `43d06ce` 后先漂 `:544`→`:549`，改这段注释后 `:549`→`:554`）：
-             metric_names = [c for c in (['net_inflow','buy_amount','sell_amount'] + extra_cols)
-                             if c in row.index]
-             if not metric_names or all(v is None for v in metric_vals.values()):
-         的 `metric_names` 只收 `row.index` 里**存在**的列 ⇒ 一份只带
+         ⚠️ 精确说法是「给出的」，**不是**「12 个指标列全空」：判据 1 用的
+         `metric_names` 只收 `row.index` 里**存在**的列，故一份只带
          `{"net_inflow": NaN}` 的 payload 与一份 12 列全 NaN 的 payload
-         **落到同一条 `all(v is None)` 路径**（行为一致，故无需为前者另写判据）。
+         落到**同一条**「给出的列全为空」路径（行为一致，故无需为前者另写判据）。
          而当 `net_inflow` 为空、`buy_amount` 等**别的列有值**时，判据 1 放行，于是
          仍会落一行 `net_inflow IS NULL` + 缺省 `confidence=1.0` 的「自称完全可信
          的空值行」—— 与 09-16 那次**同型**，只是靠读取端的 NULL 过滤兜住。
          （实测于 `#135`，见 `audit/_v130_verdict.md` §3.1；「给出 vs 全列」这层语义差
          由 `verify-p1-batch` 在 09-17 指出并已按精确说法更正。）
          故 INSERT 分支对 `net_inflow is None` 也**拒绝**并落同一条 error 告警。
+         🔴 **本 docstring 刻意「不写行号、也不复制代码原文」**，两个理由都是实测的：
+           (a) 行号会漂：同一段在本轮内漂了两次（`:544`→`:549`→`:554`），且漂移
+               **正是本 docstring 自己的增删造成的** ⇒ 引用自己所在文件时，裸行号必然过期；
+           (b) **复制原文会造成「自指空锚」**：一旦这里照抄了那几行代码，`grep` 那句原文
+               就会命中**两处**（本引文 + 真实代码），读者可能**停在引文上**。
+               实测过一次：连"用哪条注释做唯一锚点"这种写法，也会因为把该注释抄进本
+               docstring 而**自己把自己变成不唯一**（3 处命中）。
+         ⇒ **要读实现，请直接看本函数体**（`metric_names` 的构造是唯一的那一处）。
          ⚠️ 本判据只作用于 INSERT：已有行的部分为空仍走判据 2（保留真值），
          不能把「部分更新」也一并拒绝。
          ⚠️ 代价（已知并接受）：源端若真的只给 buy/sell 而不给 net_inflow，
