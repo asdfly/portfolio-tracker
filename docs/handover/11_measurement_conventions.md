@@ -67,12 +67,13 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
 ```
 
 - **原文（唯一锚点）**：`SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1`
-- **`HEAD`（`613649e`）**：`src/analysis/portfolio.py:482-485`
-- **工作区**：`src/analysis/portfolio.py:717`（截至 2026-09-17）
+- **`HEAD`（`43d06ce`）**：`src/analysis/portfolio.py:817-820`（SQL 串在 `:818`）；取证 2026-09-17
+- ~~**工作区**：`src/analysis/portfolio.py:717`（截至 2026-09-17）~~ —— 🔴 **该列已于 2026-09-17 删除**：
+  `#115`/`#116` 已提交、工作区与 `HEAD` **逐字一致**，**不再存在第三套行号**。
 
-> ⚠️ **以原文片段为锚，不要以行号为锚**：该文件工作区有大量未提交改动（`+236/−27`，工作区 862 行 vs `HEAD` 653 行），
-> 且**正在被 #115/#116 改动** ⇒ 上面那个「工作区」行号**随时失效**。
-> 本会话内示例数字 `:482` 已先后指向**三种不同的东西**（详见 §4 约定 9 展开）。
+> ⚠️ **以原文片段为锚，不要以行号为锚**：本节旧版曾并列「`HEAD`（`613649e`）`:482-485` / 工作区 `:717`」两套行号，
+> 而**这两套现在都已作废**（`HEAD` 已前进到 `43d06ce`）。本会话内示例数字 `:482` 已先后指向**三种不同的东西**
+> （详见 §4 约定 9 展开）——**这正是「只给行号」必然失效的实证**。
 
 ⇒ **`summary` 只要缺一天，它后一天就静默变成「两日收益」，盘上无任何标记。**
 
@@ -93,53 +94,138 @@ SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1
 >
 > ⚠️ **范围限定**：上表是 `date >= 2026-08-01` **窗口内**的数，**不是全历史**；更早历史未查。
 
-### 1.4 🔴 `daily_return` 的分母有**三种**，且**走哪一支不落盘**（「分母必须显式」的加强反例）
+### 1.4 🔴 `daily_return` 的分母有**三种**，且**走哪一支不落在「值」上**（「分母必须显式」的加强反例）
 
-本节 §1 的规则说「分母必须显式声明」。`daily_return` 是**唯一**一个连分母都无法从盘上反推的指标 ——
-因为它在同一次计算里**有三个可能的分母**，且**没有任何一支留下标记**。这不是口径差异，是**码内缺陷**。
+本节 §1 的规则说「分母必须显式声明」。`daily_return` 是**唯一**一个连分母都无法从**行值**反推的指标 ——
+因为它在同一次计算里**有三个可能的分母**（外加 §1.5 的**篮子收窄**），而**这些都不写进 `portfolio_summary` 的行**。
+⚠️ **2026-09-17 更新**：口径 B 落地后，第 3 支**已可用日志与 `alerts` 表反查**（旧版「连告警都没有」**已不成立**），
+故本节的准确定语是「**不落在值上**」而不是「完全无标记」。它仍然是**码内缺陷**（只是已部分收口）。
 
-**三支分母**（`src/analysis/portfolio.py`）：
+**三支分母**（`src/analysis/portfolio.py`；行号 = `HEAD` `43d06ce`，2026-09-17 取证）：
 
 | # | 分母 | 触发条件 | 盘上/日志可否反推 |
 |---|---|---|---|
-| 1 | `prev_common_mv`（前日 **common 持仓**市值和） | 常规路径 | ❌ 无落盘；只能按 §1.3 反算基期后再推 |
+| 1 | `prev_common_mv`（**当日 `common` 篮子**的前日市值和；该篮子 = 可比 ∩ 当日价新鲜，见 §1.5） | 常规路径 | ❌ 无落盘；只能按 §1.3 反算基期后再推 |
 | 2 | **收缩后的** common | 当日有标的走「无复权价」支（`continue` 前未累加分母） | ✅ 日志含 `已从日收益计算中剔除` |
-| 3 | **`prev_value`（全持仓 `total_value`）** | **`daily_return == 0 and prev_value > 0 and not guard_fired`** | ❌ **无落盘、且连告警都没有** |
+| 3 | **`prev_value`（全持仓 `total_value`）** | **`not daily_return_computed and prev_value > 0 and not guard_fired`** | ✅ **2026-09-17 起可反推**：日志含 `无可用「当日新鲜」共同篮子` ＋ `alerts` 表 `rule_name='daily_return_caliber_fallback'`（见 §1.5） |
 
 第 3 支的可 `grep` 原文（引用格式见 §4 约定 9；**以原文为锚**，行号仅作导航）：
 ```python
-if daily_return == 0 and prev_value > 0 and not guard_fired:
+if not daily_return_computed and prev_value > 0 and not guard_fired:
     daily_pnl = total_value - prev_value
     daily_return = daily_pnl / prev_value * 100
 ```
-- **`HEAD`（`613649e`）**：`src/analysis/portfolio.py:549-551`
-- **工作区**：`src/analysis/portfolio.py:783-785`（截至 2026-09-17；**该文件正被 #115/#116 改动，此行号随时失效**）
+- **`HEAD`（`43d06ce`）**：`src/analysis/portfolio.py:920-922`（哨兵初值 `:761`）
+- ⚠️ **旧版原文 `if daily_return == 0 and prev_value > 0 and not guard_fired:` 已不再是当前行为**
+  （该哨兵于 2026-09-17 随口径 B 落地被替换）⇒ **引用前务必核哨兵形态**，这是「原文也存在、但已过期」的一类陷阱。
 
-**为什么第 3 支是缺陷而不是口径（三条缺一不可）**：
+**为什么第 3 支曾被视为缺陷（三条缺一不可）—— 现状：①③ 已修复、② 部分修复**
+
+> ⚠️ **本节 2026-09-17 更新**：口径 B 落地（`#115` `7ee4cf5`）后，原三条缺陷**不再是同一状态**。
+> 下面**保留原始三条作为历史记录**（它们解释了为什么要改），**并逐条标注现状** ——
+> **不要**再把「该支连告警都没有」当作当前事实引用。
 
 1. **`0` 是合法取值，却被当成「未计算」的哨兵** ⇒ 语义混淆。
    真实的「当日收益恰为 `0.00%`」（flat）与「**没有 common 持仓** / 快照或表不可用」（`daily_return` 保持初值 `0`）
-   **走进同一支**，无法区分。
+   走进同一支，无法区分。
+   ⇒ ✅ **已修复（2026-09-17）**：改用独立布尔哨兵 `daily_return_computed`（`HEAD :761` / `:907` / `:920`），
+   注释明写「`0.0` 一律保留」（`HEAD :757-761`）⇒ **presence 判断与 value 判断不再混淆**。
 2. **命中后分母由 common 前日市值静默换成全持仓 `total_value`** ⇒ **无声降级**。
    同一天的 `daily_return` 会在「common 口径」与「全持仓口径」之间**自动换挡**，而引用者看到的是同一个列名、同一个数。
-3. **该支全程无告警**，比第 2 支更隐蔽 ——
-   第 2 支至少在日志里留下 `已从日收益计算中剔除`；第 3 支**连一句日志都没有**（`guard_fired` 只用于**抑制**本支，不用于**标记**本支）。
+   ⇒ ⚠️ **部分修复**：该支现在**必留痕**（`logger.warning` ＋ `record_error_alert` 落 `alerts` 表），
+   **但仍不落在 `portfolio_summary` 行上** ⇒ 「**按行值反推**」依旧不可执行（须跨表查 `alerts`）。
+3. **该支全程无告警**，比第 2 支更隐蔽。
+   ⇒ ✅ **已修复（2026-09-17）**：现在同时有 ① 日志文案 `无可用「当日新鲜」共同篮子…`（`HEAD :924-929`）
+   与 ② `record_error_alert(..., "daily_return_caliber_fallback", ...)`（`HEAD :931-938`），
+   后者 `INSERT INTO alerts (rule_name, level, message, created_at, acknowledged)` 且 `level` 硬编码 `"error"`
+   （`src/analysis/snapshot_gate.py:135-150`）。
+   ⚠️ 但该告警函数**是 `#116` 新引入的** ⇒ 「`alerts` 表 0 行」只能证明**自引入以来**未命中，**不能**回溯更早历史。
 
-⇒ **可引用性结论**：在补齐落盘之前（修法见 `07` §八：`portfolio_summary` 补 `return_base_date` 一类的列），
-`daily_return` 的**分母口径不可自证**。因此：
+⇒ **可引用性结论（2026-09-17 更新）**：`daily_return` 的**分母 / 篮子口径仍不随「值」落盘**
+（修法见 `07` §八：`portfolio_summary` 补 `return_base_date` / `return_denom_kind` 一类的列）。因此：
 - 它**不得**与 `total_value` 变动并列在同一张表的同一行（跨口径）；
-- 引用它时**必须同时**声明三件事：**基期日 p**（§1.3）、**分母口径 ≠ 已知**、**该日是否命中第 2/3 支**；
+- 引用它时**必须同时**声明四件事：**基期日 p**（§1.3）、**分母 / 篮子口径**（第几支 ＋ 是否经过 §1.5 收窄）、
+  **该日是否命中第 2 / 3 支**、**覆盖度是否 < 100%**（口径见 §1.5；**数字不得硬编码**）；
 - 若无法确认，按 §1 的保守写法处理：**不给百分数，只给「分子/分母 + 该支未知」**。
+- ⚠️ **表述修正（2026-09-17）**：即便 `portfolio_summary` 行上什么都没标，
+  **第 3 支现已可用 `alerts` 表反查**（`rule_name='daily_return_caliber_fallback'`）
+  ⇒ 「不可自证」的**准确**表述是**「不能按行值自证，但可跨表 / 查日志自证」**。
+  旧版绝对表述（「连告警都没有」）**已不再成立**，不要沿用。
 
 > 附：三支的**互斥关系**（可当**排除判据**用，但只有一个方向成立）——
-> `guard_fired = True` 是在折算闸门**两支之前**置位的，原文
-> `if abs(raw_ratio - 1) > CONVERSION_SUSPECT_RATIO:` 紧随其后即 `guard_fired = True`
-> （`HEAD` `613649e` `:518-519`；工作区 `:752-753`，截至 2026-09-17），
+> `guard_fired = True` 是在折算闸门**两支之前**置位的：
+> `HEAD` `43d06ce` 的 `:883` 为 `if abs(raw_ratio - 1) > CONVERSION_SUSPECT_RATIO:`、
+> `:884` 紧随 `guard_fired = True`（2026-09-17 取证；**原文为锚**），
 > 而第 3 支的触发条件含 `not guard_fired`。因此：
 > - ✅ **看到日志里有折算闸门告警（`已从日收益计算中剔除` 或 `改用复权价比`）⇒ 当天一定不是第 3 支**；
-> - ❌ **反之不成立**：没有闸门告警**不**保证是第 1 支 —— 恰恰可能是第 3 支，这正是它最隐蔽的地方。
+> - ❌ **反之不成立**：没有闸门告警**不**保证是第 1 支 —— 恰恰可能是第 3 支
+>   （旧版如此；**现版第 3 支已可反查**，见上）。
 >
 > 推论：**第 2 支与第 3 支互斥**（第 2 支命中必置 `guard_fired`，从而抑制第 3 支）。
+
+### 1.5 口径 B 已落地的实现要点（2026-09-17 授权补写；**只记代码事实**）
+
+> 定位：本节记「实现要点」，口径的**完整定义与实测数**在 `12_*` §17.2；本节**不复制其数字**。
+> 所有行号 = `HEAD` `43d06ce`（2026-09-17 取证），**原文为锚**。
+
+**(1) 独立布尔哨兵：`0.0` 一律保留**
+- `HEAD :761` —— `daily_return_computed = False`（初值）
+- `HEAD :907` —— `daily_return_computed = True`（算出后置位，紧随 `daily_return = daily_pnl / prev_common_mv * 100` 于 `:906`）
+- `HEAD :920` —— `if not daily_return_computed and prev_value > 0 and not guard_fired:`
+- 代码注释自述（`HEAD :757-761`）：`daily_return == 0` **不是**「未计算」——真实平价日算出来就是合法值 `0.0`；
+  用 `== 0` 当哨兵会让平价日**静默换回**「全持仓口径」的兜底分支，使序列变成「多数日 A 口径、个别日 B 口径」的**混合口径**。
+⇒ **这是一次「presence 判断替换 value 判断」的修复**，§1.4 缺陷 ① 由此闭合。
+
+**(2) 「当日价新鲜」的三档退化（顺序不可交换，每档都留痕）**
+- `HEAD :774` —— `def _resolve_fresh_codes():`，返回 `(fresh_codes, source)`；其 docstring（`HEAD :775-790`）自述顺序：
+  1. **`merge_info`** —— 权威：文件侧 code ＋ `carried` 中 `age_days == 0`；
+  2. **本次真正取到实时行情的 code 集合**（`_update_realtime_quotes` 记录的 `_quoted_codes`）；
+  3. **持仓行自带的 `date`**：**缺失**视为「无 as-of 证据 ⇒ 当日」，**早于目标日**才判非当日。
+- `HEAD :844` —— `fresh_codes, freshness_source = _resolve_fresh_codes()`
+- 第 ③ 档「缺失 ⇒ 当日」的理由（代码自述，`HEAD :783-789`）：两档都不可用时若把**所有**标的判成非当日，
+  共同篮子会变空 ⇒ `daily_return` 直接翻到「全持仓」口径 —— 那是**比「不收窄」更大**的一次静默口径变更，**方向还相反**。
+  ⇒ 故缺证据时**保守沿用原有（不收窄）语义 + WARNING 留痕**。
+- `HEAD :804-809` —— 该档的 `logger.warning("[口径B] %d 只标的没有可用的 as-of 证据…")`
+
+**(3) 两层集合必须分开命名（否则同一个词指两个量）**
+- `HEAD :843` —— `comparable_codes = set(curr_codes.keys()) & set(prev_snapshots.keys())`（**可比**层）
+- `HEAD :846` —— `common_codes = comparable_codes & fresh_codes`（**最终篮子**）
+- `HEAD :845` —— `excluded_stale = sorted(comparable_codes - fresh_codes)`
+- `HEAD :847` / `:848` —— `prev_value_comparable` / `prev_value_included` **两个市值量分别计算**
+- `HEAD :861-868` —— 存在被排除标的时**必留痕**：`if excluded_stale:` → `logger.warning(`（`:861`）
+  文案串 `"[口径B] daily_return 排除 %d 只价格非当日的标的"` 起于 `:862`，并打印被排除清单
+⇒ ⚠️ **`comparable_codes` 的右值与旧版的 `common_codes` 逐字相同** ⇒ 只写「`set(curr_codes.keys()) & set(prev_snapshots.keys())`」**已不足以定位**（它现在不是 `common_codes`）。引用请连**左值变量名**一起给。
+
+**(4) 兜底必留痕（不许静默）**
+- 日志：`HEAD :924-929` —— `logger.warning("[口径B] 无可用「当日新鲜」共同篮子（freshness_source=%s, 纳入=%s）：…报告须显式标注", ...)`
+- 运行期标记：`HEAD :930` —— `coverage["caliber"] = "total_value_fallback"`；非兜底时 `HEAD :940` —— `coverage.setdefault("caliber", "fresh_price_basket")`
+- **落库告警**：`HEAD :931-938` —— `record_error_alert(self.db.db_path, "daily_return_caliber_fallback", ...)`；
+  其实现 `INSERT INTO alerts (rule_name, level, message, created_at, acknowledged) VALUES (?,?,?,?,0)`、
+  `level` 硬编码 `"error"`（`src/analysis/snapshot_gate.py:135-150`）。
+  > ⚠️ 该函数**写入失败不改变调用方的结论**（其 docstring 自述：调用方的拒绝判断先于本函数成立），
+  > 故**不得**把「`alerts` 表查不到」读成「一定没触发过」——只能读成「没有留痕证据」。
+
+**(5) 覆盖度随值一起走，但**不落库**（契约）**
+- `HEAD :762-772` —— 运行期 `coverage = {...}`（含 `freshness_source` / `included_n` / `total_n` / `comparable_n` /
+  `prev_value_included` / `prev_value_comparable` / `value_share` / `excluded_stale`）
+- `HEAD :1010` —— `'daily_return_coverage': coverage,` 进入 `_calculate_summary` 的返回
+- 代码注释自述（`HEAD :1007-1009`）：覆盖度**必须随值一起走**，否则「收窄口径的收益率」会被读者拿去乘「全持仓的总市值」；
+  **报告侧读不到本键时须显式印「覆盖度未记录」，不许静默省略。**
+- 🔴 **但 `portfolio_summary` 没有这一列**（只读生产库实测 **16 列、无该列**，2026-09-17 `mode=ro`）
+  ⇒ **同进程可见、跨进程不可见**（邮件路径另起进程 ⇒ 拿不到数字）。
+  ⇒ 任何写进文档的覆盖度**必须**标为「**运行时值**」＋ 给取证方式与日期，**以运行时算出的数为准**，**禁止硬编码**。
+
+**(6) 报告侧的无条件声明（契约，不在本文件实现）**
+- 报告侧实现：`src/utils/enhanced_report.py` 的模块级 `_fmt_dr_coverage(cov)` ＋ 「当日盈亏」卡片下的永久覆盖度行
+  ＋ 卡片组后的**无条件**口径声明（含「两者口径不同，**不可相乘**」）。
+- ⚠️ **「无条件」是本条的关键**：声明与**数据可得性无关** —— 即使读不到覆盖度，也要印「覆盖度未记录」。
+  这正是 §1 的精神（分母必须显式），只是把「显式」推进到「**显式到读者无法误用**」。
+
+**(7) 🚫 本节的边界（防越界推断，同 §4 约定 9 / `12_*` §17.4）**
+- ✅ **可写**：以上全部是**逐行读到的代码事实**（含代码自述文案）。
+- ⛔ **不可写**：**不得**写「因为口径 B 落地，所以某个历史 `daily_return` 是错的 / 已过期」一类因果 ——
+  **口径不同 ≠ 错误**；裁定 B 只约束**新写入**，未回溯历史行。凡涉及「历史行该不该按 B 重算」，
+  属**未知定义**，**一律不写**。
 
 ---
 
@@ -443,8 +529,13 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
   | 工作区（#115/#116 在途，另一刻） | 862 行 | `# ========== 步骤6.5: 快照基线闸门（#116 契约2）=========` ← 一段**注释块** |
 
   ⇒ 引用者与被引用者**都没有记错**，分歧来自**版本（含「同一版本的不同时刻」）**，不是记忆。
+  > 📌 **状态注（2026-09-17 后）**：上表是**历史实例**，其中的 `613649e` 与「工作区」均已不是当前版本；
+  > 当前 `HEAD` = `43d06ce`，**工作区与 `HEAD` 逐字一致**。**上表作为「漂移三态」的证据保留，不要当作现状引用。**
 - **位移量随改动规模变化，且不可预测**：`+20/−0` 时是整体 `+20`；`+236/−27` 时同一个 SQL 从 `:483`（`HEAD`）漂到 `:717`（工作区）—— **位移 234 行**。
   ⇒ 任何「按上次的差值做个减法」的做法都会失效。
+  > 🔑 **2026-09-17 加强**：这条现在有了**更强的形式** —— 同一个锚在**一天内**给出过 `+20` 与 `+234` **两个差值**，
+  > 且**提交切分一变还会出现第三个** ⇒ 失效的不是「差值不准」，而是「**差值法这个规则类型本身**」。
+  > （`07` §八 旧版的「查 `HEAD` 就把这些数整体 `−20`」已按此**整条删除**，不是改成 `−234`。）
 - **更隐蔽的一层**：漂移发生在**未提交状态**时，**同一 commit 的读者**之间无法通过"核对行号"发现分歧 ——
   因为双方看到的行号**各自自洽**，矛盾只在把两段原文摆在一起时才暴露。
 - 本仓同类旧案：`portfolio_risk.py` 单文件已有 **4 个 blob 版本**（见约定 1）。
@@ -452,8 +543,20 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
 **2｜可执行形式（不满足此格式 = 不合格引用）**
 
 ```
-可 grep 的原文片段（≥1 行完整语句或注释） + 路径 + 行号（HEAD / 工作区各一） + 版本标记 + 取证日期
+可 grep 的原文片段（≥1 行完整语句或注释，必要时含左值/变量名） + 路径 + 行号（标 HEAD 及其 commit） + 取证日期
 ```
+
+> 🔴 **2026-09-17 状态变更（`HEAD` `43d06ce`）**：`#115`/`#116` 已提交，**工作区与 `HEAD` 逐字一致**
+> ⇒ **「`HEAD` / 工作区各一」的双行号形式不再需要**，本节此前的「必须给两套」在**当前状态下退化为单套**。
+> 该条**作为条件规则保留**：**只要目标文件工作区有未提交改动，仍需双套**（或直接改用「原文为唯一锚点」，推荐）。
+>
+> 🔴 **同时新增一条（2026-09-17 由 `07` §八 重写实测得出）**：**锚本身也会消失/改名，不只是行号会漂。**
+> 实例：`#115` 把 `common_codes = set(curr_codes.keys()) & set(prev_snapshots.keys())`
+> 改名为 `comparable_codes = …` ⇒ **同一行右值逐字未变，但旧锚点已 `grep` 不到**。
+> ⇒ **对策**：原文片段**必须连左值 / 变量名 / 键名一起给**（如 `comparable_codes = set(curr_codes.keys()) & …`），
+> 不能只取「表达式那一半」—— 否则改名就能让锚静默失效，**而这是 `grep` 失败也未必被注意到的**。
+> ⇒ 这条与 §4 的「不要取 `continue`/`pass` 这类不唯一片段」是**两条独立的**要求：
+> 前者防**不唯一**，后者防**改名**。
 
 > ⚠️ **原文片段在前、行号在后**，不是排版偏好：行号是**导航**，原文才是**锚**（第 3 节）。
 > 只给行号时，读者**没有任何手段**发现自己在读另一个版本；给了原文，他 `grep` 一次即知。
@@ -469,7 +572,9 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
 
 - ✗ `src/analysis/portfolio.py:482-484`
 - ✓ 「原文 `SELECT date FROM portfolio_summary WHERE date < ? ORDER BY date DESC LIMIT 1`；
-  `src/analysis/portfolio.py`，`HEAD`（`613649e`）`:482-485` / 工作区 `:717`；取证 2026-09-17」
+  `src/analysis/portfolio.py`，`HEAD`（`43d06ce`）`:817-820`（SQL 串在 `:818`）；取证 2026-09-17」
+- ⚠️ **旧版此处的正例是「`HEAD`（`613649e`）`:482-485` / 工作区 `:717`」—— 两个行号现已全部作废**
+  （`HEAD` 前进到 `43d06ce`、工作区与 `HEAD` 逐字一致）。**这本身是「正例也会过期、而原文不会」的又一实证。**
 
 **3｜为什么不靠「把行号改对」解决**
 
@@ -490,11 +595,23 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
 
 **适用域**（缺一不可，漏任一项数字不可复现）：
 
-- **篮子**：`portfolio_snapshots` 场外篮子（`is_otc_fund` **13 只**，`config/settings.py:368`）
+> **行号版本**：以下行号均为 `HEAD` `43d06ce`（2026-09-17 取证）。**原文为锚，行号仅作导航**（§4 约定 9）。
+
+- **篮子**：`portfolio_snapshots` 场外篮子（`is_otc_fund` **13 只**）
+  - **可 `grep` 原文**：`OTC_FUND_CODES = frozenset({`（`config/settings.py:368`）
+    与 `def is_otc_fund(code: str) -> bool:`（`config/settings.py:385`）
+  - ⚠️ 旧版此处只写 `config/settings.py:368` —— 该行是**集合定义**，**不是 `is_otc_fund`**（后者在 `:385`）；
+    现按原文补正。**「13 只」已按规定：「逐行点数」核对 `:369-381` 共 13 个 code 字面量**（2026-09-17）。
 - **窗口**：每 `code` `get_price_history(code, 60)` = **`LIMIT 60` 行**，
   **不是 60 个日历日**。多数 code 历史不足 60 行 ⇒ 退化为全历史（实测 `001194` 33 行、`027293` 8 行）
-- **key**：`(current_price, round(market_value, 2))`（`portfolio_risk.py::_replica_key`）
-- **判据**：`n >= COPY_BREADTH_MIN_N(3)` 且 `c*2 >= n` ⇒ VOID（`portfolio_risk.py:221` / `:223`）
+- **key**：`(current_price, round(market_value, 2))`
+  - **可 `grep` 原文**：`def _replica_key(row: Dict[str, Any]) -> Optional[Tuple[float, float]]:`
+    （`src/analysis/portfolio_risk.py:138`；旧版写作 `portfolio_risk.py::_replica_key`，**无行号**，现补行号作导航）
+- **判据**：`n >= COPY_BREADTH_MIN_N(3)` 且 `c*2 >= n` ⇒ VOID
+  - **可 `grep` 原文**：`if n < COPY_BREADTH_MIN_N:`（`src/analysis/portfolio_risk.py:221`）
+    与 `if c * 2 < n:`（`src/analysis/portfolio_risk.py:223`）
+  - **常量定义**：`COPY_RUN_MIN_LEN = 5`（`:125`）、`COPY_BREADTH_MIN_N = 3`（`:126`）、
+    `COPY_BREADTH_MIN_RATIO = 0.5`（`:127`）
 - **观测区间**：可比日 `2026-02-28 ~ 2026-09-15`，其中 `n >= 3` 者共 **48 天**
 
 逐日 `n / c / ratio` 实测分布：
@@ -514,7 +631,11 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
 **两条推论**：
 
 1. `COPY_BREADTH_MIN_RATIO` 是「**非承重常量**」，**不只是「未被消费」**——
-   代码 `:223` 硬编码 `c*2 < n`、常量只进日志（`:226`）。
+   代码**硬编码** `c*2 < n`（可 `grep` 原文：`if c * 2 < n:`，`src/analysis/portfolio_risk.py:223`，`HEAD` `43d06ce`），
+   常量**只进日志**（可 `grep` 原文：`COPY_BREADTH_MIN_RATIO * 100)`
+   位于 `logger.info(… )` 的参数列表，`src/analysis/portfolio_risk.py:225-227`，常量引用在 `:227`）。
+   > ⚠️ 旧版此处写「常量只进日志（`:226`）」—— **`:226` 在 `HEAD` `43d06ce` 是日志的续行（`"该日这些行按非观测处置"`），
+   > 不是常量引用行**；常量引用在 `:227`。现按原文补正（这是「行号漂移导致指错物」的又一例）。
    **即使真的消费它，观测样本上的行为也完全一样** ⇒ 风险说明按「非承重」措辞，**不按「无影响」**。
 2. 保留 `0.5` 的价值**不在历史分辨力，而在对未来中间态的防御**——
    中间区间现在空着，但**空得没有理由保证将来还空**。
@@ -527,8 +648,10 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
 
 ### 5.2 有效基期 `gap` 逐 code 分布（同一事件日，三种参照量）
 
-`gap` 的基期 = **窗口首行**（`portfolio_risk.py:504` `last_real_date = dates[0]`），
-且 `:520-521` 在跨期分支里**推进基期** ⇒ 同一个 `2026-06-30`，各 `code` 的 `gap` 并不相同。
+`gap` 的基期 = **窗口首行**（可 `grep` 原文：`last_real_date = dates[0]`，
+`src/analysis/portfolio_risk.py:504`，`HEAD` `43d06ce`，2026-09-17 取证），
+且 `:520-521` 在跨期分支里**推进基期**（可 `grep` 原文：`last_real_date = d` 在 `:520`、
+`last_real_value = values[k]` 在 `:521`）⇒ 同一个 `2026-06-30`，各 `code` 的 `gap` 并不相同。
 
 **实测（窗口 = 每 `code` `LIMIT 60` 行，判据顺序走生产实现）**：
 
@@ -548,21 +671,28 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
 
 - 在 head=`06-15` 组的窗口里，`06-15` 是**窗口首行** ⇒ `:504` 无条件取它当基期 ⇒ `06-15 → 06-30 =` **15**；
 - 在 head=`01-31` 组的窗口里，`06-15` 是**内部行**，且它是 `06-15~06-29` 复制段的**段首**，
-  被 Tier1 整段 void（**含段首**，`COPY_RUN_MIN_LEN = 5`）⇒ 基期停在 `05-31` ⇒ **30**。
+  被 Tier1 整段 void（**含段首**；可 `grep` 原文：`COPY_RUN_MIN_LEN = 5`
+  （`src/analysis/portfolio_risk.py:125`）与 `if run_len >= COPY_RUN_MIN_LEN:`（`:198`），`HEAD` `43d06ce`）
+  ⇒ 基期停在 `05-31` ⇒ **30**。
 
 ⇒ **「窗口首行」与「内部行」的处置不同**（前者无条件当基期，后者可能被判据作废），
 这才是 `gap` 逐 code 变化的真正机制——**不是**「各 code 数据不同」。
 
 **机制清点（是三项，不是「两病因」）**：
 
-| 机制 | 只数 |
-|---|---|
-| `gap > MAX_SINGLE_SESSION_GAP_DAYS(12)` ⇒ 跨期 | **11** |
-| 窗口首行即基期（无收益位置） | **1** |
-| 事件日不在窗口内 | **1** |
-| `gap <= 0`（同日重复采集） | **0** |
+> **行号版本**：`HEAD` `43d06ce`（2026-09-17 取证）。**原文为锚**。
 
-> ⚠️ `gap <= 0` **实测 0 例**，与 `portfolio_risk.py:515-516` 代码注释自述（「当前生产库实测 0 例」）一致。
+| 机制 | 只数 | 可 `grep` 的原文（`src/analysis/portfolio_risk.py`） |
+|---|---|---|
+| `gap > MAX_SINGLE_SESSION_GAP_DAYS(12)` ⇒ 跨期 | **11** | `if gap is None or gap <= 0 or gap > MAX_SINGLE_SESSION_GAP_DAYS:`（`:514`）；常量 `MAX_SINGLE_SESSION_GAP_DAYS = 12`（`:40`） |
+| 窗口首行即基期（无收益位置） | **1** | `last_real_date = dates[0]`（`:504`） |
+| 事件日不在窗口内 | **1** | 同 `:504`（窗口起点即 `dates[0]`） |
+| `gap <= 0`（同日重复采集） | **0** | `:514` 的 `gap <= 0` 分支 |
+
+> ⚠️ `gap <= 0` **实测 0 例**，与代码注释自述一致 —— 可 `grep` 原文：
+> `# gap 为 None（日期不可解析）或非正（同日重复采集，当前生产库`（`:515`）
+> ＋ `# 实测 0 例）同样不是「单个交易日」，一并按跨期处理。`（`:516`）
+> （`HEAD` `43d06ce`，2026-09-17 取证；旧版写 `portfolio_risk.py:515-516` 但**未附原文**，现补）。
 > **不得**把 `027293` 的 `06-30` 归为 `gap <= 0`——它是**窗口首行当基期**，两者机制不同。
 
 ---
@@ -576,3 +706,4 @@ if daily_return == 0 and prev_value > 0 and not guard_fired:
 | 面板范围 | `etf_features` 含 2012–2017 的 4,091 行结构性 OHLC 缺失；任何按行统计前须先声明面板（§2.3 / §2.6） | 本文件 |
 | 折算闸门阈值 | `CONVERSION_SUSPECT_RATIO` / `MAX_SINGLE_SESSION_GAP_DAYS` / `SPLIT_SPIKE_LOG_RET` 的口径与顺序论证见 `12_*` §4.5–4.8 | `12_*` |
 | 场外口径缺口 | `portfolio.py` 用 `WHERE date = prev_dt` 精确匹配 ⇒ 仅月末落行的场外基金当日被整只踢出收益（见 `12_*` §13） | `12_*` |
+| 场外卖出不可检测 | **性质**：持仓文件**结构性不含场外**（场外基金只按披露节奏落行）⇒ 卖出当日**从文件侧无「消失」信号可比对 ⇒ 卖出不可检测**。**唯一兜底**：`FORWARD_FILL_MAX_STALENESS_DAYS = 10`（可 `grep` 原文：`FORWARD_FILL_MAX_STALENESS_DAYS = 10`，`src/analysis/portfolio.py:74`，`HEAD` `43d06ce`，2026-09-17 取证）—— 库内行距目标日超 10 个自然日即视为「已清仓的」（该规则自述见 `:277`，判据见 `:306`），**靠陈旧上限让它自然退出**，不并入当日组合。**归因**：属**既有结构限制，非 `#115` 引入**（`#115` 只是把「无限期携带」改为「10 天后退出」）。**当前未处置**（修法方向：从场外**份额来源**导入份额变动，使卖出成为**可观测事件**，从而不必依赖陈旧上限）。 | 本文件 |
