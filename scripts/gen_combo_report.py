@@ -7,11 +7,33 @@
 - 所有定性叙事（TLDR、四段式、周线阶段、交叉验证风向、操作取向）均由当日真实数据经规则推导，
   不写死任何某日专属措辞；数字与定性结论一一对应，杜绝"旧叙事套新数字"。
 """
-import sqlite3, os, html, json, statistics, glob, re
+import sqlite3, os, html, json, statistics, glob, re, sys
 from datetime import datetime, date as _date
 
 DB = r'data/database/portfolio.db'
-RUN_DATE = datetime.now().strftime('%Y-%m-%d')
+
+# ---- 运行日解析（支持历史回溯重生成）----
+# 优先级：--date YYYY-MM-DD  >  环境变量 GEN_COMBO_DATE  >  系统当天。
+# 硬约束：无参且未设环境变量时回落到 datetime.now()，行为与历史无参自动化调用完全一致。
+def _resolve_run_date():
+    _argv = sys.argv[1:]
+    _arg = None
+    for _i, _t in enumerate(_argv):
+        if _t == '--date' and _i + 1 < len(_argv):
+            _arg = _argv[_i + 1]
+        elif _t.startswith('--date='):
+            _arg = _t.split('=', 1)[1]
+    _v = _arg or os.environ.get('GEN_COMBO_DATE') or datetime.now().strftime('%Y-%m-%d')
+    try:
+        _d = datetime.strptime(_v, '%Y-%m-%d')
+    except ValueError:
+        raise SystemExit(f'[FATAL] 运行日格式非法（需 YYYY-MM-DD）：{_v!r}')
+    # 必须归一化后返回：strptime 会接受非零填充写法（如 2026-9-16），若原样返回就会写出
+    # ..._2026-9-16.* ；而下方 sidecar 的「跳过自身」判定用的是 RUN_DATE 精确子串匹配，
+    # 届时将匹配不到规范名 ..._2026-09-16.signals.json，导致把本期当上期、跨日信号退化为恒等。
+    return _d.strftime('%Y-%m-%d')
+
+RUN_DATE = _resolve_run_date()
 OUT = f'data/reports/组合大盘综合视角_{RUN_DATE}.html'
 
 # ============ NeoData 实时查询抽取（外置 JSON）============
@@ -85,6 +107,16 @@ cur.execute("SELECT indicator_code,value FROM macro_daily WHERE date=?", (DATA_D
 macro = dict(cur.fetchall())
 
 # ---------- 分类（code -> (资产类别, 行业族)）----------
+# 代码与名称取自 portfolio_snapshots（基准日 2026-09-16，以库为准，非人工猜测）：
+#   880013 天添利                       -> 货币。单位净值恒 1.0、收益走份额增长，必须单列一族；
+#                                          混入权益族会把「当日涨跌恒为 0」误当成「无收益」污染涨跌归因。
+#   007994 华夏中证500指数增强A / 100032 富国中证红利指数增强前端 -> 场外指数（指数增强）
+#   其余 9 只灵活配置/混合型             -> 场外主动权益
+OTC_ACTIVE = {'519770', '166301', '001407', '001323', '001437', '008269', '002152', '001765', '001194'}
+OTC_INDEX = {'007994', '100032'}
+OTC_MONEY = {'880013'}
+
+# 场内 ETF（22 只，沿用原映射，未改动）
 CLS = {
  '159267': ('行业主题', '军工系'), '512810': ('行业主题', '军工系'),
  '512010': ('行业主题', '医药系'), '159992': ('行业主题', '医药系'), '515120': ('行业主题', '医药系'),
@@ -95,6 +127,22 @@ CLS = {
  '563020': ('红利', '红利'), '159220': ('红利', '红利'),
  '512100': ('宽基', '宽基'), '510300': ('宽基', '宽基'), '510500': ('宽基', '宽基'),
  '588000': ('宽基', '宽基'), '159300': ('宽基', '宽基'), '159949': ('宽基', '宽基'),
+ # --- 场外基金（12 只，本次纳入；旧版只认 22 只 ETF，会把 38.92% 的组合静默塞进「其他」）---
+ # 场外主动权益（9 只，名称见 DB）
+ '519770': ('场外主动权益', '场外主动权益'),   # 交银优择回报灵活配置混合A
+ '166301': ('场外主动权益', '场外主动权益'),   # 华商新趋势优选灵活配置混合型证券投资基
+ '001407': ('场外主动权益', '场外主动权益'),   # 景顺长城稳健回报灵活配置混合C
+ '001323': ('场外主动权益', '场外主动权益'),   # 东吴移动互联混合A
+ '001437': ('场外主动权益', '场外主动权益'),   # 易方达瑞享灵活配置混合I
+ '008269': ('场外主动权益', '场外主动权益'),   # 大成睿享混合A
+ '002152': ('场外主动权益', '场外主动权益'),   # 华宝核心优势混合
+ '001765': ('场外主动权益', '场外主动权益'),   # 前海开源嘉鑫混合A类
+ '001194': ('场外主动权益', '场外主动权益'),   # 景顺长城稳健回报灵活配置混合A
+ # 场外指数（2 只指数增强）
+ '007994': ('场外指数', '场外指数'),           # 华夏中证500指数增强A
+ '100032': ('场外指数', '场外指数'),           # 富国中证红利指数增强前端
+ # 货币（1 只）
+ '880013': ('货币', '货币'),                   # 天添利
 }
 cls_sum, ind_sum = {}, {}
 for c, n, mv, pr, cp, pnl in hold:
@@ -102,6 +150,19 @@ for c, n, mv, pr, cp, pnl in hold:
     cls_sum[a] = cls_sum.get(a, 0) + mv
     ind_sum[b] = ind_sum.get(b, 0) + mv
 pct = lambda v: v / TOT * 100
+HOLD_N = len(hold)
+OTC_CODES = OTC_ACTIVE | OTC_INDEX | OTC_MONEY
+OTC_N = sum(1 for r in hold if r[0] in OTC_CODES)
+ETF_N = HOLD_N - OTC_N
+
+# 未覆盖代码显式告警：项目准则「要么显式标记，要么显式拒绝，不许静默」。
+# 旧版 CLS.get(c, ('其他','其他')) 会把任何未登记代码静默归入「其他」，此处补日志 + 产物内显式标注。
+_UNCOVERED = [(c, n, mv) for c, n, mv, _, _, _ in hold if c not in CLS]
+UNC_N = len(_UNCOVERED)
+UNC_W = pct(sum(mv for _, _, mv in _UNCOVERED))
+if UNC_N:
+    print('[WARN] CLS 未覆盖 %d 只 / 权重 %.2f%%：%s'
+          % (UNC_N, UNC_W, '、'.join(f'{c}({n})' for c, n, _ in _UNCOVERED)))
 
 bad = [(c, n, mv, pr, cp) for c, n, mv, pr, cp, _ in hold if abs(pr) > 50 or cp < 0]
 bad_mv = sum(r[2] for r in bad)
@@ -232,12 +293,25 @@ PROXY = {
  '512100': idx['中证1000'][1], '510300': idx['沪深300'][1], '510500': idx['中证500'][1],
  '588000': idx['科创50'][1], '159300': idx['沪深300'][1], '159949': idx['创业板50'][1],
 }
+# 场外基金无当日板块/指数代理口径：场外净值 T+1 披露，本地亦无其当日涨跌（etf_price_history 滞后至 2026-08-19），
+# 不做臆造替代 -> 显式排除，并在产物 3.2 表中标注 est 的实际覆盖范围与未覆盖权重。
+# 旧版对未覆盖标的按 0 贡献静默计入 est，等于默认「这部分仓位当日不涨不跌」，属隐性失真。
+_PROXY_UNC = [(c, n, mv) for c, n, mv, _, _, _ in hold if c not in PROXY]
+PROXY_N = HOLD_N - len(_PROXY_UNC)
+PROXY_W = pct(sum(mv for c, n, mv, _, _, _ in hold if c in PROXY))
+PROXY_UNC_N = len(_PROXY_UNC)
+PROXY_UNC_W = pct(sum(mv for _, _, mv in _PROXY_UNC))
+if PROXY_UNC_N:
+    print('[WARN] PROXY 未覆盖 %d 只 / 权重 %.2f%%（按 0 贡献计入 est，非真实为 0）：%s'
+          % (PROXY_UNC_N, PROXY_UNC_W, '、'.join(f'{c}({n})' for c, n, _ in _PROXY_UNC)))
 est = sum(pct(mv) / 100 * PROXY.get(c, 0) for c, n, mv, _, _, _ in hold)
 
 # 集中度
 med_w = pct(ind_sum.get('医药系', 0)); mil_w = pct(ind_sum.get('军工系', 0))
 sec_w = pct(ind_sum.get('证券', 0)); top3_w = med_w + mil_w + sec_w
 aero_w = pct(next((r[2] for r in hold if r[0] == '159267'), 0))
+aero_over = aero_w > 10   # 单一持仓 10% 审慎线：按实测条件渲染，禁止硬编码「已超」
+_aero_verdict = '已超' if aero_over else '未超'
 core300_w = pct(sum(r[2] for r in hold if r[0] in ('510300', '159300')))
 def_w = pct(cls_sum.get('红利', 0) + cls_sum.get('债券', 0))
 innov_w = pct(sum(r[2] for r in hold if r[0] in ('159992', '515120')))
@@ -245,6 +319,11 @@ ratebond_w = pct(sum(r[2] for r in hold if r[0] in ('511520', '159650')))
 batt_w = pct(sum(r[2] for r in hold if r[0] in ('159796', '561910')))
 up_w = pct(cls_sum.get('红利', 0) + cls_sum.get('债券', 0) + ind_sum.get('军工系', 0) + ind_sum.get('科技系', 0) + cls_sum.get('宽基', 0))
 inv_w = pct(ind_sum.get('医药系', 0) + ind_sum.get('新能源系', 0) + ind_sum.get('证券', 0))
+# 攻守比按扩展后的全部类别计算（含场外），否则 38.92% 场外仓位会掉在攻守口径之外
+off_w = pct(cls_sum.get('行业主题', 0) + cls_sum.get('场外主动权益', 0) + cls_sum.get('宽基', 0) + cls_sum.get('场外指数', 0))
+def2_w = pct(cls_sum.get('债券', 0) + cls_sum.get('红利', 0) + cls_sum.get('货币', 0))
+otc_w = pct(cls_sum.get('场外主动权益', 0) + cls_sum.get('场外指数', 0) + cls_sum.get('货币', 0))
+off_def_ratio = (f'{off_w / def2_w:.1f} : 1' if def2_w else '—')
 
 # 周线阶段：计算上证 20 日位置
 try:
@@ -324,16 +403,34 @@ WATCH12 = MIL_SECTORS + ['化学制药', '生物制品', '医疗服务', '证券
                         '半导体', '通信设备', '种植业']
 
 def _upsert_sectors(date_str, secdict):
-    """把当日板块涨跌幅写入 sector_daily_change（供后续跨日跟踪）。幂等。"""
+    """把当日板块涨跌幅写入 sector_daily_change（供后续跨日跟踪）。
+
+    幂等强化（本次修正）：先读现值逐项比对，仅对「不存在 / 值或 source 不同」的行执行
+    INSERT OR REPLACE。原实现无条件写入，而该表 PRIMARY KEY 为 (date, sector_name)，
+    REPLACE 会先 delete 再 insert，于是即便 metric 列完全相同，created_at 仍被
+    DEFAULT CURRENT_TIMESTAMP 刷新，改写该行的历史写入时间戳——严格说并非 no-op
+    （已用库副本隔离实测确认：13/13 行的 change_pct/source 不变，created_at 全部被改写）。
+    生产库应保持只读；正常换日运行时目标日期无行，仍会照常写入。
+    """
     try:
+        _w = _skip = 0
         for _nm, _val in secdict.items():
             if _val is None:
+                continue
+            cur.execute("SELECT change_pct, source FROM sector_daily_change "
+                        "WHERE date=? AND sector_name=?", (date_str, _nm))
+            _r = cur.fetchone()
+            if (_r and _r[0] is not None and _r[1] == 'neodata_q4'
+                    and abs(float(_r[0]) - float(_val)) < 1e-9):
+                _skip += 1
                 continue
             cur.execute(
                 "INSERT OR REPLACE INTO sector_daily_change "
                 "(date, sector_name, change_pct, source) VALUES (?,?,?,?)",
                 (date_str, _nm, float(_val), 'neodata_q4'))
+            _w += 1
         con.commit()
+        print(f'[INFO] sector_daily_change upsert({date_str})：写入 {_w} 行 / 幂等跳过 {_skip} 行')
     except Exception as _e:
         print('[WARN] sector_daily_change upsert 失败:', _e)
 
@@ -379,6 +476,13 @@ signal_state['mil_top_today'] = mil_top_today
 signal_state['mil_complete_days'] = len(_complete)
 
 # 读取往期 sidecar 做连续性对比（仅读结构化 JSON，绝不爬报告 HTML 文本）
+# 【上期选取语义 · 跨日续接的正确性所在，勿改】
+#   1) 只扫 data/reports/组合大盘综合视角_*.signals.json，按文件名倒序（= 运行日倒序）；
+#   2) 跳过文件名中含本期 RUN_DATE 的那一份——否则会把「自己」当上期，所有跨日信号退化为恒等；
+#   3) 取剩余的第一个 = 最近一期已落盘的 sidecar 作为「上期」。
+#   注：回溯重跑（--date 2026-09-16）时 09-16 那份被跳过，取到的仍是 09-15 那期，与原 09-16 run 的上期完全一致；
+#   而 sidecar 内的 date 字段是「组合数据基准日」（09-15 run 写的是 09-14，因当日 summary 滞后），
+#   故 _prev_state['date'] 与文件名日期不必相同——这是既有语义，不是 bug。
 _prev_state = None
 try:
     for _p in sorted(glob.glob('data/reports/组合大盘综合视角_*.signals.json'), reverse=True):
@@ -440,6 +544,8 @@ else:
 _prev_gap_html = f'<li><span class="cond">跨期对照</span>：{_prev_gap_note}</li>' if _prev_gap_note else ''
 
 now = datetime.now().strftime('%Y-%m-%d %H:%M')
+# 回溯重生成标记：RUN_DATE 早于实际生成日时为 True，产物中显式标注来源，避免被误读为当日盘后原件
+BACKFILL = (RUN_DATE != datetime.now().strftime('%Y-%m-%d'))
 E = html.escape
 def chg(v, suffix='%'):
     if v is None: return '<span class="flat">—</span>'
@@ -457,21 +563,24 @@ mil_recent_txt = '；'.join(
 
 # ================= HTML =================
 rows_hold = ''
+_TAG_CLS = {'行业主题': 'a', '债券': 'b', '红利': 'c', '宽基': 'd',
+            '场外主动权益': 'e', '场外指数': 'f', '货币': 'g'}
 for c, n, mv, pr, cp, pnl in hold:
     a, b = CLS.get(c, ('其他', '其他'))
     flag = ' <span class="warn-tag">待核对</span>' if (abs(pr) > 50 or cp < 0) else ''
     ef = etf_flow.get(c)
     ef_txt = money(ef[0]) if ef and ef[0] is not None else '<span class="flat">—</span>'
-    rows_hold += f'''<tr><td class="code">{c}</td><td>{E(n)}{flag}</td><td class="tag t-{"a" if a=="行业主题" else "b" if a=="债券" else "c" if a=="红利" else "d"}">{a}</td>
+    rows_hold += f'''<tr><td class="code">{c}</td><td>{E(n)}{flag}</td><td class="tag t-{_TAG_CLS.get(a, 'd')}">{a}</td>
 <td>{E(b)}</td><td class="num">{mv:,.0f}</td><td class="num">{pct(mv):.2f}%</td><td class="num">{chg(pr)}</td><td class="num">{ef_txt}</td></tr>'''
 
 rows_cls = ''
-for k in ['行业主题', '债券', '红利', '宽基']:
+for k in ['行业主题', '债券', '红利', '宽基', '场外主动权益', '场外指数', '货币']:
     v = cls_sum.get(k, 0)
     rows_cls += f'''<tr><td>{k}</td><td class="num">{v:,.0f}</td><td class="num"><b>{pct(v):.2f}%</b></td>
 <td><div class="bar"><i style="width:{pct(v):.1f}%"></i></div></td></tr>'''
 
-ind_order = ['医药系', '军工系', '证券', '宽基', '红利', '利率债', '新能源系', '科技系', '可转债']
+ind_order = ['医药系', '军工系', '证券', '宽基', '红利', '利率债', '新能源系', '科技系', '可转债',
+             '场外主动权益', '场外指数', '货币']
 rows_ind = ''
 for k in ind_order:
     v = ind_sum.get(k, 0)
@@ -629,6 +738,7 @@ tr:hover td{{background:#1a2029}}
 .tag{{font-size:11px;padding:2px 7px;border-radius:4px;white-space:nowrap}}
 .t-a{{background:#3d2a1a;color:#e3a33c}} .t-b{{background:#16302b;color:#3fb950}}
 .t-c{{background:#3a2436;color:#db61a2}} .t-d{{background:#1b2c42;color:#58a6ff}}
+.t-e{{background:#2a2038;color:#a371f7}} .t-f{{background:#142b2b;color:#39c5cf}} .t-g{{background:#26292e;color:#9aa5b1}}
 .warn-tag{{background:#4a2c11;color:#e3a33c;font-size:10.5px;padding:1px 5px;border-radius:3px;margin-left:4px}}
 .bar{{background:#21262d;height:7px;border-radius:4px;overflow:hidden;min-width:90px}}
 .bar i{{display:block;height:100%;background:linear-gradient(90deg,#58a6ff,#a371f7)}}
@@ -666,7 +776,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 </style></head><body><div class="wrap">
 
 <h1>组合 + 大盘综合视角 · 盘后日报</h1>
-<div class="sub">报告生成：{now}（运行日 {RUN_DATE}）　|　<b style="color:#d29922">组合数据基准日：{DATA_DATE}（收盘）</b>{f'　|　⚠ 大盘指数采用 {IDX_DATE} 实时（组合/持仓采集器滞后至 {DATA_DATE}）' if (DATA_LAG and IDX_DATE != DATA_DATE) else ''}　|　持仓快照：{SNAP}　|　22 只 ETF　总市值 ¥{TOT:,.0f}
+<div class="sub">报告生成：{now}（运行日 {RUN_DATE}）　|　<b style="color:#d29922">组合数据基准日：{DATA_DATE}（收盘）</b>{f'　|　⚠ 大盘指数采用 {IDX_DATE} 实时（组合/持仓采集器滞后至 {DATA_DATE}）' if (DATA_LAG and IDX_DATE != DATA_DATE) else ''}　|　持仓快照：{SNAP}　|　持仓 {HOLD_N} 只（场内 ETF {ETF_N} / 场外 {OTC_N}）　总市值 ¥{TOT:,.0f}
 <br>数据源：项目本地数据层（东方财富/新浪）+ NeoData 金融搜索 <span class="ok">✓ 均可用</span>　|　NeoData 查询时间 {MKT_NEO['query_time']}</div>
 
 <div class="tldr">
@@ -674,7 +784,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <ul>
 {f'<li><b>⚠ 锚定提示</b>：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% <b>方向相反</b>，代理法在本组合结构下方向亦不可信，<b>本报告一律以真值为准</b>。</li>' if (est < 0) != (d_ret < 0) else ''}
 <li><b>核心矛盾</b>：主力资金今日<b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。</li>
-<li><b>组合最大集中度风险</b>：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（已超 10% 审慎线）；军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 <b style="color:#e3a33c">{top3_w:.1f}%</b>。军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。</li>
+<li><b>组合最大集中度风险</b>：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（{_aero_verdict} 10% 审慎线）；军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 <b style="color:#e3a33c">{top3_w:.1f}%</b>。军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。</li>
 <li><b>亮点/风险</b>：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；红利+债券防御底仓（{def_w:.1f}%）稳定；{_mil_against_txt}；医药系微逆风（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）拖累有限。</li>
 <li><b>宏观逆风未解</b>：制造业 PMI 整体值经 NeoData 查询仍未直接返回（标「—」）；仅返回综合PMI产出 {PMI['composite']}%、非制造业 {PMI['nonmfg']}%（收缩区）、服务业 {PMI['service']}%、建筑业 {PMI['construction']}%。</li>
 </ul>
@@ -768,7 +878,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="kpi"><div class="k">累计盈亏</div><div class="v"><span class="up">+¥{tot_pnl:,.0f}</span></div><div class="n">{chg(tot_pnl/tot_cost*100)}（含失真数据，见2.4）</div></div>
 <div class="kpi"><div class="k">当日回报（真值）</div><div class="v">{chg(d_ret)}</div><div class="n"><span class="down">{d_pnl:+,.0f} 元</span></div></div>
 <div class="kpi"><div class="k">相对沪深300</div><div class="v">{chg(vs300, 'pct')}</div><div class="n">{_perf_word}（{'军工顺风+防御对冲' if _mil_av>0 else '防御端缓冲'}）</div></div>
-<div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 22 只</div></div>
+<div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 {HOLD_N} 只</div></div>
 <div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{sharpe:.2f} / {mdd:.2f}% / {vol:.2f}%</div><div class="n">滚动统计口径</div></div>
 </div>
 <div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {d_ret}%，{('跑赢' if vs300>=0 else '跑输')}沪深300 {abs(vs300):.2f}pct）。项目 etf_price_history 最新仅至 2026-08-19（滞后），<b>禁止</b>用其估算当日逐 ETF 损益。</div>
@@ -777,15 +887,15 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <h3>2.1 资产类别分布</h3>
 <table><thead><tr><th>类别</th><th class="num">市值</th><th class="num">占比</th><th style="width:40%">分布</th></tr></thead><tbody>{rows_cls}</tbody></table>
-<div class="note">进攻性资产（行业主题 {pct(cls_sum.get('行业主题',0)):.1f}% + 宽基 {pct(cls_sum.get('宽基',0)):.1f}%）= <b>{pct(cls_sum.get('行业主题',0)+cls_sum.get('宽基',0)):.1f}%</b>；防御性资产（债券 {pct(cls_sum.get('债券',0)):.1f}% + 红利 {pct(cls_sum.get('红利',0)):.1f}%）= <b>{def_w:.1f}%</b>。约 3:1 的攻守比，进攻端偏重。</div>
+<div class="note">进攻性资产（行业主题 {pct(cls_sum.get('行业主题',0)):.1f}% + 场外主动权益 {pct(cls_sum.get('场外主动权益',0)):.1f}% + 宽基 {pct(cls_sum.get('宽基',0)):.1f}% + 场外指数 {pct(cls_sum.get('场外指数',0)):.1f}%）= <b>{off_w:.1f}%</b>；防御性资产（债券 {pct(cls_sum.get('债券',0)):.1f}% + 红利 {pct(cls_sum.get('红利',0)):.1f}% + 货币 {pct(cls_sum.get('货币',0)):.1f}%）= <b>{def2_w:.1f}%</b>。攻守比约 <b>{off_def_ratio}</b>（进攻端 {off_w:.1f}% : 防御端 {def2_w:.1f}%），{'进攻端偏重' if off_w > def2_w else '防御端偏重'}。</div>
 </div>
 
 <div class="card">
 <h3>2.2 行业集中度</h3>
 <table><thead><tr><th>行业族</th><th class="num">市值</th><th class="num">占比</th><th style="width:38%">集中度</th></tr></thead><tbody>{rows_ind}</tbody></table>
 <div class="note">
-<b>集中度诊断</b>：医药系 {med_w:.2f}% + 军工系 {mil_w:.2f}% + 证券 {sec_w:.2f}% = <b style="color:#e3a33c">{top3_w:.2f}%</b> 集中在三个方向。
-单一持仓最高为航天ETF华安 {aero_w:.2f}%，已超单票 10% 的常规审慎线。{('<b style="color:#f85149">⚠ 单只超 15% 升级预警：集中度已达 {:.2f}%，建议审视再平衡与分批减压。</b>'.format(aero_w)) if aero_w > 15 else ''}<br>
+<b>集中度诊断</b>：医药系 {med_w:.2f}% + 军工系 {mil_w:.2f}% + 证券 {sec_w:.2f}% = <b style="color:#e3a33c">{top3_w:.2f}%</b> 集中在三个行业方向。另有最大单一族<b>场外主动权益 {pct(cls_sum.get('场外主动权益',0)):.2f}%</b>（9 只场外混合型基金）——属主动管理风格暴露而非行业方向，不体现行业集中，但同样构成单一风格依赖，与上表 top3 不可直接相加比较。
+单一持仓最高为航天ETF华安 {aero_w:.2f}%，{_aero_verdict}单票 10% 的常规审慎线。{('<b style="color:#f85149">⚠ 单只超 15% 升级预警：集中度已达 {:.2f}%，建议审视再平衡与分批减压。</b>'.format(aero_w)) if aero_w > 15 else ''}<br>
 <b>宽基核心薄弱</b>：宽基类合计 {pct(cls_sum.get('宽基',0)):.2f}%，但其中真正的核心宽基（沪深300 两只）仅 <b>{core300_w:.2f}%</b>，其余为科创50 / 创业板50 / 中证500 / 中证1000 等风格暴露型宽基——组合缺少「市场平均收益」压舱石。</div>
 </div>
 
@@ -822,16 +932,17 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 
 <div class="card">
 <h3>3.1 净风向结论</h3>
-<p style="font-size:13.2px;color:#c9d1d9">组合 <b>8 个方向中 {n_up} 个顺风/微顺风、{n_dn} 个逆风/强逆风、{n_mid} 个弱逆风</b>。顺风权重合计约 <b class="up">{up_w:.1f}%</b>（红利+债券+军工+科技+宽基），逆风（医药+新能源+证券）合计约 <b class="down">{inv_w:.1f}%</b>。</p>
+<p style="font-size:13.2px;color:#c9d1d9">组合 <b>{len(CROSS)} 个方向中 {n_up} 个顺风/微顺风、{n_dn} 个逆风/强逆风、{n_mid} 个弱逆风</b>。顺风权重合计约 <b class="up">{up_w:.1f}%</b>（红利+债券+军工+科技+宽基），逆风（医药+新能源+证券）合计约 <b class="down">{inv_w:.1f}%</b>；上述两项<b>均不含场外主动权益/场外指数/货币合计 {otc_w:.1f}%</b>——这部分是场内 ETF 之外的仓位，无当日板块风向口径，故不纳入顺逆风统计，两者相加不等于 100%。</p>
 <p style="font-size:13.2px;color:#c9d1d9;margin-top:8px">真实当日回报 <b>{d_ret}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。当日领涨方向为{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%；超配的军工/医药/证券/红利普遍逆风（军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%），防御端（债券+红利 {def_w:.1f}%）提供缓冲，组合与大盘呈现「指数涨、组合跌」的结构性背离。</p>
 <h3>3.2 代理加权估算 vs 真值（方法学诊断）</h3>
 <table><thead><tr><th>口径</th><th class="num">数值</th><th>说明</th></tr></thead>
 <tbody>
-<tr><td>板块/指数代理加权估算</td><td class="num"><span class="down">{est:.2f} pct</span></td><td>逐持仓 × 对应板块或指数当日涨跌幅，按权重加总</td></tr>
+<tr><td>板块/指数代理加权估算</td><td class="num">{chg(est, ' pct')}</td><td>逐持仓 × 对应板块或指数当日涨跌幅，按权重加总；<b>仅覆盖 {PROXY_N} 只场内 ETF（合计权重 {PROXY_W:.2f}%）</b></td></tr>
+<tr><td>&nbsp;&nbsp;↳ 未覆盖部分（场外基金）</td><td class="num"><span class="flat">{PROXY_UNC_N} 只 / {PROXY_UNC_W:.2f}%</span></td><td>场外净值 T+1 披露、本地无当日涨跌口径（etf_price_history 滞后至 2026-08-19），<b>未做臆造替代，按 0 贡献计入上式</b>——即 est 天然缺失这 {PROXY_UNC_W:.2f}% 仓位的当日贡献，<b>不等于该部分真实为 0</b></td></tr>
 <tr><td><b>真实当日回报（锚）</b></td><td class="num"><b>{chg(d_ret)}</b></td><td>portfolio_summary.daily_return，市值口径真值</td></tr>
 <tr><td>偏离</td><td class="num"><span class="mid">{est-d_ret:+.2f} pct</span></td><td>代理与真值偏差 {abs(est-d_ret):.2f}pct，方向{'一致' if (est<0)==(d_ret<0) else '背离'}（代理{est:+.2f}%、实际{d_ret:+.2f}%）</td></tr>
 </tbody></table>
-<div class="note">诊断结论：本组合结构下代理法<b>方向亦可能失真</b>（人工智能/机器人/新能源南方等 ETF 实际跟踪指数与所取代理板块不一致），绝对幅度与方向均不可采信，当日表现一律以真值为准。该项已列入自我进化改进项。</div>
+<div class="note">诊断结论：本组合结构下代理法<b>方向亦可能失真</b>（人工智能/机器人/新能源南方等 ETF 实际跟踪指数与所取代理板块不一致），绝对幅度与方向均不可采信，当日表现一律以真值为准。<b>另需注意口径残缺</b>：est 仅覆盖 {PROXY_N} 只场内 ETF 的 {PROXY_W:.2f}% 权重，其余 {PROXY_UNC_W:.2f}%（{PROXY_UNC_N} 只场外基金）无当日涨跌口径、在 est 中被当作 0 贡献，故上表「偏离」同时包含「代理板块选择误差」与「{PROXY_UNC_W:.2f}% 权重口径缺失」两个来源，<b>不可据此推断代理法自身的误差量级</b>。该项已列入自我进化改进项。</div>
 </div>
 
 <h2>四、操作取向（条件框架，非买卖指令）</h2>
@@ -853,7 +964,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 
 <div class="op"><div class="t">③ 对冲 / 减压（针对集中度）—— 关注单一持仓与三方向集中</div>
 <ul>
-<li><b>航天ETF华安 {aero_w:.2f}%</b> 为单一最大持仓，已超 10% 审慎线。<span class="cond">观察条件</span>：地面兵装板块若冲高回落且 ETF 资金流由正转负，则集中度风险实质化。</li>
+<li><b>航天ETF华安 {aero_w:.2f}%</b> 为单一最大持仓，{_aero_verdict} 10% 审慎线。<span class="cond">观察条件</span>：地面兵装板块若冲高回落且 ETF 资金流由正转负，则集中度风险实质化。</li>
 <li><b>军工系 {mil_w:.1f}%</b> {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）；<b>医药系 {med_w:.1f}%</b> 微逆风、<b>证券 {sec_w:.1f}%</b> 当日 {HP['证券Ⅱ']:+.2f}% 且资金净流出 {fy(sec_today_yi)} 为最大单一拖累。<span class="cond">观察条件</span>：证券若连续 3 日净流出（当前已连续 {sec_out_streak} 日，见⑤跨日跟踪），则该方向逆风从单日事件升级为趋势。</li>
 <li><b>宽基核心仅 {core300_w:.2f}%</b>：组合缺少市场平均收益压舱石，风格暴露过重。<span class="cond">改善方向</span>：去重释放的额度可考虑向核心宽基倾斜，而非新增行业主题。</li>
 </ul></div>
@@ -878,7 +989,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <h2>五、数据源与可用性</h2>
 <div class="src">
 <b>✓ 项目本地数据层</b>（data/database/portfolio.db）—— 本次为主数据源<br>
-&nbsp;&nbsp;· portfolio_snapshots / portfolio_summary：{SNAP}（22 只持仓、当日真实回报 {d_ret}%）<br>
+&nbsp;&nbsp;· portfolio_snapshots / portfolio_summary：{SNAP}（{HOLD_N} 只持仓 = 场内 ETF {ETF_N} + 场外 {OTC_N}；当日真实回报 {d_ret}%）<br>
 &nbsp;&nbsp;· index_quotes：{IDX_DATE}（11 个指数收盘/涨跌/成交额）{f'　⚠ 较组合基准 {DATA_DATE} 更新（采集器滞后）' if IDX_DATE != DATA_DATE else ''}<br>
 &nbsp;&nbsp;· fund_flows：{DATA_DATE}（90 个申万板块 + 23 只 ETF；main_fund 行缺失，主资金以 90 板块合计代理）<br>
 &nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币，PMI 仍缺）<br>
@@ -888,7 +999,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 &nbsp;&nbsp;· 三大指数统一行情（与本地交叉核对一致）、大盘市场宽度（涨跌 {BR['up']}:{BR['down']}）<br>
 &nbsp;&nbsp;· 板块涨跌排行（{top_gain_names} 等）+ 申万板块当日涨跌幅（航天装备/生物制品/半导体 等完整召回）<br>
 &nbsp;&nbsp;· 宏观 PMI（综合PMI产出 {PMI['composite']}/非制造业 {PMI['nonmfg']}/服务业 {PMI['service']}/建筑业 {PMI['construction']}；制造业整体值未返回标「—」）<br>
-<b>无法核实项一律以「—」标注，未做任何推算填充。</b>
+{f'<b style="color:#d29922">⚠ 回溯重生成标记</b>：本报告按运行日 {RUN_DATE} 重新生成（实际生成 {now}），非当日 18:00 盘后原件；场外基金纳入分类与权重口径属本次修正内容。<br>' if BACKFILL else ''}<b>无法核实项一律以「—」标注，未做任何推算填充。</b>
 </div>
 
 <div class="dis">
@@ -920,7 +1031,7 @@ _tldr_lines.append(
     f"核心矛盾：主力资金今日{main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；"
     f"两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。")
 _tldr_lines.append(
-    f"组合最大集中度风险：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（已超 10% 审慎线）；"
+    f"组合最大集中度风险：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（{_aero_verdict} 10% 审慎线）；"
     f"军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 {top3_w:.1f}%。"
     f"军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，"
     f"军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。")
@@ -941,6 +1052,9 @@ if DATA_LAG:
     _tldr_lines.append(
         f"⚠ 数据新鲜度提示：组合/持仓/资金流/本地广度仍停留在 {DATA_DATE}（采集器滞后，运行日 {RUN_DATE} 为交易日但本地 portfolio_summary 等尚未更新），"
         f"大盘指数已采用 {IDX_DATE} 实时；组合回报与跨日信号以 {DATA_DATE} 为基准，研判时请注意日期口径差异。")
+if BACKFILL:
+    _tldr_lines.append(
+        f"⚠ 回溯重生成标记：本 TLDR 按运行日 {RUN_DATE} 重新生成（实际生成 {now}），非当日 18:00 盘后原件。")
 TLDR_PATH = f'data/reports/组合大盘综合视角_{RUN_DATE}.tldr.txt'
 # TLDR 为纯文本（邮件 --body 直读），需剥离因复用 HTML 片段而混入的标签与实体
 _tldr_clean = '\n'.join(html.unescape(re.sub(r'<[^>]+>', '', ln)) for ln in _tldr_lines)
@@ -961,3 +1075,10 @@ print('CROSS_WIND', [(x[0], x[4], round(x[5],2)) for x in CROSS])
 print('DUP_TOTAL_W', round(dup_total_w, 2))
 print('CROSSDAY', signal_state)
 print('PREV_STATE', _prev_state.get('date') if _prev_state else None)
+print('COVERAGE CLS_UNC', UNC_N, round(UNC_W, 2),
+      'PROXY_COV', PROXY_N, round(PROXY_W, 2),
+      'PROXY_UNC', PROXY_UNC_N, round(PROXY_UNC_W, 2))
+print('HOLDN', HOLD_N, 'ETF_N', ETF_N, 'OTC_N', OTC_N, 'OTC_W', round(otc_w, 2))
+print('OFF_DEF', round(off_w, 2), round(def2_w, 2), off_def_ratio)
+print('AERO', round(aero_w, 2), _aero_verdict, 'aero_over', aero_over)
+print('BACKFILL', BACKFILL, 'RUN_DATE', RUN_DATE, 'DATA_DATE', DATA_DATE, 'IDX_DATE', IDX_DATE, 'SNAP', SNAP)
