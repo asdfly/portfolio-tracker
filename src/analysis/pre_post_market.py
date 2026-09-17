@@ -5,12 +5,17 @@
 """
 import pandas as pd
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
 import logging
 
 logger = logging.getLogger(__name__)
+
+# 资金流 as-of 允许的最大滞后自然日数。超过则仍然展示（有总比没有好），
+# 但必须打 WARNING 标出 as-of 日期 —— 本项目已经在"静默陈旧"上栽过一次
+# （#69/#73 的 12 行陈旧快照），缺失可以接受，静默缺失不可以。
+FUND_FLOW_MAX_STALENESS_DAYS = 7
 
 @dataclass
 class IndexChange:
@@ -25,6 +30,9 @@ class MacroAlert:
 class EtfSignalPreview:
     code: str; name: str; trend: str; ma_signal: str; macd_signal: str
     rsi_value: float; rsi_status: str; signal_score: float; risk_score: float; fund_flow_net: float
+    # 资金流的 as-of 日期（"" = 取不到）。字段名即"这个数是什么时候的"，
+    # 避免读者把 D-2 的资金流当成今日资金流。
+    fund_flow_asof: str = ""
 
 @dataclass
 class PreMarketReport:
@@ -212,16 +220,39 @@ def _load_etf_signal_previews(conn) -> List[EtfSignalPreview]:
         except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError):
             pass
         try:
+            # #130：必须过滤 NULL 行并**回落到上一可用日**。
+            # 只在 Python 侧判空是不够的 —— `LIMIT 1` 会永远卡在最近那行空值上，
+            # 拿不到更早的可用值。SQL 侧过滤后，取到的就是"最近一行有值的"。
             flow_df = pd.read_sql_query(
-                "SELECT net_inflow FROM fund_flows WHERE code=? "
-                "AND category = 'etf' ORDER BY date DESC LIMIT 1",
+                "SELECT net_inflow, date FROM fund_flows WHERE code=? "
+                "AND category = 'etf' AND net_inflow IS NOT NULL "
+                "ORDER BY date DESC LIMIT 1",
                 conn, params=(code,))
             if not flow_df.empty:
                 preview.fund_flow_net = float(flow_df.iloc[0]["net_inflow"]) / 1e4
-        except (pd.errors.DatabaseError, sqlite3.OperationalError):
-            pass
+                preview.fund_flow_asof = str(flow_df.iloc[0]["date"] or "")[:10]
+                lag = _asof_lag_days(preview.fund_flow_asof)
+                if lag is not None and lag > FUND_FLOW_MAX_STALENESS_DAYS:
+                    logger.warning(
+                        "[盘前] %s 资金流取自 %s（滞后 %d 自然日 > %d），已标注 as-of；"
+                        "请勿当作当日资金流使用",
+                        code, preview.fund_flow_asof, lag, FUND_FLOW_MAX_STALENESS_DAYS)
+        except (pd.errors.DatabaseError, sqlite3.OperationalError, KeyError, IndexError,
+                TypeError, ValueError) as e:
+            # #130：TypeError 原不在白名单内 ⇒ 一行 NULL 就能打断整个盘前报告。
+            # 取值失败时字段留空（fund_flow_net 保持 0.0、asof=""），不伪造、不抛。
+            logger.warning("[盘前] %s 资金流读取失败，该字段留空: %s", code, e)
         previews.append(preview)
     return previews
+
+
+def _asof_lag_days(asof: str):
+    """as-of 日期距今天的自然日数；无法解析返回 None。"""
+    try:
+        return (date.today() - date.fromisoformat(str(asof)[:10])).days
+    except (TypeError, ValueError):
+        return None
+
 
 def _load_news_sentiment(conn) -> Dict:
     df = pd.read_sql_query("""
@@ -352,11 +383,22 @@ def _load_portfolio_pnl(conn) -> Tuple[Dict, List[Dict]]:
     return summary, attr
 
 def _load_fund_flow_changes(conn) -> List[Dict]:
+    """盘后复盘：当日行业/ETF 资金流变化（相对各自上一可用日）。
+
+    #130 两处修正（一个"靠 bug 挡 bug"的陷阱）:
+      1) 原字面量 `category IN ('etf_flow','sector')` 里的 `'etf_flow'` 在本库
+         **一行都没有**（全库 category 只有 sector / etf / main_fund）⇒ 这个查询
+         从来没有取到过 ETF 资金流，只是**碰巧**绕开了 09-16 那 20 行全空记录。
+      2) 所以把字面量改对（`'etf'`）时**必须同时补 NULL 过滤**，否则立刻把
+         `float(None)` 引进盘后报告（就是盘前那个 TypeError 的同类）。
+         CTE 里加 `AND net_inflow IS NOT NULL` 后，取到的恒是"最近一行**有值**的"。
+    """
     df = pd.read_sql_query("""
         WITH latest AS (
             SELECT code,date,net_inflow,
                    ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) as rn
-            FROM fund_flows WHERE category IN ('etf_flow','sector')
+            FROM fund_flows
+            WHERE category IN ('etf','sector') AND net_inflow IS NOT NULL
         )
         SELECT l1.code, l1.net_inflow as today_flow, l2.net_inflow as yesterday_flow,
                l1.net_inflow - COALESCE(l2.net_inflow,0) as flow_change
@@ -364,9 +406,18 @@ def _load_fund_flow_changes(conn) -> List[Dict]:
         WHERE l1.rn=1 ORDER BY flow_change DESC
     """, conn)
     if df.empty: return []
-    return [{"code":str(r["code"]),"today_flow":float(r["today_flow"])/1e4,
-             "yesterday_flow":float(r.get("yesterday_flow",0) or 0)/1e4,
-             "flow_change":float(r.get("flow_change",0) or 0)/1e4} for _,r in df.iterrows()]
+    out = []
+    for _, r in df.iterrows():
+        today = r.get("today_flow")
+        if today is None or pd.isna(today):
+            continue                      # 双保险：SQL 已过滤，这里不吞不炸
+        yest = r.get("yesterday_flow")
+        chg = r.get("flow_change")
+        out.append({"code": str(r["code"]),
+                    "today_flow": float(today) / 1e4,
+                    "yesterday_flow": float(yest) / 1e4 if (yest is not None and not pd.isna(yest)) else 0.0,
+                    "flow_change": float(chg) / 1e4 if (chg is not None and not pd.isna(chg)) else 0.0})
+    return out
 
 
 def _load_signal_changes(conn) -> List[Dict]:

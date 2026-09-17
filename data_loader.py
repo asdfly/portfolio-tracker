@@ -1460,15 +1460,22 @@ def load_etf_fund_flow(code, days=60):
     """
     conn = get_db_connection()
     try:
+        # #130：过滤 NULL 行。源端抽风时 `save_fund_flows` 曾把 12 个指标列整体写成
+        # NULL（且沿用 confidence=1.0），若不过滤，调用方拿到的"最新一条"是空行，
+        # 且任何 `float(net_inflow)` 都会 TypeError。这里在 SQL + DataFrame 两层都挡。
         df = pd.read_sql_query(
             "SELECT date, code, name, net_inflow, net_inflow_pct, "
             "super_large_inflow, super_large_pct, large_inflow, large_pct, "
             "medium_inflow, medium_pct, small_inflow, small_pct "
             "FROM fund_flows WHERE code = ? AND category = 'etf' "
+            "AND net_inflow IS NOT NULL "
             "ORDER BY date DESC LIMIT ?",
             conn, params=(code, days)
         )
-        return df.sort_values("date") if not df.empty else pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
+        df = df.dropna(subset=["net_inflow"])
+        return df.sort_values("date")
     except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
         logger.warning(f"DB error loading fund flow for {code}: {e}")
         return pd.DataFrame()
@@ -1494,12 +1501,15 @@ def load_etf_fund_flow_alerts(threshold_pct=200):
     conn = get_db_connection()
     try:
         # 获取最近两天的 ETF 资金流
+        # #130：两处 SQL 都加了 `net_inflow IS NOT NULL` —— 否则最近一行若被
+        # 源端清零（12 列全 NULL 却带 confidence=1.0），`row["net_inflow"] - prev`
+        # 会直接 TypeError，而该异常原先不在下方 except 白名单内。
         df = pd.read_sql_query(
             "SELECT f.* FROM fund_flows f "
             "INNER JOIN (SELECT code, MAX(date) as latest FROM fund_flows "
-            "WHERE category='etf' GROUP BY code) l "
+            "WHERE category='etf' AND net_inflow IS NOT NULL GROUP BY code) l "
             "ON f.code = l.code AND f.date = l.latest "
-            "WHERE f.category = 'etf'",
+            "WHERE f.category = 'etf' AND f.net_inflow IS NOT NULL",
             conn
         )
         if df.empty:
@@ -1510,17 +1520,20 @@ def load_etf_fund_flow_alerts(threshold_pct=200):
         for _, row in df.iterrows():
             prev = pd.read_sql_query(
                 "SELECT net_inflow FROM fund_flows WHERE code = ? AND category = 'etf' "
-                "AND date < ? ORDER BY date DESC LIMIT 1",
+                "AND net_inflow IS NOT NULL AND date < ? ORDER BY date DESC LIMIT 1",
                 conn, params=(row["code"], row["date"])
             )
-            if not prev.empty and prev.iloc[0]["net_inflow"] != 0:
-                change_pct = (row["net_inflow"] - prev.iloc[0]["net_inflow"]) / abs(prev.iloc[0]["net_inflow"]) * 100
+            cur_flow = row["net_inflow"]
+            if cur_flow is None or pd.isna(cur_flow):
+                continue
+            if not prev.empty and prev.iloc[0]["net_inflow"] not in (None, 0):
+                change_pct = (cur_flow - prev.iloc[0]["net_inflow"]) / abs(prev.iloc[0]["net_inflow"]) * 100
                 if abs(change_pct) >= threshold_pct:
                     alerts.append({
                         "code": row["code"],
                         "name": row["name"],
                         "date": row["date"],
-                        "net_inflow": row["net_inflow"],
+                        "net_inflow": cur_flow,
                         "prev_inflow": prev.iloc[0]["net_inflow"],
                         "change_pct": round(change_pct, 1),
                     })
@@ -1528,7 +1541,7 @@ def load_etf_fund_flow_alerts(threshold_pct=200):
     except (sqlite3.OperationalError, pd.errors.DatabaseError) as e:
         logger.warning(f"DB error loading fund flow alerts: {e}")
         return pd.DataFrame()
-    except (KeyError, IndexError, ZeroDivisionError) as e:
+    except (KeyError, IndexError, ZeroDivisionError, TypeError, ValueError) as e:
         logger.warning(f"Data format error in fund flow alerts: {e}")
         return pd.DataFrame()
     finally:

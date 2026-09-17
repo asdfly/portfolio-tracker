@@ -489,6 +489,42 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
 
     P1-A: 每条记录可携带 source/is_estimated/confidence 可信度标签。
     缺省约定：is_estimated=0（真实），confidence=1.0（完全可信）。
+
+    ------------------------------------------------------------------------
+    #130 上游守卫：**指标全空的行既不 INSERT 也不 UPDATE**
+    ------------------------------------------------------------------------
+    事故（2026-09-16 / 09-17，同一缺陷第二次发生）：
+      `portfolio_snapshots` 之外，`fund_flows` 里 09-16 的 20 行（category='etf'，
+      id 30796–30815）**12 个指标列全部 NULL**，却仍带着 `source=em_spot /
+      is_estimated=0 / confidence=1.0` —— 元数据在宣称"这是完全可信的真值"，
+      而值已被清零。
+      机制：本函数的 UPDATE 分支原先**无条件覆盖** `net_inflow/buy_amount/
+      sell_amount` 与各扩展列，df 为 NaN 时 `_float()` 得到 None 就直接写进去
+      ⇒ 用 NULL 把 18:02 还是好的真值原地清零；而且 UPDATE **不刷新
+      `created_at`**（`:521-526` 只对显式带标签的批次覆盖三个标签列），所以这次
+      清零在时间戳上完全看不见。任何按 `confidence` 加权的下游都会把空行当真值。
+
+    本守卫的三条判据：
+      1. **拒绝空行**：一行里所有指标列都是空 ⇒ 该行没有任何信息量，直接跳过，
+         并落一条 error 级告警（项目准则：要么显式标记、要么显式拒绝，不许静默）；
+      2. **不得用 NULL 覆盖非 NULL**：UPDATE 的 SET 列表只纳入**非空**的新值，
+         既有真值不会被一个部分为空的 payload 抹掉；
+  3. **拒绝关键列为空的 INSERT**：判据 1 只挡「**payload 里给出的**指标列全空」。
+     ⚠️ 精确说法是「给出的」，**不是**「12 个指标列全空」：`:544-547` 的
+     `metric_names` 只收 `row.index` 里**存在**的列 ⇒ 一份只带
+     `{"net_inflow": NaN}` 的 payload 与一份 12 列全 NaN 的 payload
+     **落到同一条 `all(v is None)` 路径**（行为一致，故无需为前者另写判据）。
+     而当 `net_inflow` 为空、`buy_amount` 等**别的列有值**时，判据 1 放行，于是
+     仍会落一行 `net_inflow IS NULL` + 缺省 `confidence=1.0` 的「自称完全可信
+     的空值行」—— 与 09-16 那次**同型**，只是靠读取端的 NULL 过滤兜住。
+     （实测于 `#135`，见 `audit/_v130_verdict.md` §3.1；「给出 vs 全列」这层语义差
+     由 `verify-p1-batch` 在 09-17 指出并已按精确说法更正。）
+         故 INSERT 分支对 `net_inflow is None` 也**拒绝**并落同一条 error 告警。
+         ⚠️ 本判据只作用于 INSERT：已有行的部分为空仍走判据 2（保留真值），
+         不能把「部分更新」也一并拒绝。
+         ⚠️ 代价（已知并接受）：源端若真的只给 buy/sell 而不给 net_inflow，
+         这条记录会被整体拒绝而不是留一行半空的。取舍理由：`net_inflow` 是
+         该表**唯一被下游直接消费**的列，为它留一行"看起来可信的空值"风险更大。
     """
     if df.empty:
         return 0
@@ -502,38 +538,62 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
     meta_cols = ['source', 'is_estimated', 'confidence']
     cursor = conn.cursor()
     count = 0
+    empty_rows = []
     for _, row in df.iterrows():
         date_val = str(row.get('date', ''))
         code_val = str(row.get('code', ''))
         cat_val = str(row.get('category', ''))
         def _float(v):
             return float(v) if pd.notna(v) else None
+        # --- 守卫 1：指标全空 ⇒ 无信息量，不落库 ---
+        metric_names = [c for c in (['net_inflow', 'buy_amount', 'sell_amount'] + extra_cols)
+                        if c in row.index]
+        metric_vals = {c: _float(row.get(c)) for c in metric_names}
+        if not metric_names or all(v is None for v in metric_vals.values()):
+            empty_rows.append("%s@%s" % (code_val, date_val))
+            continue
         cursor.execute("SELECT id FROM fund_flows WHERE date = ? AND code = ? AND category = ?", (date_val, code_val, cat_val))
         existing = cursor.fetchone()
-        base_vals = (str(row.get('name', '')), _float(row.get('net_inflow')), _float(row.get('buy_amount')), _float(row.get('sell_amount')))
         if existing:
-            set_parts = ["name=?", "net_inflow=?", "buy_amount=?", "sell_amount=?"]
-            vals = list(base_vals)
+            # --- 守卫 2：SET 只纳入非空新值，绝不用 NULL 覆盖既有真值 ---
+            set_parts = []
+            vals = []
+            name_val = str(row.get('name', ''))
+            if name_val:
+                set_parts.append("name=?")
+                vals.append(name_val)
+            for c in ['net_inflow', 'buy_amount', 'sell_amount']:
+                if metric_vals.get(c) is not None:
+                    set_parts.append(f"{c}=?")
+                    vals.append(metric_vals[c])
             for ec in extra_cols:
-                if ec in row.index:
+                if metric_vals.get(ec) is not None:
                     set_parts.append(f"{ec}=?")
-                    vals.append(_float(row.get(ec)))
+                    vals.append(metric_vals[ec])
             # UPDATE 仅在有显式标签时覆盖，避免清空既有可信度标记
             for mc in meta_cols:
                 if mc in row.index and pd.notna(row.get(mc)):
                     set_parts.append(f"{mc}=?")
                     v = row.get(mc)
                     vals.append(int(v) if mc == 'is_estimated' else (float(v) if mc == 'confidence' else str(v)))
+            if not set_parts:
+                # 连 name/标签都没有可写字段（理论上不可达，守卫 1 已挡住全空行）
+                empty_rows.append("%s@%s" % (code_val, date_val))
+                continue
             vals.append(existing[0])
             cursor.execute(f"UPDATE fund_flows SET {', '.join(set_parts)} WHERE id=?", vals)
         else:
+            # --- 守卫 3：关键列 `net_inflow` 为空 ⇒ 拒绝 INSERT（判据 1 只挡「全空」）---
+            if metric_vals.get('net_inflow') is None:
+                empty_rows.append("%s@%s(net_inflow为空)" % (code_val, date_val))
+                continue
             ins_cols = ['date', 'code', 'name', 'net_inflow', 'buy_amount', 'sell_amount', 'category']
-            ins_vals = [date_val, code_val, str(row.get('name', '')), _float(row.get('net_inflow')), _float(row.get('buy_amount')), _float(row.get('sell_amount')), cat_val]
+            ins_vals = [date_val, code_val, str(row.get('name', '')), metric_vals.get('net_inflow'), metric_vals.get('buy_amount'), metric_vals.get('sell_amount'), cat_val]
             placeholders = '?,?,?,?,?,?,?'
             for ec in extra_cols:
                 if ec in row.index:
                     ins_cols.append(ec)
-                    ins_vals.append(_float(row.get(ec)))
+                    ins_vals.append(metric_vals.get(ec))
                     placeholders += ',?'
             # INSERT 始终写入可信度标签（缺省=真实源: source空/is_estimated=0/confidence=1.0）
             src = str(row.get('source')) if ('source' in row.index and pd.notna(row.get('source'))) else ''
@@ -546,8 +606,50 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
             cursor.execute(f"INSERT INTO fund_flows ({', '.join(ins_cols)}) VALUES ({placeholders})", ins_vals)
         count += 1
     conn.commit()
+    if empty_rows:
+        _report_empty_fund_flow_rows(conn, empty_rows)
     return count
 
+
+# 指标全空告警的事件名（须同步登记到 config/notification.json 的 events 白名单）
+FUND_FLOW_EMPTY_KIND = "fund_flow_empty_metrics"
+
+_ALERTS_DDL = """
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_name TEXT NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT,
+    created_at TEXT,
+    acknowledged INTEGER DEFAULT 0
+)
+"""
+
+
+def _report_empty_fund_flow_rows(conn: sqlite3.Connection, empty_rows):
+    """指标全空 / 关键列为空的行被拒绝写入 ⇒ 落 error 级日志 + error 级告警（不许静默）。
+
+    告警写入失败**不得**改变"已完成主流程"的事实，故只记日志、绝不向上抛：
+    采集器不该因为告警落库失败而整体失败。
+    """
+    detail = ", ".join(empty_rows[:20])
+    if len(empty_rows) > 20:
+        detail += " …(共 %d 行)" % len(empty_rows)
+    message = ("[%s] 收到 %d 行**指标全空或关键列 `net_inflow` 为空**的 fund_flows "
+               "记录，已拒绝写入/覆盖"
+               "（防止用 NULL 清零既有真值、并防止留下自称 confidence=1.0 的空行）：%s"
+               % (FUND_FLOW_EMPTY_KIND, len(empty_rows), detail))
+    logger.error(message)
+    try:
+        conn.execute(_ALERTS_DDL)
+        conn.execute(
+            "INSERT INTO alerts (rule_name, level, message, created_at, acknowledged) "
+            "VALUES (?,?,?,?,0)",
+            (FUND_FLOW_EMPTY_KIND, "error", message, datetime.now().isoformat()))
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error("[资金流] error 级告警写入失败(%s): %s —— 拒绝写入的结论不变",
+                     FUND_FLOW_EMPTY_KIND, e)
 
 
 def backfill_sector_fund_flow(conn, trading_days=None, apply_market_trend_scaling=False):
