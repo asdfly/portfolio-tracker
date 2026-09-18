@@ -197,10 +197,16 @@ reason 枚举：`rows_lt_2` / `rows_le_min_overlap` / `zero_variance` / `valid_r
 
 blob 历史：`5f7c6a3e4797`（`401a39f`，无守卫）/ `0a6e815b75fe`（`9de2800`，B2 版，602 行）/ `673590464107`（`05c7288`，两级落地，763 行）/ `f8aaf95cd143`（已验收）。
 
-### 4.11 ⚠️ 待处理：`COPY_BREADTH_MIN_RATIO` 死常量
-- 判定用**硬编码** `c*2 < n`，常量**只在日志被读** ⇒ 旋钮无效。
+### 4.11 ✅ 已处理：`COPY_BREADTH_MIN_RATIO` 死常量（#87 裁定 B）
+- 判定用**硬编码** `c*2 < n`，常量**只在日志被读** ⇒ 旋钮无效（死常量）。
 - `b034f9a` 曾修为 `c / n < COPY_BREADTH_MIN_RATIO`，随后 `ba96ce8` **回滚**（裁定：保持已验收 blob）。
-- 最终裁定 **B：删常量**，**解冻后执行**；需同笔清理 5 处悬空符号引用：`07_known_data_issues.md`:899/1229/1238/1291 与 `10_correlation_guard_decision_log.md`:56。
+- 最终裁定 **B：删常量**，**已执行**（提交 hash 见本回合末条提交）：
+  - 删除 `src/analysis/portfolio_risk.py:127` 的定义；日志行 `:227` 的 `COPY_BREADTH_MIN_RATIO * 100` 改为字面 `50.0`；
+    两处注释（`:114` 顶部 Tier2 说明、`:223` 判定行）改为「同值占比 50%」。
+  - 同笔清理悬空符号引用：`07_known_data_issues.md`（问题十一 行 899 / 两档实现 1250 / 1259 / 1312 / 1330-1332）、
+    `10_correlation_guard_decision_log.md`（误卷事实清单 22-23 / Tier2 参数表 56）、
+    `11_measurement_conventions.md`（常量定义 613-614 / 推论1 633 / 635-636）。
+  - 行为不变：独立复现验证 `audit/_verify_replica_guard.py`（4 用例：100% 命中 / 25% 不命中 / n<3 不命中 / 50% 边界恰命中）全部通过。
 
 ### 4.12 不可达分支裁定
 `_calculate_metrics:122` 的 `total_value` 差分 fallback 裁定**不可达**：最近 60 行 `daily_return` 60/60 非零；全历史最长连续全 0 = 1 行；触发需 ≥61 连续全 0。

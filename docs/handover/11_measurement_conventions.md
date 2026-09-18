@@ -610,8 +610,8 @@ if not daily_return_computed and prev_value > 0 and not guard_fired:
 - **判据**：`n >= COPY_BREADTH_MIN_N(3)` 且 `c*2 >= n` ⇒ VOID
   - **可 `grep` 原文**：`if n < COPY_BREADTH_MIN_N:`（`src/analysis/portfolio_risk.py:221`）
     与 `if c * 2 < n:`（`src/analysis/portfolio_risk.py:223`）
-  - **常量定义**：`COPY_RUN_MIN_LEN = 5`（`:125`）、`COPY_BREADTH_MIN_N = 3`（`:126`）、
-    `COPY_BREADTH_MIN_RATIO = 0.5`（`:127`）
+- **常量定义**：`COPY_RUN_MIN_LEN = 5`（`:125`）、`COPY_BREADTH_MIN_N = 3`（`:126`）；
+  横截面同值占比下限 = **50%**，判定走硬编码 `c * 2 < n`（原 `:127` 的 `COPY_BREADTH_MIN_RATIO` 常量已由 #87 裁定 B 删除）
 - **观测区间**：可比日 `2026-02-28 ~ 2026-09-15`，其中 `n >= 3` 者共 **48 天**
 
 逐日 `n / c / ratio` 实测分布：
@@ -630,10 +630,10 @@ if not daily_return_computed and prev_value > 0 and not guard_fired:
 
 **两条推论**：
 
-1. `COPY_BREADTH_MIN_RATIO` 是「**非承重常量**」，**不只是「未被消费」**——
+1. 横截面同值占比阈值 `0.5` 是「**非承重**」的——判定走硬编码 `c*2 < n`（原 `COPY_BREADTH_MIN_RATIO` 常量已由 #87 裁定 B 删除），**不只是「未被消费」**——
    代码**硬编码** `c*2 < n`（可 `grep` 原文：`if c * 2 < n:`，`src/analysis/portfolio_risk.py:223`，`HEAD` `43d06ce`），
-   常量**只进日志**（可 `grep` 原文：`COPY_BREADTH_MIN_RATIO * 100)`
-   位于 `logger.info(… )` 的参数列表，`src/analysis/portfolio_risk.py:225-227`，常量引用在 `:227`）。
+   判定只走硬编码 `c*2 < n`（原日志引用 `COPY_BREADTH_MIN_RATIO * 100` 已由 #87 裁定 B 删除，日志现打字面 `50.0`；
+   详见 `src/analysis/portfolio_risk.py` 的 `if c * 2 < n:` 与 `logger.info(… )` 行）。
    > ⚠️ 旧版此处写「常量只进日志（`:226`）」—— **`:226` 在 `HEAD` `43d06ce` 是日志的续行（`"该日这些行按非观测处置"`），
    > 不是常量引用行**；常量引用在 `:227`。现按原文补正（这是「行号漂移导致指错物」的又一例）。
    **即使真的消费它，观测样本上的行为也完全一样** ⇒ 风险说明按「非承重」措辞，**不按「无影响」**。

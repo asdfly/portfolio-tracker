@@ -20,7 +20,7 @@
 
 **误卷事实**：`05c7288` 的 209 行新增里只有 81 行是注释/空行，**128 行是实现代码**
 （`_replica_key` / `_scan_replica_rows` / `COPY_RUN_MIN_LEN` / `COPY_BREADTH_MIN_N` /
-`COPY_BREADTH_MIN_RATIO` / Tier1+Tier2 扫描与留痕接线）。
+`横截面占比阈值(50%, 硬编码 c*2<n)` / Tier1+Tier2 扫描与留痕接线）。
 > ⚠️ 该提交与它前一笔 `9de2800`（B2 入库）**相隔 8 分钟**。
 > 任何引用「相关性守卫的最终判据」的材料，若写作时间早于 11:21，写的都是 B2 —— **已被取代**。
 
@@ -53,7 +53,7 @@ B2 = 「**场外**标的的任意**相邻两行** `key = (current_price, round(m
 | 层级 | 判据 | 是否加 `is_otc_fund` gate | 参数 |
 |---|---|---|---|
 | `Tier1` | 逐标的，`key` 相同的**连续段长** `L >= COPY_RUN_MIN_LEN` ⇒ 该段**全部 L 行（含段首）**都不是观测 | **不加**（数据驱动） | `COPY_RUN_MIN_LEN = 5` |
-| `Tier2` | **仅场外篮子内**，某日 `key` 与各自上一行相同的只数 `c` / 可比只数 `n`；`n >= COPY_BREADTH_MIN_N` 且 `c * 2 >= n` ⇒ 命中 | 加（`config.settings.is_otc_fund`） | `COPY_BREADTH_MIN_N = 3`、`COPY_BREADTH_MIN_RATIO = 0.5` |
+| `Tier2` | **仅场外篮子内**，某日 `key` 与各自上一行相同的只数 `c` / 可比只数 `n`；`n >= COPY_BREADTH_MIN_N` 且 `c * 2 >= n` ⇒ 命中 | 加（`config.settings.is_otc_fund`） | `COPY_BREADTH_MIN_N = 3`、横截面同值占比下限 = 50%（硬编码 c*2<n） |
 
 > ⚠️ **判据只约束分母 `n`，不额外约束命中只数 `c`** —— 裁定原文如此（例如 `n = 4`、`c = 2` 恰好 50% 即命中）。
 > `6434f05` 把上式从临时的 `c >= 3` 下限改回 `c * 2 >= n`；实测「`n >= 3` 且 `c/n >= 50%` 且 `c < 3`」的日期集合 = `[]`，
