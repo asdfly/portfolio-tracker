@@ -991,9 +991,12 @@ SELECT source, is_estimated, confidence, COUNT(*) FROM fund_flows
 `otc_nav_missing(error)` ⇒ `degraded` ⇒ `pipeline_incomplete(critical)`。
 
 
-### 17.12 🔴 #140 占位哨兵值 = 合法中立值 ⇒「无数据」与「中立」逐字符相同（待裁归属）
+### 17.12 ✅ #140 占位哨兵值 = 合法中立值 ⇒「无数据」与「中立」逐字符相同（已裁定 Option A）
 
-> 注册为 **#140（待裁归属：tab8「持仓信号预览」的 12 行是占位哨兵）**。本节能复用的教训先行，归属裁定留待后续。
+> 注册为 **#140（tab8「持仓信号预览」的 12 行是占位哨兵）**。2026-09-18 裁定 **Option A**：
+> 数据层 `EtfSignalPreview` 新增 `rsi_available` / `score_available` / `risk_available` 三标志（`_load_etf_signal_previews` 按「真实行/字典是否存在」置位）；
+> 渲染层 `_render_pre_market_panel` 仅在标志为 True 时输出数值、否则输出「无数据」。
+> 已落地 `bf77304`；行为对照测试 `tests/test_tab8_advice.py::TestTab8SignalPreviewNoDataDistinction` 双反例通过（真实中立 50 显示「50」/ 占位 50 显示「无数据」）。Option B（仅文档标注为已知限制）未采用。
 
 **病**：`tabs/tab8_advice.py` 的「持仓信号预览」有 **12 行占位哨兵**，而哨兵值恰为**合法中立值 `50`**。
 ⇒ 在 UI 上，「这只**没数据**」与「这只**就是中立**」**逐字符相同**，人眼无法区分；下游若按 `==50` 判中性会误把「未取到」当「已判定为中性」。同 `docs/handover/11_measurement_conventions.md` §1.4 那个病（指标缺值时用 0 当哨兵，而 0 也是合法值）。
