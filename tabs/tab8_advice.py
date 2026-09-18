@@ -1644,8 +1644,10 @@ def _render_pre_market_panel():
                 if es.fund_flow_asof and es.fund_flow_asof != today:
                     ff += f" (as-of {es.fund_flow_asof})"
                 sig_data.append({"名称": es.name, "代码": es.code, "趋势": es.trend,
-                                 "MACD": es.macd_signal, "RSI": f"{es.rsi_value:.0f}",
-                                 "技术评分": f"{es.signal_score:.0f}", "风险评分": f"{es.risk_score:.0f}",
+                                 "MACD": es.macd_signal,
+                                 "RSI": f"{es.rsi_value:.0f}" if es.rsi_available else "无数据",
+                                 "技术评分": f"{es.signal_score:.0f}" if es.score_available else "无数据",
+                                 "风险评分": f"{es.risk_score:.0f}" if es.risk_available else "无数据",
                                  "资金流(万)": ff})
             st.dataframe(sig_data, width="stretch", hide_index=True,
                          height=min(200 + len(sig_data) * 28, 500))

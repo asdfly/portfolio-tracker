@@ -33,6 +33,11 @@ class EtfSignalPreview:
     # 资金流的 as-of 日期（"" = 取不到）。字段名即"这个数是什么时候的"，
     # 避免读者把 D-2 的资金流当成今日资金流。
     fund_flow_asof: str = ""
+    # #140 Option A：各指标是否确有真实数据。占位哨兵(50)不得与真实中立(50)混淆——
+    # UI 仅在对应标志为 True 时渲染数值，否则渲染"无数据"。
+    rsi_available: bool = False
+    score_available: bool = False
+    risk_available: bool = False
 
 @dataclass
 class PreMarketReport:
@@ -205,6 +210,7 @@ def _load_etf_signal_previews(conn) -> List[EtfSignalPreview]:
             preview.macd_signal = str(tr.get("macd_signal", "--"))
             preview.rsi_value = float(tr.get("rsi_value", 50))
             preview.rsi_status = str(tr.get("rsi_status", "--"))
+        sig_dict = None
         try:
             from data_loader import load_signal_score
             sig_dict = load_signal_score(code)
@@ -212,6 +218,7 @@ def _load_etf_signal_previews(conn) -> List[EtfSignalPreview]:
                 preview.signal_score = float(sig_dict["total_score"])
         except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError):
             pass
+        risk_dict = None
         try:
             from data_loader import load_etf_risk_scan
             risk_dict = load_etf_risk_scan(code)
@@ -219,6 +226,17 @@ def _load_etf_signal_previews(conn) -> List[EtfSignalPreview]:
                 preview.risk_score = float(risk_dict["total_score"])
         except (pd.errors.DatabaseError, sqlite3.OperationalError, ImportError):
             pass
+
+        # #140 Option A：标记各指标是否确有真实数据，避免占位哨兵 50 与真实中立 50 混淆
+        preview.rsi_available = bool(
+            not tech_df.empty and pd.notna(tech_df.iloc[0].get("rsi_value"))
+        )
+        preview.score_available = bool(
+            sig_dict and sig_dict.get("total_score") is not None
+        )
+        preview.risk_available = bool(
+            risk_dict and risk_dict.get("total_score") is not None
+        )
         try:
             # #130：必须过滤 NULL 行并**回落到上一可用日**。
             # 只在 Python 侧判空是不够的 —— `LIMIT 1` 会永远卡在最近那行空值上，

@@ -115,3 +115,52 @@ class TestTab8SignalScoring:
         assert -0.5 <= net < 1.5
         action = "持有" if -0.5 <= net < 1.5 else "观望"
         assert action == "持有"
+
+
+class TestTab8SignalPreviewNoDataDistinction:
+    """#140 Option A: 渲染层必须把「无数据(占位哨兵50)」与「真实中立50」区分开。"""
+
+    @patch("data_loader.load_pre_market_report")
+    @patch("tabs.tab8_advice.st")
+    def test_render_shows_no_data_not_neutral(self, mock_st, mock_load):
+        from src.analysis.pre_post_market import PreMarketReport, EtfSignalPreview
+
+        # 反例 A：真实数据齐全，RSI/评分=50 命中真中立 → 必须原样显示 "50"
+        real = EtfSignalPreview(
+            code="510300", name="300ETF", trend="上涨", ma_signal="金叉", macd_signal="金叉",
+            rsi_value=50.0, rsi_status="正常", signal_score=50.0, risk_score=50.0,
+            fund_flow_net=12.0, rsi_available=True, score_available=True, risk_available=True)
+        # 反例 B：占位哨兵 50，但三个指标都无真实数据 → 必须显示 "无数据"
+        missing = EtfSignalPreview(
+            code="159915", name="创业ETF", trend="--", ma_signal="--", macd_signal="--",
+            rsi_value=50.0, rsi_status="--", signal_score=50.0, risk_score=50.0,
+            fund_flow_net=0.0, rsi_available=False, score_available=False, risk_available=False)
+
+        mock_load.return_value = PreMarketReport(
+            report_time="09:00", report_date="2026-09-17",
+            etf_signals=[real, missing], news_sentiment={}, risk_warnings=[])
+
+        frames = []
+        mock_st.dataframe = lambda df, *a, **k: frames.append(df)
+        mock_st.session_state = MagicMock()
+        mock_st.session_state.get = lambda key, default="": default
+        for m in ["caption", "info", "markdown", "metric", "button", "download_button",
+                  "success", "error", "bar_chart", "expander", "plotly_chart", "warning"]:
+            setattr(mock_st, m, MagicMock())
+        mock_st.columns = lambda spec: [MagicMock() for _ in range(
+            len(spec) if isinstance(spec, list) else spec)]
+
+        from tabs.tab8_advice import _render_pre_market_panel
+        _render_pre_market_panel()
+
+        sig_frames = [f for f in frames if isinstance(f, list) and f and "代码" in f[0]]
+        assert sig_frames, "持仓信号预览 dataframe 未被渲染"
+        rows = {r["代码"]: r for r in sig_frames[0]}
+        # 真实中立 50 必须原样显示
+        assert rows["510300"]["RSI"] == "50", "真实中立 RSI=50 必须显示 '50'"
+        assert rows["510300"]["技术评分"] == "50"
+        assert rows["510300"]["风险评分"] == "50"
+        # 占位哨兵 50 必须显示为 无数据，不得与中立混淆
+        assert rows["159915"]["RSI"] == "无数据", "无数据的占位 50 必须显示 '无数据'"
+        assert rows["159915"]["技术评分"] == "无数据"
+        assert rows["159915"]["风险评分"] == "无数据"
