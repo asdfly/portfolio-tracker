@@ -379,6 +379,8 @@ class EnhancedReportBuilder:
             ps = sign(pnl)
             bg = T['row1'] if i % 2 == 0 else T['row2']
             p_name = _pick(p, 'name', '名称', default='')
+            if p.get('is_void'):
+                p_name = p_name + ' ⚠️复制行'
             p_code = _pick(p, 'code', '代码', default='')
             p_qty = _pick(p, 'quantity', '证券数量', default=0) or 0
             p_cost = _pick(p, 'cost_price', '成本价', default=0) or 0
@@ -715,20 +717,36 @@ class EnhancedReportBuilder:
 
         原实现固定取 `MAX(date)`，与页头取值的 portfolio_summary 最新日期相互独立，
         正是 09-15 报告"页头 09-14 / 持仓 09-15"的直接成因。
+
+        附加 `is_void` 标志（问题十一）：命中旁路表 `portfolio_snapshots_replica_void`
+        的复制行标记 True，供渲染侧显式标注「数据陈旧/复制行」，绝不把陈旧值当当日
+        有效值静默展示。void 查询失败则退化为「无标记」，不阻断报告生成。
         """
         conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         if report_date:
-            cursor.execute(
-                "SELECT * FROM portfolio_snapshots WHERE date = ? ORDER BY market_value DESC",
-                (str(report_date)[:10],),
-            )
+            date_val = str(report_date)[:10]
         else:
-            cursor.execute("SELECT * FROM portfolio_snapshots WHERE date = (SELECT MAX(date) FROM portfolio_snapshots) ORDER BY market_value DESC")
+            _m = cursor.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()
+            date_val = _m[0] if _m else None
+        cursor.execute(
+            "SELECT * FROM portfolio_snapshots WHERE date = ? ORDER BY market_value DESC",
+            (date_val,),
+        )
         rows = cursor.fetchall()
+        out = [dict(r) for r in rows]
+        try:
+            from src.analysis.replica_void import void_codes_on
+            vset = void_codes_on(conn, date_val) if date_val else set()
+            for r in out:
+                r['is_void'] = r.get('code') in vset
+        except Exception as _e:
+            logger.warning("void 标记查询失败，持仓行将不带 is_void 标记: %s", _e)
+            for r in out:
+                r.setdefault('is_void', False)
         conn.close()
-        return [dict(r) for r in rows]
+        return out
 
     def _load_history(self, days, report_date=None):
         """净值/回撤曲线的历史序列。

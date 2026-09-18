@@ -7,6 +7,8 @@ import logging
 from datetime import date
 from typing import List
 from data_loader import get_db_connection
+from src.analysis.replica_void import (
+    void_aware_total_value, void_codes_on, void_excluded_common_codes)
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +107,10 @@ class HistoricalDataBackfiller:
             if not row or not row[0]:
                 continue
 
-            total_value = row[0]
+            # 问题十一：void 复制行市值按最近非 void 观测结转
+            # （本库数据下 void 行已持有上次已知值，数值等价；口径显式固定，
+            #  未来若 void 值偏离也能正确结转，非破坏性）
+            total_value = void_aware_total_value(conn, dt)
             total_cost = row[1] or 0
             total_pnl = row[2] or 0
             profit_count = row[3] or 0
@@ -126,7 +131,13 @@ class HistoricalDataBackfiller:
                 cursor.execute(
                     "SELECT code, quantity, market_value, current_price FROM portfolio_snapshots WHERE date = ?", (dt,))
                 curr_snaps = {r[0]: (r[1], r[2], r[3]) for r in cursor.fetchall()}
-                common_codes = set(prev_snaps.keys()) & set(curr_snaps.keys())
+                # 问题十一：复制行（void）非观测，不进分子也不进分母
+                _void_prev = void_codes_on(conn, prev_dt)
+                _void_curr = void_codes_on(conn, dt)
+                common_codes = void_excluded_common_codes(
+                    set(prev_snaps.keys()) & set(curr_snaps.keys()),
+                    _void_prev, _void_curr,
+                )
                 price_adj_mv = sum(curr_snaps[c][2] * prev_snaps[c][0] for c in common_codes)
                 prev_common_mv = sum(prev_snaps[c][1] for c in common_codes)
                 if prev_common_mv > 0:

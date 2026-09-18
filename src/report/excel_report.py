@@ -44,6 +44,9 @@ class Styles:
         bottom=Side(style='thin', color='FFD9D9D9'),
     )
 
+    # 问题十一复制行旁路表标记色（淡琥珀）：命中 portfolio_snapshots_replica_void 的行整行标记。
+    VOID_FILL = PatternFill(start_color='FFFCE4B6', end_color='FFFCE4B6', fill_type='solid')
+
 
 class ExcelReportGenerator:
     """Excel 多 Sheet 专业报告生成器"""
@@ -95,6 +98,14 @@ class ExcelReportGenerator:
                 conn, params=[date])
             if positions.empty:
                 return None
+            # 问题十一：复制行旁路表标记（is_void）。查询失败退化为「无标记」，不阻断报告生成。
+            try:
+                from src.analysis.replica_void import void_codes_on
+                _vset = {str(c) for c in (void_codes_on(conn, date) if date else set())}
+                positions['is_void'] = positions['code'].astype(str).isin(_vset)
+            except Exception as _e:
+                logger.warning("void 标记查询失败: %s", _e)
+                positions['is_void'] = False
 
             summary = pd.read_sql_query(
                 "SELECT * FROM portfolio_summary ORDER BY date DESC", conn)
@@ -238,7 +249,7 @@ class ExcelReportGenerator:
         ws['A1'].font = s.TITLE_FONT; ws.row_dimensions[1].height = 36
 
         headers = ['代码', '名称', '行业', '持仓量', '成本价', '现价',
-                   '市值', '盈亏', '收益率', '占比', 'Beta']
+                   '市值', '盈亏', '收益率', '占比', 'Beta', '数据状态']
         for ci, h in enumerate(headers):
             c = ws.cell(row=3, column=ci + 1, value=h)
             c.font = s.HEADER_FONT; c.fill = s.HEADER_FILL; c.alignment = s.HEADER_ALIGN; c.border = s.THIN_BORDER
@@ -275,8 +286,8 @@ class ExcelReportGenerator:
                 else:
                     c.alignment = Alignment(horizontal='left', vertical='center')
         ws.freeze_panes = 'A4'
-        ws.auto_filter.ref = f"A3:K{len(positions) + 3}"
-        for i, w in enumerate([10, 20, 8, 10, 10, 10, 14, 14, 10, 8, 8]):
+        ws.auto_filter.ref = f"A3:L{len(positions) + 3}"
+        for i, w in enumerate([10, 20, 8, 10, 10, 10, 14, 14, 10, 8, 8, 14]):
             ws.column_dimensions[get_column_letter(i + 1)].width = w
 
     def _write_returns_sheet(self, wb, data):
@@ -361,7 +372,7 @@ class ExcelReportGenerator:
         ws[f'A{r}'] = '个股 Beta 分布'
         ws[f'A{r}'].font = Font(name='微软雅黑', size=12, bold=True, color='FF333333')
         r += 1
-        for ci, h in enumerate(['代码', '名称', '行业', 'Beta', '风险等级']):
+        for ci, h in enumerate(['代码', '名称', '行业', 'Beta', '风险等级', '数据状态']):
             c = ws.cell(row=r, column=ci + 1, value=h)
             c.font = s.HEADER_FONT; c.fill = s.HEADER_FILL; c.alignment = s.HEADER_ALIGN; c.border = s.THIN_BORDER
         r += 1
@@ -370,8 +381,10 @@ class ExcelReportGenerator:
             code = str(pos['code'])
             beta = pos.get('beta', 0)
             rl = '高' if beta and beta == beta and abs(beta) > 1.3 else '中' if beta and beta == beta else '低'
-            fill = s.ALT_FILL if pi % 2 == 0 else s.WHITE_FILL
-            for ci, val in enumerate([code, pos.get('name', ''), ETF_CATEGORIES.get(code, {}).get('sector', ''), beta, rl]):
+            is_void = bool(pos.get('is_void', False))
+            status = '复制行(陈旧)' if is_void else ''
+            fill = VOID_FILL if is_void else (s.ALT_FILL if pi % 2 == 0 else s.WHITE_FILL)
+            for ci, val in enumerate([code, pos.get('name', ''), ETF_CATEGORIES.get(code, {}).get('sector', ''), beta, rl, status]):
                 c = ws.cell(row=r, column=ci + 1, value=val)
                 c.font = s.DATA_FONT; c.fill = fill; c.border = s.THIN_BORDER
                 if ci == 3:
@@ -380,6 +393,10 @@ class ExcelReportGenerator:
                     c.alignment = s.CENTER
                     if val == '高': c.font = Font(name='微软雅黑', size=10, color='FFEF4444', bold=True)
                     elif val == '低': c.font = Font(name='微软雅黑', size=10, color='FF22C55E')
+                elif ci == 5:
+                    c.alignment = Alignment(horizontal='left', vertical='center')
+                    if val:
+                        c.font = Font(name='微软雅黑', size=10, color='FFB45309', bold=True)
             r += 1
 
         # 近期趋势

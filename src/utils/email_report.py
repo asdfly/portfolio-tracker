@@ -363,18 +363,30 @@ class EmailReportBuilder:
         return dict(row) if row else None
 
     def _load_positions(self) -> List[Dict]:
-        """加载最新持仓"""
+        """加载最新持仓（含复制行 is_void 标记，问题十一）"""
         conn = get_db_connection(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        row = cursor.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()
+        date_val = row[0] if row else None
         cursor.execute("""
             SELECT * FROM portfolio_snapshots 
-            WHERE date = (SELECT MAX(date) FROM portfolio_snapshots)
+            WHERE date = ?
             ORDER BY market_value DESC
-        """)
+        """, (date_val,))
         rows = cursor.fetchall()
+        out = [dict(r) for r in rows]
+        try:
+            from src.analysis.replica_void import void_codes_on
+            vset = void_codes_on(conn, date_val) if date_val else set()
+            for r in out:
+                r['is_void'] = r.get('code') in vset
+        except Exception as _e:
+            logger.warning("void 标记查询失败: %s", _e)
+            for r in out:
+                r.setdefault('is_void', False)
         conn.close()
-        return [dict(r) for r in rows]
+        return out
 
     def _load_alerts(self) -> List[Dict]:
         """加载最近告警"""
