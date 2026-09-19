@@ -117,6 +117,29 @@ cur.execute('SELECT MAX(date) FROM index_quotes'); IDX_DATE = cur.fetchone()[0]
 cur.execute('SELECT name,close,change_pct,amount FROM index_quotes WHERE date=?', (IDX_DATE,))
 idx = {r[0]: (r[1], r[2], r[3]) for r in cur.fetchall()}
 
+# 🔴 数据兜底（2026-09-18 发现）：index_quotes.change_pct 全表历史存在 590 行 NULL，
+#    若为空则按相邻前交易日收盘推算当日涨跌幅，确保 idx[k][1] 始终为数值、不直接崩溃。
+_idx_prev_date = cur.execute("SELECT MAX(date) FROM index_quotes WHERE date<?", (IDX_DATE,)).fetchone()[0]
+_idx_prev_close = {}
+if _idx_prev_date:
+    for _r in cur.execute("SELECT name,close FROM index_quotes WHERE date=?", (_idx_prev_date,)):
+        _idx_prev_close[_r[0]] = _r[1]
+def _idx_chg(_c, _p, _n):
+    if _p is not None:
+        return _p
+    _pc = _idx_prev_close.get(_n)
+    if _pc and _c is not None:
+        return round((_c - _pc) / _pc * 100, 4)
+    return 0.0
+idx = {_n: (_c, _idx_chg(_c, _p, _n), _a) for _n, (_c, _p, _a) in idx.items()}
+
+# 🔴 vs_hs300 兜底（同批数据缺口）：portfolio_summary.vs_hs300 为 NULL 时，
+#    改用「真值日回报 − 沪深300 当日涨跌幅」计算相对表现，避免 None 比较崩溃（数据驱动，非臆造）。
+if vs300 is None and '沪深300' in idx and idx['沪深300'][1] is not None:
+    vs300 = round(d_ret - idx['沪深300'][1], 4)
+if vs300 is None:
+    vs300 = 0.0
+
 # ---------- 3. 资金流（本地 fund_flows）----------
 def _f(v):
     try: return float(v)
@@ -599,6 +622,8 @@ def money(v):
     if v is None: return '<span class="flat">—</span>'
     cl = 'up' if v > 0 else ('down' if v < 0 else 'flat')
     return f'<span class="{cl}">{v:+,.2f}亿</span>'
+def f2(v):
+    return f'{v:.2f}' if v is not None else '—'
 
 # 军工近 N 日表现串（需 chg()，故置于 def chg/money 之后）
 mil_recent_txt = '；'.join(
@@ -739,8 +764,9 @@ _tech_w = pct(ind_sum.get('科技系', 0))
 if vs300 >= 0:
     _perf_reason = (f"超配的{'军工系（当日顺风）' if _mil_av > 0 else '防御端（债券+红利）'}对冲了{_hw_names}逆风")
 else:
-    _perf_reason = (f"超配的军工/医药/证券/红利当日普遍逆风（军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%），"
-                    f"而领涨的科技系组合权重仅 {_tech_w:.1f}%、对组合拉动有限，故组合跑输宽基")
+    _perf_reason = (f"当日领涨主线集中于{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
+                    f"超配方向中军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%，"
+                    f"领涨主线权重偏低，故相对宽基落后")
 _amt_note = (f"{REGIME}中资金{'净流入' if (main_in_yi and main_in_yi > 0) else '净流出'}、量能{amt_dir}"
              if REGIME in ('普涨', '普跌回调') else f"量能{amt_dir}、资金{'净流入' if (main_in_yi and main_in_yi>0) else '净流出'}")
 _mil_against_txt = f"军工系逆市走弱（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}%）" if _mil_against else f"军工系{_mil_wind}"
@@ -752,6 +778,17 @@ _weak_sectors = '、'.join(x[0] for x in sorted(CROSS, key=lambda x: x[5])[:3] i
 _strong_sectors = '、'.join(x[0] for x in sorted(CROSS, key=lambda x: -x[5])[:3] if x[5] > 0) or '无'
 _weak_body = '、'.join(f"{n} {_cross_map.get(n,0):+.2f}%" for n in _weak_sectors.split('、')) or '无'
 _strong_body = '、'.join(f"{n} {_cross_map.get(n,0):+.2f}%" for n in _strong_sectors.split('、')) or '无'
+
+# 3.1 净风向结论段落（完全数据驱动：顺/逆风方向由 CROSS_WIND 实时派生，消除硬编码「普遍逆风/指数涨组合跌」下行日措辞，落实数据纪律）
+if vs300 >= 0:
+    _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。"
+                    f"当日领涨方向为{_main_line_sectors}；组合顺风方向为{_strong_sectors}（{_strong_body}），"
+                    f"{'军工系顺风' if _mil_av>0 else '防御端（债券+红利）'}提供支撑，逆风方向（{_weak_sectors}）拖累有限，整体相对宽基占优。")
+else:
+    _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。"
+                    f"当日领涨主线集中于{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
+                    f"组合顺风方向为{_strong_sectors}（{_strong_body}）、逆风方向为{_weak_sectors}（{_weak_body}），"
+                    f"叠加领涨主线权重偏低，故相对宽基落后。")
 
 HTML = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -923,7 +960,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="kpi"><div class="k">当日回报（真值）</div><div class="v">{chg(d_ret)}</div><div class="n"><span class="down">{d_pnl:+,.0f} 元</span></div></div>
 <div class="kpi"><div class="k">相对沪深300</div><div class="v">{chg(vs300, 'pct')}</div><div class="n">{_perf_word}（{'军工顺风+防御对冲' if _mil_av>0 else '防御端缓冲'}）</div></div>
 <div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 {HOLD_N} 只</div></div>
-<div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{sharpe:.2f} / {mdd:.2f}% / {vol:.2f}%</div><div class="n">滚动统计口径</div></div>
+<div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{f2(sharpe)} / {f2(mdd)}% / {f2(vol)}%</div><div class="n">滚动统计口径（本地未采集标—）</div></div>
 </div>
 <div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {DRET_TXT}%，{('跑赢' if vs300>=0 else '跑输')}沪深300 {abs(vs300):.2f}pct）。{EPH_CAVEAT_884}</div>
 </div>
@@ -977,7 +1014,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <h3>3.1 净风向结论</h3>
 <p style="font-size:13.2px;color:#c9d1d9">组合 <b>{len(CROSS)} 个方向中 {n_up} 个顺风/微顺风、{n_dn} 个逆风/强逆风、{n_mid} 个弱逆风</b>。顺风权重合计约 <b class="up">{up_w:.1f}%</b>（红利+债券+军工+科技+宽基），逆风（医药+新能源+证券）合计约 <b class="down">{inv_w:.1f}%</b>；上述两项<b>均不含场外主动权益/场外指数/货币合计 {otc_w:.1f}%</b>——这部分是场内 ETF 之外的仓位，无当日板块风向口径，故不纳入顺逆风统计，两者相加不等于 100%。</p>
-<p style="font-size:13.2px;color:#c9d1d9;margin-top:8px">真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。当日领涨方向为{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%；超配的军工/医药/证券/红利普遍逆风（军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%），防御端（债券+红利 {def_w:.1f}%）提供缓冲，组合与大盘呈现「指数涨、组合跌」的结构性背离。</p>
+<p style="font-size:13.2px;color:#c9d1d9;margin-top:8px">{_perf_detail}</p>
 <h3>3.2 代理加权估算 vs 真值（方法学诊断）</h3>
 <table><thead><tr><th>口径</th><th class="num">数值</th><th>说明</th></tr></thead>
 <tbody>
@@ -1093,9 +1130,14 @@ _tldr_lines.append(
     f"数据来源：项目本地数据层（东方财富/新浪）+ NeoData 金融搜索（查询时间 {MKT_NEO['query_time']}）。"
     f"NeoData 仅增强，主力以本地为准。不构成投资建议。")
 if DATA_LAG:
-    _tldr_lines.append(
-        f"⚠ 数据新鲜度提示：组合/持仓/资金流/本地广度仍停留在 {DATA_DATE}（采集器滞后，运行日 {RUN_DATE} 为交易日但本地 portfolio_summary 等尚未更新），"
-        f"大盘指数已采用 {IDX_DATE} 实时；组合回报与跨日信号以 {DATA_DATE} 为基准，研判时请注意日期口径差异。")
+    if RUN_DATE_IS_TRADING:
+        _tldr_lines.append(
+            f"⚠ 数据新鲜度提示：组合/持仓/资金流/本地广度仍停留在 {DATA_DATE}（采集器滞后，运行日 {RUN_DATE} 为交易日但本地 portfolio_summary 等尚未更新），"
+            f"大盘指数已采用 {IDX_DATE} 实时；组合回报与跨日信号以 {DATA_DATE} 为基准，研判时请注意日期口径差异。")
+    else:
+        _tldr_lines.append(
+            f"⚠ 数据新鲜度提示：运行日 {RUN_DATE} 为休市日（周末/节假日），数据基准为最近交易日 {DATA_DATE}（收盘）；"
+            f"大盘指数与组合回报、跨日信号均以 {DATA_DATE} 为基准，研判时请注意非交易日口径。")
 if BACKFILL:
     _tldr_lines.append(
         f"⚠ 回溯重生成标记：本 TLDR 按运行日 {RUN_DATE} 重新生成（实际生成 {now}），非当日 18:00 盘后原件。")
