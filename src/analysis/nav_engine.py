@@ -340,7 +340,7 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
                 {
                     "date": d_str,
                     "unit_nav": round(unit_nav, 6),
-                    "total_units": round(prev_v, 2),
+                    "total_units": round(v / unit_nav, 2) if unit_nav else None,
                     "total_value": round(v, 2),
                     "net_flow": round(c, 2),
                     "twr_cumulative": round(twr_cum, 6),
