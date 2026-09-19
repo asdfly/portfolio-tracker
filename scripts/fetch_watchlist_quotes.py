@@ -85,7 +85,6 @@ from config.settings import DATABASE_PATH, WATCHLIST_CODES  # noqa: E402
 from src.analysis.predictor.price_history import (  # noqa: E402
     backfill_etf_price_history,
 )
-from src.analysis.technical import TechnicalAnalyzer  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -159,8 +158,6 @@ def run_watchlist(codes=None, apply_db=True, log=print) -> dict:
         {"ok", "failed", "price_rows", "tech_new", "tech_refresh",
          "per_code", "error"}
     """
-    from config.settings import TECH_INDICATORS
-
     codes = list(codes) if codes else sorted(WATCHLIST_CODES)
     result = {
         "ok": 0, "failed": 0, "price_rows": 0,
@@ -172,7 +169,6 @@ def run_watchlist(codes=None, apply_db=True, log=print) -> dict:
         log("  观察名单为空，跳过")
         return result
 
-    analyzer = TechnicalAnalyzer(TECH_INDICATORS)
     real_conn = sqlite3.connect(str(DATABASE_PATH))
     # dry-run：转发所有操作但吞掉 commit，退出时 rollback
     conn = real_conn if apply_db else _NoCommitConn(real_conn)
@@ -217,17 +213,25 @@ def run_watchlist(codes=None, apply_db=True, log=print) -> dict:
                 logger.info("%s 技术指标待算 %d 天（库内末日 %s）",
                             code, len(targets), last_tech)
 
+                # 统一口径：复用 portfolio_snapshots 全历史，算法与 backfill 完全一致
+                from src.analysis.technical import compute_technical_unified
+                cur_hist = conn.execute(
+                    "SELECT date, current_price FROM portfolio_snapshots "
+                    "WHERE code=? AND current_price>0 ORDER BY date", (code,))
+                hist = cur_hist.fetchall()
+                hist_dates = [r[0] for r in hist]
+                hist_prices = [float(r[1]) for r in hist]
+
                 pending = []   # [(date, indicators)]
                 for d in targets:
-                    kline = _load_kline(conn, code, d)
-                    if len(kline) < KLINE_BARS:
-                        logger.warning("%s %s K线仅 %d 根（需 %d），跳过",
-                                       code, d, len(kline), KLINE_BARS)
+                    if d not in hist_dates:
+                        logger.warning("%s %s 无快照价，跳过", code, d)
                         continue
-                    ind = analyzer.calculate_all(kline)
-                    if not ind:
-                        logger.warning("%s %s 指标计算结果为空，跳过", code, d)
+                    i = hist_dates.index(d)
+                    if i < 20:
+                        logger.warning("%s %s 历史不足 20 根，跳过", code, d)
                         continue
+                    ind = compute_technical_unified(hist_prices, hist_dates, i)
                     pending.append((d, ind))
 
                 # 释放本连接的读事务再写库：sqlite 默认 journal 模式下，

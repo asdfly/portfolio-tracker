@@ -144,6 +144,50 @@ class DatabaseManager:
             ))
             conn.commit()
 
+    def rebuild_latest_technical(self, codes):
+        """统一口径刷新「当日」技术指标（问题八落地）。
+
+        对每个 code 取 portfolio_snapshots.current_price 全历史，用统一算法
+        compute_technical_unified 计算最新一根（K 线末日）并写入 etf_technical。
+
+        关键修正：行日期 = 该行所用价格窗口末日的日期（K 线末日），**绝不**用 self.today
+        —— 避免「行写 D、指标算到 D-1」的间歇性错位（行情源未及时更新时）。
+        算法与 backfill_full_history.rebuild_etf_technical 完全一致。
+        """
+        from src.analysis.technical import compute_technical_unified
+        with get_db_connection(self.db_path) as conn:
+            cur = conn.cursor()
+            written = 0
+            for code in codes:
+                cur.execute(
+                    "SELECT date, current_price FROM portfolio_snapshots "
+                    "WHERE code = ? AND current_price > 0 ORDER BY date",
+                    (code,),
+                )
+                rows = cur.fetchall()
+                if len(rows) < 20:
+                    continue
+                dates = [r[0] for r in rows]
+                prices = [float(r[1]) for r in rows]
+                i = len(prices) - 1
+                ind = compute_technical_unified(prices, dates, i)
+                row_date = str(dates[i])  # K 线末日，非 self.today
+                assert row_date == str(dates[i]), "行日期必须等于价格窗口末日"
+                cur.execute(
+                    "INSERT OR REPLACE INTO etf_technical "
+                    "(date, code, ma_signal, macd_signal, rsi_value, rsi_status, "
+                    "kdj_signal, bollinger_position, atr_pct, trend) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (row_date, code,
+                     ind["ma"]["signal"], ind["macd"]["signal"],
+                     ind["rsi"]["RSI"], ind["rsi"]["status"],
+                     ind["kdj"]["signal"], ind["bollinger"]["position"],
+                     ind["atr"]["ATR_pct"], ind["trend"]["trend"]),
+                )
+                written += 1
+            conn.commit()
+            return written
+
     def get_latest_portfolio(self, date_str: Optional[str] = None) -> List[Dict[str, Any]]:
         """获取最新持仓数据"""
         with get_db_connection(self.db_path) as conn:

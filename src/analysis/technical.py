@@ -8,6 +8,135 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def compute_technical_unified(prices, dates, i):
+    """统一技术指标算法（与 backfill_full_history.rebuild_etf_technical 逐字段实现完全一致）。
+
+    价格源统一为 portfolio_snapshots.current_price（覆盖全部 34 只，含 12 只无
+    etf_price_history 行的场外标的）；行日期 = 该行所用价格窗口末日的日期（即 dates[i]），
+    消除「行写 D、指标算到 D-1」的间歇性错位
+    （见 docs/handover/07_known_data_issues.md 问题八）。
+
+    返回嵌套 dict，结构与 TechnicalAnalyzer.calculate_all 兼容，可直接交给
+    database.DatabaseManager.save_technical_indicators(date, code, indicators)。
+
+    Args:
+        prices: 升序收盘价序列（float 或 numpy array）
+        dates:  与 prices 同序的日期序列（str, YYYY-MM-DD）
+        i:      窗口末端索引（调用方须保证 i >= 20）
+    """
+    import numpy as np
+    import pandas as pd
+
+    window = list(prices[: i + 1])
+    close = float(prices[i])
+
+    # MA5 / MA20
+    ma5 = float(np.mean(window[-5:]))
+    ma20 = float(np.mean(window[-20:]))
+    if i >= 21:
+        prev_ma5 = float(np.mean(window[-6:-1]))
+        prev_ma20 = float(np.mean(window[-21:-1]))
+        if ma5 > ma20 and prev_ma5 <= prev_ma20:
+            ma_signal = "金叉"
+        elif ma5 < ma20 and prev_ma5 >= prev_ma20:
+            ma_signal = "死叉"
+        elif ma5 > ma20:
+            ma_signal = "多头排列"
+        else:
+            ma_signal = "空头排列"
+    else:
+        ma_signal = "多头排列" if ma5 > ma20 else "空头排列"
+
+    # RSI(14) —— 简单移动平均（与 backfill 一致，非 Wilder 平滑）
+    if i >= 14:
+        deltas = [window[j] - window[j - 1] for j in range(max(1, i - 13), i + 1)]
+        gains = [d for d in deltas if d > 0]
+        losses = [-d for d in deltas if d < 0]
+        avg_gain = sum(gains) / 14
+        avg_loss = sum(losses) / 14 if losses else 0.001
+        rsi = 100 - 100 / (1 + avg_gain / avg_loss)
+    else:
+        rsi = 50.0
+    if rsi >= 85:
+        rsi_status = "严重超买"
+    elif rsi >= 70:
+        rsi_status = "超买"
+    elif rsi <= 15:
+        rsi_status = "严重超卖"
+    elif rsi <= 30:
+        rsi_status = "超卖"
+    else:
+        rsi_status = "正常"
+
+    # MACD EMA12 / EMA26, DIF / DEA(EMA9)
+    if i >= 35:
+        series = pd.Series(window)
+        ema12 = float(series.ewm(span=12, adjust=False).mean().iloc[-1])
+        ema26 = float(series.ewm(span=26, adjust=False).mean().iloc[-1])
+        dif = ema12 - ema26
+        dif_series = series.ewm(span=12, adjust=False).mean() - series.ewm(span=26, adjust=False).mean()
+        dea_series = dif_series.ewm(span=9, adjust=False).mean()
+        dea = float(dea_series.iloc[-1])
+        if dif > 0 and dea > 0:
+            macd_signal = "多头"
+        elif dif < 0 and dea < 0:
+            macd_signal = "空头"
+        elif dif > dea and (i < 36 or float(dif_series.iloc[-2]) <= float(dea_series.iloc[-2])):
+            macd_signal = "金叉"
+        elif dif < dea:
+            macd_signal = "死叉"
+        else:
+            macd_signal = "看多" if dif > 0 else "看空"
+    else:
+        macd_signal = "中性"
+
+    # 布林带(20, 2)
+    boll_window = window[-20:]
+    boll_mid = float(np.mean(boll_window))
+    # 与 backfill_full_history.rebuild_etf_technical 一致：用样本标准差 (ddof=1)，
+    # 而非 np.std 的总体标准差 (ddof=0)，否则布林带位置会系统性偏移约 1.25。
+    boll_std = float(pd.Series(boll_window).std())
+    boll_upper = boll_mid + 2 * boll_std
+    boll_lower = boll_mid - 2 * boll_std
+    boll_range = boll_upper - boll_lower
+    boll_position = ((close - boll_lower) / boll_range * 100) if boll_range > 0 else 50.0
+
+    # ATR —— 14 日 TR 简单均值（与 backfill 一致：用相邻收盘差分近似 TR）
+    if i >= 14:
+        recent = window[-15:]
+        trs = [abs(recent[j] - recent[j - 1]) for j in range(1, len(recent))]
+        atr = sum(trs) / len(trs) if trs else 0.0
+        atr_pct = atr / close * 100 if close > 0 else 0.0
+    else:
+        atr_pct = 0.0
+
+    # KDJ（简化）—— RSV>50 → 金叉，否则 死叉
+    high_n = max(window[-15:])
+    low_n = min(window[-15:])
+    rsv = (close - low_n) / (high_n - low_n) * 100 if high_n != low_n else 50.0
+    kdj_signal = "金叉" if rsv > 50 else "死叉"
+
+    # 趋势判断
+    if ma5 > ma20 and rsi > 50:
+        trend = "强势上涨"
+    elif ma5 > ma20:
+        trend = "温和上涨"
+    elif ma5 < ma20 and rsi < 50:
+        trend = "下跌"
+    else:
+        trend = "震荡整理"
+
+    return {
+        "ma": {"signal": ma_signal},
+        "macd": {"signal": macd_signal},
+        "rsi": {"RSI": round(float(rsi), 2), "status": rsi_status},
+        "kdj": {"signal": kdj_signal},
+        "bollinger": {"position": round(float(boll_position), 2)},
+        "atr": {"ATR_pct": round(float(atr_pct), 2)},
+        "trend": {"trend": trend},
+    }
+
+
 class TechnicalAnalyzer:
     """技术分析器"""
 
