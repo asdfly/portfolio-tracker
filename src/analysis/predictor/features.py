@@ -245,6 +245,27 @@ def build_feature_matrix(conn, codes: Iterable[str], as_of: Optional[str] = None
         close = g["close"]
         ohlc = ohlc_map.get(code)
         tech = compute_technical_from_close(close, ohlc)
+        # 问题十二（份额折算）：拆分日伪收益修复。
+        # etf_price_history.close 是前复权连续序列（拆分日无跳变），而快照
+        # current_price 在拆分日合法跳变（每股真减半）。若直接对 current_price 取
+        # pct_change，会把拆分当成 ±200% 的伪收益喂给 predictor。
+        # 故 return/momentum/volatility 类特征改从 qfq 价算；无 qfq 覆盖的
+        # (code,date)（如 510500 2015 拆分期，行情表 2018 才起）保留 NaN
+        # -> upsert 落 NULL，绝不伪造。ma/macd/boll 等位置类特征仍用原始价
+        # （见 docs/handover/07_known_data_issues.md 问题十二）。
+        if ohlc is not None and "close" in ohlc.columns:
+            qc = ohlc["close"].reindex(g.index)
+            if qc.notna().any():
+                qret = qc.pct_change()
+                tech["ret_1d"] = qret
+                tech["ret_5d"] = qc.pct_change(5)
+                tech["ret_60d"] = qc.pct_change(60)
+                tech["mom_5d"] = qc / qc.shift(5) - 1.0
+                tech["mom_20d"] = qc / qc.shift(20) - 1.0
+                tech["vol_5d"] = qret.rolling(5, min_periods=3).std()
+                tech["vol_20d"] = qret.rolling(20, min_periods=10).std()
+                tech["vol_60d"] = qret.rolling(60, min_periods=30).std()
+                tech["vol_ratio_5_20"] = tech["vol_5d"] / tech["vol_20d"]
         tech["code"] = code
         frames.append(tech)
     feat = pd.concat(frames)
