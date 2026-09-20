@@ -101,9 +101,12 @@ def test_position_features_continuous_across_split_with_qfq():
         assert abs(a_split["macd"] - a_prev["macd"]) < 0.05, \
             f"TESTA macd 跨拆分不应尖刺, {a_prev['macd']}->{a_split['macd']}"
 
-        # --- TESTB（无 qfq）：拆分日 boll_pctb 应跌出 [0,1]（复现修复前假台阶）---
+        # --- TESTB（无 qfq）：消费侧闸门将拆分日位置/收益类特征置 NULL 并打
+        #     is_split_merge=1（数据问题十二），不再把拆分假台阶喂给 predictor。
         b_split = row("TESTB", split_date)
-        assert b_split["boll_pctb"] < 0.0 or b_split["boll_pctb"] > 1.0, \
-            f"TESTB 无 qfq 应保留拆分假台阶(boll_pctb 越界), got {b_split['boll_pctb']}"
+        assert pd.isna(b_split["boll_pctb"]), \
+            f"TESTB 无 qfq 拆分日 boll_pctb 应被剔除(置 NULL), got {b_split['boll_pctb']}"
+        assert int(b_split["is_split_merge"]) == 1, \
+            "TESTB 无 qfq 拆分日应打 is_split_merge=1"
     finally:
         _cleanup_db(path)

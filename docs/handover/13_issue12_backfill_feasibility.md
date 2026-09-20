@@ -62,12 +62,17 @@
 
 ### 2.3 `etf_features`（位置类 37 维）覆盖
 
-| 族 | code/date | `etf_features` 行数 |
-|---|---|---|
-| A+B | 7 例 | **各 1 行**（已改用 qfq 合并价，`07` §附，位置特征已连续化）|
-| C | 6 例 | **0 行**（场外基金，**不在 `etf_features` 覆盖范围**）|
+| 族 | code/date | `etf_features` 行数 | 状态 |
+|---|---|---|---|
+| A+B（qfq 覆盖，2018+）| 6 例 | 各 1 行 | 已改用 qfq 合并价（`07` §附），位置特征连续化 |
+| A 510500（pre-2018，无 qfq）| 2015-04-15 | 1 行 | **消费侧闸门兜底**：该日 ma5/ma20/ret 等整体置 NULL + `is_split_merge=1`（实测修复前 ma5=1.349、ma20=2.36 的台阶已消除）|
+| C | 6 例 | 0 行 | 场外基金，**不在 `etf_features` 覆盖范围** |
 
 ⇒ C 族 6 例根本不进 `etf_features` ⇒ 再次证明 C 族是**另一数据类**（场外），回填与判别都必须把它们排除在外。
+⇒ **新增（消费侧闸门延伸）**：`etf_features` 的 37 维特征也接了 `split_merge_guard`——
+对「qfq 缺失的拆分/合并伪收益日」（典型 pre-2018，如 510500 2015，行情表 2018 才起、
+价格源层仍含台阶）把当天位置/收益类特征置 NULL 并打 `is_split_merge` 标志，下游可据此排除。
+见 `src/analysis/predictor/features.py` 的 `build_feature_matrix` 与 `tests/test_etf_features_split_guard.py`。
 
 ### 2.4 `portfolio_nav`
 
@@ -84,8 +89,8 @@
 | `portfolio_snapshots.market_value`（A 族 5 行） | **是（直接目标）** | 由整倍放大 → 正确值 | 仅 5 行 UPDATE |
 | `portfolio_summary` 权重 / 集中度（`max_weight` 等） | **是** | 权重 = mv / 组合总市值，A 族 mv 修正会改变这几日权重分布 | 仅重算命中日期的 summary（局部）|
 | `portfolio_summary.daily_return` | **否（已修正）** | 公式侧守卫已落地；回填快照不会自动重算它，除非重跑 `portfolio.py`（重跑会再走守卫）| 视是否重跑而定 |
-| `etf_features` 位置类 | **基本否** | 位置特征已改 qfq 合并价源（`07` §附），不再读膨胀的快照价 ⇒ 回填快照不改变它们 | 不需 |
-| `etf_features.ret_1d` 等收益列 | **可能** | 若收益列仍由快照价派生则受影响；需先确认 13 例 `ret_1d` 现状（见 `07` §六，A 族曾双向落盘伪值，需核实当前是否已随公式侧修正）| 局部核验 |
+| `etf_features` 位置类 | **否** | 位置特征已改 qfq 合并价源（`07` §附）；pre-2018/no-qfq 拆分日再由消费侧闸门置 NULL+标记（`is_split_merge`），回填快照不影响它们 | 不需 |
+| `etf_features.ret_1d` 等收益列 | **否（已处理）** | 收益列 qfq 覆盖处取真实日收益；qfq 缺失的拆分日由消费侧闸门置 NULL，不再含伪 ±200% | 不需 |
 | `portfolio_nav` | **间接** | NAV 是 `daily_return` 的累积乘积；因 `daily_return` 已修正，NAV 当前无伪跌。若回填后重跑 `portfolio.py` 会重新生成 NAV，但守卫保证仍正确 | 仅当重跑时才全序列重算 |
 | 历史全序列其它日期 | **否** | 仅 13 例、每标的一处 | — |
 
@@ -115,7 +120,7 @@
 
 理由：
 1. **公式侧守卫已把 13 例 `daily_return` 修正为小值**（§2.2 实测），NAV / 风险 / 因子三大消费路径已不再吃到伪暴跌。
-2. **本 workstream 闸门已落地**（§2 间接验证 + `tests/test_split_merge_guard.py` 14 例全绿），对 nav_engine / portfolio_risk / factor_attribution 三处消费点做"检测 + 标记 + 极端值中性化"，并把 `is_split_merge` 落库供审计。
+2. **本 workstream 闸门已落地**（§2 间接验证 + `tests/test_split_merge_guard.py` 14 例全绿 + `tests/test_etf_features_split_guard.py` 覆盖 37 维特征侧），对 nav_engine / portfolio_risk / factor_attribution 三处消费点做"检测 + 标记 + 极端值中性化"，并对 `etf_features` 的 pre-2018/no-qfq 拆分日置 NULL + `is_split_merge` 标志，把 `is_split_merge` 落库供审计。
 3. 回填的**唯一净收益**是修正 A 族 5 行的 `market_value` 与对应 `portfolio_summary` 权重；但权重失真仅限这 5 个孤立日期、且不影响组合级 `daily_return`/NAV。
 4. 回填有**写库 + 局部重算**的实操成本与回归风险，收益/风险比低。
 

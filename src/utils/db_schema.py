@@ -503,6 +503,7 @@ TABLE_DEFS = [
             ff_net_inflow_5d REAL, ff_net_inflow_20d REAL,
             ff_super_net_5d REAL, ff_large_net_5d REAL,
             hs300_ret_20d REAL, hs300_vol_20d REAL,
+            is_split_merge BOOLEAN DEFAULT 0,
             PRIMARY KEY (date, code)
         )
     """, [

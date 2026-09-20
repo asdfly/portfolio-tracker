@@ -12,6 +12,14 @@ from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
+import sqlite3
+
+# 数据问题十二·特征侧重闸门（消费侧，与 nav_engine / portfolio_risk /
+# factor_attribution 同款判别器）：检测各 code 的拆分/合并伪收益日，把当天
+# 位置/收益类特征置 NaN 并打 is_split_merge 标志，避免拆分台阶被 predictor 当成
+# 真实价格信号静默吸收。仅当 qfq 缺失（close 回退到未复权快照价）的拆分日才置
+# NaN——qfq 已覆盖的拆分日（无台阶）保持原值，不丢数据。
+from src.analysis.split_merge_guard import split_merge_pseudo_return_dates
 
 # ⚠️ 量纲/语义红线（2026-09-15 事故后写死）：任何改变特征【量纲或语义】的改动
 #   （如本次 绝对价→相对量）必须对 etf_features 做**全表重算**，**不能靠升 FEAT_VERSION
@@ -256,14 +264,15 @@ def build_feature_matrix(conn, codes: Iterable[str], as_of: Optional[str] = None
         else:
             close = g["close"]
         tech = compute_technical_from_close(close, ohlc)
-        # 问题十二（份额折算）：拆分日伪收益修复。
-        # etf_price_history.close 是前复权连续序列（拆分日无跳变），而快照
-        # current_price 在拆分日合法跳变（每股真减半）。若直接对 current_price 取
-        # pct_change，会把拆分当成 ±200% 的伪收益喂给 predictor。
-        # 故 return/momentum/volatility 类特征改从 qfq 价算；无 qfq 覆盖的
-        # (code,date)（如 510500 2015 拆分期，行情表 2018 才起）保留 NaN
-        # -> upsert 落 NULL，绝不伪造。ma/macd/boll 等位置类特征仍用原始价
-        # （见 docs/handover/07_known_data_issues.md 问题十二）。
+        # 问题十二（份额折算）：拆分日伪收益修复（两层）。
+        # ① 价格源层（本段）：etf_price_history.close 是前复权连续序列（拆分日无跳变），
+        #    而快照 current_price 在拆分日合法跳变（每股真减半）。故 return/momentum/
+        #    volatility 类特征改从 qfq 价算；无 qfq 覆盖的 (code,date)（如 510500 2015
+        #    拆分期，行情表 2018 才起）保留 NaN -> upsert 落 NULL，绝不伪造。
+        # ② 消费侧闸门（本函数尾部、数据问题十二）：对「qfq 缺失的拆分/合并伪收益日」
+        #   额外把当天位置/收益类特征（含 ma/macd/boll）整体置 NULL 并打 is_split_merge=1，
+        #   覆盖价格源层仍含台阶的 pre-2018 等场景，避免拆分台阶被 predictor 当成真实信号
+        #   （见 src/analysis/split_merge_guard.py 与 docs/handover/07_known_data_issues.md 问题十二）。
         if ohlc is not None and "close" in ohlc.columns:
             qc = ohlc["close"].reindex(g.index)
             if qc.notna().any():
@@ -277,6 +286,30 @@ def build_feature_matrix(conn, codes: Iterable[str], as_of: Optional[str] = None
                 tech["vol_20d"] = qret.rolling(20, min_periods=10).std()
                 tech["vol_60d"] = qret.rolling(60, min_periods=30).std()
                 tech["vol_ratio_5_20"] = tech["vol_5d"] / tech["vol_20d"]
+        # 数据问题十二·特征侧重闸门：把"qfq 缺失的拆分/合并伪收益日"当天的
+        # 位置/收益类特征置 NaN 并打 is_split_merge 标志（仅该日，不动 stored 值、
+        # 不动相邻日）。qfq 已覆盖的拆分日（无台阶）保持原值，避免无谓丢数据。
+        # 判别只读 portfolio_snapshots（与 nav/risk/factor 同款），失败不应阻断特征构建。
+        try:
+            _sdates = split_merge_pseudo_return_dates(conn, codes=[code])
+        except Exception:
+            _sdates = set()
+        tech["is_split_merge"] = 0
+        if _sdates:
+            # qfq 是否在该日缺失（close 因此回退到未复权快照价，含台阶）才干预；
+            # qfq 已覆盖的拆分日特征本就连续，仅标记会更稳妥，但置 NaN 会丢好数据，
+            # 故只在 qfq 缺失处干预。
+            if ohlc is not None and "close" in ohlc.columns:
+                _qc_na = ohlc["close"].reindex(g.index).isna()
+            else:
+                _qc_na = pd.Series(True, index=g.index)
+            _qc_na = _qc_na.reindex(tech.index).fillna(False).astype(bool)
+            _mask = tech.index.strftime("%Y-%m-%d").isin(_sdates) & _qc_na
+            if _mask.any():
+                for _c in TECH_COLS:
+                    if _c in tech.columns:
+                        tech.loc[_mask, _c] = np.nan
+                tech.loc[_mask, "is_split_merge"] = 1
         tech["code"] = code
         frames.append(tech)
     feat = pd.concat(frames)
@@ -292,7 +325,7 @@ def build_feature_matrix(conn, codes: Iterable[str], as_of: Optional[str] = None
         feat = feat.merge(mkt, on="date", how="left")
 
     feat["feat_version"] = FEAT_VERSION
-    keep = ["date", "code", "feat_version"] + ALL_FEATURE_COLS
+    keep = ["date", "code", "feat_version", "is_split_merge"] + ALL_FEATURE_COLS
     feat = feat[[c for c in keep if c in feat.columns]].copy()
     if as_of:
         feat = feat[feat["date"] <= as_of]
@@ -302,6 +335,12 @@ def build_feature_matrix(conn, codes: Iterable[str], as_of: Optional[str] = None
 def upsert_features(conn, df: pd.DataFrame) -> int:
     if df.empty:
         return 0
+    # 幂等补齐 is_split_merge 列（既有库可能无此列；新库由 db_schema 已建）
+    try:
+        conn.cursor().execute(
+            "ALTER TABLE etf_features ADD COLUMN is_split_merge BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     cols = list(df.columns)
     placeholders = ",".join("?" for _ in cols)
     col_sql = ",".join(cols)

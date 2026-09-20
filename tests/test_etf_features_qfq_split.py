@@ -85,8 +85,11 @@ def test_qfq_split_ret_uses_adjusted_price():
         assert abs(r01["ret_1d"] - 0.01) < 0.05, f"TEST01 ret_1d 应为真实收益, got {r01['ret_1d']}"
 
         r02 = feat[(feat.code == "TEST02") & (feat.date == "2024-01-03")].iloc[0]
-        # 无 qfq 覆盖 -> 保留原始 current_price 跳变（-50%）
-        assert r02["ret_1d"] < -0.3, f"TEST02 无 qfq 应保留原始 ret, got {r02['ret_1d']}"
+        # 无 qfq 覆盖的拆分日：消费侧闸门（数据问题十二）将其位置/收益类特征置 NULL
+        # 并打 is_split_merge=1，避免拆分台阶被 predictor 当成真实信号静默吸收。
+        # 与模块 docstring「无 qfq 覆盖：该 (code,date) 置 NULL」一致。
+        assert pd.isna(r02["ret_1d"]), f"TEST02 无 qfq 拆分日 ret_1d 应置 NULL, got {r02['ret_1d']}"
+        assert int(r02["is_split_merge"]) == 1, "TEST02 无 qfq 拆分日应打 is_split_merge=1"
 
         r03 = feat[(feat.code == "TEST03") & (feat.date == "2024-01-03")].iloc[0]
         # 有 qfq 表但当日缺行 -> 置空（NaN）
