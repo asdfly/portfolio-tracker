@@ -10,12 +10,16 @@
   - 质量因子 (QMJ):   盈利质量（ROE近似：红利指数 vs 成长 proxy）
 """
 
+import logging
 import numpy as np
 import pandas as pd
 import sqlite3
 from typing import Dict, List
 
 from config.settings import RISK_CONFIG
+from src.analysis.split_merge_guard import split_merge_pseudo_return_dates
+
+logger = logging.getLogger(__name__)
 
 # 无风险利率（年化），用于计算超额收益（P0-1: 统一引用 RISK_CONFIG，消除 0.02 硬编码）
 RISK_FREE_RATE_ANNUAL = RISK_CONFIG["risk_free_rate"]
@@ -425,6 +429,21 @@ def run_full_attribution(conn: sqlite3.Connection,
     else:
         summary = summary.sort_values('date').reset_index(drop=True)
         port_returns = summary.set_index('date')['daily_return'].dropna() / 100  # 百分比转小数，与因子收益率量纲一致
+
+        # 数据问题十二（消费侧闸门）：剔除拆分/合并伪收益日，避免 ±25% 伪收益被因子
+        # 回归当成真实组合收益、污染风格/行业归因。仅去掉对齐观测点，对回归影响可忽略。
+        try:
+            split_dates = split_merge_pseudo_return_dates(
+                conn,
+                start_date=str(summary['date'].iloc[0])[:10],
+                end_date=str(summary['date'].iloc[-1])[:10])
+        except Exception:
+            split_dates = set()
+        if split_dates:
+            before = len(port_returns)
+            port_returns = port_returns[~port_returns.index.isin(split_dates)]
+            logger.info("因子归因已剔除 %d 个拆分/合并伪收益日（%d→%d 观测）",
+                        before - len(port_returns), before, len(port_returns))
         
         # 构造因子
         start_date = summary['date'].iloc[0]

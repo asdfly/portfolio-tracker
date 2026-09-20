@@ -9,6 +9,7 @@ import logging
 
 from .risk import RiskAnalyzer
 from src.utils.database import DatabaseManager
+from src.analysis.split_merge_guard import split_merge_pseudo_return_dates
 from config.settings import is_otc_fund
 
 logger = logging.getLogger(__name__)
@@ -302,8 +303,46 @@ class PortfolioRiskAnalyzer:
             returns = np.diff(values) / values[:-1]
             dd_prices = values
 
-        # 获取沪深300作为基准
+        # 获取沪深300作为基准（须在拆分剔除之前取，否则索引对齐失效）
         benchmark_returns = self._get_benchmark_returns('sh000300', days)
+
+        # 数据问题十二（消费侧闸门）：拆分/合并伪收益日从日收益窗口剔除，
+        # 避免 ±25% 伪收益被静默平均进波动率 / Sharpe / Var；回撤累积链中把该日
+        # 净值因子置 1（不制造伪回撤 / 伪跳变）。已纠正为经济真值的小值不动，仅剔除突变。
+        try:
+            from data_loader import get_db_connection
+            all_dates = sorted(
+                {h['date'] for h in history} | {h['date'] for h in full_history})
+            if all_dates:
+                _conn = get_db_connection(self.db.db_path)
+                split_dates = split_merge_pseudo_return_dates(
+                    _conn, start_date=all_dates[0], end_date=all_dates[-1])
+                _conn.close()
+            else:
+                split_dates = set()
+        except Exception as exc:  # 判别器只读，失败不应阻断风险计算
+            logger.warning("拆分/合并伪收益扫描失败，跳过风险侧闸门: %s", exc)
+            split_dates = set()
+
+        if split_dates:
+            hist_dates = [h['date'] for h in history]
+            full_dates = [h['date'] for h in full_history]
+            mask_hist = np.array([d in split_dates for d in hist_dates])
+            mask_full = np.array([d in split_dates for d in full_dates])
+            # 回撤链：拆分日净值因子置 1（中性化），其余不变
+            full_daily = full_daily.copy()
+            full_daily[mask_full] = 0.0
+            dd_prices = np.cumprod(1 + full_daily)
+            # 波动率 / Sharpe / Var：剔除拆分日（不静默平均进窗口）；基准按相同索引对齐。
+            # 仅在"正确口径"分支（returns 与 history 等长）剔除；全零退化分支实测不可达。
+            if np.any(mask_hist) and len(returns) == len(hist_dates):
+                keep = ~mask_hist
+                returns = returns[keep]
+                if len(benchmark_returns) == len(hist_dates):
+                    benchmark_returns = benchmark_returns[keep]
+                logger.info(
+                    "风险指标已剔除 %d 个拆分/合并伪收益日（窗口 %d→%d 行）",
+                    int(mask_hist.sum()), len(hist_dates), int(keep.sum()))
 
         # 计算风险指标（sharpe/波动率用 `returns`(days 窗口)；
         # drawdown 用全历史 `dd_prices`，由 risk.py 内部切 60d/1Y/ALL）

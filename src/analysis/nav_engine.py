@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import numpy as np
 import pandas as pd
 
 from config.settings import DATABASE_PATH
+from src.analysis.split_merge_guard import (
+    split_merge_pseudo_return_dates,
+    SPLIT_MERGE_NEUTRALIZE_DAILY_RETURN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +310,20 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
         df["date"] = pd.to_datetime(df["date"])
         df["dr"] = df["daily_return"] / 100.0  # 主口径日收益（小数，基于价格）
 
+        # 数据问题十二（消费侧闸门）：扫描 portfolio_snapshots，标出所有拆分/合并伪收益日。
+        # 这些日的 stored daily_return 若为极端伪收益（公式侧尚未纠正/被重跑覆盖），
+        # 须阻止其被 TWR/unit_nav 永久累乘吸收。已纠正为经济真值的小值不改，仅标记。
+        # 仅在 portfolio_summary 日期范围内扫描（拆分日须落在 NAV 序列里才有意义）。
+        split_dates: Set[str] = set()
+        try:
+            split_dates = split_merge_pseudo_return_dates(
+                conn,
+                start_date=str(df["date"].iloc[0].date()),
+                end_date=str(df["date"].iloc[-1].date()),
+            )
+        except Exception as exc:  # 判别器只读，失败不应阻断 NAV 重建
+            logger.warning("拆分/合并伪收益扫描失败，跳过该闸门: %s", exc)
+
         unit_nav = 1.0
         prev_nav = 1.0
         prev_v = float(df["total_value"].iloc[0])
@@ -318,6 +336,7 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
             v = float(df["total_value"].iloc[i])
             d_str = d.strftime("%Y-%m-%d")
             c = float(cf.get(d_str, 0.0))
+            is_split = d_str in split_dates
 
             if i == 0:
                 r = 0.0
@@ -333,6 +352,20 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
                 # 含分红（P0-5）：当日分红收益率 = 分红现金 / 当日市值，再投资口径
                 div_yield = (div.get(d_str, 0.0) / v) if v > 0 else 0.0
                 r_total = r + div_yield
+
+                # 拆分/合并伪收益闸门（数据问题十二·消费侧）：stored daily_return 仍是
+                # 极端伪收益（公式侧未纠正 / 被重跑覆盖）时，把价格收益置 0、仅保留真实
+                # 分红再投资部分——拆分日价值守恒，组合价格收益≈0，阻止其被 TWR/unit_nav
+                # 永久累乘吸收。已纠正为经济真值的小值（如 -4.53%）不在此阈值内，保持原值。
+                if is_split and abs(r) > SPLIT_MERGE_NEUTRALIZE_DAILY_RETURN:
+                    logger.warning(
+                        "[数据十二·NAV] %s 为拆分/合并伪收益日，stored daily_return=%.2f%% "
+                        "超阈值，已在 TWR/unit_nav 累乘中置 0（仅保留分红再投资 %.4f）",
+                        d_str, r * 100, div_yield,
+                    )
+                    r = 0.0
+                    r_total = div_yield
+
                 twr_cum = (1 + twr_cum) * (1 + r_total) - 1
 
             unit_nav = prev_nav * (1 + r_total)
@@ -346,6 +379,7 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
                     "twr_cumulative": round(twr_cum, 6),
                     "mwr_return": None,  # 全周期 MWR 在循环后统一计算填充
                     "is_suspect": d_str in suspects,
+                    "is_split_merge": is_split,
                 }
             )
             prev_v = v
@@ -370,20 +404,25 @@ def rebuild_portfolio_nav(conn: Optional[sqlite3.Connection] = None) -> int:
                 net_flow REAL,
                 twr_cumulative REAL,
                 mwr_return REAL,
-                is_suspect BOOLEAN DEFAULT 0
+                is_suspect BOOLEAN DEFAULT 0,
+                is_split_merge BOOLEAN DEFAULT 0
             )
             """
         )
-        # 兼容旧表（早期版本无 is_suspect 列）：自动补列，避免 INSERT 列不匹配
+        # 兼容旧表（早期版本无 is_suspect / is_split_merge 列）：自动补列，避免 INSERT 列不匹配
         try:
             cur.execute("ALTER TABLE portfolio_nav ADD COLUMN is_suspect BOOLEAN DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
+        try:
+            cur.execute("ALTER TABLE portfolio_nav ADD COLUMN is_split_merge BOOLEAN DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # 列已存在
         cur.executemany(
             """
             INSERT OR REPLACE INTO portfolio_nav
-                (date, unit_nav, total_units, total_value, net_flow, twr_cumulative, mwr_return, is_suspect)
-            VALUES (:date, :unit_nav, :total_units, :total_value, :net_flow, :twr_cumulative, :mwr_return, :is_suspect)
+                (date, unit_nav, total_units, total_value, net_flow, twr_cumulative, mwr_return, is_suspect, is_split_merge)
+            VALUES (:date, :unit_nav, :total_units, :total_value, :net_flow, :twr_cumulative, :mwr_return, :is_suspect, :is_split_merge)
             """,
             rows,
         )
@@ -418,7 +457,8 @@ def get_nav_series(conn: Optional[sqlite3.Connection] = None) -> pd.DataFrame:
         conn = get_db_connection()
     try:
         df = pd.read_sql_query(
-            "SELECT date, unit_nav, total_value, net_flow, twr_cumulative, mwr_return, is_suspect "
+            "SELECT date, unit_nav, total_value, net_flow, twr_cumulative, mwr_return, "
+            "is_suspect, is_split_merge "
             "FROM portfolio_nav ORDER BY date",
             conn,
         )
