@@ -942,7 +942,7 @@ DB 列名，不存在"上游某天突然改成中文键"的路径。实测文件
 > 已统一编号：`etf_technical` 保持问题八、`excel_report` 顺延为问题九，本节为问题十。
 
 ### 此前误判
-早期记录（见 `docs/自动化采集完善方案.md` 的 D3 项）写的是
+早期记录（见 `docs/_archive/2026-09-03_initial_assessment/自动化采集完善方案.md` 的 D3 项）写的是
 「主源 EM 被代理墙挡：`push2his.eastmoney.com` 返回 ProxyError」。
 **这个结论是错的**，按它去查代理配置会查不到东西。
 

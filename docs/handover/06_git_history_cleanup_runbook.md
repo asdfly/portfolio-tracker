@@ -1,5 +1,11 @@
 # 06 - Git 历史清理 Runbook（P0：87.9MB 生产数据库 blob）
 
+> ⚠️ **本文件是 2026-09-03 时点的操作手册草稿，内容已过时——请勿据此执行。**
+>
+> 原 P0-A 目标（用 `git filter-repo` 清除历史中的 `data/database/portfolio.db` blob）**当前已无必要**：生产库 `data/database/` 已被 `.gitignore` 排除，git 历史中不存在任何 `.db` blob（`git ls-files` 无 `portfolio.db`；`24574df` 已非有效对象）。除非未来有人误将生产库纳入版本控制，否则本 Runbook 应保持休眠。
+>
+> **以 `docs/handover/12_engineering_invariants.md` 为随项目演进的活源。**
+
 > 本文件为**操作手册（草稿）**，由 devops-3 在 2026-09-03 准备。
 > 当前阶段**仅做预演与准备**，未执行任何历史重写命令。
 > 正式执行需 lead 向用户确认后再动手。所有命令均基于仓库实测事实，非猜测路径。

@@ -1,5 +1,11 @@
 # 交接评估总览 (Handover Assessment Overview)
 
+> ⚠️ **本文件是 2026-09-03 时点的交接评估快照，内容已部分过时——请勿据此判断仓库当前状态。**
+>
+> 自评估以来已推进并被后续提交解决：① git 工作正常，代码与文档已**持续提交并推送至 origin/master**（当前 HEAD 见 `git rev-parse HEAD`）；② **生产库 `data/database/` 已被 `.gitignore` 排除，当前 git 历史中无任何 `.db` blob，原 P0-A「历史含真实 DB blob」风险不存在**（验证：`.gitignore` 含 `data/database/`；`git ls-files` 无 `portfolio.db`；`24574df` 已非有效对象）；③ 核心生产脚本（如 `scripts/gen_combo_report.py`）已入库。
+>
+> **以 `docs/handover/12_engineering_invariants.md` 为随项目演进的活源**；本文件仅作历史快照，具体铁律/判据以 `12_` 为准。
+
 > 生成日期: 2026-09-03 | 团队: MVP 开发专家团 (portfolio-tracker-takeover)
 > 范围: lingxi-claw / portfolio_tracker（Streamlit + SQLite 量化投资组合分析仪表盘）
 > 真实工程目录: `D:\HuaweiMoveData\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker`（原 C: 路径已空壳）

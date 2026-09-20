@@ -1,5 +1,11 @@
 # 05 - 可复现构建与换机器交接指南（Reproducibility & Handover）
 
+> ⚠️ **本文件是 2026-09-03 时点的交接评估快照，内容已部分过时——请勿据此判断仓库当前状态。**
+>
+> 自评估以来已推进并被后续提交解决：① git 工作正常，代码与文档已**持续提交并推送至 origin/master**（当前 HEAD 见 `git rev-parse HEAD`）；② **生产库 `data/database/` 已被 `.gitignore` 排除，当前 git 历史中无任何 `.db` blob，原 P0-A「历史含真实 DB blob」风险不存在**（验证：`.gitignore` 含 `data/database/`；`git ls-files` 无 `portfolio.db`；`24574df` 已非有效对象）；③ 核心生产脚本（如 `scripts/gen_combo_report.py`）已入库。
+>
+> **以 `docs/handover/12_engineering_invariants.md` 为随项目演进的活源**；本文件仅作历史快照，具体铁律/判据以 `12_` 为准。
+
 > 本文档对应整改任务 **P0-E（锁定依赖）** 与 **P0-G（清理机器相关硬编码路径）**。
 > 目的：让另一位工程师在**全新机器**上从零复现本项目的运行环境，无需原机专属信息。
 > 生成日期：2026-09-03。配套产物：`requirements.lock`（项目根）、`requirements.txt`（已补全直接依赖）。

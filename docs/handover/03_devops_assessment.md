@@ -1,5 +1,11 @@
 # 部署 / 交付 / 运维就绪度交接评估
 
+> ⚠️ **本文件是 2026-09-03 时点的交接评估快照，内容已部分过时——请勿据此判断仓库当前状态。**
+>
+> 自评估以来已推进并被后续提交解决：① git 工作正常，代码与文档已**持续提交并推送至 origin/master**（当前 HEAD 见 `git rev-parse HEAD`）；② **生产库 `data/database/` 已被 `.gitignore` 排除，当前 git 历史中无任何 `.db` blob，原 P0-A「历史含真实 DB blob」风险不存在**（验证：`.gitignore` 含 `data/database/`；`git ls-files` 无 `portfolio.db`；`24574df` 已非有效对象）；③ 核心生产脚本（如 `scripts/gen_combo_report.py`）已入库。
+>
+> **以 `docs/handover/12_engineering_invariants.md` 为随项目演进的活源**；本文件仅作历史快照，具体铁律/判据以 `12_` 为准。
+
 | 项 | 值 |
 |---|---|
 | 评估对象 | `D:\HuaweiMoveData\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker` |
@@ -610,7 +616,7 @@ icacls .env /inheritance:r /grant:r "$env:USERNAME:(R)"   # 收紧为仅当前�
 | 完整生产代码 | **否** | 5 个脚本未入库（§P0-2） |
 | 调度编排定义 | **否** | 4 个 WorkBuddy 自动化的 prompt 全在仓库外 |
 | 运维 runbook | **否** | 卡死恢复等知识只在 gitignore 的 `.workbuddy/memory` 里 |
-| 测试报告 | 有 | `docs/测试交接评估.md`、`data_coverage_report.md` |
+| 测试报告 | 有 | `docs/_archive/2026-09-03_initial_assessment/测试交接评估.md`、`data_coverage_report.md` |
 | 数据初始化路径 | 半 | `DEPLOYMENT.md:61-67` 给了建库命令，但新库是空的；无脱敏样例数据，接手人无法验证功能 |
 | 不应包含的东西 | **包含了** | 根目录 24 张调试 PNG、4 个孤儿 .db、`coverage.json`(467KB)、`.env.QA_RESIDUE_*` |
 
