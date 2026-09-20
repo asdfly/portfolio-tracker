@@ -11,8 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import (
-    DATA_SOURCES, INDEX_CODES, TECH_INDICATORS, 
-    RISK_CONFIG,
+    DATA_SOURCES, INDEX_CODES, TECH_INDICATORS,
+    RISK_CONFIG, is_otc_fund,
 )
 from src.data_sources import DataSourceManager
 from src.analysis.technical import TechnicalAnalyzer
@@ -45,6 +45,14 @@ CONVERSION_SUSPECT_RATIO = 0.25
 # 「伪造的 0% 收益」，比直接剔除更隐蔽。7 日取自然日，与交易日口径无关；
 # 折算日前后都有正常交易日，7 日足够宽，不会误伤停牌造成的快照断点。
 CONVERSION_QFQ_MAX_STALENESS_DAYS = 7
+
+# 快照侧 quantity 比值的「未调整」容差。当复权价缺失（pre-2018 折算 / 表缺失 /
+# 行情陈旧）时，用 `qty_ratio = quantity(date)/quantity(prev)` 区分真假折算：
+#   qty_ratio ≈ 1.0（落在 [1-容差, 1+容差]）→ 价格跳变没有数量调整配平 ⇒ 折算假收益，剔除；
+#   qty_ratio 远离 1.0（≈ 折算倍数）→ 数量已调增吸收折价（B族），用当日 quantity 计入即得真实 ~0。
+# 0.15 的容差把「未调整」与「已按 2~4 倍调整」彻底分开（无真实交易会让 quantity 落在中间）。
+CONVERSION_QTY_FLAT_TOL = 0.15
+
 
 # ============================================================================
 # 持仓合并（position merge，#115）
@@ -845,24 +853,48 @@ class PortfolioAnalyzer:
                     if curr_price > 0 and prev_price > 0:
                         raw_ratio = curr_price / prev_price
                         if abs(raw_ratio - 1) > CONVERSION_SUSPECT_RATIO:
-                            guard_fired = True
-                            qfq_ratio = self._conversion_qfq_ratio(cur, code, prev_dt)
-                            if qfq_ratio is None:
-                                # 查不到可用复权价（典型：场外基金 / 行情陈旧）：
-                                # 两边同时剔除，绝不让假价比进入求和
-                                logger.warning(
-                                    "[折算闸门] %s 原始价比 %.3f 超阈值且无可用复权价"
-                                    "（缺失或陈旧），已从日收益计算中剔除（%s→%s）",
-                                    code, raw_ratio, prev_dt, self.today
+                            if is_otc_fund(code):
+                                # 场外基金（按金额申赎）绝不发生份额折算。大价比一律视为
+                                # 真实净值变动（净值口径切换等），不触发复权替换/剔除，保留原口径。
+                                logger.info(
+                                    "[折算闸门] %s 为场外基金，原始价比 %.3f 不按折算处理，保留原口径",
+                                    code, raw_ratio
                                 )
+                            else:
+                                guard_fired = True
+                                qfq_ratio = self._conversion_qfq_ratio(cur, code, prev_dt)
+                                if qfq_ratio is None:
+                                    # 复权价缺失（pre-2018 折算 / 表缺失 / 行情陈旧）：
+                                    # 改用快照侧 quantity 比值判别，避免「要么假收益、要么丢标的」。
+                                    curr_qty = curr_pos.get('quantity') or 0
+                                    qty_ratio = (curr_qty / prev_qty) if prev_qty else 0
+                                    if abs(qty_ratio - 1) < CONVERSION_QTY_FLAT_TOL:
+                                        # quantity 未调整 ⇒ 大价比是未配平的折算假收益 → 剔除
+                                        logger.warning(
+                                            "[折算闸门] %s 原始价比 %.3f 超阈值且复权价缺失："
+                                            "快照 quantity 未调整(qty_ratio=%.3f)，判定为折算假收益，"
+                                            "已从日收益剔除（%s→%s）",
+                                            code, raw_ratio, qty_ratio, prev_dt, self.today
+                                        )
+                                        continue
+                                    # quantity 已调增吸收折价（B族）⇒ 用当日 quantity 计入，
+                                    # curr_price*curr_qty≈prev_mv，即得真实 ~0 收益，无需复权价。
+                                    logger.warning(
+                                        "[折算闸门] %s 原始价比 %.3f 超阈值且复权价缺失："
+                                        "快照 quantity 已调整(qty_ratio=%.3f)，按当日 quantity 计入"
+                                        "（%s→%s）",
+                                        code, raw_ratio, qty_ratio, prev_dt, self.today
+                                    )
+                                    price_adj_mv += curr_price * curr_qty
+                                    prev_common_mv += prev_mv
+                                    continue
+                                logger.warning(
+                                    "[折算闸门] %s 原始价比 %.3f 超阈值，改用复权价比 %.3f（%s→%s）",
+                                    code, raw_ratio, qfq_ratio, prev_dt, self.today
+                                )
+                                price_adj_mv += prev_price * qfq_ratio * prev_qty
+                                prev_common_mv += prev_mv
                                 continue
-                            logger.warning(
-                                "[折算闸门] %s 原始价比 %.3f 超阈值，改用复权价比 %.3f（%s→%s）",
-                                code, raw_ratio, qfq_ratio, prev_dt, self.today
-                            )
-                            price_adj_mv += prev_price * qfq_ratio * prev_qty
-                            prev_common_mv += prev_mv
-                            continue
                     price_adj_mv += curr_price * prev_qty
                     prev_common_mv += prev_mv
                 if prev_common_mv > 0:
