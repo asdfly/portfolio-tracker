@@ -107,8 +107,10 @@ class TestEtfSplitDaysNoPseudo:
             split_date=split_date, split_qty=split_qty, split_price=split_price, qfq_rows=qfq_rows,
         )
         dr = _daily_return(db_path, code, split_qty, split_price, split_date)
-        # 折算日前一天的真实日收益本应≈0%（市值连续）；修复后绝不出现 ±50%/±250% 伪收益。
-        assert abs(dr) < 0.15, f"{code} {split_date}: daily_return={dr}"
+        # daily_return 以百分比计（公式里 ×100），故「|daily_return| > 0.15」指
+        # 0.15 这个小数=15%（团队要求：杜绝 ±50%/±250% 折算伪收益）。折算日前一天
+        # 真实日收益本应≈0%（市值连续），修复后绝不出现折算尖峰。
+        assert abs(dr) < 15, f"{code} {split_date}: daily_return={dr}"
 
 
 class TestCfamilyAndDiscriminator:
