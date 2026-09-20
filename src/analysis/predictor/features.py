@@ -242,8 +242,19 @@ def build_feature_matrix(conn, codes: Iterable[str], as_of: Optional[str] = None
         #   且与 snapshot 造成同列两套尺度（PK=(date,code) 且 feat_version 不在键里）。
         #   OHLC 派生特征（KDJ/ATR/高低幅/Parkinson）均为同源比值/对数比，尺度不变，
         #   不会与 snapshot close 产生跨源量纲混用。
-        close = g["close"]
         ohlc = ohlc_map.get(code)
+        # 问题十二延伸（C 线 / 合并而非替换）：位置类特征 ma/macd/boll 及相对量
+        #   (macd/s、boll_pctb、ma*/close-1) 改用「qfq 优先、快照兜底」的合并价：
+        #   - etf_price_history.close 为前复权连续序列（拆分日无跳变），2018+ 全量覆盖；
+        #   - 缺失处（2012-2017 或该 code 行情表无行）回退 portfolio_snapshots.current_price，
+        #     保留全程覆盖（qfq 表 2018 才起，直接替换会丢 2012-2017 全部行）。
+        #   相对量公式以 close 为分母，close 连续 ⇒ 拆分日不再出现尖刺（修复前 raw snapshot
+        #   在拆分日合法跳变，macd/s、boll_pctb 会产出伪尖刺喂给 predictor）。
+        #   pre-2018 拆分日台阶因无 qfq 源不可消除，属已知局限（见 07 问题十二）。
+        if ohlc is not None and "close" in ohlc.columns:
+            close = ohlc["close"].reindex(g.index).fillna(g["close"])
+        else:
+            close = g["close"]
         tech = compute_technical_from_close(close, ohlc)
         # 问题十二（份额折算）：拆分日伪收益修复。
         # etf_price_history.close 是前复权连续序列（拆分日无跳变），而快照

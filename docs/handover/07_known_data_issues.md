@@ -1869,6 +1869,31 @@ B 族两例是**公式侧最干净的证据**（快照侧完全正确、收益�
    13 例全在历史段 ⇒ 需要**一次性回填**或**下游屏蔽**二选一，**尚未排期**。
    注意 §五 的结论：**回填修好快照侧，公式侧仍错** ⇒ 两件事要分别排。
 
+### 附、C 线位置类特征（ma/macd/boll）合并价收口（2026-09-20 团队 lead 落地）
+
+**结论**：`etf_features` 的位置类特征 `ma5/ma10/ma20/ma60/macd/macd_signal/macd_hist/boll_mid/boll_upper/boll_lower/boll_pctb`
+此前**全部**由 `portfolio_snapshots.current_price`（raw）计算（`build_feature_matrix` 单一源），在**拆分 / 合并日**会随
+`current_price` 的合法跳变产出**假台阶**（与 §五 公式侧失真同类）。2026-09-20 改为「**qfq 优先、快照兜底**」合并价：
+`etf_price_history.close`（前复权连续，2018+ 全量）优先，缺失处（2012-2017 或该 code 无行情）回退 `current_price`，
+**保留全程覆盖**（直接替换会丢 2012-2017，违背「合并而非替换」）。相对量 `macd/s`、`boll_pctb`、`ma*/close-1` 因分母 `close`
+连续 ⇒ 拆分日不再尖刺。
+
+**实证（修复前 backup `portfolio_pre_c_merge_20260920.db` vs 修复后 prod）**
+- `512010` 拆分日 `2021-06-28`：`boll_pctb` 由 `-0.5559`（越界）→ `0.8881`（连续在带）；`ma20` 由 `-0.7321` → `0.0301`；`macd` 由 `-0.2176` → `0.0055`。假台阶消除。
+- `etf_price_history.adj_close == close` 全表 31555 行（0 差异）：`adj_close` 仅为 qfq `close` 的冗余副本，真实复权已在 `close`（akshare `fund_etf_hist_em` 返 qfq）；故「改用 etf_price_history.close」即取连续序列，**非**另造复权。
+- 覆盖锚：512010 与 qfq 重叠段 `maxScaledDiff=3.0031`（≈1:4 拆）、510300 `=0.2545` ⇒ 这两只确在快照侧带台阶、qfq 侧连续。
+
+**落地**
+- 代码：`src/analysis/predictor/features.py` `build_feature_matrix`（合并价，非替换）。
+- 回归：`tests/test_tech_position_split_merge.py`（TESTA 有 qfq→连续；TESTB 无 qfq→保留台阶，证明守卫有效）；既有 `tests/test_etf_features_qfq_split.py`（return 8 列）仍绿。
+- 全量重算 `etf_features`：34488 行 upsert（idempotent，行数不变）；`test_predictor_base.py` 6 例全绿。
+- `feat_version` 不在 PK ⇒ 改量纲须全表重算（已执行）。
+
+**残留（不属本次范围，登记不修）**
+- 快照侧 `quantity`/`current_price` **同步折算**（真拆分入账，§七 #5 的「回填」支）未做；仅公式侧位置特征已修。
+- `2012-2017` 拆分日台阶：该段无 qfq 源，合并价回退 raw ⇒ 台阶不可消除，属已知局限。
+- 全局 `boll_pctb` 越界率 ~10.5%（修复前后 3613/3611，几乎不变）为 BOLL ±2σ 厚尾常态，**非**拆分伪台阶代理；拆分尖刺为稀疏单日事件，已由 512010 锚点证明消除。
+
 ### 八、`#91` 收口：`daily_return` 的 `common`（共同持仓法）口径 = **定义域差异，不是 bug**
 
 **收口结论（一句话）**：`#91`（「`daily_return` 与市值台阶不一致，四例中两例对不上」）
