@@ -304,16 +304,19 @@ def test_portfolio_risk_excludes_split_spike(tmp_path):
     from src.utils.database import DatabaseManager
 
     db = tmp_path / "portfolio.db"
-    _build_temp_risk_db(str(db))
-    analyzer = PortfolioRiskAnalyzer()
-    analyzer.db = DatabaseManager(db_path=str(db))
-    # 直接调用被改动的函数，隔离"消费侧闸门"逻辑（避免 _generate_warnings 对空持仓的无关报错）
-    metrics = analyzer._calculate_portfolio_metrics(positions=[], days=60)
-    assert "error" not in metrics, f"风险指标计算失败: {metrics}"
-    ann_vol = metrics["volatility_metrics"]["annual_volatility"]
-    # 若剔除失败，单个 250% 尖峰会把年化波动率推到数千%；剔除后仅剩 ~0.5% 正常日 → 低位。
-    assert ann_vol < 50.0, f"年化波动率={ann_vol}，疑似拆分日伪收益未被剔除"
-    assert ann_vol == ann_vol  # 有限值
+    conn = _build_temp_risk_db(str(db))  # 返回的连接须由调用方关闭，避免句柄泄漏
+    try:
+        analyzer = PortfolioRiskAnalyzer()
+        analyzer.db = DatabaseManager(db_path=str(db))
+        # 直接调用被改动的函数，隔离"消费侧闸门"逻辑（避免 _generate_warnings 对空持仓的无关报错）
+        metrics = analyzer._calculate_portfolio_metrics(positions=[], days=60)
+        assert "error" not in metrics, f"风险指标计算失败: {metrics}"
+        ann_vol = metrics["volatility_metrics"]["annual_volatility"]
+        # 若剔除失败，单个 250% 尖峰会把年化波动率推到数千%；剔除后仅剩 ~0.5% 正常日 → 低位。
+        assert ann_vol < 50.0, f"年化波动率={ann_vol}，疑似拆分日伪收益未被剔除"
+        assert ann_vol == ann_vol  # 有限值
+    finally:
+        conn.close()  # 先关闭连接、释放文件句柄，再 unlink
     db.unlink(missing_ok=True)
 
 
@@ -324,38 +327,41 @@ def test_factor_attribution_excludes_split_day(tmp_path, monkeypatch):
     from src.utils.database import DatabaseManager
 
     db = tmp_path / "portfolio.db"
-    _build_temp_risk_db(str(db))
-    # 因子构建需要 index_quotes（close），补足量纲数据使其非空
-    conn = sqlite3.connect(str(db))
-    cur = conn.cursor()
-    cur.execute("CREATE TABLE index_quotes (date TEXT, code TEXT, name TEXT, close REAL, change_pct REAL)")
-    dates = [d.strftime("%Y-%m-%d") for d in pd.date_range("2024-01-01", periods=60, freq="D")]
-    codes = ["sh000300", "sh000852", "sh000015", "sh000688", "sz399006"]
-    iq = []
-    for i, d in enumerate(dates):
-        for c in codes:
-            iq.append((d, c, c, 1000.0 + i, 0.1))
-    cur.executemany("INSERT INTO index_quotes VALUES (?,?,?,?,?)", iq)
-    conn.commit()
-    conn.close()
-
-    captured = {}
-    orig = fa.compute_factor_attribution
-
-    def _spy(port_returns, factor_returns):
-        captured["port_returns"] = port_returns
-        return orig(port_returns, factor_returns)
-
-    monkeypatch.setattr(fa, "compute_factor_attribution", _spy)
-    conn2 = sqlite3.connect(str(db))
+    risk_conn = _build_temp_risk_db(str(db))  # 返回的连接须由调用方关闭
     try:
-        fa.run_full_attribution(conn2, pd.DataFrame(), {}, lookback_days=60)
+        # 因子构建需要 index_quotes（close），补足量纲数据使其非空
+        conn = sqlite3.connect(str(db))
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE index_quotes (date TEXT, code TEXT, name TEXT, close REAL, change_pct REAL)")
+        dates = [d.strftime("%Y-%m-%d") for d in pd.date_range("2024-01-01", periods=60, freq="D")]
+        codes = ["sh000300", "sh000852", "sh000015", "sh000688", "sz399006"]
+        iq = []
+        for i, d in enumerate(dates):
+            for c in codes:
+                iq.append((d, c, c, 1000.0 + i, 0.1))
+        cur.executemany("INSERT INTO index_quotes VALUES (?,?,?,?,?)", iq)
+        conn.commit()
+        conn.close()
+
+        captured = {}
+        orig = fa.compute_factor_attribution
+
+        def _spy(port_returns, factor_returns):
+            captured["port_returns"] = port_returns
+            return orig(port_returns, factor_returns)
+
+        monkeypatch.setattr(fa, "compute_factor_attribution", _spy)
+        conn2 = sqlite3.connect(str(db))
+        try:
+            fa.run_full_attribution(conn2, pd.DataFrame(), {}, lookback_days=60)
+        finally:
+            conn2.close()
+        assert "port_returns" in captured, "因子归因未进入 compute_factor_attribution"
+        # 拆分日（index 30 的日期）必须已从 port_returns 剔除
+        split_date = dates[30]
+        assert split_date not in captured["port_returns"].index, (
+            f"拆分日 {split_date} 仍残留于因子回归输入，未被剔除")
+        assert len(captured["port_returns"]) == 59, "应剔除 1 个拆分日观测（60→59）"
     finally:
-        conn2.close()
-    assert "port_returns" in captured, "因子归因未进入 compute_factor_attribution"
-    # 拆分日（index 30 的日期）必须已从 port_returns 剔除
-    split_date = dates[30]
-    assert split_date not in captured["port_returns"].index, (
-        f"拆分日 {split_date} 仍残留于因子回归输入，未被剔除")
-    assert len(captured["port_returns"]) == 59, "应剔除 1 个拆分日观测（60→59）"
+        risk_conn.close()  # 先关闭连接、释放文件句柄，再 unlink
     db.unlink(missing_ok=True)

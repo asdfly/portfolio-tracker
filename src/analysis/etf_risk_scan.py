@@ -307,6 +307,13 @@ def compute_etf_risk_scan(
     else:
         summary = f"整体风险可控，各维度均处于安全区间"
 
+    # #140：compute_etf_risk_scan 对任何输入都返回一个分数（缺数据时各维度用 50 兜底），
+    # 因此 total_score 永远非 None。若连 etf_technical / etf_fundamental 都没有，
+    # 这个分数纯属占位、不可信。这里据「真实风险数据是否可得」置位 available，
+    # 供上游 pre_post_market 把 risk_available 设为 False → UI 渲染「无数据」，
+    # 避免把缺数据误当成真实的中立风险值。
+    risk_data_available = tech_row is not None or fund_row is not None
+
     return {
         "code": code,
         "total_score": round(total_score, 1),
@@ -314,6 +321,7 @@ def compute_etf_risk_scan(
         "grade": grade,
         "dimensions": dimensions,
         "summary": summary,
+        "available": risk_data_available,
     }
 
 

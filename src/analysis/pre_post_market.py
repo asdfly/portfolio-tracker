@@ -235,7 +235,7 @@ def _load_etf_signal_previews(conn) -> List[EtfSignalPreview]:
             sig_dict and sig_dict.get("total_score") is not None
         )
         preview.risk_available = bool(
-            risk_dict and risk_dict.get("total_score") is not None
+            risk_dict and risk_dict.get("available")
         )
         try:
             # #130：必须过滤 NULL 行并**回落到上一可用日**。

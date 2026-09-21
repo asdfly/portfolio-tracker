@@ -383,7 +383,7 @@ class ExcelReportGenerator:
             rl = '高' if beta and beta == beta and abs(beta) > 1.3 else '中' if beta and beta == beta else '低'
             is_void = bool(pos.get('is_void', False))
             status = '复制行(陈旧)' if is_void else ''
-            fill = VOID_FILL if is_void else (s.ALT_FILL if pi % 2 == 0 else s.WHITE_FILL)
+            fill = s.VOID_FILL if is_void else (s.ALT_FILL if pi % 2 == 0 else s.WHITE_FILL)
             for ci, val in enumerate([code, pos.get('name', ''), ETF_CATEGORIES.get(code, {}).get('sector', ''), beta, rl, status]):
                 c = ws.cell(row=r, column=ci + 1, value=val)
                 c.font = s.DATA_FONT; c.fill = fill; c.border = s.THIN_BORDER

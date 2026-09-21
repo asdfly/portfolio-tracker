@@ -61,15 +61,42 @@ def _ensure_indexes():
     conn.commit()
     conn.close()
 
+# 统一 DB 并发设置：busy_timeout（毫秒）避免并发读写 "database is locked"。
+# WAL 提升并发读能力并减少写阻塞；只读连接（URI 带 mode=ro 或 :memory:）无法
+# 切换 journal_mode=WAL，已在 _configure_sqlite_connection 中 try/except 兜底。
+DB_BUSY_TIMEOUT_MS = 5000
+
 def get_db_connection(db_path=None):
-    """获取数据库连接
+    """获取数据库连接（统一启用 WAL + busy_timeout）
 
     Args:
         db_path: 数据库文件路径，默认为 DATABASE_PATH。
             类方法中传入 self.db_path 即可复用同一接口。
     """
     path = str(db_path) if db_path else str(DATABASE_PATH)
-    return sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(path, check_same_thread=False)
+    _configure_sqlite_connection(conn, path)
+    return conn
+
+
+def _configure_sqlite_connection(conn, path=""):
+    """为连接统一设置并发参数（WAL + busy_timeout）。
+
+    - busy_timeout：写冲突时阻塞等待而非立即报 "database is locked"，对只读连接也无害。
+    - journal_mode=WAL：仅对可写连接生效；只读连接（:memory: 或 URI 带 mode=ro）
+      切换 WAL 会抛 OperationalError，用 try/except 忽略即可，不影响查询。
+    """
+    try:
+        conn.execute(f"PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}")
+    except sqlite3.Error:
+        pass
+    if path == ":memory:" or "mode=ro" in path:
+        return
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        # 只读库 / 已被其他进程以只读方式锁定等，跳过 WAL 设置
+        pass
 
 def load_positions(date_str=None):
     """加载持仓数据"""

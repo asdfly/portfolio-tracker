@@ -1639,10 +1639,15 @@ def _render_pre_market_panel():
             today = report.report_date
             sig_data = []
             for es in report.etf_signals:
-                ff = f"{es.fund_flow_net:+.0f}"
-                # 裁定 (ii)：资金流 as-of ≠ 当日 → 必须在数值旁标注 as-of 日期
-                if es.fund_flow_asof and es.fund_flow_asof != today:
-                    ff += f" (as-of {es.fund_flow_asof})"
+                # 裁定 (ii)：资金流 as-of ≠ 当日 → 必须在数值旁标注 as-of 日期。
+                # #140：as-of 为空 == 取不到数据（占位哨兵），必须显式标「无数据」，
+                # 否则会与「当日净流入恰好为 0」的 +0 逐字符相同，把缺数据误当真中性。
+                if not es.fund_flow_asof:
+                    ff = "无数据"
+                else:
+                    ff = f"{es.fund_flow_net:+.0f}"
+                    if es.fund_flow_asof != today:
+                        ff += f" (as-of {es.fund_flow_asof})"
                 sig_data.append({"名称": es.name, "代码": es.code, "趋势": es.trend,
                                  "MACD": es.macd_signal,
                                  "RSI": f"{es.rsi_value:.0f}" if es.rsi_available else "无数据",

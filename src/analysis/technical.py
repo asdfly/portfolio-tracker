@@ -52,12 +52,21 @@ def compute_technical_unified(prices, dates, i):
         deltas = [window[j] - window[j - 1] for j in range(max(1, i - 13), i + 1)]
         gains = [d for d in deltas if d > 0]
         losses = [-d for d in deltas if d < 0]
-        avg_gain = sum(gains) / 14
-        avg_loss = sum(losses) / 14 if losses else 0.001
-        rsi = 100 - 100 / (1 + avg_gain / avg_loss)
+        # #140：价格恒定（如货基 880013，price≡1.0）时无方差，gains/losses 皆空，
+        # RSI 数学上无定义。绝不能返回 0.0——它会与「严重超卖 / 无信号」混淆，
+        # 把缺数据误当成真实读数。必须显式置 None，由下游存 NULL → rsi_available=False
+        # → UI 渲染「无数据」。
+        if not gains and not losses:
+            rsi = None
+        else:
+            avg_gain = sum(gains) / 14
+            avg_loss = sum(losses) / 14 if losses else 0.001
+            rsi = 100 - 100 / (1 + avg_gain / avg_loss)
     else:
         rsi = 50.0
-    if rsi >= 85:
+    if rsi is None:
+        rsi_status = "无数据"
+    elif rsi >= 85:
         rsi_status = "严重超买"
     elif rsi >= 70:
         rsi_status = "超买"
@@ -117,11 +126,11 @@ def compute_technical_unified(prices, dates, i):
     kdj_signal = "金叉" if rsv > 50 else "死叉"
 
     # 趋势判断
-    if ma5 > ma20 and rsi > 50:
+    if ma5 > ma20 and rsi is not None and rsi > 50:
         trend = "强势上涨"
     elif ma5 > ma20:
         trend = "温和上涨"
-    elif ma5 < ma20 and rsi < 50:
+    elif ma5 < ma20 and rsi is not None and rsi < 50:
         trend = "下跌"
     else:
         trend = "震荡整理"
@@ -129,7 +138,7 @@ def compute_technical_unified(prices, dates, i):
     return {
         "ma": {"signal": ma_signal},
         "macd": {"signal": macd_signal},
-        "rsi": {"RSI": round(float(rsi), 2), "status": rsi_status},
+        "rsi": {"RSI": round(float(rsi), 2) if rsi is not None else None, "status": rsi_status},
         "kdj": {"signal": kdj_signal},
         "bollinger": {"position": round(float(boll_position), 2)},
         "atr": {"ATR_pct": round(float(atr_pct), 2)},

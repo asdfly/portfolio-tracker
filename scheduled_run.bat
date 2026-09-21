@@ -13,8 +13,11 @@ cd /d "%~dp0"
 if not exist logs mkdir logs
 
 call "%~dp0run_analysis.bat" >> logs\scheduled_run.log 2>&1
+:: 立即捕获收盘分析的返回码，避免被后续步骤覆盖
+set analysis_rc=%ERRORLEVEL%
 
 :: 收盘分析完成后推送日报邮件（HTML 附件，免确认；未启用 SMTP 时脚本内部自动跳过）
 call "%~dp0send_report_email.bat" >> logs\scheduled_run.log 2>&1
 
-exit /b %ERRORLEVEL%
+:: 最终退出码反映收盘分析是否成功（邮件步骤仍照常执行，不影响其返回码被捕获）
+exit /b %analysis_rc%

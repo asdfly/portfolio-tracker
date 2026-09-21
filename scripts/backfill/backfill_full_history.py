@@ -547,18 +547,25 @@ def rebuild_etf_technical(db_path):
             else:
                 ma_signal = "多头排列" if ma5 > ma20 else "空头排列"
 
-            # RSI(14)
+            # RSI(14) —— 与 compute_technical_unified 逐字段一致
             if i >= 14:
                 deltas = [window[j] - window[j - 1] for j in range(max(1, i - 13), i + 1)]
                 gains = [d for d in deltas if d > 0]
                 losses = [-d for d in deltas if d < 0]
-                avg_gain = sum(gains) / 14
-                avg_loss = sum(losses) / 14 if losses else 0.001
-                rsi = 100 - 100 / (1 + avg_gain / avg_loss)
+                # #140：价格恒定（货基 880013，price≡1.0）无方差 → RSI 无定义，
+                # 必须置 None（下游存 NULL），绝不可返回 0.0 与"严重超卖"混淆。
+                if not gains and not losses:
+                    rsi = None
+                else:
+                    avg_gain = sum(gains) / 14
+                    avg_loss = sum(losses) / 14 if losses else 0.001
+                    rsi = 100 - 100 / (1 + avg_gain / avg_loss)
             else:
                 rsi = 50
 
-            if rsi >= 85:
+            if rsi is None:
+                rsi_status = "无数据"
+            elif rsi >= 85:
                 rsi_status = "严重超买"
             elif rsi >= 70:
                 rsi_status = "超买"
@@ -618,18 +625,18 @@ def rebuild_etf_technical(db_path):
             kdj_signal = "金叉" if rsv > 50 else "死叉"
 
             # 趋势判断
-            if ma5 > ma20 and rsi > 50:
+            if ma5 > ma20 and rsi is not None and rsi > 50:
                 trend = "强势上涨"
             elif ma5 > ma20:
                 trend = "温和上涨"
-            elif ma5 < ma20 and rsi < 50:
+            elif ma5 < ma20 and rsi is not None and rsi < 50:
                 trend = "下跌"
             else:
                 trend = "震荡整理"
 
             tech_rows.append((
                 str(dates[i]), code, ma_signal, macd_signal,
-                round(rsi, 2), rsi_status, kdj_signal,
+                round(rsi, 2) if rsi is not None else None, rsi_status, kdj_signal,
                 round(boll_position, 2), round(atr_pct, 2), trend
             ))
 

@@ -12,6 +12,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config.settings import DATABASE_PATH, BACKUP_DIR
 from data_loader import get_db_connection
 
+# Hard upper bound on retained backups. Combined with the age rule, this prevents
+# unbounded storage growth when backups are taken more frequently than max_age_days
+# (production saw 15 copies / ~2.0GB). Tune here.
+MAX_BACKUP_COUNT = 10
+
 
 def get_backup_dir() -> Path:
     """Get or create backup directory."""
@@ -42,13 +47,22 @@ def backup_database(db_path=None, backup_dir=None) -> Path:
 
 
 def cleanup_old_backups(backup_dir=None, max_age_days=7, keep_min=3):
-    """Delete backup files older than max_age_days, keeping at least keep_min."""
+    """Delete backup files older than max_age_days, keeping at least keep_min.
+
+    In addition to the age rule, a hard cap (MAX_BACKUP_COUNT) ensures the total
+    number of retained backups never exceeds N most-recent copies. keep_min is
+    always honored: the count cap never deletes backups within the newest keep_min,
+    and backups younger than max_age_days are only removed when over the count cap.
+    """
     bak_dir = Path(backup_dir or BACKUP_DIR) if backup_dir else get_backup_dir()
     if not bak_dir.exists():
         return
     cutoff = datetime.now() - timedelta(days=max_age_days)
+    # Newest first.
     backups = sorted(bak_dir.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
     deleted = 0
+
+    # Phase 1 — age-based deletion (newest keep_min always protected).
     for i, bp in enumerate(backups):
         if i < keep_min:
             continue
@@ -56,8 +70,27 @@ def cleanup_old_backups(backup_dir=None, max_age_days=7, keep_min=3):
         if mtime < cutoff:
             bp.unlink()
             deleted += 1
-            print(f"Deleted old backup: {bp.name}")
-    print(f"Cleanup: {deleted} old backups removed, {len(backups) - deleted} retained")
+            print(f"Deleted old backup (age): {bp.name}")
+
+    # Phase 2 — count cap. Re-enumerate retained backups (newest first) and trim
+    # the oldest extras down to MAX_BACKUP_COUNT, never deleting below keep_min.
+    remaining = sorted(
+        bak_dir.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    protected = set(remaining[:keep_min])
+    excess = len(remaining) - MAX_BACKUP_COUNT
+    for bp in reversed(remaining):  # oldest first
+        if excess <= 0:
+            break
+        if bp in protected:
+            continue
+        bp.unlink()
+        deleted += 1
+        excess -= 1
+        print(f"Deleted old backup (count cap): {bp.name}")
+
+    retained = len(list(bak_dir.glob("*.db")))
+    print(f"Cleanup: {deleted} old backups removed, {retained} retained")
 
 
 def list_backups(backup_dir=None):
