@@ -176,19 +176,40 @@ def _extract_valuation_rows(content: str) -> List[Dict]:
 
 
 def fetch_index_valuation(index_code: str) -> List[Dict]:
-    """采集单个指数的估值时间序列（经 neodata）。"""
+    """采集单个指数的估值时间序列（经 neodata）。
+
+    查询策略：优先用指数代码精确查询（f"{index_code} 指数估值"），规避中文名被
+    neodata 实体解析误判（实证 930713/931743 中文名曾误解析为 931071.CS /
+    01801085.PT，导致 0 行或串味）。若代码查询无「指数估值」块或 0 行，回退到
+    INDEX_NAME_MAP 中文名查询（兜底 000688 等代码查询间歇失败的标的）。
+
+    防误标（修复原 `... or rows` 兜底缺陷）：严格按 index_code 过滤返回行；当
+    neodata 把查询误解析为其它指数（返回行代码 != index_code）时，丢弃这些行并
+    告警，绝不以 index_code 名义落库他人估值。
+    """
     name = INDEX_NAME_MAP.get(index_code, index_code)
-    data = _run_query(f"{name} 指数估值")
-    if not data or data.get("code") != "200":
-        return []
-    try:
-        recall = data["data"]["apiData"]["apiRecall"]
-    except (KeyError, TypeError):
-        return []
-    for block in recall:
-        if block.get("type") == "指数估值":
-            rows = _extract_valuation_rows(block.get("content", ""))
-            return [r for r in rows if r["code"] == index_code] or rows
+    queries = [f"{index_code} 指数估值", f"{name} 指数估值"]
+    last_resolved = None
+    for q in queries:
+        data = _run_query(q)
+        if not data or data.get("code") != "200":
+            continue
+        try:
+            recall = data["data"]["apiData"]["apiRecall"]
+        except (KeyError, TypeError):
+            continue
+        for block in recall:
+            if block.get("type") == "指数估值":
+                rows = _extract_valuation_rows(block.get("content", ""))
+                matched = [r for r in rows if r["code"] == index_code]
+                if matched:
+                    return matched
+                if rows:
+                    last_resolved = sorted({r["code"] for r in rows})
+    if last_resolved:
+        logger.warning(
+            "[NeoData] %s 全部候选查询返回的「指数估值」行代码 %s 与请求不符，"
+            "疑似 neodata 实体解析偏差，丢弃以防误标", index_code, last_resolved)
     return []
 
 
