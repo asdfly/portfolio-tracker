@@ -208,6 +208,57 @@ def run_stage2_risk(analyzer, results):
     return risk_data
 
 
+def _compute_var95(window: int = 60):
+    """历史 VaR(95%)：取最近 window 个有 daily_return 的 portfolio_summary 行，
+    返回 5% 分位（负值，单位 %），四舍五入 2 位。数据不足 20 行返回 None。
+    任何异常都退回 None，由通知模板显式印 N/A（不许静默编造数值）。
+
+    说明：每日管线原本不计算 VaR(95%)，notification.py 模板却引用 risk['var_95']，
+    导致该项恒为 N/A。这里用组合日收益率序列的 5% 历史分位补上该指标，
+    口径与行业标准历史模拟法 VaR 一致（单日、95% 置信）。
+    """
+    try:
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT daily_return FROM portfolio_summary "
+                "WHERE daily_return IS NOT NULL ORDER BY date DESC LIMIT ?", (window,))
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            return None
+        vals = sorted(float(r[0]) for r in rows if r[0] is not None)
+        if len(vals) < 20:
+            return None
+        k = max(0, int(round(0.05 * (len(vals) - 1))))
+        return round(vals[k], 2)
+    except Exception as exc:
+        logging.getLogger(__name__).debug("VaR(95%%) 计算失败，退回 N/A: %s", exc)
+        return None
+
+
+def _build_notification_risk(summary: dict, risk_data: dict) -> dict:
+    """构造通知模块(notification.py)所需的扁平风险指标 dict。
+
+    results['risk'] 是嵌套结构(portfolio_metrics.risk_adjusted_metrics.* 等)，
+    而 notification.py 按扁平键 risk['sharpe_ratio']/['max_drawdown']/
+    ['volatility']/['var_95'] 读取 —— 直接传嵌套 dict 会让四项全部 N/A。
+    这里优先从 summary['risk_summary'] 取已算好的 sharpe/max_dd/年化波动率
+    (落库列名为 volatility)，并补算历史 VaR(95%)，确保邮件风险块有真实数值。
+    """
+    risk_summary = {}
+    if isinstance(summary, dict):
+        risk_summary = summary.get('risk_summary', {}) or {}
+    flat = dict(risk_data) if isinstance(risk_data, dict) else {}
+    flat['sharpe_ratio'] = risk_summary.get('sharpe_ratio')
+    flat['max_drawdown'] = risk_summary.get('max_drawdown')
+    flat['volatility'] = risk_summary.get('annual_volatility')  # 模板键名为 volatility
+    flat['var_95'] = _compute_var95()
+    return flat
+
+
 def run_stage3_monitor(summary, risk_data):
     """阶段三: 自动化部署 - 告警检测和通知"""
     logger = logging.getLogger(__name__)
@@ -311,7 +362,7 @@ def run_stage3_monitor(summary, risk_data):
         logger.info("发送日报通知...")
         report_data = {
             'summary': summary,
-            'risk': risk_data,
+            'risk': _build_notification_risk(summary, risk_data),
             'alerts': alerts
         }
         notifier.send_portfolio_report(report_data)
