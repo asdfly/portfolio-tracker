@@ -1,11 +1,13 @@
 """
-【DEPRECATED / 未启用】通知模块 - 支持邮件和企业微信通知
+【部分启用 / 仅告警子通道】通知模块 - 支持邮件和企业微信通知
 
-⚠️ 本模块（NotificationManager）已停止维护，且未挂钩任何实际推送链。
-当前组合系统的真实邮件推送为 scripts/send_report_email.py（由 scheduled_run.bat 调用，
-含时效守卫与报告重生，读取 config.NOTIFICATION_CONFIG['email'] 的 EMAIL_* 配置，免确认）。
+⚠️ 本模块的「组合日报」通道（send_portfolio_report）已于 2026-09-21 废除，不再被任何
+管线调用；当前组合系统的真实邮件日报入口为 scripts/send_report_email.py
+（由 scheduled_run.bat 调用，含时效守卫与报告重生，读取 config.NOTIFICATION_CONFIG['email']
+的 EMAIL_* 配置，免确认）。
 
-请勿在新代码中调用本模块。如需发送邮件：
+本模块目前仅 send_alert() 仍被 run_analysis.py 的阶段三告警检测调用，用于发送失败/异常告警。
+请勿在新代码中新增 send_portfolio_report 调用。如需发送邮件：
   - 收盘日报专用：scripts/send_report_email.py
   - 通用 / 跨项目发信：scripts/send_generic_email.py
 """
