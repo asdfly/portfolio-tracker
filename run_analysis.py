@@ -1209,6 +1209,31 @@ def main(argv=None):
             logger.warning(f"预测底座增量维护失败(不影响主流程): {e}")
             _reporter.stage("prediction_base", "error", note=str(e)[:160])
 
+        # === 阶段3.25b: etf_price_history 缺口防护（#140 收口 / 报告15 §3 数据完整性）===
+        # 根因：etf_price_history 曾静默断崖（09-18 整日 0 行、9 只缺 09-15 起），
+        # 既无告警也无重试队列。此处刷新后做连续性校验，缺口显式告警；
+        # 设环境变量 ETF_GAP_AUTOREPAIR=1 时自动回补增量（不静默、有日志）。
+        # warning(1~2 天滞后) 不写 alerts 表、不降级；error(≥3 天) 写 alerts 表并经
+        # _reporter.alert 降级 run_status ⇒ 真实断崖时拒发基于陈旧价的日报（与 snapshot_gate 同口径）。
+        try:
+            import os as _os
+            from src.analysis.price_history_gate import check_etf_price_history_gaps
+            _auto = _os.environ.get("ETF_GAP_AUTOREPAIR") == "1"
+            _gap = check_etf_price_history_gaps(str(DATABASE_PATH), auto_repair=_auto)
+            _glevel = _gap.get("alert_level") or ""
+            if _glevel:
+                if _glevel == "error":
+                    logger.error(_gap["message"])
+                else:
+                    logger.warning(_gap["message"])
+                _reporter.alert(_glevel, _gap["kind"], _gap["message"])
+            else:
+                logger.info(_gap["message"])
+            _reporter.stage("etf_price_gap", "ok")
+        except Exception as e:
+            logger.warning(f"etf_price_history 缺口校验失败(不影响主流程): {e}")
+            _reporter.stage("etf_price_gap", "error", note=str(e)[:160])
+
         # === 阶段三.五: 行业资讯与新闻分析 ===
         # 预置 None: 新闻阶段抛错时该变量仍需可用,
         # 否则后面 send_daily_report(..., news_result) 会 NameError 打断整个日报。

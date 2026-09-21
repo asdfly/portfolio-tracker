@@ -167,7 +167,7 @@
 - ✅ **真凭证入库 = 0**：扫 368 个已跟踪文件，命中 166 处逐条人工判定，全为变量名/占位符/注释/环境变量读取。关键：`config/settings.py:203` `"password": ""`、`:241` `env('EMAIL_PASSWORD','')`、`.env.example` 全注释态占位且有 `tests/test_d5_env_config.py:150` 守住。常见密钥前缀（sk-/ghp_/AKIA/AIza/Bearer…）**0 处真凭证**；高熵字符串 1135 个候选全为标识符；唯一 32-hex 命中是东方财富 push2 公开固定参数（假阳性）。
 - ✅ **生产库数据未进版本控制**：`git ls-files '*.db'` = 0、`ls-tree -r HEAD` 368 文件无 .db、`rev-list --objects` .db 实体 = 0、`fsck --unreachable` 无残留、无 `refs/original/`。**远端未泄露**（`03`-记载 87.9MB blob 仅本地可达；当前 origin/master 已同步到 96a2967）。
   - ⚠️ 措辞修正：路径层确入库过 3 条 `.db`（`f42fa76 portfolio.db`、`c6d4310 data/portfolio.db`、`d497aa1 portfolio_data.db`），`git cat-file -s` 全为 **0 字节**空 blob（`e69de29…`）⇒ 09-03 filter-repo **剥离了内容、只留路径占位**。
-- 🔴 **（中-高）仓库外 2 份 mirror 仍含完整真实生产库**：`_backup_portfolio_tracker_git_mirror_20260903.git`（33.3MB）与 `_backup_pt_git_mirror_20260903_2310_pre_filterrepo.git`（33.4MB）中的 `data/database/portfolio.db` blob 实测 **87,949,312 B（83.9MB）** ⇒ **清了仓库没清备份**。这是本维度最该处置的一项。
+- ✅ **（已收口 · 2026-09-21）仓库外 2 份 mirror 含完整真实生产库**：原 `_backup_portfolio_tracker_git_mirror_20260903.git`（33.3MB）与 `_backup_pt_git_mirror_20260903_2310_pre_filterrepo.git`（33.4MB）中的 `data/database/portfolio.db` blob 实测 **87,949,312 B（83.9MB）**。已于 2026-09-21 经用户明确授权**永久删除**（精确路径 `shutil.rmtree` / `rmdir /s /q`，无 glob、无回收站模糊删除），仓库父目录 `_QUARANTINE_LEAK_20260921/` 一并移除。详见 §12。
 - 🟠 机器专属硬编码路径 51 处，运行时真问题 5 处：`setup_scheduler.ps1:12/35`（C 盘，脚本已坏）、`config/settings.py:64` `TDX_EXPORT_DIR` 默认值跨机**静默降级到旧快照且无告警**、`scripts/import_aug_2026.py:42`、`audit/_verify_replica_guard.py:13`、`requirements.lock:8`。已整改清零的：`.workbuddy` 路径已改 `Path.home()`、`scripts/fetch_market_data.py` 已用 `__file__` 推导。
 - 🟠 `.env` 本机明文 + `st_mode=0o100666`（未收紧 ACL）；`data/risk_lgb_v2_oos.csv` 产物入库未 ignore（低）；个人 QQ 邮箱 `asdfl@qq.com` 硬编码进版本库（低）。
 - ✅ `.env` 未被跟踪且被 ignore；`.streamlit/secrets.toml` 被排除；CI 无真密钥（`DATABASE_PATH=:memory:`、`EMAIL_ENABLED=false`）。
@@ -203,8 +203,8 @@
 | 2 | **退出码被邮件覆盖**：保存 `run_analysis.bat` 的 ERRORLEVEL 再 exit | `scheduled_run.bat:15/18/20` | 一行 |
 | 3 | **测试全量恒红**：`_build_temp_risk_db` 自行 close + 改用 `_cleanup_db()` | `tests/test_split_merge_guard.py:298/361` | 极小 |
 | 4 | **`13` 与 `07` 口径冲突**：`13` 按 A 族 0 例重写结论（防无收益写库） | `docs/handover/13_…:41/85/89/90/124/146` | 纯文档 |
-| 5 | **清理/加密仓库外 2 份 mirror**（含 83.9MB 真实库） | `…/_backup_*_git_mirror_20260903*.git` | 运维 |
-| 6 | **`etf_price_history` 缺口**：定位 09-15 后补采为何未恢复 → 回填 09-15~09-18 → 加 DQ 条目 + 重试入队 | 数据/采集 | 中 |
+| 5 | **清理/加密仓库外 2 份 mirror**（含 83.9MB 真实库） | `…/_backup_*_git_mirror_20260903*.git` | 运维 | **（已收口 2026-09-21：经授权永久删除，见 §12）** |
+| 6 | **`etf_price_history` 缺口**：定位 09-15 后补采为何未恢复 → 回填 09-15~09-18 → 加 DQ 条目 + 重试入队 | 数据/采集 | 中 | **（已收口 2026-09-21：自愈验证 + 新增缺口闸门与自动回补入口，见 §12）** |
 | 7 | **`#140` 哨兵**：资金流列无数据时改显式「无数据」；风险列 `risk_available` 判据修正 | `tab8_advice.py:1644`、`etf_risk_scan.py` | 小 |
 | 8 | 备份加**条数上限**（保留最新 7，与年龄判据取交集） | `scripts/backup_db.py:44-60` | 小 |
 | 9 | **开 WAL + 统一 busy_timeout** | `data_loader.py:72` 等 | 小 |
@@ -246,3 +246,54 @@
 - **各维度均要求**：证据优先、生产库只读、不采信 09-03 数字、无法验证标「未验证」。8 份回报中「未验证」项已集中列于 §10。
 - **未做的事**：未改任何生产代码、未写生产库、未跑 `run_analysis.py` / `scheduled_run.bat`、未做依赖 CVE 审计（用户拍板安全只做静态）、未 commit 除 `14` 以外的任何变更。
 - **两条最高可操作断言已由报告作者独立复核**：`excel_report.py:386` 裸 `VOID_FILL`（grep 确认定义在 `Styles` 内 `:48`）、`scheduled_run.bat:15/18/20` 的 `exit /b %ERRORLEVEL%`（读文件确认）。
+
+---
+
+## 12. P0 整改收口记录（2026-09-21，评估后执行）
+
+> 本节为评估（只读）完成后的**整改执行记录**，非诊断内容。所有结论均带 commit / 文件锚点。
+
+### 12.1 九项 P0 集中收口（commit `126b45b`）
+
+九项 P0 改动由并行 worker 落地、lead 逐条复核 diff + 重跑测试后，于 `126b45b` 集中提交（显式 pathspec，11 文件；前置报告 15 自身已在 `1c637ec` 提交推送）：
+
+| # | 项 | 落点 | 验证 |
+|---|---|---|---|
+| 1 | `VOID_FILL` → `s.VOID_FILL` | `src/report/excel_report.py:386` | `-k excel` 3 passed |
+| 2 | 退出码捕获 | `scheduled_run.bat`（存 `analysis_rc` 作最终退出码） | 逻辑复核 |
+| 3 | 测试连接泄漏 | `tests/test_split_merge_guard.py`（try/finally close） | 14 passed，无遗留 .db |
+| 4 | `13` 口径订正 | `docs/handover/13_…`（A 族 0 例） | 全文无矛盾断言 |
+| 5 | 仓库外 mirror | 先隔离至 `_QUARANTINE_LEAK_20260921/`，**本步骤 §12.2 永久删除** | 见 §12.2 |
+| 6 | `etf_price_history` 缺口 | 自愈验证 + **本步骤 §12.3 加 DQ 闸门与回补入口** | 见 §12.3 |
+| 7 | `#140` 哨兵三列 | `tab8_advice` / `etf_risk_scan` / `technical` / `pre_post_market` / `backfill_full_history` | 30 tests green + import OK |
+| 8 | 备份条数上限 | `scripts/backup_db.py`（`MAX_BACKUP_COUNT=10` + keep_min 保护） | 3 场景验证 |
+| 9 | WAL + busy_timeout | `data_loader.py`（统一 `busy_timeout=5000` + WAL，只读/:memory: 跳过） | 冒烟全过 |
+
+### 12.2 P0-5 · 仓库外 mirror 永久删除（用户授权）
+
+- **授权**：用户于 2026-09-21 明确指示「镜像永久删除」。
+- **执行**：精确路径 `shutil.rmtree`（首只）+ `cmd rmdir /s /q`（残留大仓，rmtree 在沙箱被 SIGTERM 中断，换用内核级递归删除）+ 空父目录 `rmdir`，**无 glob、无回收站模糊删除**。
+- **对象**：
+  - `D:/…/lingxi-claw/_QUARANTINE_LEAK_20260921/_backup_portfolio_tracker_git_mirror_20260903.git`
+  - `D:/…/lingxi-claw/_QUARANTINE_LEAK_20260921/_backup_pt_git_mirror_20260903_2310_pre_filterrepo.git`
+  - 父目录 `_QUARANTINE_LEAK_20260921/` 一并移除。
+- **复验**：删除后 `os.path.exists` 三项均 `False`，数据泄漏面彻底消除。
+
+### 12.3 P0-6 · `etf_price_history` 缺口根因防护（新增 DQ 闸门）
+
+**根因**（非表象）：缺口曾**完全静默**——既无告警也无重试队列，直到并发进程巧合自愈才被发现（呼应 §3「只查 MAX(date) 漏掉每日只数」的教训）。故防护的核心是**让缺口可见 + 可闭环**，而非一次性回填。
+
+**新增** `src/analysis/price_history_gate.py`（与 `snapshot_gate` 同口径）：
+- `detect_etf_price_gaps(conn)`：只读；以「活跃标的中覆盖最完整的那只的日期集合」为参考交易日历，对每只活跃标的统计窗口内缺失交易日；参考日取 `max(etf_price_history 全局最新日, portfolio_snapshots 最新日)`，并单列**系统级断崖**（全局最新日落后参考日 ≥4 自然日 ⇒ 全市场源中断）。
+- `check_etf_price_history_gaps(db_path, auto_repair=…)`：warning（缺 1~2 天）→ 仅日志 + `_reporter.alert("warning")`，**不写 alerts 表、不降级**；error（缺 ≥3 天或系统级）→ 写 `alerts` 表 + `_reporter.alert("error")` ⇒ `run_status=degraded` ⇒ 真实断崖时拒发基于陈旧价的日报（与 snapshot_gate 契约2 同构，且不会像 09-17 那样把 T+1 常态误判成 error 每日拦死）。
+- `ETF_GAP_AUTOREPAIR=1` 时显式增量回补（仅 qfq 源、INSERT OR REPLACE 幂等），**绝不静默触发**；CLI `python -m src.analysis.price_history_gate --check / --repair`。
+
+**接线**：`run_analysis.py` 阶段 3.25（预测底座增量维护、etf_price_history 刷新）之后插入「阶段 3.25b」调用闸门，失败仅降级为 warning 不影响主流程。
+
+**只读复测（生产库 `?mode=ro`）**：闸门现可检出
+- `159732`：**error**，缺 3 天（2026-09-17~2026-09-21）；
+- 13 只：**warning**，各缺 2 天（2026-09-18 / 2026-09-21，停在 09-17）；
+- 9 只当前标的：无缺口。
+语法 + error 级 `alerts` 写路径已在**库副本**上验证通过（副本写 1 行、生产库零写入）。
+
+**残留（待立项闭环）**：上述 14 只滞后标的仍未回填；可用新闸门 `python -m src.analysis.price_history_gate --repair`，或设 `ETF_GAP_AUTOREPAIR=1` 让每日管线自动回补（写库前须先备份 `data/database/portfolio.db`，单独立项执行，不在本收口内静默写生产库）。
