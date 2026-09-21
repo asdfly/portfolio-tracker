@@ -284,7 +284,7 @@
 **根因**（非表象）：缺口曾**完全静默**——既无告警也无重试队列，直到并发进程巧合自愈才被发现（呼应 §3「只查 MAX(date) 漏掉每日只数」的教训）。故防护的核心是**让缺口可见 + 可闭环**，而非一次性回填。
 
 **新增** `src/analysis/price_history_gate.py`（与 `snapshot_gate` 同口径）：
-- `detect_etf_price_gaps(conn)`：只读；以「活跃标的中覆盖最完整的那只的日期集合」为参考交易日历，对每只活跃标的统计窗口内缺失交易日；参考日取 `max(etf_price_history 全局最新日, portfolio_snapshots 最新日)`，并单列**系统级断崖**（全局最新日落后参考日 ≥4 自然日 ⇒ 全市场源中断）。
+- `detect_etf_price_gaps(conn)`：只读；以「活跃标的中覆盖最完整的那只的日期集合」为参考交易日历；**活跃 = 近 30 天有数据且属最新快照在册持仓**（已清仓标的如 `159732` 排除，避免永久误报 error），对每只活跃标的统计窗口内缺失交易日；参考日取 `max(etf_price_history 全局最新日, portfolio_snapshots 最新日)`，并单列**系统级断崖**（全局最新日落后参考日 ≥4 自然日 ⇒ 全市场源中断）。
 - `check_etf_price_history_gaps(db_path, auto_repair=…)`：warning（缺 1~2 天）→ 仅日志 + `_reporter.alert("warning")`，**不写 alerts 表、不降级**；error（缺 ≥3 天或系统级）→ 写 `alerts` 表 + `_reporter.alert("error")` ⇒ `run_status=degraded` ⇒ 真实断崖时拒发基于陈旧价的日报（与 snapshot_gate 契约2 同构，且不会像 09-17 那样把 T+1 常态误判成 error 每日拦死）。
 - `ETF_GAP_AUTOREPAIR=1` 时显式增量回补（仅 qfq 源、INSERT OR REPLACE 幂等），**绝不静默触发**；CLI `python -m src.analysis.price_history_gate --check / --repair`。
 
@@ -296,4 +296,8 @@
 - 9 只当前标的：无缺口。
 语法 + error 级 `alerts` 写路径已在**库副本**上验证通过（副本写 1 行、生产库零写入）。
 
-**残留（待立项闭环）**：上述 14 只滞后标的仍未回填；可用新闸门 `python -m src.analysis.price_history_gate --repair`，或设 `ETF_GAP_AUTOREPAIR=1` 让每日管线自动回补（写库前须先备份 `data/database/portfolio.db`，单独立项执行，不在本收口内静默写生产库）。
+**闭环执行（2026-09-21，lead 自执行，不派工）**：
+- **备份**：写库前落 `data/backups/portfolio_20260921_141902_before_gap_repair.db`（144MB，integrity 双 OK）。
+- **闸门增强**：`detect_etf_price_gaps` 新增「当前持仓」口径过滤——仅对最新快照日 `portfolio_snapshots` 在册的 code 判缺口，**已清仓的 `159732` 不再被误判为活跃**，根除「清仓标的永久 error ⇒ 每日日报 `run_status=degraded` 被闸门拦死」的 09-17 式灾难（复测：`GAP_CODES_NOT_HELD` 由 `['159732']` 变为 `[]`）。
+- **回填**：直接调用 `backfill_etf_price_history`（sources=("em","tx")，增量从 `MAX(date)` 起、INSERT OR REPLACE 幂等）回填 **13 只在册缺口标的**（159732 因已清仓自动排除）。09-18 真实断崖对 13 只**全部补齐**；其中 11 只（含 516160 经重试）补齐至 09-21。
+- **残留（benign，待 15:30 管线自愈）**：`512810`、`588000` 仅缺 **09-21 当日盘中数据**——em 源对这 2 只持续 `ProxyError`、tx 源无今日盘中数据；属 1 天 warning（**不拦日报**），今日 15:30 管线增量路径会正常补齐。**无任何 error 级缺口，日报不再被闸门拦死**。

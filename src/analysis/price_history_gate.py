@@ -135,7 +135,19 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
     active = conn.execute(
         "SELECT DISTINCT code FROM etf_price_history WHERE date >= ?",
         (tail_start,)).fetchall()
+    # 当前持仓口径（最新快照日的 distinct code）：仅对"在册持仓"判缺口。
+    # 已清仓标的（如 159732）即便近 30 天有数据，也不应判 error——
+    # 否则会永久误报，导致每次日报 run_status=degraded 被闸门拦死（09-17 式灾难）。
+    try:
+        _held_rows = conn.execute(
+            "SELECT DISTINCT code FROM portfolio_snapshots "
+            "WHERE date=(SELECT MAX(date) FROM portfolio_snapshots)").fetchall()
+        held = {r[0] for r in _held_rows}
+    except sqlite3.Error:
+        held = None
     for (code,) in active:
+        if held is not None and code not in held:
+            continue  # 已清仓 / 不在当前持仓：不判缺口，避免永久误报 error
         r = conn.execute(
             "SELECT MIN(date), MAX(date), COUNT(DISTINCT date) "
             "FROM etf_price_history WHERE code=? AND date >= ?",
