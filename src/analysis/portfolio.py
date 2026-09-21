@@ -704,6 +704,42 @@ class PortfolioAnalyzer:
             return None
         return closes['curr'] / closes['prev']
 
+    def _calculate_technical_indicators(self, positions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """计算技术指标"""
+        from src.data_sources.base import DataSourceError
+
+        results = {}
+
+        for pos in positions:
+            code = pos['code']
+            # 场内ETF/LOF代码规则: 51/56/58开头为上海，15开头为深圳
+            # 场外基金（519/001/002/003/004/005/007/008/100/166等）无K线，直接跳过
+            is_on_market = (code.startswith('51') or code.startswith('56')
+                           or code.startswith('58') or code.startswith('15'))
+            if not is_on_market:
+                logger.debug(f"跳过非场内标的 {code}({pos.get('name', '')})的技术指标计算")
+                continue
+            if code.startswith('51') or code.startswith('56') or code.startswith('58'):
+                ds_code = f'sh{code}'
+            else:
+                ds_code = f'sz{code}'
+
+            try:
+                kline = self.ds_manager.get_kline(ds_code, period='day', count=40)
+
+                if len(kline) >= 30:
+                    indicators = self.tech_analyzer.calculate_all(kline)
+                    results[code] = indicators
+                else:
+                    logger.warning(f"{code} K线数据不足")
+
+            except DataSourceError as e:
+                logger.warning(f"获取 {code}({pos.get('name', '')}) K线失败，跳过技术指标计算: {e}")
+            except (ValueError, KeyError, TypeError, IndexError) as e:
+                logger.warning(f"计算 {code} 技术指标失败: {e}")
+
+        return results
+
     def _calculate_summary(self, positions: List[Dict[str, Any]],
                           index_quotes: Dict[str, Dict[str, Any]],
                           risk_results: Dict[str, Any],
