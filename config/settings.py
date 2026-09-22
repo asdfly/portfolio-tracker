@@ -3,8 +3,11 @@
 支持环境变量覆盖: .env 文件或系统环境变量
 优先级: 环境变量 > .env文件 > 默认值
 """
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ---------- 环境变量加载 ----------
 def _load_env_file(env_path=None):
@@ -61,8 +64,15 @@ BACKUP_DIR = Path(env('BACKUP_DIR', str(PROJECT_ROOT / "data" / "backups")))
 # 自动查找通达信导出目录中最新的持仓股文件
 def _find_latest_position_file() -> str:
     """自动查找通达信导出目录中最新的持仓股文件"""
-    export_dir = env("TDX_EXPORT_DIR", r"C:\zd_zsone\T0002\export")
-    if not os.path.isdir(export_dir):
+    # 默认值刻意留空：C:\zd_zsone\T0002\export 是作者机通达信客户端的机器专属路径。
+    # 若把它写成默认值，换机/容器里 os.path.isdir 为 False 会【静默】降级到旧快照
+    # （15 号报告 §8 记为运行时真问题）。留空后未配置即走 fallback 且必须告警。
+    export_dir = env("TDX_EXPORT_DIR", "")
+    if not export_dir or not os.path.isdir(export_dir):
+        logger.warning(
+            "未配置 TDX_EXPORT_DIR（或目录不存在），回退到 data/raw/positions.tsv 历史持仓文件；"
+            "如需使用通达信最新导出，请设置环境变量 TDX_EXPORT_DIR 指向导出目录"
+        )
         # fallback到历史文件
         return os.path.join(os.path.dirname(__file__), "..", "data", "raw", "positions.tsv")
     candidates = []
@@ -71,6 +81,12 @@ def _find_latest_position_file() -> str:
             fpath = os.path.join(export_dir, fname)
             candidates.append((os.path.getmtime(fpath), fpath))
     if not candidates:
+        # 第二个静默降级：目录存在但里面没有「持仓股*.xls/.tsv」。
+        # 与上面那个分支是同一个病——不告警就会让人以为读到了最新导出。
+        logger.warning(
+            "TDX_EXPORT_DIR=%s 下未找到「持仓股*.xls/.tsv」，回退到 data/raw/positions.tsv 历史持仓文件",
+            export_dir,
+        )
         # fallback
         return os.path.join(os.path.dirname(__file__), "..", "data", "raw", "positions.tsv")
     candidates.sort(reverse=True)

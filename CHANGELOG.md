@@ -52,8 +52,15 @@
 - **#87 死常量删除 (c698916)**：移除 `COPY_BREADTH_MIN_RATIO`
 - **组合大盘报告措辞数据驱动化**（09-21 遗留未提交改动，2026-09-22 接管提交）：`医药系` 不再写死「微逆风…拖累有限」，改按 `_med_wind` / `_med_av` 实际风向渲染（顺风时输出「提供正向贡献」，与事实一致）；并补「无明确逆风方向」分支，修复原 `_hw` 为空时 `_hw_names='无'` 导致输出「对冲了无逆风」的病句
 
+- **计划任务脚本三改 (809e47c)**：`setup_scheduler.ps1` 去掉 `C:\Users\HUAWEI\...` 硬编码（改 `$PSScriptRoot`）、触发时间 15:10 → **15:30**、目标由 `run_analysis.bat` 改为 **`scheduled_run.bat`**（后者才带邮件闸门，直接跑前者会绕过正式日报出口）；补 UTF-8 BOM（PS 5.1 对无 BOM 的 .ps1 按 ANSI 读会乱码）；末尾显式声明「改本脚本不会自动更新已注册任务，需重新运行才生效」
+- **通达信导出目录静默降级治理 (config/settings.py)**：`TDX_EXPORT_DIR` 默认值由 `C:\zd_zsone\T0002\export`（作者机专属）改为**空**；两处 fallback（目录不存在 / 目录存在但无「持仓股*.xls|.tsv」）**均加 warning**，换机或容器不再静默降级到 `data/raw/positions.tsv` 旧快照。本机 `.env` 已显式配置该变量 ⇒ **运行行为不变**
+- **QA 残留清理**：删除仓库根目录 `.env.QA_RESIDUE_20260805`（内容仅 `D5_TEST_NO_OVERRIDE` 测试字串，无凭证；本就未被 git 跟踪）
+
 #### 变更
 - **A 通道日报推送废除 (d839327)**：删除 `run_analysis.py` 内 `send_portfolio_report` 调用及其专属两个 helper；组合日报**唯一出口收敛为 `scripts/send_report_email.py`**，`NotificationManager` 仅保留 `send_alert()` 供失败告警
+- **数据层直连收敛 P1-D (559fb69)**：`etf_position` / `nav_engine` / `portfolio_risk` / `rebalance_engine` 4 处 `sqlite3.connect` 改用统一连接工厂（`src.utils.database.get_db_connection`），从而拿到统一的 `check_same_thread=False` + WAL + `busy_timeout=5000`，消除并发写 `database is locked` 隐患。4 处均无 `with sqlite3.connect(...)` 形式 ⇒ 无自动 commit 语义需补偿；全部用函数内惰性导入规避 `data_loader` 循环导入。**未改** `snapshot_gate.py:136` / `price_history_gate.py:72`（二者刻意用 `busy_timeout=15000` 且拒收 `file:` URI，切换会丢掉更长超时 ⇒ 行为变化）
+- **Docker / CI 对齐 Python 3.13 (e7b4334)**：Dockerfile `python:3.12-slim` → `3.13-slim`（与 venv313 一致）、新增 **`.dockerignore`**（此前 `COPY . .` 会把 ~144MB 生产库卷进构建上下文）、非 root `appuser` + 数据目录 chown、`VOLUME` + `HEALTHCHECK`（探 `/_stcore/health`）；CI 改 3.13、依赖改用 `requirements.lock`（92 行纯 `pkg==ver`，无本地路径 / 无 Windows 专属包）。⚠️ CI 新增的 `-m "not integration"` **当前是空操作**——`pytest.ini` 虽注册了 `integration` marker，但全仓 `@pytest.mark.integration` 命中 **0 处**，依赖真实数据的用例尚未打标记，**待补标记后才真正生效**
+- **备份条数上限 10 → 7**：对齐保留策略（`data/backups/` 顶层留最近 7 个 / ≈0.93GB）；仅改 `MAX_BACKUP_COUNT` 常量，与年龄判据取交集、`keep_min=3` 保护逻辑不变
 
 #### 文档
 - **项目状态全面评估 (96a2967 方案 / 1c637ec 报告 15_)**：8 维评估 + 9 项 P0 整改优先级

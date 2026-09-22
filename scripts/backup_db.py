@@ -15,7 +15,9 @@ from data_loader import get_db_connection
 # Hard upper bound on retained backups. Combined with the age rule, this prevents
 # unbounded storage growth when backups are taken more frequently than max_age_days
 # (production saw 15 copies / ~2.0GB). Tune here.
-MAX_BACKUP_COUNT = 10
+# 丹哥拍板的保留策略（2026-09-22）：data/backups/ 顶层只留最近 7 个（≈0.93GB），
+# 由 10 下调为 7。仅改条数上限，与年龄判据取交集的 keep_min 保护逻辑不变。
+MAX_BACKUP_COUNT = 7
 
 
 def get_backup_dir() -> Path:
