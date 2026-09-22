@@ -19,7 +19,7 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
     exit 0
 }
 
-$TaskName = "PortfolioDailyAnalysis"
+$TaskName = "投资组合每日分析"
 $TaskDescription = "投资组合智能分析系统 v1.2 - 每交易日15:30执行四阶段完整分析"
 # $PSScriptRoot = 本脚本所在目录（等价于批处理里的 %~dp0），避免把仓库路径写死在某台机器上
 $ScriptPath = Join-Path $PSScriptRoot "scheduled_run.bat"
@@ -47,10 +47,9 @@ $Action = New-ScheduledTaskAction `
     -Execute $ScriptPath `
     -WorkingDirectory $PSScriptRoot
 
-# 创建触发器 - 周一至周五 15:30
-$Trigger = New-ScheduledTaskTrigger -Daily -At "15:30"
-# 注意: Windows任务计划程序 Daily 触发器每天运行
-# 在 run_analysis.py 中已做周末判断（is_trading_day()）
+# 创建触发器 - 周一至周五 15:30（与真实生产任务一致：每周工作日，非 Daily）
+$Trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At "15:30"
+# 注: run_analysis.py 内仍有 is_trading_day() 周末早退作为兜底，但此处按工作日触发更干净
 
 # 创建任务主体 - 以当前用户身份运行
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Highest
