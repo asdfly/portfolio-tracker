@@ -750,6 +750,9 @@ _main_line_txt = f"当日主线为<b>{_main_line_sectors}</b>（涨幅居前 {to
 _mil = next((x for x in CROSS if x[0] == '军工系'), None)
 _mil_wind = _mil[4] if _mil else '—'
 _mil_av = _mil[5] if _mil else 0.0
+_med = next((x for x in CROSS if x[0] == '医药系'), None)
+_med_wind = _med[4] if _med else '—'
+_med_av = _med[5] if _med else 0.0
 _mil_against = (avg_idx > 0.5) and (_mil_av < 0)
 if _mil_against:
     _mil_txt = (f"；军工系逆市走弱（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，"
@@ -762,7 +765,10 @@ _hw = [x[0] for x in CROSS if x[4] in ('逆风', '强逆风')]
 _hw_names = '、'.join(_hw) if _hw else '无'
 _tech_w = pct(ind_sum.get('科技系', 0))
 if vs300 >= 0:
-    _perf_reason = (f"超配的{'军工系（当日顺风）' if _mil_av > 0 else '防御端（债券+红利）'}对冲了{_hw_names}逆风")
+    if _hw:
+        _perf_reason = (f"超配的{'军工系（当日顺风）' if _mil_av > 0 else '防御端（债券+红利）'}对冲了{_hw_names}逆风")
+    else:
+        _perf_reason = (f"超配方向{'军工系（当日顺风）' if _mil_av > 0 else '防御端（债券+红利）'}支撑、当日无明确逆风方向拖累，相对宽基占优")
 else:
     _perf_reason = (f"当日领涨主线集中于{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
                     f"超配方向中军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {HP['证券Ⅱ']:+.2f}%、红利 {idx['红利指数'][1]:+.2f}%，"
@@ -866,7 +872,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 {f'<li><b>⚠ 锚定提示</b>：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% <b>方向相反</b>，代理法在本组合结构下方向亦不可信，<b>本报告一律以真值为准</b>。</li>' if (est < 0) != (d_ret < 0) else ''}
 <li><b>核心矛盾</b>：主力资金今日<b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。</li>
 <li><b>组合最大集中度风险</b>：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（{_aero_verdict} 10% 审慎线）；军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 <b style="color:#e3a33c">{top3_w:.1f}%</b>。军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。</li>
-<li><b>亮点/风险</b>：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；红利+债券防御底仓（{def_w:.1f}%）稳定；{_mil_against_txt}；医药系微逆风（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）拖累有限。</li>
+<li><b>亮点/风险</b>：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；红利+债券防御底仓（{def_w:.1f}%）稳定；{_mil_against_txt}；医药系{_med_wind}（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）{'拖累有限' if _med_av < 0 else '提供正向贡献'}。</li>
 <li><b>宏观逆风未解</b>：制造业 PMI 整体值经 NeoData 查询仍未直接返回（标「—」）；仅返回综合PMI产出 {PMI['composite']}%、非制造业 {PMI['nonmfg']}%（收缩区）、服务业 {PMI['service']}%、建筑业 {PMI['construction']}%。</li>
 </ul>
 </div>
@@ -1046,7 +1052,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="op"><div class="t">③ 对冲 / 减压（针对集中度）—— 关注单一持仓与三方向集中</div>
 <ul>
 <li><b>航天ETF华安 {aero_w:.2f}%</b> 为单一最大持仓，{_aero_verdict} 10% 审慎线。<span class="cond">观察条件</span>：地面兵装板块若冲高回落且 ETF 资金流由正转负，则集中度风险实质化。</li>
-<li><b>军工系 {mil_w:.1f}%</b> {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）；<b>医药系 {med_w:.1f}%</b> 微逆风、<b>证券 {sec_w:.1f}%</b> 当日 {HP['证券Ⅱ']:+.2f}% 且资金净流出 {fy(sec_today_yi)} 为最大单一拖累。<span class="cond">观察条件</span>：证券若连续 3 日净流出（当前已连续 {sec_out_streak} 日，见⑤跨日跟踪），则该方向逆风从单日事件升级为趋势。</li>
+<li><b>军工系 {mil_w:.1f}%</b> {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，军工装备 {fy(sec_yi('军工装备'))}）；<b>医药系 {med_w:.1f}%</b> {_med_wind}（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）、<b>证券 {sec_w:.1f}%</b> 当日 {HP['证券Ⅱ']:+.2f}% 且资金净流出 {fy(sec_today_yi)} 为最大单一拖累。<span class="cond">观察条件</span>：证券若连续 3 日净流出（当前已连续 {sec_out_streak} 日，见⑤跨日跟踪），则该方向逆风从单日事件升级为趋势。</li>
 <li><b>宽基核心仅 {core300_w:.2f}%</b>：组合缺少市场平均收益压舱石，风格暴露过重。<span class="cond">改善方向</span>：去重释放的额度可考虑向核心宽基倾斜，而非新增行业主题。</li>
 </ul></div>
 
@@ -1120,7 +1126,7 @@ _tldr_lines.append(
     f"亮点/风险：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），"
     f"{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；"
     f"红利+债券防御底仓（{def_w:.1f}%）稳定；{_mil_against_txt}；"
-    f"医药系微逆风（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）拖累有限。")
+    f"医药系{_med_wind}（化学制药 {HP['化学制药']:+.2f}%/生物制品 {HP['生物制品']:+.2f}%）{'拖累有限' if _med_av < 0 else '提供正向贡献'}。")
 _tldr_lines.append(
     f"宏观逆风未解：制造业 PMI 整体值经 NeoData 查询仍未直接返回（标「—」）；"
     f"仅返回综合PMI产出 {PMI['composite']}%、非制造业 {PMI['nonmfg']}%（收缩区）、"
