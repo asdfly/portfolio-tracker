@@ -1,0 +1,55 @@
+# ============================================================
+# .dockerignore — 控制 docker build 上下文
+# ============================================================
+# 背景：仓库 data/ 下含生产库（portfolio.db ≈144MB）与 backups/ 快照，
+# 没有本文件时 `COPY . .` 会把构建上下文撑到 GB 级（上传慢、缓存失效、
+# 且把生产数据烤进镜像 = 数据泄露 + 镜像不可复现）。
+# 运行时所需目录由 Dockerfile 内 mkdir 创建，数据通过 VOLUME / -v 挂载注入。
+# ============================================================
+
+# 运行时数据（含生产库 / 备份 / 报告产物，一律走挂载，不进镜像）
+data/
+data/database/
+data/backups/
+data/reports/
+data/raw/
+data/processed/
+
+# 日志
+logs/
+
+# VCS / 编辑器 / 工具目录
+.git/
+.workbuddy/
+.vscode/
+.idea/
+
+# 本机虚拟环境（Windows 下的二进制在 Linux 镜像里不可用，且体积巨大）
+venv313/
+venv/
+.venv/
+env/
+
+# Python 缓存与构建产物
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# 数据库及 SQLite 伴随文件（双保险：即便有人把 db 放到别的目录也不进镜像）
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# 本机/临时产物
+*.log
+.DS_Store
+Thumbs.db

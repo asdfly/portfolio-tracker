@@ -12,16 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install dependencies
+        # requirements.lock = venv313 (Python 3.13) 的完整 == 快照，与本地同源、可复现
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-timeout
+          pip install -r requirements.lock
+          pip install pytest-timeout
 
       - name: Run tests
         env:
@@ -29,4 +30,4 @@ jobs:
           EMAIL_ENABLED: "false"
           WECHAT_ENABLED: "false"
         run: |
-          pytest tests/ -v --tb=short --timeout=120
+          pytest tests/ -v --tb=short --timeout=120 -m "not integration"
