@@ -788,11 +788,11 @@ class PortfolioRiskAnalyzer:
         分支永不进入，Beta/Alpha/TE/IR 相对收益指标从未计算。
         """
         try:
-            import sqlite3
             import pandas as pd
             from config.settings import DATABASE_PATH
+            from src.utils.database import get_db_connection
 
-            conn = sqlite3.connect(str(DATABASE_PATH))
+            conn = get_db_connection(str(DATABASE_PATH))
             df = pd.read_sql_query(
                 "SELECT date, close FROM index_quotes WHERE code=? ORDER BY date",
                 conn,

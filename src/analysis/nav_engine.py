@@ -53,8 +53,13 @@ _MWR_MAX = 5.0
 
 
 def get_db_connection() -> sqlite3.Connection:
-    """复用项目统一的数据库路径建立连接"""
-    return sqlite3.connect(str(DATABASE_PATH))
+    """复用项目统一的数据库路径建立连接（统一 WAL + busy_timeout=5000）。
+
+    委托 src.utils.database.get_db_connection（其本身惰性委托 data_loader），
+    原样保持「默认生产库路径」语义。函数内导入以避开循环导入。
+    """
+    from src.utils.database import get_db_connection as _get_conn
+    return _get_conn()
 
 
 def _daily_net_cashflow(conn: sqlite3.Connection) -> Dict[str, float]:

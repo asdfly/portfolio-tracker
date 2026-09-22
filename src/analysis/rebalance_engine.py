@@ -830,7 +830,8 @@ if __name__ == "__main__":
     if not os.path.exists(db_path):
         print(f"未找到生产库: {db_path}")
     else:
-        conn = sqlite3.connect(db_path)
+        from src.utils.database import get_db_connection
+        conn = get_db_connection(db_path)
         try:
             as_of = str(last_trading_day_on_or_before(date.today()))
             plan = compute_rebalance_suggestion(conn, as_of_date=as_of, strategy="equal_weight")

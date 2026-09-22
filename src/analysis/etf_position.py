@@ -54,7 +54,10 @@ ETF_TO_INDEX_QUOTES = {
 # 数据加载
 # --------------------------------------------------------------------------- #
 def _conn(db_path: str) -> sqlite3.Connection:
-    return sqlite3.connect(db_path)
+    # 统一连接入口：check_same_thread=False + WAL + busy_timeout=5000。
+    # 惰性导入：data_loader 顶层会 import src.analysis.*，函数内导入可避开循环导入。
+    from src.utils.database import get_db_connection
+    return get_db_connection(db_path)
 
 
 def default_db_path() -> str:
