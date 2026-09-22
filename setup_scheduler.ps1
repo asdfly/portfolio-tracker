@@ -7,6 +7,18 @@ param(
     [switch]$Uninstall
 )
 
+# 自动提权：若未以管理员身份运行，则弹 UAC 重新以管理员身份执行本脚本本身。
+# 否则 Register-ScheduledTask 会静默报「拒绝访问 (0x80070005)」，而脚本却误报成功。
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "检测到未以管理员身份运行，正在请求提权重新执行..." -ForegroundColor Yellow
+    $psi = New-Object System.Diagnostics.ProcessStartInfo "powershell.exe" -Property @{
+        Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" $($args)"
+        Verb      = "runas"
+    }
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    exit 0
+}
+
 $TaskName = "PortfolioDailyAnalysis"
 $TaskDescription = "投资组合智能分析系统 v1.2 - 每交易日15:30执行四阶段完整分析"
 # $PSScriptRoot = 本脚本所在目录（等价于批处理里的 %~dp0），避免把仓库路径写死在某台机器上
@@ -60,7 +72,7 @@ try {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
 
-    Register-ScheduledTask `
+    Register-ScheduledTask -ErrorAction Stop `
         -TaskName $TaskName `
         -Description $TaskDescription `
         -Action $Action `
