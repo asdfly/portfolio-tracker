@@ -174,7 +174,7 @@ UI 层 (Presentation)
 | 位置 | 内容 | 影响 |
 |------|------|------|
 | `config/settings.py:64` | `TDX_EXPORT_DIR` 默认值 `r"C:\zd_zsone\T0002\export"` | 机器专属绝对路径（可用 env 覆盖，但默认值仅作者机有效） |
-| `src/data_sources/neodata_valuation.py:29` | `NEODATA_SKILL_DIR = Path("C:/Users/HUAWEI/.workbuddy/skills/neodata-financial-search")` | 依赖本机 WorkBuddy 技能目录，换机即失效 |
+| `src/data_sources/neodata_valuation.py`（✅ 已修；锚：`NEODATA_SKILL_DIR = Path.home()`） | 原硬编码 `Path("C:/Users/HUAWEI/.workbuddy/skills/neodata-financial-search")` → 现为 `Path.home() / ".workbuddy" / "skills" / "neodata-financial-search"` | 硬编码用户名**已消除**；**残留**是软绑定：换机仍需 WorkBuddy 运行时且该 skill 在默认位置，且生产 `scheduled_run.bat`（纯 Python）无法调用 NeoData，相关回填须在 WorkBuddy 会话内执行。见 `05_reproducibility.md` §4.2 |
 | `scripts/backfill_sector_change.py:25-26` | 硬编码 `C:/Users/HUAWEI/.workbuddy/.../query.py` 与 workbuddy python 二进制 | 脚本级机器绑定 |
 | `scripts/fetch_market_data.py:20-22` | `ROOT` 已改 D 盘，但 `PY`/`QS` 仍指向 `C:/Users/HUAWEI/.workbuddy/...` | 半迁移状态：ROOT 正确、依赖路径未改 |
 | `scripts/import_aug_2026.py:41` | `PDF_PATH = r"C:/Users/HUAWEI/Downloads/20260801-20260831.pdf"` | 一次性导入脚本写死个人下载路径 |

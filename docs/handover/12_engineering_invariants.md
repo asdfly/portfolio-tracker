@@ -889,9 +889,13 @@ SELECT source, is_estimated, confidence, COUNT(*) FROM fund_flows
 | 日报被拒 | `logs/scheduled_run.log`（**GBK**）原文 `[EMAIL] [CRITICAL] 数据未就绪，拒绝生成/发送今日(2026-09-17)日报` + `run_status=degraded（本次运行不完整）`；紧跟一行 `[WARN] report email send FAILED, rc=1` |
 | 浅色版未生成 | `data/reports/` 下**无** `email_report_20260917_light.html` |
 
-⚠️ **「收到邮件」≠「日报发出」**：阶段三的 `src/utils/notification.py` → `send_portfolio_report`
-是**另一条通道**，它不读 `run_status`、**不受闸门管** ⇒ 当天用户仍收到**简版摘要邮件**。
-**唯一正式日报出口是 `scripts/send_report_email.py`**；判「日报发没发」只能看它，**不能看「有没有邮件」**。
+⚠️ **「收到邮件」≠「日报发出」**：历史上阶段三的 `src/utils/notification.py` → `send_portfolio_report`
+曾是**另一条通道**（不读 `run_status`、**不受闸门管**）⇒ 当天用户仍会收到**简版摘要邮件**。
+🔴 **该通道已于 2026-09-21（`d839327`）废除** —— `run_analysis.py` 内 `send_portfolio_report` 调用，
+以及仅服务于它的 `_build_notification_risk` / `_compute_var95` 两个 helper 一并删除；
+`NotificationManager` 现**仅保留 `send_alert()`** 供阶段三失败/异常告警使用（docstring 已同步订正）。
+⇒ **当前组合日报唯一出口是 `scripts/send_report_email.py`**；判「日报发没发」只能看它，**不能看「有没有邮件」**
+（收到邮件也可能只是 `send_alert` 发出的失败告警，而非日报）。完整经过见 §18.1。
 
 闸门定义（`grep` 点）：`scripts/send_report_email.py` 的
 `_RUN_STATUS_BLOCKING = ("partial", "failed", "degraded")`。
@@ -1007,6 +1011,45 @@ SELECT source, is_estimated, confidence, COUNT(*) FROM fund_flows
 - **绝不允许**「没数据」与「有数据但中立」共用同一个数值——这是静默歧义，比报错更坏（报错会被看见，歧义不会）。
 
 📌 **判定/诊断分离的同款陷阱**：测试若只断言「界面显示 50」无法区分这两种语义；必须断言**数据来源层**的 `is_placeholder` / 取数状态，而非渲染出的数字。`verify-p1-batch` 已点名此条，但**尚未在 12_ 留铁律**——本条补上。
+
+---
+
+## 18. 2026-09-21 沉淀（三条新增铁律）
+
+### 18.1 邮件通道已收敛为单通道（A 通道废除）
+
+- **事实**：`run_analysis.py` 阶段三原先调用 `NotificationManager.send_portfolio_report()` 发「简版日报」，
+  这是一条**不受闸门管**的第二通道；2026-09-21 `d839327` 已删除该调用（仅服务于它的
+  `_build_notification_risk` / `_compute_var95` 同步删除，避免死代码回归）。
+- **当前形态**：`NotificationManager` **仅剩 `send_alert()`**，用于阶段三的失败/异常告警；
+  组合日报**唯一出口 = `scripts/send_report_email.py`**（含数据就绪闸门 + 时效守卫 + 降级拒发）。
+  `src/utils/notification.py` 顶部 docstring 已同步订正（原文「未挂钩任何实际推送链」与代码事实矛盾）。
+- 🔴 **铁律**：判「日报有没有发出」**只能看 `send_report_email.py` 的退出码与 `logs/scheduled_run.log`**，
+  **不能看「用户有没有收到邮件」** —— 收到的可能是 `send_alert` 发出的告警邮件，而非日报。
+
+### 18.2 ETF 价格缺口闸门 `src/analysis/price_history_gate.py`（2026-09-21 新增）
+
+- **模块**：对齐 `snapshot_gate` 口径，**只读检测** `etf_price_history` 缺口；参考日历取
+  「活跃标的中覆盖最完整者」的日期集合，参考日 = `max(etf_price_history 全局最新日, portfolio_snapshots 最新日)`。
+- **分级**：warning(1~2 天) / error(≥3 天或系统级)；error 落 `alerts` 表，warning **不写库、不降级**
+  （避免重演「T+1 常态被误判 ⇒ 每日日报被拦死」的 09-17 式灾难）。
+- 🔴 **根因修复（易退化，勿回退）**：`detect_etf_price_gaps` **必须按「当前持仓」口径过滤** —— 只对最新快照日
+  `portfolio_snapshots` 在册 code 判缺口。**已清仓标的（如 159732）不得计入**，否则它会永久 error
+  ⇒ `run_status=degraded` ⇒ 日报被闸门拦死。复测判据：`GAP_CODES_NOT_HELD` 应为 `[]`。
+- **回补**：仅在 `ETF_GAP_AUTOREPAIR=1` 时显式增量回补，**绝不静默触发**。
+  ⚠️ 闸门 CLI `--repair` **只回填 error 级**，而真实缺口多为 warning 级 ⇒ 不能靠 `--repair` 闭环。
+- **接线**：`run_analysis.py` 阶段 3.25b；error → 拦日报，warning → 不拦、不触发回补。
+
+### 18.3 neodata 指数估值：用代码查，且不得串味（2026-09-21 修复）
+
+- **坑**：neodata **中文名实体解析会回归** —— 930713「人工智能指数」曾被解析成 `931071.CS`（另一只指数），
+  931743「消费电子指数」被解析成 `01801085.PT`（「统一估值查询」主题标的，根本不返回「指数估值」块）⇒ 长期 0 行。
+- **修法**：`fetch_index_valuation` 改为 **`f"{index_code} 指数估值"` 代码查询优先**，无块/0 行时回退中文名。
+  ⚠️ **不能盲目全切代码查询**：实测 `000688`（科创50）代码查询**间歇失败**（neodata 非确定性：
+  同一查询有时返回「指数估值」块、有时不返回），而中文名查询稳定 ⇒ **必须保留中文名兜底**，否则 000688 会退化。
+- 🔴 **防误标（原 `... or rows` 兜底是数据完整性隐患）**：返回行的 `code` 与请求的 `index_code` 不符时
+  **必须丢弃并告警**，绝不以本指数名义落库别家指数的估值。
+- **验证口径**：代码查询对 16/16 指数均返回「指数估值」块且代码正确；修复后 930713/931743 由 0 行 → 10 行。
 
 
 

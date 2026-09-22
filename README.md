@@ -17,7 +17,7 @@
 
 ## 功能概览
 
-### Streamlit Dashboard（17 个分析 Tab）
+### Streamlit Dashboard（18 个分析 Tab）
 
 | Tab | 名称 | 核心功能 |
 |-----|------|----------|
@@ -38,6 +38,7 @@
 | 15 | 🔁 交易复盘 | 交易历史统计、盈亏分析、定投基金追踪（11 只）、月度资金流向（天添利/银转存独立归类） |
 | 16 | 🔮 ETF 风险展望 | 波动率预测（分位 / 高低波动分类 / 回测 AUC）+ 历史回撤参照；walk-forward 验证 OOS R² 0.44–0.89、AUC 0.90–0.97 达标才上线；回撤幅度预测 R² 全负不达标，仅作历史回撤参照（非涨跌预测） |
 | 17 | 🎯 高低位定位 | ETF 状态定位器（描述"现在处于历史什么位置"，非方向预测）；三因子集成输出统一度量 P∈[-100,+100]、置信度 C∈[0,1]；F2 估值因子因 250 交易日数据门控自动禁用（index_pe_history 仅积累约 1 个月） |
+| 18 | 👀 清仓观察 | 已清仓标的的行情 / 估值 / 技术面跟踪，回答「清仓决策事后对不对」（清仓日至今涨跌）；**不进**持仓统计、再平衡与预测底座（由 `config.DELISTED_CODES` 保证），只观察、不产生任何调仓建议 |
 
 > **⚠️ ETF 数量有多个口径，不要混用**（数字不一致不是 bug）。以下均为 2026-08-26 实测：
 >
@@ -261,7 +262,7 @@ python -m pytest tests/test_bugfix_round4.py -v
 ## 架构要点
 
 - **数据加载层**: `data_loader.py` 采用 Repository 模式，11 个 Tab 的重复查询函数统一委托到单一实现
-- **Tab 注册**: `TAB_REGISTRY` 插件式注册，17 个 Tab 无参数签名 `render_tabN()`
+- **Tab 注册**: `TAB_REGISTRY` 插件式注册，18 个 Tab 无参数签名 `render_tabN()`
 - **DB 连接**: 统一 `get_db_connection()`，仅 `data_loader.py` 实现内部保留 1 处 `sqlite3.connect`
 - **异常处理**: 裸 `except` = 0，宽泛 `except Exception` = 0（三次细化完成），340 处具体异常类型
 - **UI 标准化**: `render_chart`（121 处）+ `render_empty_state`（26 处），统一图表/空态渲染

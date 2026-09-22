@@ -52,7 +52,7 @@
 
 | 入口 | 文件 | 说明 |
 |------|------|------|
-| Dashboard | `dashboard.py` | Streamlit Web 界面，15 个 Tab，`TAB_REGISTRY` 插件式注册 |
+| Dashboard | `dashboard.py` | Streamlit Web 界面，18 个 Tab，`TAB_REGISTRY` 插件式注册 |
 | 交互菜单 | `run_all.bat` | 9 选项 Windows 批处理菜单 |
 | 定时任务 | `scheduled_run.bat` | Windows 任务计划程序入口，备份+分析 |
 | 分析流水线 | `run_analysis.py` | 五阶段：基础持仓 → 风险分析 → 监控告警 → 智能建议 → 通知报告 |
