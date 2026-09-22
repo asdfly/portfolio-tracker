@@ -1,4 +1,4 @@
-
+﻿
 # 投资组合智能分析系统 - 定时任务配置脚本
 # 以管理员身份运行 PowerShell
 # 用法: .\setup_scheduler.ps1
@@ -8,8 +8,9 @@ param(
 )
 
 $TaskName = "PortfolioDailyAnalysis"
-$TaskDescription = "投资组合智能分析系统 v1.2 - 每交易日15:10执行四阶段完整分析"
-$ScriptPath = "C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker\run_analysis.bat"
+$TaskDescription = "投资组合智能分析系统 v1.2 - 每交易日15:30执行四阶段完整分析"
+# $PSScriptRoot = 本脚本所在目录（等价于批处理里的 %~dp0），避免把仓库路径写死在某台机器上
+$ScriptPath = Join-Path $PSScriptRoot "scheduled_run.bat"
 
 # 检查脚本是否存在
 if (-not (Test-Path $ScriptPath)) {
@@ -32,12 +33,12 @@ if ($Uninstall) {
 # 创建任务动作
 $Action = New-ScheduledTaskAction `
     -Execute $ScriptPath `
-    -WorkingDirectory "C:\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker"
+    -WorkingDirectory $PSScriptRoot
 
-# 创建触发器 - 周一至周五 15:10
-$Trigger = New-ScheduledTaskTrigger -Daily -At "15:10"
+# 创建触发器 - 周一至周五 15:30
+$Trigger = New-ScheduledTaskTrigger -Daily -At "15:30"
 # 注意: Windows任务计划程序 Daily 触发器每天运行
-# 在 run_analysis.py 中已做周末判断
+# 在 run_analysis.py 中已做周末判断（is_trading_day()）
 
 # 创建任务主体 - 以当前用户身份运行
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Highest
@@ -72,7 +73,7 @@ try {
     Write-Host ""
     Write-Host "  任务名称:   $TaskName" 
     Write-Host "  任务描述:   $TaskDescription"
-    Write-Host "  执行时间:   每日 15:10 (交易日)"
+    Write-Host "  执行时间:   每日 15:30 (交易日)"
     Write-Host "  执行脚本:   $ScriptPath"
     Write-Host "  运行用户:   $env:USERNAME"
     Write-Host ""
@@ -91,6 +92,13 @@ try {
     Write-Host "  启动任务:   Start-ScheduledTask -TaskName '$TaskName'"
     Write-Host "  查看状态:   Get-ScheduledTask -TaskName '$TaskName'"
     Write-Host "  卸载任务:   .\setup_scheduler.ps1 -Uninstall"
+    Write-Host ""
+    Write-Host "重要提示:" -ForegroundColor Yellow
+    Write-Host "  修改本脚本不会自动更新已注册的任务。若你此前已注册过旧任务，"
+    Write-Host "  它仍会按旧配置继续运行（旧触发时间、以及旧的 run_analysis.bat 入口，"
+    Write-Host "  后者不带邮件闸门，不是正式日报出口）。"
+    Write-Host "  必须重新运行: 以管理员身份执行 .\setup_scheduler.ps1"
+    Write-Host "  (脚本会先 Unregister 同名旧任务，再按当前文件重新注册)"
     Write-Host ""
 
 } catch {
