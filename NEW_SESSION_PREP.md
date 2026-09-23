@@ -17,8 +17,8 @@
 - 结论：交接正确性只依赖 `12_engineering_invariants.md` + 本文件；记忆文件只是锦上添花。
 
 ## 2. 起点状态（已实测，直接继承）
-- 仓库 HEAD 以 `git rev-parse HEAD` **实测**为准（2026-09-23 实测 = `a4abd2c`）；工作区**不保证干净**，见 §6
-- 生产定时任务「投资组合每日分析」：沙箱内**无法自验**（PowerShell 输出被吞，见 §3），状态须由你本地自查（命令见 §6）。勿凭记忆断言 Ready
+- 仓库 HEAD 以 `git rev-parse HEAD` **实测**为准（`2026-09-23 09:0x` 实测 = `7a5cfe1`，与 `origin/master` 逐字一致，领先 0；最近 4 提交 `a11320b`→`307a80b`→`502621d`→`7a5cfe1`）；工作区**不保证干净**，用 `git diff --name-status HEAD` 现取
+- 生产定时任务「投资组合每日分析」：已由丹哥本地实测确认健康（`State=Ready`，Actions → `scheduled_run.bat`，`LastRunTime=2026-09-22 15:30`，`LastTaskResult=0`）。⚠️ 沙箱内仍读不到，新会话**勿重新怀疑其停摆**（早轮"停摆"判断已证伪：根因是 ASCII `portfolio` 搜索漏中文任务名）
 - `venv313` 在；Python 3.13 已对齐（Docker/CI）；备份上限 = 7；P1-D 直连已收敛；setup_scheduler 已修
 - `scripts/restore_db.py` **仍缺失**（P0-F 待办，见 §4）
 
@@ -35,11 +35,24 @@
 - ⚠️ 沙箱内 PowerShell `Get-ScheduledTask` / `schtasks` **stdout 被吞**（探针 `Write-Output` 也无输出），计划任务状态**无法自验** → 标记 UNKNOWN，请你本地运行并回传（命令见 §6）
 
 ## 4. 可直接接手的真待办
-1. 给依赖真实 DB/网络的用例补 `@pytest.mark.integration`（目前 CI 的 `-m "not integration"` 因 0 处打标是空操作）
-2. `scripts/` 下 20+ 处 `sqlite3.connect`（一次性脚本/探针）尚未收敛到 `get_db_connection`
-3. **P0-F 异地副本 + 恢复演练：`scripts/restore_db.py` 仍 MISSING**，需创建
-4. `snapshot_gate` / `price_history_gate` 两处直连（busy_timeout=15000，拒收 `file:` URI）待定
-5. evolution 台账若干项（`#129/#130` fund_flows 覆盖链、`#140` tab8 哨兵值 `50` 与中性值碰撞等）
+
+> ⚠️ **2026-09-23 新增前置**：上一轮派工的约 40 个 paused worker 已做 relevance 复核，结论见
+> `docs/handover/16_worker_batch_relevance_20260923.md`（**开工前先读它**，可省掉 21 项重复劳动）。
+> 摘要：21 项已收口 / 5 项仍成立 / 4 项部分收口 / 6 项 UNKNOWN（缺 assignment 原文）。
+
+**仍成立、可直接接手（按性价比排序）**：
+1. 🔴 **`etf_price_history` 于 `2026-09-22` 断崖 23→1**（本轮新发现，且未落 error）——列第一优先
+2. 🔴 **`scripts/restore_db.py` 仍 MISSING**（P0-F，实测 `os.path.exists` = False，`git log --grep=restore_db` 0 命中）
+3. 🔴 **`@pytest.mark.integration` 零打标** —— `tests/` 命中 0，而 CI 第 33 行仍 `-m "not integration"` ⇒ deselect 是空操作
+4. 🟡 `scripts/` 下裸 `sqlite3.connect` 实测 **24 处 / 19 文件**未收敛（多为一次性脚本/探针）
+5. 🟡 `snapshot_gate` / `price_history_gate` 两处直连**待拍板**（`src/` 仅剩这 2 处，且为有意保留：拒收 `file:` URI + `busy_timeout=15000`）
+
+**本轮实测已推翻的旧陈述（引用时须连本条一起引）**：
+- `scripts/restore_db.py` **仍缺失**（P0-F 待办，见上第 2 条）
+- `15_` §3 称「`is_split_merge` 列在生产 `etf_features` / `portfolio_nav` 均不存在」——**已失效**：实测两表该列均在，`etf_features` 34,532 行中 `IS NULL=0`、`=1` 者 1 行
+- 场外「整篮子缺行」形态（§16.2）**已不再发生**：最近 8 个交易日场外 12 只均 12/12 有行
+
+**已确认不需要再做的**：`integration` marker 已在 `pytest.ini` 声明；CI 的 Python 已对齐 3.13。
 
 ## 5. 关键路径速查
 | 项 | 路径 |
