@@ -67,6 +67,7 @@
 - **文档审计整改 (7d49cb1)**：09-03 评估快照加「内容已部分过时」横幅，归档根目录重复评估文档
 - **12_ 工程铁律台账**：新增 §18（A 通道收敛 / ETF 缺口闸门 / neodata 代码查询三条铁律）
 - **新会话准备指引 (92d5abe)**：新增 `NEW_SESSION_PREP.md`（仓库根目录简明版交接文档，指向 `docs/handover/12_engineering_invariants.md` 铁律全集与 `.workbuddy/memory/`），本地提交并已推送 `git ls-remote` 逐字验真
+- **交接资料实测修正 (a11320b)**：新会话实测发现 3 处出入后完善 `NEW_SESSION_PREP.md` —— 删除"工作区干净"断言（改以 `git rev-parse HEAD` 实测为准）、移除写死的 `cd22c4e`（落后 1 提交）、澄清仓库内 / 会话工作区两套 `.workbuddy/memory/` 差异（仓库内只到 09-18 且缺 MEMORY.md）、标注沙箱内 PowerShell 计划任务自检 stdout 被吞致状态 UNKNOWN、新增 §6 已知工作区状态（`gen_combo_report.py` 未提交改动 + 处置三选一 + 定时任务本地自查命令）。本地提交，未推送
 
 ### 新增
 - **Tab16 ETF 风险展望** (13e0c21, d51fc6c, a1f21a8, 6e1344d)：ETF 波动率 / 回撤预测模型落地；walk-forward 验证 OOS R² 0.44–0.89、AUC 0.90–0.97 达标才上线；前端对比 / 三档分类 / 预警 / 导出 + 组合聚合 + 历史回撤参照 + 轨迹下钻
