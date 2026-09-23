@@ -572,6 +572,17 @@ def _streak_delta(cur_v, prev_v):
     return f'（较上期 {cur_v-prev_v:+d} 日）'
 sec_delta_txt = _streak_delta(sec_out_streak, _prev_state.get('sec_outflow_streak') if _prev_state else None)
 mil_delta_txt = _streak_delta(mil_up_streak, _prev_state.get('mil_up_streak') if _prev_state else None)
+# 进化项 #30：军工主线顺风连续终止显式提示（streak 由 >0 转 0 时）
+_prev_mil = _prev_state.get('mil_up_streak') if _prev_state else None
+if mil_up_streak > 0:
+    mil_alive_txt = "（主线未熄火）"
+    mil_terminate_warn = ''
+else:
+    mil_alive_txt = "（主线已中断）"
+    if _prev_mil and _prev_mil > 0:
+        mil_terminate_warn = f'<span style="color:#f85149;font-weight:600">⚠ 军工主线顺风连续终止（前序 {_prev_mil} 日为正）</span>'
+    else:
+        mil_terminate_warn = ''
 sec_thresh_remain = max(0, 3 - sec_out_streak)
 sec_triggered = sec_out_streak >= 3
 aero_trend = ''
@@ -1070,7 +1081,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <li><span class="cond">航天ETF(159267) 资金流</span>：今日 {aero_sign}（{fy(aero_today_yi)}）{aero_trend}。单一最大持仓集中度观察的"由正转负"触发条件{'已满足' if aero_flip else '未满足'}。</li>
 <li><span class="cond">上证位置 / 量能</span>：{ma20_txt}；{amt_txt}。与路径 A 维持条件（守住 MA20 + 量能 1.7–2.0 万亿）{'吻合' if ma20_ok else '出现偏离'}。</li>
 <li><span class="cond">周线阶段</span>：{STAGE}（{REGIME}），较上期（{stage_prev}）{'未变' if not stage_changed else '有变化'}。</li>
-<li><span class="cond">军工主线延续性</span>：连续 <b>{mil_up_streak} 日</b>军工板块（地面兵装/航空装备/军工电子/航海装备）最优涨跌幅为正（主线未熄火）{mil_delta_txt}；今日军工最优 {chg(_today_best)}，<b>12板块观测池</b>内严格领涨{'✔' if mil_top_today else '✘'}（{'是' if mil_top_today else '非'}当日观测池第一）。<br>&nbsp;&nbsp;近{mil_up_streak if mil_up_streak else len(_mil_recent)}日：{mil_recent_txt}。<br>&nbsp;&nbsp;<span class="note">（数据源自 sector_daily_change 历史表，回溯窗口 {signal_state['mil_complete_days']} 个完整交易日；"观测池"为我方重仓相关 12 板块，非全市场 90 板块；NeoData 宽区间查询为采样返回，更深日度历史由每日运行自动累积）</span></li>
+<li><span class="cond">军工主线延续性</span>：连续 <b>{mil_up_streak} 日</b>军工板块（地面兵装/航空装备/军工电子/航海装备）最优涨跌幅为正{mil_alive_txt}{mil_delta_txt}{mil_terminate_warn}；今日军工最优 {chg(_today_best)}，<b>12板块观测池</b>内严格领涨{'✔' if mil_top_today else '✘'}（{'是' if mil_top_today else '非'}当日观测池第一）。<br>&nbsp;&nbsp;近{mil_up_streak if mil_up_streak else len(_mil_recent)}日：{mil_recent_txt}。<br>&nbsp;&nbsp;<span class="note">（数据源自 sector_daily_change 历史表，回溯窗口 {signal_state['mil_complete_days']} 个完整交易日；"观测池"为我方重仓相关 12 板块，非全市场 90 板块；NeoData 宽区间查询为采样返回，更深日度历史由每日运行自动累积）</span></li>
 </ul></div>
 
 <h2>五、数据源与可用性</h2>
