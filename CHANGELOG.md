@@ -61,6 +61,7 @@
 - **数据层直连收敛 P1-D (559fb69)**：`etf_position` / `nav_engine` / `portfolio_risk` / `rebalance_engine` 4 处 `sqlite3.connect` 改用统一连接工厂（`src.utils.database.get_db_connection`），从而拿到统一的 `check_same_thread=False` + WAL + `busy_timeout=5000`，消除并发写 `database is locked` 隐患。4 处均无 `with sqlite3.connect(...)` 形式 ⇒ 无自动 commit 语义需补偿；全部用函数内惰性导入规避 `data_loader` 循环导入。**未改** `snapshot_gate.py:136` / `price_history_gate.py:72`（二者刻意用 `busy_timeout=15000` 且拒收 `file:` URI，切换会丢掉更长超时 ⇒ 行为变化）
 - **Docker / CI 对齐 Python 3.13 (e7b4334)**：Dockerfile `python:3.12-slim` → `3.13-slim`（与 venv313 一致）、新增 **`.dockerignore`**（此前 `COPY . .` 会把 ~144MB 生产库卷进构建上下文）、非 root `appuser` + 数据目录 chown、`VOLUME` + `HEALTHCHECK`（探 `/_stcore/health`）；CI 改 3.13、依赖改用 `requirements.lock`（92 行纯 `pkg==ver`，无本地路径 / 无 Windows 专属包）。⚠️ CI 新增的 `-m "not integration"` **当前是空操作**——`pytest.ini` 虽注册了 `integration` marker，但全仓 `@pytest.mark.integration` 命中 **0 处**，依赖真实数据的用例尚未打标记，**待补标记后才真正生效**
 - **备份条数上限 10 → 7**：对齐保留策略（`data/backups/` 顶层留最近 7 个 / ≈0.93GB）；仅改 `MAX_BACKUP_COUNT` 常量，与年龄判据取交集、`keep_min=3` 保护逻辑不变
+- **组合报告 evolution #30 (502621d)**：`scripts/gen_combo_report.py` 军工主线顺风 streak 由 >0 转 0 时显式红色终止提示（⚠ 军工主线顺风连续终止，前序 N 日为正），并把写死的「（主线未熄火）」改为按状态派生（主线已中断 / 未熄火）
 
 #### 文档
 - **项目状态全面评估 (96a2967 方案 / 1c637ec 报告 15_)**：8 维评估 + 9 项 P0 整改优先级
