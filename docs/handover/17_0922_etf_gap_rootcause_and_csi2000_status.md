@@ -108,19 +108,22 @@
 
 - `932000` 共 **10 行，最新 2026-09-23**（NeoData，09-24 回填，写前已备份）。
 
-### 4.3 index_quotes（阻断，0 行）
+### 4.3 index_quotes（阻断，0 行 — 2026-09-24 深度复核后结论）
 
-`sh932000` 行数 = **0**。阻断原因（本沙箱实测，四源全不可达）：
+`sh932000` 行数 = **0**。原 §4.3 把阻断归因为「沙箱限制 / 临时上游」，**经 2026-09-24 真机（沙箱内外双跑）逐源探测，结论须更正**：
 
-| 源 | 结果 | 性质 |
+| 源 | 实测结果（2026-09-24） | 性质（更正后） |
 |---|---|---|
-| 新浪 K线 | `null`（不覆盖中证2000） | **结构性**，非临时 |
-| 东方财富 push2his | `RemoteDisconnected` | 临时上游，与 09-22 系统抖动同源（HEALTH_CHECK 已连续多交易日 fail） |
-| 腾讯 gtimg | `No dispatch info found`（本沙箱主机不可路由，连 sh000001 也失败） | 本沙箱限制，用户真机应可达 |
-| 网易 163 | `502 Bad Gateway` | 本沙箱限制 |
+| 新浪 K线 | 4 种符号格式（sh932000 / sh000932000 等）均 `null` | **结构性不覆盖** 中证2000，非临时 |
+| 腾讯 gtimg | `qt.gtimg.cn/q=sh932000` → `v_pv_none_match="1"`；`appstuff/app/chart/kline` 对 `sh000300` 也 `No dispatch info found` | **腾讯根本不跟踪 中证2000**，且该端点本就不服务指数；**真机亦取不到**，非沙箱限制 |
+| 东方财富 push2his / push2 | `RemoteDisconnected`（**https 与 http 均失败**，沙箱内外一致） | **东财对 K 线数据端点的 host 级 RST**（门户 `quote.eastmoney.com`、数据治理 `datacenter-web.eastmoney.com` 可达 → 非整体 IP 封，是数据 API 定向阻断）；java 侧 `index_zh_a_hist` 同源失败 |
+| 东方财富 datacenter-web | 可达（HTTP 200），但 `RPT_INDEX_KLINE`/`RPT_INDEX_DAILY`/`RPT_IDX_HISTORY` 均「报表配置不存在」 | 主机可达但无可用 index 历史报表名（试探未命中） |
+| NeoData「统一行情查询」 | 可达且覆盖（PE 已回填 10 行）；但行情召回**截断中间历史**（明示「省略中间，禁止推断补全」）且**返回窗口不具确定性**（同口径两次查询分别回 9 月 / 7 月窗口） | **不适合做指数时序回填**——实测插入到 7 月陈旧窗口，会污染 MA / 跨日跟踪 |
 
-→ **本环境无法取数**；脚本逻辑已就绪（新浪 → 腾讯 gtimg → 东财 三级回退），
-须在**可达网络环境**重跑。
+→ **更正结论**：本机环境（即生产机，repo 同机）**无任何可达且可靠的 中证2000 指数时序源**。
+脚本三级回退（新浪→腾讯→东财）逻辑就绪但全链在本地不通；腾讯路径对 932000 永远失效，
+东财 K 线端点被本机 RST。A（回填 index_quotes）**无法在本环境落地**，须改从可通达东财 push2his 的
+网络出口（代理 / VPN / 异地机器）执行，或待东财对该 host 解封。详见 §7。
 
 ### 4.4 回填脚本增强
 
@@ -181,3 +184,73 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 | 09-23 全表 0 行 | success 假象（gate 漏检） | 系统性 error ⇒ degraded ⇒ 拒发 |
 | 9 只缺口跨日累积 | 第 1 天 warning；第 3 天起 error（依赖参考日历） | 第 3 天起 error（参考日历 + snap_max 双锚点，更稳） |
 | 持续失败标的每轮全量重试 | 每轮重试 + 日志噪声 | 达阈值进隔离期，跳过 + 单独列示 |
+
+---
+
+## 7. 2026-09-24 后续：崩溃修复 + A 重跑 + B 源链方案
+
+### 7.1 崩溃根因修复（已提交 `b4e625e`，未推送）
+
+- **现象**：09-24 主分析 `run_status=failed`（本窗口首次 failed），缺失 basic/risk/monitor/dq_check，
+  HEALTH_CHECK 仅 `RemoteDisconnected`，告警 `critical / pipeline_incomplete`（真·流水线错误型，须保留 critical）。
+- **根因**：`src/analysis/portfolio.py::_fetch_index_quotes` 遍历 `INDEX_CODES`（含 9/22 新增的 `sh932000`）
+  取指数行情，异常捕获写成 `except OSError`；但 `DataSourceManager.get_quote` 多源全失败后抛 **`DataSourceError`**
+  （`base.py`，继承 `Exception` 非 `OSError`），未被捕获即上抛，中断整轮 → 全阶段缺失。
+  （handover 17_ §4.1 原称「try/except OSError 告警跳过不崩」承诺落空，正因故障转移层把底层异常
+  包装成 `DataSourceError` 上抛、类型不符。同文件 `_calculate_technical_indicators` 用的是正确的
+  `except DataSourceError`，印证是一处不一致遗漏。）
+- **修复**：捕获改为 `except (DataSourceError, OSError)`，方法内局部导入 `DataSourceError`。单只失败仅告警跳过、
+  其余 11 只正常返回，整轮不再被单指数拖垮，兑现「告警跳过不崩」承诺。
+- **验证**：新增 `tests/test_fetch_index_quotes_isolation.py`（模拟 sh932000 抛 DataSourceError，验证被隔离、
+  其余指数全保留、方法不抛异常）；`pytest` 7 passed；`pre-commit` 17 passed。
+- **澄清**：`dq_score=null` 是「run incomplete 直接导致」，与 9/17 suppressed 抑制值语义不同，已区分；
+  critical 分级逻辑未动，未来若其他必需阶段仍缺仍触发、不降级 warning。
+
+### 7.2 A —— 中证2000 index_quotes 回填：结论「本环境无法落地」
+
+按用户授权「直接落地 A」，沙箱内外双跑 `backfill_single_index.py --code sh932000 --name 中证2000 --no-pe`，
+并在发现全源不通后，逐源探测其可达性（详见 §4.3 更正表）。**结论：本机（即生产机）无任何可达且可靠的
+中证2000 指数时序源**，A 无法落地。要点：
+
+1. 新浪不覆盖、腾讯不跟踪 932000、东财 K 线端点（`push2his`/`push2`）对本机 RST（host 级定向阻断，
+   https/http 均失败，门户与 datacenter-web 可达）、东财 datacenter-web 无可用 index 历史报表名。
+2. NeoData 可达但「统一行情查询」**截断中间历史 + 返回窗口不确定**：实测两次查询分别回 9 月 / 7 月窗口，
+   **曾误将 7 月陈旧窗口落库**，已立即删除回滚（见 §7.4）。故 NeoData **不可作为指数时序回填源**。
+3. 因此 932000 的 index_quotes 仍为 0 行；但 7.1 的崩溃修复已确保：缺失时整轮**降级**（degraded）而非 failed，
+   其余 11 只基准与全组合分析正常产出。这是当前环境下唯一可落地的正确行为。
+
+> **A 的真正落地条件**：从能通达东财 `push2his` 的网络出口（代理 / VPN / 异地机器）重跑
+> `backfill_single_index.py`；或待东财对该 host 解封。届时可一键补齐，无需改代码。
+
+### 7.3 B —— 源链增强方案（规划，未实施）
+
+目标：让 `DataSourceManager` 对中证类指数（尤其 932000）具备**生产可调用的可靠源**，且单源失败不致命。
+基于 7.2 发现，方案排序如下：
+
+- **B0（已隐含完成）崩溃隔离**：7.1 的 `except (DataSourceError, OSError)` 已确保单指数/单源失败不拖垮整轮。
+  这是「B 源链增强」的前提，已落地。
+- **B1（核心，待决策）出口解封 / 代理**：东财 K 线端点被本机 host 级 RST，是 A 与生产的共同瓶颈。
+  两条路：(a) 让取数走可达东财的代理 / VPN（改动小，仅 `DataSourceManager` / akshare 的出网方式）；
+  (b) 确认东财是否对数据中心 IP 长期封禁，若是则需在能出网的生产网段运行取数。
+- **B2（源多样化）新增东财直连源**：在 `DataSourceManager` 注册 `eastmoney_direct`（直连
+  `push2his.eastmoney.com/api/qt/stock/kline/get`，带与 `backfill_single_index.py` 一致的超时 + 有界重试），
+  与现有 sina / akshare 形成三源；指数取数优先直连、失败再回退。注意：若 B1 不通，此源同样 RST，
+  故 B2 须与 B1 搭配才有效。
+- **B3（可见性）数据缺口显式标记**：当 `INDEX_CODES` 中某指数在 `index_quotes` 行数为 0 时，
+  报告 / `run_report` 显式标注「中证2000：数据暂缺」而非静默缺失；`dq` 或 health 摘要单列「指数覆盖缺口」，
+  使降级**有意且可见**（对应 9/17 待办的 critical 分级精神）。
+- **B4（排除项）NeoData 不入生产源链**：NeoData 凭证仅 WorkBuddy 会话内有效（~12h）、且行情召回截断 +
+  窗口不确定（7.2 已证），**不可作为指数时序回填 / 生产取数源**；仅可作会话内的估值(PE)采集（现有用途）。
+- **B5（候选评估）网易 163 / 其他**：网易指数历史（`quotes.money.163.com/service/chddata`）可能覆盖 中证2000，
+  且通常不被 host 级封锁；列为待评估候选（需先验证 932000 在网易的代码与可达性，再用 B2 模式接入）。
+
+> 落地建议：先 B1（出口）打通东财 → 再 B2（直连源）固化 → B3（可见性）收尾；B5 作为 B1 不通时的兜底评估。
+> 当前因 B1 未决，B2/B3 暂搁置。是否启动 B1 的代理 / 异地出网方案，待用户决策。
+
+### 7.4 本次操作留痕（安全）
+
+- 回滚：NeoData 回填脚本曾误插 8 行 7 月陈旧窗口（`2025-12-31` + `2026-07-09~07-17`），已 `DELETE` 干净，
+  `index_quotes WHERE code='sh932000'` 现 **0 行**，与插入前备份 `portfolio_PRE_CS2000_ND_20260924_195757.db` 一致。
+- 备份：`data/backups/` 现有 `portfolio_PRE_CS2000_ND_20260924_195757.db` / `..._195924.db`（各 146.1 MB，安全副本）。
+- 已删除未提交的探索性脚本 `scripts/backfill/backfill_index_quotes_neodata.py`（其 NeoData 源不可靠，留作 footgun 风险）。
+- 提交：`b4e625e`（7.1 崩溃修复 + 回归测试）已本地提交，未推送。本 §7 文档更新将随下次授权推送一并提交。
