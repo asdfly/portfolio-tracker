@@ -4,10 +4,34 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
 import logging
+import os
 import time
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_env_proxies() -> Optional[Dict[str, str]]:
+    """从环境变量解析出网代理（兼容大小写 HTTPS_PROXY/HTTP_PROXY/ALL_PROXY）。
+
+    返回 {'http':..., 'https':...} 或 None（环境无代理时直连）。
+    这是 B1「代理/异地出网」的代码侧落地：运行环境只要配置了可用出网代理，
+    数据源即自动经代理取数，无需改动调用方。
+    """
+    d: Dict[str, str] = {}
+    for key in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY",
+                "https_proxy", "http_proxy", "all_proxy"):
+        val = os.environ.get(key)
+        if val:
+            scheme = "https" if key.lower().startswith("https") else (
+                "http" if key.lower().startswith("http") else "http")
+            d[scheme] = val
+    if not d:
+        return None
+    # 归一：http/https 都指向同一代理（多数本地代理 http/https 同端口）
+    https = d.get("https") or d.get("http")
+    http = d.get("http") or d.get("https")
+    return {"http": http, "https": https}
 
 
 class DataSourceError(Exception):
@@ -27,6 +51,13 @@ class BaseDataSource(ABC):
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+        # B1: 显式注入环境代理，使「运行环境配了出网代理即自动生效」可观测、确定
+        self._proxies = resolve_env_proxies()
+        if self._proxies:
+            self.session.proxies.update(self._proxies)
+        logger.info(
+            f"[{self.name}] 出网模式: {'代理 ' + str(self._proxies) if self._proxies else '直连(环境无代理)'}"
+        )
 
     def _request(self, url: str, params: Optional[Dict] = None, 
                  headers: Optional[Dict] = None, encoding: str = 'utf-8') -> str:

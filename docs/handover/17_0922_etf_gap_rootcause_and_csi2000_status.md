@@ -229,9 +229,13 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 
 - **B0（已隐含完成）崩溃隔离**：7.1 的 `except (DataSourceError, OSError)` 已确保单指数/单源失败不拖垮整轮。
   这是「B 源链增强」的前提，已落地。
-- **B1（核心，待决策）出口解封 / 代理**：东财 K 线端点被本机 host 级 RST，是 A 与生产的共同瓶颈。
-  两条路：(a) 让取数走可达东财的代理 / VPN（改动小，仅 `DataSourceManager` / akshare 的出网方式）；
-  (b) 确认东财是否对数据中心 IP 长期封禁，若是则需在能出网的生产网段运行取数。
+- **B1（已启动实测，2026-09-24 晚）出口解封 / 代理**：
+  实测：本环境 `HTTPS_PROXY=http://127.0.0.1:10808` 是**真实出网代理**（baidu 200 验证；sina 取 510300 经代理成功返回真实价 4.515，证明透传出网生效）。
+  但对**金融行情域做上游策略限制**：东财 `push2his` 经代理 `503`、网易 `chddata` `502`、datacenter-web `200` 但无 932000 报表名。
+  故 932000 在本地仍无法落地（源覆盖缺失 + 金融域上游限），与 7.2 一致。
+  代码侧 B1 已落地：`base.py` 新增 `resolve_env_proxies()` 显式注入 env 代理 + 可观测 INFO 日志（出网模式：代理 / 直连一目了然）；
+  运行环境只要配置「对 eastmoney 放行的出网代理」（独立 VPN / Clash 系统代理），数据源**自动经代理取数、无需改代码**。本地 10808 不满足（金融域限）。
+  两条路：(a) 真机 / 生产网段配可用出网代理（代码已就绪，配即生效）；(b) 异地出网：腾讯云 Lighthouse（账号有，当前无实例），需用户建实例后跑取数。
 - **B2（源多样化）新增东财直连源**：在 `DataSourceManager` 注册 `eastmoney_direct`（直连
   `push2his.eastmoney.com/api/qt/stock/kline/get`，带与 `backfill_single_index.py` 一致的超时 + 有界重试），
   与现有 sina / akshare 形成三源；指数取数优先直连、失败再回退。注意：若 B1 不通，此源同样 RST，
@@ -245,7 +249,9 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
   且通常不被 host 级封锁；列为待评估候选（需先验证 932000 在网易的代码与可达性，再用 B2 模式接入）。
 
 > 落地建议：先 B1（出口）打通东财 → 再 B2（直连源）固化 → B3（可见性）收尾；B5 作为 B1 不通时的兜底评估。
-> 当前因 B1 未决，B2/B3 暂搁置。是否启动 B1 的代理 / 异地出网方案，待用户决策。
+> B1 已启动实测：代理透传基础设施落地（`base.py` 新增提交，待推送），本环境 10808 真实出网但对金融域上游限，故 932000 本地仍缺；
+> B2/B3 待「对 eastmoney 放行的出网代理」具备后实施；B5 网易实测 502 同样受限，降级为「需异地出网才验」。
+> 下一步（待用户决策）：在真机生产环境配置可用出网代理，或建腾讯云 Lighthouse 异地实例跑取数——任一具备即解锁 A 与 B2/B3。
 
 ### 7.4 本次操作留痕（安全）
 
@@ -253,4 +259,5 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
   `index_quotes WHERE code='sh932000'` 现 **0 行**，与插入前备份 `portfolio_PRE_CS2000_ND_20260924_195757.db` 一致。
 - 备份：`data/backups/` 现有 `portfolio_PRE_CS2000_ND_20260924_195757.db` / `..._195924.db`（各 146.1 MB，安全副本）。
 - 已删除未提交的探索性脚本 `scripts/backfill/backfill_index_quotes_neodata.py`（其 NeoData 源不可靠，留作 footgun 风险）。
-- 提交：`b4e625e`（7.1 崩溃修复 + 回归测试）已本地提交，未推送。本 §7 文档更新将随下次授权推送一并提交。
+- 提交：`b4e625e`（7.1 崩溃修复 + 回归测试）、`2de44fc`（§4.3 更正 + §7）已推送 origin/master；
+  本次 B1 代理透传 `base.py::resolve_env_proxies` + 本 §7.3 实测更新为新增本地提交（待授权推送）。
