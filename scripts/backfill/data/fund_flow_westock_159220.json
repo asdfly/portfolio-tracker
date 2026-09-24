@@ -1,0 +1,145 @@
+{
+  "code": "159220",
+  "name": "港股通红利低波ETF华宝",
+  "source": "westock_mcp",
+  "records": [
+    {
+      "date": "2026-08-25",
+      "main_net_inflow": 481386.0,
+      "super_large_inflow": 2667767.0,
+      "large_inflow": -2186381.0
+    },
+    {
+      "date": "2026-08-26",
+      "main_net_inflow": -406836.0,
+      "super_large_inflow": -1355607.0,
+      "large_inflow": 948770.0
+    },
+    {
+      "date": "2026-08-27",
+      "main_net_inflow": 90145.0,
+      "super_large_inflow": 84152.0,
+      "large_inflow": 5994.0
+    },
+    {
+      "date": "2026-08-28",
+      "main_net_inflow": 641043.0,
+      "super_large_inflow": -207417.0,
+      "large_inflow": 848461.0
+    },
+    {
+      "date": "2026-08-31",
+      "main_net_inflow": -969578.0,
+      "super_large_inflow": -1012819.0,
+      "large_inflow": 43241.0
+    },
+    {
+      "date": "2026-09-01",
+      "main_net_inflow": 557334.0,
+      "super_large_inflow": -1881114.0,
+      "large_inflow": 2438448.0
+    },
+    {
+      "date": "2026-09-02",
+      "main_net_inflow": 1845452.0,
+      "super_large_inflow": -832994.0,
+      "large_inflow": 2678446.0
+    },
+    {
+      "date": "2026-09-03",
+      "main_net_inflow": -348777.0,
+      "super_large_inflow": -6400195.0,
+      "large_inflow": 6051418.0
+    },
+    {
+      "date": "2026-09-04",
+      "main_net_inflow": 1293270.0,
+      "super_large_inflow": 3095154.0,
+      "large_inflow": -1801884.0
+    },
+    {
+      "date": "2026-09-07",
+      "main_net_inflow": -392178.0,
+      "super_large_inflow": -1254293.0,
+      "large_inflow": 862115.0
+    },
+    {
+      "date": "2026-09-08",
+      "main_net_inflow": 727159.0,
+      "super_large_inflow": 1781182.0,
+      "large_inflow": -1054022.0
+    },
+    {
+      "date": "2026-09-09",
+      "main_net_inflow": 67699.0,
+      "super_large_inflow": -216373.0,
+      "large_inflow": 284072.0
+    },
+    {
+      "date": "2026-09-10",
+      "main_net_inflow": 245770.0,
+      "super_large_inflow": 394156.0,
+      "large_inflow": -148386.0
+    },
+    {
+      "date": "2026-09-11",
+      "main_net_inflow": 798516.0,
+      "super_large_inflow": 979779.0,
+      "large_inflow": -181263.0
+    },
+    {
+      "date": "2026-09-14",
+      "main_net_inflow": 99525.0,
+      "super_large_inflow": 86510.0,
+      "large_inflow": 13015.0
+    },
+    {
+      "date": "2026-09-15",
+      "main_net_inflow": -2429744.0,
+      "super_large_inflow": -5252108.0,
+      "large_inflow": 2822364.0
+    },
+    {
+      "date": "2026-09-16",
+      "main_net_inflow": 532900.0,
+      "super_large_inflow": 1112895.0,
+      "large_inflow": -579995.0
+    },
+    {
+      "date": "2026-09-17",
+      "main_net_inflow": 1327899.0,
+      "super_large_inflow": 755719.0,
+      "large_inflow": 572179.0
+    },
+    {
+      "date": "2026-09-18",
+      "main_net_inflow": -88381.0,
+      "super_large_inflow": 524412.0,
+      "large_inflow": -612793.0
+    },
+    {
+      "date": "2026-09-21",
+      "main_net_inflow": 672693.0,
+      "super_large_inflow": 1836375.0,
+      "large_inflow": -1163682.0
+    },
+    {
+      "date": "2026-09-22",
+      "main_net_inflow": -587836.0,
+      "super_large_inflow": -256775.0,
+      "large_inflow": -331061.0
+    },
+    {
+      "date": "2026-09-23",
+      "main_net_inflow": 639045.0,
+      "super_large_inflow": 745267.0,
+      "large_inflow": -106222.0
+    },
+    {
+      "date": "2026-09-24",
+      "main_net_inflow": 175039.0,
+      "super_large_inflow": 297188.0,
+      "large_inflow": -122149.0
+    }
+  ]
+}

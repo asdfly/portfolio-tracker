@@ -337,3 +337,65 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 - 修改 `src/analysis/predictor/price_history.py`：`backfill_etf_price_history` 加 westock_mcp 缓存兜底标记
 - 删除 `scripts/backfill/backfill_index_quotes_tencent.py`（无全史价值，footgun，已删未提交）
 - 更新本报告 §7.5.3 / 新增 §7.6
+
+### 7.7 ETF 资金流（fund_flows）复制「连接器 + MCP 兜底」+ 多源交叉验证（2026-09-25）
+
+与 §7.5 / §7.6 同理，将「连接器 + DB 缓存兜底 + 每日自动化」三件套复制到 `fund_flows`（ETF 资金流）。
+**新增要求（丹哥明确）**：配套一套**含多源数据交叉验证**的数据质量检查与维护方案——本期落地。
+
+#### 7.7.1 缺口现状与根因
+
+- `fund_flows` 中 25 个 `category='etf'` 代码（含 2 只误标）的 ETF 资金流**全部卡在 2026-09-21**；实时增量补数（`fetch_etf_fund_flow_batch` 走东财 `push2his` / `fund_etf_spot_em`）因同一 host 级 RST 全失败，缺口跨日累积。
+- 诊断发现 **`category='etf'` 中混入 2 只非 ETF 个股**：`001323`（实为慕思股份）、`002152`（实为广电运通）。二者是 `resolve_target_codes` 跟随持仓快照时把个股误归入 ETF 白名单所致，须在资金流回填中**显式排除**（种子生成器已排除，避免脏写）。
+- 主取数链（东财 push2his / fund_etf_spot_em）被 host 级 RST 阻断 → 与 §7.5/§7.6 同根因。
+
+#### 7.7.2 多源交叉验证架构与关键发现
+
+| 角色 | 源 | 工具 / 字段 | 用途 |
+|---|---|---|---|
+| 主写（权威） | **neodata-mcp** `fund_flow` | `main_net_inflow`/`main_inflow`/`main_outflow`/`super_large_net_inflow`/`large_net_inflow`（元） | 主数据源，落 `source='neodata_mcp', is_estimated=0, confidence=1.0` |
+| 交叉校验 | **westock-mcp** `data_fund_flow` | `MainNetFlow`→`main_net_inflow`、`JumboNetFlow`→`super_large_inflow`、`BlockNetFlow`→`large_inflow` | 独立第二源，验证 neodata 量级 |
+| 历史锚点（待核验） | `fund_flows` 现有 `em_spot` / `em_push2his` 行 | 同 code+date 的 `net_inflow` | 旧主源历史值，作为交叉基准 |
+
+**关键发现（量化，来自 `fund_flow_multisource_report.json`）**：
+
+- **neodata vs westock 逐元一致**：抽样 5 只（159220/159949/510300/510500/512810）共 **115 个重叠点，一致率 100%**（容差 ±5% 或 ±1000 元）。两家独立厂商在同一指标上完全一致 ⇒ neodata 口径可信。
+- **em_spot 历史锚点严重背离**：与 neodata 重叠 **301 个点，一致率仅 22.3%**。逐只深挖：小盘/行业 ETF（如 `159267` 航天ETF）**16 个重叠点 0 匹配、12 个背离**（如 08-26 主力净流入 neodata=41.2 万 vs em_spot=16.2 万，差 2.5×；部分日期反向）。说明 `em_spot`（akshare `fund_etf_spot_em`）对中小盘 ETF 的主力净流入存在系统性口径偏差，**历史值不可信**。
+- **结论**：以 neodata 为权威源；`em_spot`/`em_push2his` 仅作「待核验锚点」，其背离行须经**双源（neodata+westock）确认**后修正。
+
+#### 7.7.3 落地：回填脚本 + 三源验证 + 维护对账
+
+1. **回填脚本** `scripts/backfill/backfill_fund_flows_neodata.py`：读 `scripts/backfill/data/fund_flow_neodata_<CODE6>.json`（主源种子，23 只各 23 行，2026-08-25~09-24）与可选的 `fund_flow_westock_<CODE6>.json`（交叉种子，5 只），幂等 upsert 入 `fund_flows`。
+   - **落库纪律（P1-A + #130/#135 守卫）**：`source='neodata_mcp'`、`is_estimated=0`、`confidence=1.0`；复用 `src/data_sources.fund_flow.save_fund_flows`，自动继承其三项守卫（指标全空跳过 / 不以 NULL 覆盖真值 / `net_inflow` 空拒绝 INSERT）。
+   - **缺口策略**：仅补齐缺口——已存在可信源行（`em_spot`/`em_push2his`/`neodata_mcp`/`westock_mcp`）不覆盖；仅当现有行是 `kline_est` 估算（`is_estimated=1`）时才用真实值升级覆盖。
+   - **初始回填结果**：**163 行补齐 09-22/23/24 缺口 + 51 个 `kline_est` 估算行升级为真实值 + 366 个可信行保留**；23/23 只 ETF 均至 `MAX(date)=2026-09-24`。
+2. **多源交叉验证** `--verify`：计算 neodata×westock、neodata×锚点 两对一致率，落盘 `scripts/backfill/data/fund_flow_multisource_report.json`（含逐只 `anchor_match_rate` / `westock_match_rate` 与背离样例）。
+3. **维护对账** `--reconcile`（双源确认修正脏历史）：仅当存在 westock 种子（双源确认）时，将「neodata 与 westock 一致、但与 em_spot/em_push2his 锚点背离 >5%」的历史行 UPDATE 为 neodata 真值；执行前**自动备份 DB** 至 `data/backups/portfolio_PRE_RECONCILE_<ts>.db`。幂等、可安全重入。
+   - **初始对账结果**：5 只样本（有 westock 种子）的历史 em_spot 背离行已修正为 `neodata_mcp`，DB 已自动备份。其余 18 只待 westock 全量种子就位后自动纳入（见 §7.7.5）。
+
+#### 7.7.4 实时路径缓存兜底标记
+
+`run_analysis.py` `fetch_etf_fund_flow_batch` 返回空分支新增审计标记：若 `fund_flows` 已有 `neodata_mcp` 缓存则打 `[缓存兜底] ETF资金流 EM 全失败，下游回退 neodata_mcp 缓存(最新 <date>)`；否则打 `[无缓存]` 告警（对齐 §7.6.3.2 的 `[OHLCV]` 标记范式）。
+
+#### 7.7.5 每日自动化（WB automation，待创建于 21:20）
+
+排程 **`FREQ=DAILY;BYHOUR=21;BYMINUTE=20`**（接在 `932000@21:00`、`9-ETF westock@21:10` 之后），ACTIVE。prompt 指示 LLM agent：
+
+1. 对 23 只 ETF 逐一调 **neodata-mcp `fund_flow`**（近 ~30 交易日）→ 落 `fund_flow_neodata_<CODE>.json`（脚本兼容归一化与原始响应两种形态）；
+2. 对 23 只逐一调 **westock-mcp `data_fund_flow`**（**单码调用、两次间隔冷却 ≥25 秒**规避 `error_type=2 服务限频`）→ 落 `fund_flow_westock_<CODE>.json`；
+3. 跑 `backfill_fund_flows_neodata.py --dir scripts/backfill/data --reconcile`（先 upsert 新数据、再以双源确认对账修正历史 em_spot 脏行、最后重跑三源验证刷新报告）；
+4. 任一源调用失败仅跳过错过代码、**显式上报失败**，不静默成功。
+   - 西构对齐 §7.5.2/§7.6.3：westock 全量种子就位后，`--reconcile` 自动把 18 只剩余 ETF 的历史 em_spot 背离行一并修正，维护方案闭环。
+
+#### 7.7.6 待提交清单（新增）
+
+- 新增 `scripts/backfill/backfill_fund_flows_neodata.py`（含 `--verify` / `--reconcile` / `--dry-run`）
+- 新增 `scripts/backfill/_diag_fundflow_neodata.py`（诊断，确认 25 代码全卡 09-21 + 排除 001323/002152）
+- 新增 `scripts/backfill/_gen_neodata_fundflow_seeds.py`（拆分 3 个 neodata 超限文件 → 23 个归一化种子，剥离 .SH/.SZ、日期 20260924→2026-09-24）
+- 新增 `scripts/backfill/_gen_westock_fundflow_seeds.py`（固化 5 只实测一致的 westock 样本）
+- 新增 `scripts/backfill/data/fund_flow_neodata_<CODE>.json`（23 个种子）+ `fund_flow_westock_<CODE>.json`（5 个交叉种子）+ `fund_flow_multisource_report.json`（验证报告）
+- 修改 `run_analysis.py`：`fetch_etf_fund_flow_batch` 空分支加 `[缓存兜底]`/`[无缓存]` 标记
+- 新增每日自动化 `fund_flows ETF 资金流 每日维护`（21:20）
+- 更新本报告 §7.7
+
+> 数据质量根因备注：`em_spot` 历史资金流对中小盘 ETF 系统性背离已量化（见 §7.7.2），其脏历史经 `--reconcile` 双源修正；`category='etf'` 误标个股（001323/002152）建议后续在 `resolve_target_codes` 层修正，避免再次混入 ETF 取数。

@@ -1,0 +1,590 @@
+{
+  "rel_tol": 0.05,
+  "abs_tol": 1000.0,
+  "codes": {
+    "159220": {
+      "anchor_overlap": 0,
+      "anchor_match": 0,
+      "anchor_close": 0,
+      "anchor_mismatch": 0,
+      "anchor_match_rate": null,
+      "anchor_examples": [],
+      "westock_overlap": 23,
+      "westock_match": 23,
+      "westock_close": 0,
+      "westock_mismatch": 0,
+      "westock_match_rate": 1.0,
+      "westock_examples": []
+    },
+    "159267": {
+      "anchor_overlap": 16,
+      "anchor_match": 0,
+      "anchor_close": 4,
+      "anchor_mismatch": 12,
+      "anchor_match_rate": 0.0,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": 5864021.7,
+          "anchor": 7256423.0,
+          "rel_diff": 0.1919,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 411865.5,
+          "anchor": 161881.0,
+          "rel_diff": 0.607,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": 9284285.2,
+          "anchor": 11896066.0,
+          "rel_diff": 0.2195,
+          "anchor_src": "em_spot"
+        }
+      ]
+    },
+    "159300": {
+      "anchor_overlap": 16,
+      "anchor_match": 0,
+      "anchor_close": 1,
+      "anchor_mismatch": 15,
+      "anchor_match_rate": 0.0,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -2820636.8,
+          "anchor": -13979001.0,
+          "rel_diff": 0.7982,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 172161.5,
+          "anchor": 2801350.0,
+          "rel_diff": 0.9385,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": 6775619.7,
+          "anchor": 11051733.0,
+          "rel_diff": 0.3869,
+          "anchor_src": "em_spot"
+        }
+      ]
+    },
+    "159650": {
+      "anchor_overlap": 0,
+      "anchor_match": 0,
+      "anchor_close": 0,
+      "anchor_mismatch": 0,
+      "anchor_match_rate": null,
+      "anchor_examples": []
+    },
+    "159732": {
+      "anchor_overlap": 16,
+      "anchor_match": 1,
+      "anchor_close": 4,
+      "anchor_mismatch": 11,
+      "anchor_match_rate": 0.0625,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -15467644.58,
+          "anchor": -7863282.0,
+          "rel_diff": 0.4916,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 17777184.8,
+          "anchor": 22329623.0,
+          "rel_diff": 0.2039,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": -5254979.218,
+          "anchor": -8686442.0,
+          "rel_diff": 0.395,
+          "anchor_src": "em_spot"
+        }
+      ]
+    },
+    "159770": {
+      "anchor_overlap": 16,
+      "anchor_match": 4,
+      "anchor_close": 4,
+      "anchor_mismatch": 8,
+      "anchor_match_rate": 0.25,
+      "anchor_examples": [
+        {
+          "date": "2026-08-26",
+          "neodata": -1816183.4,
+          "anchor": -151078.0,
+          "rel_diff": 0.9168,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": 20079236.6,
+          "anchor": 24706523.0,
+          "rel_diff": 0.1873,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-28",
+          "neodata": -8531671.2,
+          "anchor": -7163003.0,
+          "rel_diff": 0.1604,
+          "anchor_src": "em_spot"
+        }
+      ]
+    },
+    "159796": {
+      "anchor_overlap": 16,
+      "anchor_match": 3,
+      "anchor_close": 2,
+      "anchor_mismatch": 11,
+      "anchor_match_rate": 0.1875,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -8464636.8,
+          "anchor": -6685391.0,
+          "rel_diff": 0.2102,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": -547459.2,
+          "anchor": 6977662.0,
+          "rel_diff": 1.0785,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": 7210382.138,
+          "anchor": 13862525.0,
+          "rel_diff": 0.4799,
+          "anchor_src": "em_spot"
+        }
+      ]
+    },
+    "159819": {
+      "anchor_overlap": 16,
+      "anchor_match": 2,
+      "anchor_close": 4,
+      "anchor_mismatch": 10,
+      "anchor_match_rate": 0.125,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": 2191334.1,
+          "anchor": 15848239.0,
+          "rel_diff": 0.8617,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 25480511.832,
+          "anchor": 31513298.0,
+          "rel_diff": 0.1914,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-08-28",
+          "neodata": 21169958.938,
+          "anchor": 29914742.0,
+          "rel_diff": 0.2923,
+          "anchor_src": "em_spot"
+        }
+      ]
+    },
+    "159949": {
+      "anchor_overlap": 2,
+      "anchor_match": 2,
+      "anchor_close": 0,
+      "anchor_mismatch": 0,
+      "anchor_match_rate": 1.0,
+      "anchor_examples": [],
+      "westock_overlap": 23,
+      "westock_match": 23,
+      "westock_close": 0,
+      "westock_mismatch": 0,
+      "westock_match_rate": 1.0,
+      "westock_examples": []
+    },
+    "159992": {
+      "anchor_overlap": 16,
+      "anchor_match": 2,
+      "anchor_close": 10,
+      "anchor_mismatch": 4,
+      "anchor_match_rate": 0.125,
+      "anchor_examples": [
+        {
+          "date": "2026-08-26",
+          "neodata": 19878099.883,
+          "anchor": 28060954.0,
+          "rel_diff": 0.2916,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-09-10",
+          "neodata": -55365855.152,
+          "anchor": -40396845.0,
+          "rel_diff": 0.2704,
+          "anchor_src": "em_spot"
+        },
+        {
+          "date": "2026-09-11",
+          "neodata": -49006998.287,
+          "anchor": -30848176.0,
+          "rel_diff": 0.3705,
+          "anchor_src": "em_spot"
+        }
+      ]
+    },
+    "510300": {
+      "anchor_overlap": 12,
+      "anchor_match": 12,
+      "anchor_close": 0,
+      "anchor_mismatch": 0,
+      "anchor_match_rate": 1.0,
+      "anchor_examples": [],
+      "westock_overlap": 23,
+      "westock_match": 23,
+      "westock_close": 0,
+      "westock_mismatch": 0,
+      "westock_match_rate": 1.0,
+      "westock_examples": []
+    },
+    "510500": {
+      "anchor_overlap": 6,
+      "anchor_match": 6,
+      "anchor_close": 0,
+      "anchor_mismatch": 0,
+      "anchor_match_rate": 1.0,
+      "anchor_examples": [],
+      "westock_overlap": 23,
+      "westock_match": 23,
+      "westock_close": 0,
+      "westock_mismatch": 0,
+      "westock_match_rate": 1.0,
+      "westock_examples": []
+    },
+    "511380": {
+      "anchor_overlap": 12,
+      "anchor_match": 8,
+      "anchor_close": 3,
+      "anchor_mismatch": 1,
+      "anchor_match_rate": 0.6667,
+      "anchor_examples": [
+        {
+          "date": "2026-09-08",
+          "neodata": 19267597.533,
+          "anchor": 29839824.0,
+          "rel_diff": 0.3543,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "511520": {
+      "anchor_overlap": 12,
+      "anchor_match": 2,
+      "anchor_close": 5,
+      "anchor_mismatch": 5,
+      "anchor_match_rate": 0.1667,
+      "anchor_examples": [
+        {
+          "date": "2026-08-26",
+          "neodata": -11730606.922,
+          "anchor": -14729113.0,
+          "rel_diff": 0.2036,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": -47511405.3,
+          "anchor": -56044496.0,
+          "rel_diff": 0.1523,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-09-04",
+          "neodata": 1846796.276,
+          "anchor": 5093776.0,
+          "rel_diff": 0.6374,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "512010": {
+      "anchor_overlap": 18,
+      "anchor_match": 3,
+      "anchor_close": 4,
+      "anchor_mismatch": 11,
+      "anchor_match_rate": 0.1667,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": 8972474.4,
+          "anchor": 11985073.0,
+          "rel_diff": 0.2514,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 12487963.537,
+          "anchor": 20652347.0,
+          "rel_diff": 0.3953,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": 2101489.381,
+          "anchor": 2725691.0,
+          "rel_diff": 0.229,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "512100": {
+      "anchor_overlap": 18,
+      "anchor_match": 4,
+      "anchor_close": 7,
+      "anchor_mismatch": 7,
+      "anchor_match_rate": 0.2222,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -70854604.814,
+          "anchor": -56421328.0,
+          "rel_diff": 0.2037,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 27458065.183,
+          "anchor": 34823712.0,
+          "rel_diff": 0.2115,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": 86394551.893,
+          "anchor": 110522896.0,
+          "rel_diff": 0.2183,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "512810": {
+      "anchor_overlap": 1,
+      "anchor_match": 1,
+      "anchor_close": 0,
+      "anchor_mismatch": 0,
+      "anchor_match_rate": 1.0,
+      "anchor_examples": [],
+      "westock_overlap": 23,
+      "westock_match": 23,
+      "westock_close": 0,
+      "westock_mismatch": 0,
+      "westock_match_rate": 1.0,
+      "westock_examples": []
+    },
+    "515010": {
+      "anchor_overlap": 18,
+      "anchor_match": 1,
+      "anchor_close": 4,
+      "anchor_mismatch": 13,
+      "anchor_match_rate": 0.0556,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -1019848.1,
+          "anchor": -710181.0,
+          "rel_diff": 0.3036,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-28",
+          "neodata": 3242294.7,
+          "anchor": 2629472.0,
+          "rel_diff": 0.189,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-31",
+          "neodata": -1410305.2,
+          "anchor": -1106316.0,
+          "rel_diff": 0.2155,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "515120": {
+      "anchor_overlap": 18,
+      "anchor_match": 2,
+      "anchor_close": 4,
+      "anchor_mismatch": 12,
+      "anchor_match_rate": 0.1111,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": 33004762.025,
+          "anchor": 45560011.0,
+          "rel_diff": 0.2756,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 7801712.5,
+          "anchor": 14530339.0,
+          "rel_diff": 0.4631,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": -17437135.034,
+          "anchor": -22604182.0,
+          "rel_diff": 0.2286,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "516160": {
+      "anchor_overlap": 18,
+      "anchor_match": 3,
+      "anchor_close": 2,
+      "anchor_mismatch": 13,
+      "anchor_match_rate": 0.1667,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -1613740.166,
+          "anchor": -464129.0,
+          "rel_diff": 0.7124,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 6671327.725,
+          "anchor": 7933366.0,
+          "rel_diff": 0.1591,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-28",
+          "neodata": -6330345.21,
+          "anchor": -7970952.0,
+          "rel_diff": 0.2058,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "561910": {
+      "anchor_overlap": 18,
+      "anchor_match": 3,
+      "anchor_close": 4,
+      "anchor_mismatch": 11,
+      "anchor_match_rate": 0.1667,
+      "anchor_examples": [
+        {
+          "date": "2026-08-26",
+          "neodata": 3129283.7,
+          "anchor": 5658606.0,
+          "rel_diff": 0.447,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": -460963.8,
+          "anchor": 3169144.0,
+          "rel_diff": 1.1455,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-28",
+          "neodata": -9374618.1,
+          "anchor": -12932951.0,
+          "rel_diff": 0.2751,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "563020": {
+      "anchor_overlap": 18,
+      "anchor_match": 1,
+      "anchor_close": 4,
+      "anchor_mismatch": 13,
+      "anchor_match_rate": 0.0556,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -987771.2,
+          "anchor": -24211115.0,
+          "rel_diff": 0.9592,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 14286304.515,
+          "anchor": 29175475.0,
+          "rel_diff": 0.5103,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-27",
+          "neodata": -39939968.5,
+          "anchor": -70314966.0,
+          "rel_diff": 0.432,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    },
+    "588000": {
+      "anchor_overlap": 18,
+      "anchor_match": 7,
+      "anchor_close": 7,
+      "anchor_mismatch": 4,
+      "anchor_match_rate": 0.3889,
+      "anchor_examples": [
+        {
+          "date": "2026-08-25",
+          "neodata": -370311260.33,
+          "anchor": -493307488.0,
+          "rel_diff": 0.2493,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-26",
+          "neodata": 725751406.704,
+          "anchor": 859359296.0,
+          "rel_diff": 0.1555,
+          "anchor_src": "em_push2his"
+        },
+        {
+          "date": "2026-08-31",
+          "neodata": -97011731.566,
+          "anchor": -163690464.0,
+          "rel_diff": 0.4073,
+          "anchor_src": "em_push2his"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "codes_total": 23,
+    "codes_with_westock": 5,
+    "anchor_overlap": 301,
+    "anchor_match": 67,
+    "anchor_match_rate": 0.2226,
+    "westock_overlap": 115,
+    "westock_match": 115,
+    "westock_match_rate": 1.0
+  }
+}

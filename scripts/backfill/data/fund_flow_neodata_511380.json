@@ -1,0 +1,192 @@
+{
+  "code": "511380",
+  "name": "可转债ETF博时",
+  "exchange_code": "511380.SH",
+  "source": "neodata_mcp",
+  "records": [
+    {
+      "date": "2026-08-25",
+      "main_net_inflow": -10267415.412,
+      "main_inflow": 3808701993.4940004,
+      "main_outflow": 3818969408.906,
+      "super_large_net_inflow": -935668.387999773,
+      "large_net_inflow": -9331747.02399993
+    },
+    {
+      "date": "2026-08-26",
+      "main_net_inflow": -168426658.358,
+      "main_inflow": 4379381338.881,
+      "main_outflow": 4547807997.239,
+      "super_large_net_inflow": -258416042.85300016,
+      "large_net_inflow": 89989384.49499989
+    },
+    {
+      "date": "2026-08-27",
+      "main_net_inflow": 98657718.43,
+      "main_inflow": 4002748634.9560003,
+      "main_outflow": 3904090916.526,
+      "super_large_net_inflow": 200537335.04900026,
+      "large_net_inflow": -101879616.6190002
+    },
+    {
+      "date": "2026-08-28",
+      "main_net_inflow": 110249659.011,
+      "main_inflow": 3698445826.716,
+      "main_outflow": 3588196167.705,
+      "super_large_net_inflow": 173095423.4790001,
+      "large_net_inflow": -62845764.467999935
+    },
+    {
+      "date": "2026-08-31",
+      "main_net_inflow": 62377854.969,
+      "main_inflow": 3531364417.8459997,
+      "main_outflow": 3468986562.877,
+      "super_large_net_inflow": 103757172.86599994,
+      "large_net_inflow": -41379317.897000074
+    },
+    {
+      "date": "2026-09-01",
+      "main_net_inflow": -338828370.2,
+      "main_inflow": 2783772365.3,
+      "main_outflow": 3122600735.5,
+      "super_large_net_inflow": -352657067.5999999,
+      "large_net_inflow": 13828697.400000095
+    },
+    {
+      "date": "2026-09-02",
+      "main_net_inflow": -337401529.856,
+      "main_inflow": 3783937355.369,
+      "main_outflow": 4121338885.2250004,
+      "super_large_net_inflow": -375844917.1430001,
+      "large_net_inflow": 38443387.28699994
+    },
+    {
+      "date": "2026-09-03",
+      "main_net_inflow": -373543670.844,
+      "main_inflow": 4213730183.396,
+      "main_outflow": 4587273854.24,
+      "super_large_net_inflow": -473272347.5699997,
+      "large_net_inflow": 99728676.72600007
+    },
+    {
+      "date": "2026-09-04",
+      "main_net_inflow": -490629273.112,
+      "main_inflow": 5382765789.309,
+      "main_outflow": 5873395062.421,
+      "super_large_net_inflow": -708818059.6500001,
+      "large_net_inflow": 218188786.5380001
+    },
+    {
+      "date": "2026-09-07",
+      "main_net_inflow": -163151531.023,
+      "main_inflow": 3317592934.317,
+      "main_outflow": 3480744465.34,
+      "super_large_net_inflow": -295905147.81700015,
+      "large_net_inflow": 132753616.79399991
+    },
+    {
+      "date": "2026-09-08",
+      "main_net_inflow": 19267597.533,
+      "main_inflow": 3315718369.94,
+      "main_outflow": 3296450772.407,
+      "super_large_net_inflow": -13093590.16599989,
+      "large_net_inflow": 32361187.69899988
+    },
+    {
+      "date": "2026-09-09",
+      "main_net_inflow": -184642802.831,
+      "main_inflow": 3656765991.5,
+      "main_outflow": 3841408794.331,
+      "super_large_net_inflow": -209193134.73199987,
+      "large_net_inflow": 24550331.901000023
+    },
+    {
+      "date": "2026-09-10",
+      "main_net_inflow": -164057256.856,
+      "main_inflow": 4047722466.9560003,
+      "main_outflow": 4211779723.8120003,
+      "super_large_net_inflow": -128611647.36299992,
+      "large_net_inflow": -35445609.49300003
+    },
+    {
+      "date": "2026-09-11",
+      "main_net_inflow": -309304385.892,
+      "main_inflow": 5407036391.288,
+      "main_outflow": 5716340777.18,
+      "super_large_net_inflow": -269796600.4460001,
+      "large_net_inflow": -39507785.4460001
+    },
+    {
+      "date": "2026-09-14",
+      "main_net_inflow": -97810381.186,
+      "main_inflow": 4137269164.2349997,
+      "main_outflow": 4235079545.4209995,
+      "super_large_net_inflow": -163841023.66999984,
+      "large_net_inflow": 66030642.48399997
+    },
+    {
+      "date": "2026-09-15",
+      "main_net_inflow": 141145336.899,
+      "main_inflow": 3414254993.0030003,
+      "main_outflow": 3273109656.104,
+      "super_large_net_inflow": 222955194.47000003,
+      "large_net_inflow": -81809857.5710001
+    },
+    {
+      "date": "2026-09-16",
+      "main_net_inflow": 274900556.914,
+      "main_inflow": 4297451758.182,
+      "main_outflow": 4022551201.2679996,
+      "super_large_net_inflow": 177960816.61899996,
+      "large_net_inflow": 96939740.29500008
+    },
+    {
+      "date": "2026-09-17",
+      "main_net_inflow": 248512782.269,
+      "main_inflow": 3157451084.4370003,
+      "main_outflow": 2908938302.168,
+      "super_large_net_inflow": 228928402.4519999,
+      "large_net_inflow": 19584379.81700015
+    },
+    {
+      "date": "2026-09-18",
+      "main_net_inflow": 186059381.204,
+      "main_inflow": 4470056229.909,
+      "main_outflow": 4283996848.705,
+      "super_large_net_inflow": 253529196.64499998,
+      "large_net_inflow": -67469815.44099998
+    },
+    {
+      "date": "2026-09-21",
+      "main_net_inflow": -37899150.328,
+      "main_inflow": 3485748179.019,
+      "main_outflow": 3523647329.347,
+      "super_large_net_inflow": -30972819.335999966,
+      "large_net_inflow": -6926330.991999865
+    },
+    {
+      "date": "2026-09-22",
+      "main_net_inflow": 86670961.297,
+      "main_inflow": 3797815352.734,
+      "main_outflow": 3711144391.4370003,
+      "super_large_net_inflow": 235440517.07200003,
+      "large_net_inflow": -148769555.7750001
+    },
+    {
+      "date": "2026-09-23",
+      "main_net_inflow": -89963157.843,
+      "main_inflow": 3269058363.126,
+      "main_outflow": 3359021520.969,
+      "super_large_net_inflow": 129828144.15999985,
+      "large_net_inflow": -219791302.00300002
+    },
+    {
+      "date": "2026-09-24",
+      "main_net_inflow": -287074399.0,
+      "main_inflow": 3756112277.0,
+      "main_outflow": 4043186676.0,
+      "super_large_net_inflow": -220286015.0,
+      "large_net_inflow": -66788384.0
+    }
+  ]
+}

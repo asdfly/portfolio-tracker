@@ -406,6 +406,18 @@ def run_stage_fund_flow(date_str=None):
                 logger.info(f"  ETF资金流(批量): {n} 条 ({len(batch_df)} 只)")
             else:
                 logger.warning("  ETF资金流: 批量方案也无数据")
+                # 「连接器 + MCP 兜底」可见标记：EM 主源(RST 阻断)全失败时，缺口由每日
+                # neodata 自动化维护的 neodata_mcp 缓存行兜底（source='neodata_mcp'）。
+                # 此处显式标注，避免「静默丢更新却无人知晓」。不伪造数据，仅让兜底可审计。
+                _n = conn.execute(
+                    "SELECT MAX(date) FROM fund_flows WHERE category='etf' AND source='neodata_mcp'"
+                ).fetchone()
+                if _n and _n[0]:
+                    logger.warning(
+                        f"  [缓存兜底] ETF资金流 EM 全失败，下游回退 neodata_mcp 缓存(最新 {_n[0]})")
+                else:
+                    logger.warning(
+                        "  [无缓存] ETF资金流 EM 全失败且无 neodata_mcp 缓存，缺口将持续——建议检查 neodata 自动化")
 
         # --- ETF资金流历史回填（基于K线估算，补充push2his封锁缺失的历史） ---
         try:
