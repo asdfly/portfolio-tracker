@@ -608,14 +608,21 @@ class PortfolioAnalyzer:
                 pos['pre_close'] = 0
 
     def _fetch_index_quotes(self) -> Dict[str, Dict[str, Any]]:
-        """获取指数行情"""
+        """获取指数行情
+
+        单只指数取数失败必须被隔离——仅告警跳过该只，不得上抛拖垮整轮主分析。
+        注意 ``get_quote`` 在故障转移（多源）全失败后抛的是 ``DataSourceError``
+        （继承 ``Exception``，**非** ``OSError``），故需显式捕获；底层网络异常仍可能
+        以 ``OSError`` 形态漏出，一并捕获。
+        """
+        from src.data_sources.base import DataSourceError
         quotes = {}
         for code in INDEX_CODES.keys():
             try:
                 quote = self.ds_manager.get_quote(code)
                 quotes[code] = quote
-            except OSError as e:
-                logger.warning(f"获取指数 {code} 失败: {e}")
+            except (DataSourceError, OSError) as e:
+                logger.warning(f"获取指数 {code} 失败，跳过该基准: {e}")
         return quotes
 
     @staticmethod
