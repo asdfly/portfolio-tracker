@@ -1,0 +1,187 @@
+{
+  "date": "2026-09-22",
+  "run_date": "2026-09-22",
+  "mode": "daily",
+  "duration_s": 236.29,
+  "run_status": "ok",
+  "sources": [
+    {
+      "name": "HEALTH_CHECK",
+      "ok": 0,
+      "fail": 1,
+      "timeout": 0,
+      "source_used": "exception",
+      "detail": "ConnectionError(ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))"
+    },
+    {
+      "name": "ME_margin",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_lhb",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_holder_change",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_institution_research",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_block_trade",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ETF_FUNDAMENTAL",
+      "ok": 773,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "em_spot+sina_fallback",
+      "detail": ""
+    },
+    {
+      "name": "MARKET_BREADTH",
+      "ok": 1,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "em_zt_pool",
+      "detail": ""
+    }
+  ],
+  "stages": {
+    "otc_nav": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "watchlist": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "basic": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "risk": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "monitor": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "fund_flow": {
+      "status": "error",
+      "duration_s": null,
+      "note": "('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+    },
+    "prediction_base": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "etf_price_gap": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "news": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "macro": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_events": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "etf_fundamental": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_breadth": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_event_signals": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "smart": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "advice_settle": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "dq_check": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "backtest": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "nav_rebuild": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    }
+  },
+  "data_quality_issues": [],
+  "dq_score": 96.5,
+  "dq_score_reason": "from DataQualityChecker (stage dq_check)",
+  "retry_queue_pending": 1,
+  "alerts": [
+    {
+      "level": "warning",
+      "kind": "otc_nav_missing",
+      "message": "[otc_nav_missing] 场外源 T+1 披露：12 只标的当日(2026-09-22)无来源净值(最新 2026-09-21，滞后 1 自然日)；这 12 只已由「场内台账+库内场外」并集合并路径以上一可用净值(2026-09-21)补位并落当日快照行；已按 daily_return 口径B 从分子/分母排除 ⇒ 不构成 2026-09-16 事故形态(整篮子未落库)。 明细: 001194(最新 2026-09-21 滞后1自然日), 001323(最新 2026-09-21 滞后1自然日), 001407(最新 2026-09-21 滞后1自然日), 001437(最新 2026-09-21 滞后1自然日), 001765(最新 2026-09-21 滞后1自然日), 002152(最新 2026-09-21 滞后1自然日), 007994(最新 2026-09-21 滞后1自然日), 008269(最新 2026-09-21 滞后1自然日), 100032(最新 2026-09-21 滞后1自然日), 166301(最新 2026-09-21 滞后1自然日), 519770(最新 2026-09-21 滞后1自然日), 880013(最新 无) 非当日基线标的(延后披露，不拦): 027293"
+    },
+    {
+      "level": "warning",
+      "kind": "etf_price_gap",
+      "message": "[etf_price_gap] etf_price_history 缺口: error 0 只 / warning 22 只。明细: 159220 缺1天(2026-09-22~2026-09-22); 159267 缺1天(2026-09-22~2026-09-22); 159300 缺1天(2026-09-22~2026-09-22); 159650 缺1天(2026-09-22~2026-09-22); 159770 缺1天(2026-09-22~2026-09-22); 159796 缺1天(2026-09-22~2026-09-22); 159819 缺1天(2026-09-22~2026-09-22); 159949 缺1天(2026-09-22~2026-09-22); 159992 缺1天(2026-09-22~2026-09-22); 510300 缺1天(2026-09-22~2026-09-22); 510500 缺1天(2026-09-22~2026-09-22); 511380 缺1天(2026-09-22~2026-09-22); 511520 缺1天(2026-09-22~2026-09-22); 512010 缺1天(2026-09-22~2026-09-22); 512100 缺1天(2026-09-22~2026-09-22); 512810 缺1天(2026-09-22~2026-09-22); 515010 缺1天(2026-09-22~2026-09-22); 515120 缺1天(2026-09-22~2026-09-22); 516160 缺1天(2026-09-22~2026-09-22); 561910 缺1天(2026-09-22~2026-09-22)"
+    }
+  ],
+  "generated_at": "2026-09-22 15:34:08"
+}

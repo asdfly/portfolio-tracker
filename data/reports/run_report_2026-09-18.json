@@ -1,0 +1,208 @@
+{
+  "date": "2026-09-18",
+  "run_date": "2026-09-18",
+  "mode": "daily",
+  "duration_s": 296.02,
+  "run_status": "degraded",
+  "sources": [
+    {
+      "name": "HEALTH_CHECK",
+      "ok": 0,
+      "fail": 1,
+      "timeout": 0,
+      "source_used": "exception",
+      "detail": "ConnectionError(ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))"
+    },
+    {
+      "name": "ME_margin",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_lhb",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_holder_change",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_institution_research",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ME_block_trade",
+      "ok": 0,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "akshare",
+      "detail": ""
+    },
+    {
+      "name": "ETF_FUNDAMENTAL",
+      "ok": 822,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "em_spot+sina_fallback",
+      "detail": ""
+    },
+    {
+      "name": "MARKET_BREADTH",
+      "ok": 1,
+      "fail": 0,
+      "timeout": 0,
+      "source_used": "em_zt_pool",
+      "detail": ""
+    }
+  ],
+  "stages": {
+    "otc_nav": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "watchlist": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "basic": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "risk": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "monitor": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "fund_flow": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "prediction_base": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "news": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "macro": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_events": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "etf_fundamental": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_breadth": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "market_event_signals": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "smart": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "advice_settle": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "dq_check": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "backtest": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    },
+    "nav_rebuild": {
+      "status": "ok",
+      "duration_s": null,
+      "note": ""
+    }
+  },
+  "data_quality_issues": [
+    {
+      "issue_type": "spot_historical",
+      "source": "etf_fundamental",
+      "n_affected": 25,
+      "action": "rejected",
+      "detail": "实时快照类源无法回溯历史日期；请求 2026-09-17 但数据实为最新(2026-09-18)，已整体排除，避免重标失真"
+    },
+    {
+      "issue_type": "spot_stale",
+      "source": "etf_fundamental",
+      "n_affected": 20,
+      "action": "flagged",
+      "detail": "实时快照源数据日期(data_date)与目标(2026-09-18)不一致，可能源未刷新；已落库但标记待核查"
+    }
+  ],
+  "dq_score": null,
+  "dq_score_reason": "run incomplete (run_status=degraded); real dq_score 96.5 suppressed",
+  "retry_queue_pending": 1,
+  "alerts": [
+    {
+      "level": "error",
+      "kind": "summary_refused_snapshot_incomplete",
+      "message": "[summary_refused_snapshot_incomplete] 当日快照不覆盖基线标的域，已拒绝生成 portfolio_summary(2026-09-18)；行数 34 != 基线 35；缺失 1 只 027293；Σmarket_value(DB)=1533077.34；本次算出 total_value=1533077.34；原因=场外当日无净值未落库（该篮子未写当日快照行）；已拒绝写入，而不是写一个残缺值"
+    },
+    {
+      "level": "error",
+      "kind": "otc_nav_missing",
+      "message": "[otc_nav_missing] 场外当日净值缺失 13 只(目标日 2026-09-18)，其中 1 只当日快照**缺行**⇒ 整篮子未落库(2026-09-16 事故形态): 027293；原因=场外源当日只到前一交易日(T+1 披露)、库内该行已存在，采集器判「待插入 0 行」，且「场内台账+库内场外」合并路径也未为这些标的落当日快照行。 明细: 001194(最新 2026-09-17 滞后1自然日), 001323(最新 2026-09-17 滞后1自然日), 001407(最新 2026-09-17 滞后1自然日), 001437(最新 2026-09-17 滞后1自然日), 001765(最新 2026-09-17 滞后1自然日), 002152(最新 2026-09-17 滞后1自然日), 007994(最新 2026-09-17 滞后1自然日), 008269(最新 2026-09-17 滞后1自然日), 027293(最新 2026-09-11 滞后7自然日), 100032(最新 2026-09-17 滞后1自然日), 166301(最新 2026-09-17 滞后1自然日), 519770(最新 2026-09-17 滞后1自然日), 880013(最新 无)"
+    },
+    {
+      "level": "critical",
+      "kind": "pipeline_incomplete",
+      "message": "运行被降级(run_status=degraded): 无缺失/异常必需阶段，降级由 error 级质量告警触发（非运行不完整）",
+      "detail": "missing_required=[] errored_required=[] run_failed=-"
+    },
+    {
+      "level": "warning",
+      "kind": "stale_over_threshold",
+      "message": "源数据滞后 20 行(≥阈值5), 需核查源刷新"
+    }
+  ],
+  "generated_at": "2026-09-18 15:35:03"
+}
