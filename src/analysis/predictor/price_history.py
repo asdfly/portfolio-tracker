@@ -364,6 +364,16 @@ def backfill_etf_price_history(conn, codes: Iterable[str], start: str = "2018010
                 log(f"[OHLCV] {code} 所有数据源均失败"
                     + (f"，已达隔离阈值(至 {_until})" if _until else ""))
                 failed.append(code)
+                # A: 「连接器 + MCP 兜底」可见标记——实时 em/tx 全失败时，下游读 etf_price_history
+                #    会命中由 westock-mcp 自动化维护的缓存行（source='westock_mcp'）；此处显式标注，
+                #    避免「静默丢更新却无人知晓」。（不伪造数据，仅让兜底可审计、可告警。）
+                _cache = conn.execute(
+                    "SELECT MAX(date) FROM etf_price_history WHERE code=? AND source='westock_mcp'",
+                    (code,)).fetchone()
+                if _cache and _cache[0]:
+                    log(f"[OHLCV][缓存兜底] {code} em/tx 全失败，下游回退 westock_mcp 缓存(最新 {_cache[0]})")
+                else:
+                    log(f"[OHLCV][无缓存] {code} em/tx 全失败且无 westock_mcp 缓存，缺口将持续——建议检查 westock 自动化")
                 continue
             cur = conn.cursor()
             for _, r in df.iterrows():

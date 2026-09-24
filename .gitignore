@@ -34,6 +34,8 @@ data/reports/*
 !data/reports/run_report_*.json
 data/raw/
 data/processed/
+# westock-mcp 自动化每日落盘的实时缓存（覆盖写，避免每日 git 抖动；种子文件 etf_westock_<code>.json / cs932000_westock_*.json 照常提交）
+scripts/backfill/data/*_latest.json
 logs/
 *.log
 

@@ -295,7 +295,7 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 
 - **A（index_quotes 回填）已落地**，但不是经东财 push2his，而是经 **westock-mcp**（已连接连接器）。原「需异地/代理/VPN」条件不再必要。
 - **B2（eastmoney 直连源）降级为非必需**：westock 已闭环数据需求；B2 仅作为未来「数据源冗余」的可选项，不再阻塞。
-- **B1（出口代理）仍为 ETF 日行情的未解项**：9 只行业 ETF（§1.2）的东财取数仍受 host 级 RST 影响，与 932000 是两回事；ETF 侧仍需 B1 出口或 westock/网易等替代源，另案处理。
+- **B1（出口代理）已不再是阻塞项**：9 只行业 ETF（§1.2）的东财取数虽仍受 host 级 RST 影响，但已同 §7.5 一样**经 westock-mcp 闭环**（见 §7.6），B1 出口代理不再必要。
 - **NeoData 维持排除**：凭证会话有效 + 行情截断/窗口不确定，仅作会话内 PE 采集（不变）。
 
 #### 7.5.4 待提交清单（新增，待授权推送）
@@ -305,3 +305,35 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 - 修改 `src/analysis/portfolio.py`：`_fetch_index_quotes` 加 DB 缓存兜底 + 新增 `_fallback_index_quote_from_db`
 - 新增/更新本报告 §7.5
 - （此前未推送项：`57b52ea` B1 代理透传 `base.py::resolve_env_proxies` 等，一并评估推送）
+
+### 7.6 9 只行业 ETF（etf_price_history）复制「连接器 + MCP 兜底」模式（2026-09-24 晚）
+
+与 §7.5 同理，将 westock-mcp 兜底模式**原样复制**到 9 只缺口行业 ETF。
+
+#### 7.6.1 缺口现状（2026-09-24 实测）
+`etf_price_history` 最新日 = 2026-09-22，仅 14/23 只有 09-22；**恰好 9 只卡在 09-21**：
+`159267, 159770, 159796, 159819, 159949, 159992, 515010, 515120, 561910`。
+实时增量补数 `backfill_etf_price_history`（em→tx）因同一 RST 全失败，缺口跨日累积；闸门的 `_repair` 再调同一 em/tx 仍失败。
+
+#### 7.6.2 关键发现：09-21 旧行本身即脏数据
+`--verify` 交叉校验暴露：**8/9 只的 09-21 行 volume 异常偏低**（如 159267 的 102431 手 vs westock 真值 929715 手，差约 9×；515010 的 70964 vs 309140），close 也不同。说明 RST 自 09-21 起就污染了这批标的的取数，westock 一次性修正了 09-21 + 补齐 09-22/23/24。
+
+#### 7.6.3 落地三件套
+1. **回填脚本** `scripts/backfill/backfill_etf_price_history_westock.py`：读 `scripts/backfill/data/etf_westock_<CODE>.json`（westock `data_kline` 原始响应，收盘字段 `last`），幂等 `INSERT OR REPLACE` 入 `etf_price_history`（source=`westock_mcp`，volume 单位=手）。
+   初始回填结果：**9/9 全部补齐至 2026-09-24**（共 upsert 83 行；159949 因服务限频仅取回 3 个缺口日，但已足够补缺口）。
+2. **实时路径缓存兜底标记**：`src/analysis/predictor/price_history.py::backfill_etf_price_history` 在所有源失败时，新增显式日志——若 `etf_price_history` 已有 `westock_mcp` 缓存行则打 `[OHLCV][缓存兜底] <code> ... 下游回退 westock_mcp 缓存(最新 <date>)`；否则打 `[无缓存]` 告警。集成测试通过（mock 全源失败，159267 命中正向分支、510300 命中无缓存分支）。
+3. **每日自动化（WB automation）**：`79b8f3e1-e107-42ca-858c-2ca87343360e`「9只行业ETF(OHLCV) 每日westock维护」，`FREQ=DAILY;BYHOUR=21;BYMINUTE=10`，ACTIVE。LLM agent 对 9 只逐一调 `westock-mcp data_kline`（sh/sz 前缀）→ 落 `etf_westock_<CODE>.json` → 跑本 §7.6.3.1 脚本 `--verify`，失败显式上报。
+
+#### 7.6.4 模式泛化价值评估
+「连接器 + MCP 兜底」本质是**用已连接的 MCP 数据通道绕开被 RST/墙阻断的直连源**，三件套（① MCP→DB 幂等回填脚本 ② 实时路径 DB 缓存兜底标记 ③ 每日自动化刷新缓存）可复用于本项目所有"主源不稳"的数据表：
+- **已验证可复制**：index_quotes（932000，§7.5）、etf_price_history（9 ETF，本节）——结构同构，复制成本低。
+- **高价值候选**：`fund_flows`（ETF 资金流，原走 push2his，阻尼式拒绝）、`etf_fundamental`/`etf_industry_alloc`/`etf_top_holdings`（基本面/持仓，原走 AKShare 东财）、宏观/新闻类——凡主源是东财/新浪且本机不稳的，均可加一套 MCP 兜底。
+- **不适用**：纯计算派生表（etf_features/etf_forward_returns）、本地快照（portfolio_snapshots）无需外部源；以及 MCP 本身未覆盖的数据（如个股级深度财务）。
+- **代价**：每加一套需 1 个 MCP 回填脚本 + 1 个自动化 + 实时路径兜底标记；数据多一份"缓存副本"，须以 `source` 列区分、防止口径污染（westock 为 qfq 前复权，与 EM 一致，无口径风险）。
+
+#### 7.6.5 待提交清单（新增，覆盖 §7.5.4）
+- 新增 `scripts/backfill/backfill_etf_price_history_westock.py`
+- 新增 `scripts/backfill/data/etf_westock_*.json`（9 只，种子）
+- 修改 `src/analysis/predictor/price_history.py`：`backfill_etf_price_history` 加 westock_mcp 缓存兜底标记
+- 删除 `scripts/backfill/backfill_index_quotes_tencent.py`（无全史价值，footgun，已删未提交）
+- 更新本报告 §7.5.3 / 新增 §7.6
