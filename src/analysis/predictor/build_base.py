@@ -133,11 +133,18 @@ def build_prediction_base(conn=None, backfill_ohlcv: bool = True,
 
         target = as_of or conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()[0]
         ohlcv_rows = 0
+        ohlcv_failed = []
+        ohlcv_quarantined = []
         if backfill_ohlcv:
             # 三表统一以 target 为截止日：避免 OHLCV 落半日未收盘行造成底座内部错位
-            ohlcv_rows = backfill_etf_price_history(
+            _bres = backfill_etf_price_history(
                 conn, codes, end=target, force=full_refresh_ohlcv, log=log)
-            log(f"[Base] OHLCV 补采合计 {ohlcv_rows} 行 (截止 {target})")
+            ohlcv_rows = _bres.rows
+            ohlcv_failed = list(_bres.failed)
+            ohlcv_quarantined = list(_bres.quarantined)
+            log(f"[Base] OHLCV 补采合计 {ohlcv_rows} 行 (截止 {target})"
+                + (f"；失败 {len(ohlcv_failed)} 只，隔离 {len(ohlcv_quarantined)} 只"
+                   if (ohlcv_failed or ohlcv_quarantined) else ""))
 
         feat = build_feature_matrix(conn, codes, as_of=target)
         n_feat = upsert_features(conn, feat)
@@ -150,6 +157,8 @@ def build_prediction_base(conn=None, backfill_ohlcv: bool = True,
         summary = {
             "target_codes": codes,
             "ohlcv_rows": ohlcv_rows,
+            "ohlcv_failed": ohlcv_failed,
+            "ohlcv_quarantined": ohlcv_quarantined,
             "feature_rows": n_feat,
             "label_rows": n_lab,
             "feature_date_range": (feat["date"].min(), feat["date"].max()) if not feat.empty else None,

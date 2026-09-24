@@ -1193,7 +1193,16 @@ def main(argv=None):
         # 排在资金流之后：特征含 ff_net_inflow_*，需先有当日资金流才不会缺列。
         # 报错仅降级为 warning，不阻断日报。
         try:
-            run_stage_prediction_base(backfill_date)
+            _base_summary = run_stage_prediction_base(backfill_date)
+            # B: 取数失败/隔离标的留痕（warning 级不降级 run_status——隔离是有意设计，
+            #    避免其本身触发邮件闸门误拦；真实断崖由 price_history_gate 的 error 级判定）。
+            _ohf = (_base_summary or {}).get("ohlcv_failed") or []
+            _ohq = (_base_summary or {}).get("ohlcv_quarantined") or []
+            if _ohf or _ohq:
+                _msg = (f"[etf_ohlcv_backfill] 取数失败 {len(_ohf)} 只{_ohf}；"
+                        f"隔离跳过 {len(_ohq)} 只{_ohq}")
+                logger.warning(_msg)
+                _reporter.alert("warning", "etf_ohlcv_backfill", _msg)
             _reporter.stage("prediction_base", "ok")
         except Exception as e:
             logger.warning(f"预测底座增量维护失败(不影响主流程): {e}")

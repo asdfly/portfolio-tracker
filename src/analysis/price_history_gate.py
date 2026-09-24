@@ -8,8 +8,9 @@
 
 本闸门在每日管线阶段 3.25（预测底座增量维护、etf_price_history 刷新之后）运行，做三件事：
   1. 只读快照，推导「参考交易日历」= 活跃标的中覆盖最完整的那只的日期集合；
-     （系统级断崖：用 portfolio_snapshots 的最新日作对照，若 etf_price_history 全局最新日
-      落后超过 SYSTEMIC_LAG_THRESHOLD 个自然日 ⇒ 视为全市场源中断，单独告警。）
+     （系统级断崖 / A 鲜度闸门：用 portfolio_snapshots 的最新日作对照，若 etf_price_history
+      全局最新日**严格落后**（哪怕 1 天）⇒ 视为当日全量回填失败/全市场源中断，单独 error 告警。
+      正常 post-close 跑批后两者应相等，故严格 `>` 即可，无需宽限阈值。）
   2. 对每只活跃标的，统计窗口内缺失的交易日 = 参考日历 − 该标的有数据的日期
      （只计该标的最早日期之后的参考日，避免把「新纳入标的」的早期缺失误判为断崖）；
   3. 缺失 ≥ 1 天 ⇒ warning 级（不写 alerts 表、不降级 run_status，避免每日拦死日报）；
@@ -42,8 +43,9 @@ ACTIVE_TAIL_DAYS = 30
 GAP_ERROR_THRESHOLD = 3
 # 活跃标的判定所需的"窗口起点前已有数据"的最小日期数（避免把新纳入标的误判为缺口）。
 MIN_HISTORY_DATES = 2
-# 系统级断崖阈值：etf_price_history 全局最新日落后 portfolio_snapshots 最新日超过该自然日数
-# ⇒ 视为全市场源中断（所有标的等幅滞后，单标的判据会失效，故单列）。
+# 系统级断崖阈值（历史常量，保留作参考）：旧逻辑用「落后 ≥ 该自然日数」判定全市场源中断。
+# 2026-09-24 A 落地后改为严格 `snap_max > global_max`（见 detect_etf_price_gaps 顶部），
+# 因正常 post-close 跑批后两者必相等，1 天滞后即代表当日全量回填失败。
 SYSTEMIC_LAG_THRESHOLD = 4
 
 KIND = "etf_price_gap"
@@ -115,18 +117,24 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
 
     gaps = []
 
-    # --- 系统级断崖：所有标的等幅滞后，单标的判据会失效，单列 ---
-    try:
-        lag = (_dt.date.fromisoformat(reference_latest)
-               - _dt.date.fromisoformat(global_max)).days
-    except (TypeError, ValueError):
-        lag = 0
-    if lag >= SYSTEMIC_LAG_THRESHOLD:
+    # --- A: 鲜度闸门（修复 09-23「success 假象」盲区）---
+    # etf_price_history 全局最新日 严格落后 portfolio_snapshots 最新日 ⇒ 当日全量回填失败
+    # （如 09-23 全源中断→整日 0 行）。正常 post-close 跑批后两者应相等；snapshot 领先即
+    # OHLCV 取数失败。此判定独立于参考日历，能抓到「全表 0 行」——旧逻辑只看参考日历，
+    # 而参考日历由数据本身推导，0 行时日历冻结 ⇒ 漏检（这正是 09-23 漏报的根因）。
+    # 注：周末/节假日 snapshot 不会前进，故 snap_max == ohlcv_max，不会误报。
+    if global_max and snap_max and snap_max > global_max:
+        try:
+            _lag = (_dt.date.fromisoformat(snap_max)
+                    - _dt.date.fromisoformat(global_max)).days
+        except (TypeError, ValueError):
+            _lag = 0
         gaps.append({
             "code": "(systemic)", "latest": global_max,
-            "first_in_window": None, "missing_count": lag,
+            "first_in_window": None, "missing_count": _lag,
             "missing_dates": [], "severity": "error",
-            "note": f"etf_price_history 全局最新日({global_max})落后参考日({reference_latest}) {lag} 自然日，疑似全市场源中断",
+            "note": (f"etf_price_history 全局最新日({global_max})落后 portfolio_snapshots "
+                     f"最新日({snap_max}) {_lag} 天，疑似当日全量回填失败/源中断"),
         })
 
     # --- 单标的缺口 ---
@@ -165,6 +173,17 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
             continue
         # 单标的缺失天数超过系统级阈值也按 error（与系统级同口径，避免漏拦真实断崖）。
         sev = "error" if len(missing) >= GAP_ERROR_THRESHOLD else "warning"
+        # D: 不依赖参考日历完整性，以 portfolio_snapshots 最新日为锚点判单标的缺口。
+        #    若某持仓标的全局最新日落后 snap_max ≥ GAP_ERROR_THRESHOLD 个自然日 ⇒ error，
+        #    使"缺口跨日累积"在下一轮即触发（即便其余标的也停更、参考日历退化，旧逻辑会漏检）。
+        if sev != "error" and snap_max and latest:
+            try:
+                _cd = (_dt.date.fromisoformat(snap_max)
+                       - _dt.date.fromisoformat(latest)).days
+            except (TypeError, ValueError):
+                _cd = 0
+            if _cd >= GAP_ERROR_THRESHOLD:
+                sev = "error"
         gaps.append({"code": code, "latest": latest, "first_in_window": first,
                      "missing_count": len(missing), "missing_dates": missing,
                      "severity": sev})
@@ -207,9 +226,10 @@ def _repair(conn_str, gaps, log=logger.info):
         return 0
     conn = _connect(conn_str)
     try:
-        n = backfill_etf_price_history(conn, codes, sources=("em", "tx"), log=log)
-        log(f"[ETF缺口闸门] 自动回补 {len(codes)} 只标的，写入 {n} 行")
-        return n
+        _bres = backfill_etf_price_history(conn, codes, sources=("em", "tx"), log=log)
+        log(f"[ETF缺口闸门] 自动回补 {len(codes)} 只标的，写入 {_bres.rows} 行"
+            + (f"；隔离 {len(_bres.quarantined)} 只" if _bres.quarantined else ""))
+        return _bres.rows
     except Exception as e:  # noqa: BLE001
         log(f"[ETF缺口闸门] 自动回补失败: {e}")
         return 0

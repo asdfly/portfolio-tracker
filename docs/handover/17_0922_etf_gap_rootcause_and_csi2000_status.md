@@ -81,7 +81,7 @@
 
 ---
 
-## 3. 修复建议（须用户决策后落地 —— 铁律：产线代码改动须经确认）
+## 3. 修复建议（A–D 已于 2026-09-24 落地 —— 见 §6）
 
 | 编号 | 建议 | 直接消除的问题 |
 |---|---|---|
@@ -90,7 +90,7 @@
 | **C** | 恢复可用价源：等 eastmoney 上游恢复，或为 ETF 日行情接入韧性源（腾讯 gtimg 已在本仓 backfill 脚本验证可解析，但须在其可达环境运行） | 全量 0 行根因 |
 | **D** | gate 改「按代码计缺失天数」：将 ≥3 缺失日的 error 判定从全局 distinct 改为按 code 聚合，使 9 只的 3+ 日缺口在下一轮即触发 error/alert | 缺口跨日累积被掩盖 |
 
-> 当前**未改动** `backfill_etf_price_history` / `price_history_gate` 产线代码（铁律：未获确认不改产线）。
+> A–D 已于 2026-09-24 经用户授权「直接落地」（commit 本地、未推送，待旦哥确认）；改动明细见 §6。
 
 ---
 
@@ -143,7 +143,41 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 
 ## 5. 待办 / 下一步
 
-1. **用户决策 §3 的 A–D 产线修复**（尤其 A 与 D，直接消除「success 假象」与跨日掩盖）。
-2. 在**可达网络环境**重跑中证2000 `index_quotes` 回填（命令见 §4.5）。
-3. 提交本次未提交改动（`config/settings.py`、`neodata_valuation.py`、
-   `backfill_single_index.py` + 本报告）——**铁律：显式 pathspec，不推送未获授权**。
+1. ~~用户决策 §3 的 A–D 产线修复~~ —— **已于 2026-09-24 落地（见 §6）**。
+2. 在**可达网络环境**重跑中证2000 `index_quotes` 回填（命令见 §4.5；`index_pe_history` 已完成）。
+3. 提交本次改动（含 §6 的 A–D 产线代码 + 既有中证2000 配置/脚本 + 本报告）——**铁律：显式 pathspec，不推送未获授权**。
+
+---
+
+## 6. A–D 落地记录（2026-09-24，用户授权「直接落地」）
+
+### 6.1 A —— gate 鲜度闸门（0 行即降级）
+- 文件 `src/analysis/price_history_gate.py::detect_etf_price_gaps`
+- 新增**系统性鲜度判定**：`etf_price_history` 全局最新日 **严格落后** `portfolio_snapshots` 最新日 ⇒ 系统性 `error`（写 `alerts` 表 + 经 `run_analysis` 的 `_reporter.alert("error")` ⇒ `run_status=degraded` ⇒ 邮件闸门拒发基于陈旧价的日报）。
+- 直接修复 09-23「全表 0 行但 success 假象」：旧逻辑只看**参考日历**（由数据本身推导，0 行时日历冻结→漏检）；新逻辑以 snapshot 最新日为**权威锚点**，1 天滞后即触发。
+- 正常 post-close 跑批后两者相等 ⇒ 无误报；周末/节假日 snapshot 不前进 ⇒ 不误报。
+
+### 6.2 D —— gate 按 code 以 snap_max 为锚升级
+- 同一文件单标的缺口循环：除现有参考日历判定外，新增「`snap_max − code_max ≥ GAP_ERROR_THRESHOLD(3)` 自然日 ⇒ `error`」。
+- 使缺口跨日累积在下一轮即触发（即便其余标的也停更、参考日历退化，旧逻辑会漏检）。
+
+### 6.3 B —— backfill 有界重试 + 隔离名单
+- 文件 `src/analysis/predictor/price_history.py`
+- `backfill_etf_price_history` 返回值由裸 `int` 改为富结果 `BackfillResult(rows/attempted/failed/quarantined)`（调用方 `build_base`、`gate._repair` 已同步取 `.rows`；既有测试 `test_predictor_price_history_tx.py` 已更新）。
+- 新增 `etf_backfill_quarantine` 表（`CREATE TABLE IF NOT EXISTS`，幂等）：连续全源失败达 `QUARANTINE_AFTER=3` 次进入隔离期 `QUARANTINE_DAYS=1` 天；隔离期内跳过重试（省时省日志），到期再试一次；成功即重置计数。
+- 全源失败**不再静默 `continue`**，而是计入隔离失败并单独列示（`failed`/`quarantined` 名单回传）。
+- `run_analysis.py` 阶段 3.25 捕获 `ohlcv_failed`/`ohlcv_quarantined` 并以 **warning 级**留痕（**不降级** run_status——隔离是有意设计，避免其本身触发邮件闸门误拦；真实断崖由 gate 的 error 级判定）。
+
+### 6.4 C —— 恢复可用价源（验证为 no-op）
+- `em → tx` 前复权回退链（默认 `sources=("em","tx")`）+ 腾讯 gtimg 6 次指数退避重试已就位，即为韧性源。无需额外代码改动；上游恢复后自动回补。
+
+### 6.5 测试
+- 新增 `tests/test_etf_gap_fixes.py`：`test_A_freshness_detects_systemic_zero_rows`、`test_D_per_code_escalates_accumulated_gap`、`test_B_quarantine_isolates_persistent_failures`、`test_backfill_result_shape`。
+- 回归：`test_predictor_price_history_tx.py`（`.rows` 断言）、`test_run_reporter_completeness.py`、`test_snapshot_baseline_gate.py` 全绿（共 57 项通过）。
+
+### 6.6 行为对照（落地后）
+| 场景 | 落地前 | 落地后 |
+|---|---|---|
+| 09-23 全表 0 行 | success 假象（gate 漏检） | 系统性 error ⇒ degraded ⇒ 拒发 |
+| 9 只缺口跨日累积 | 第 1 天 warning；第 3 天起 error（依赖参考日历） | 第 3 天起 error（参考日历 + snap_max 双锚点，更稳） |
+| 持续失败标的每轮全量重试 | 每轮重试 + 日志噪声 | 达阈值进隔离期，跳过 + 单独列示 |

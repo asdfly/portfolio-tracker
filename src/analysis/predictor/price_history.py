@@ -10,7 +10,9 @@
 import datetime as dt
 import logging
 import math
+import sqlite3
 import time
+from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 import pandas as pd
@@ -210,6 +212,80 @@ FETCHERS = {
 }
 
 
+@dataclass
+class BackfillResult:
+    """`backfill_etf_price_history` 的富结果（替代裸 int 返回值）。
+
+    - rows: 本次写入 etf_price_history 的行数（向后兼容原 int 语义，用 .rows 取）。
+    - attempted: 实际发起取数的标的数（隔离跳过的未计入）。
+    - failed: 本轮回退链全部失败、已计入隔离计数（达阈值则进入隔离）的标的。
+    - quarantined: 因处于隔离期被跳过重试的标的（有界重试 + 隔离，见下）。
+    """
+    rows: int = 0
+    attempted: int = 0
+    failed: list = field(default_factory=list)
+    quarantined: list = field(default_factory=list)
+
+
+# B: 隔离名单（quarantine）——对持续全源失败的标的做有界重试 + 隔离，
+#    避免每轮全量重试拖慢并污染日志；隔离项单独列示、到期自动解除。
+# 背景：09-22 起 9 只 ETF 在所有源持续失败，旧逻辑仅 `continue` 静默跳过，
+#       既不报错也不告警，缺口跨日累积至永久。隔离机制把"持续失败"显式化：
+#       达阈值后进入隔离期，期间跳过重试（省时省日志），到期再试一次。
+QUARANTINE_AFTER = 3      # 连续全源失败达到该次数 ⇒ 进入隔离期
+QUARANTINE_DAYS = 1       # 隔离期长度（自然日），到期后下一轮再试一次
+_QUARANTINE_DDL = """
+CREATE TABLE IF NOT EXISTS etf_backfill_quarantine (
+    code TEXT PRIMARY KEY,
+    fail_count INTEGER NOT NULL DEFAULT 0,
+    last_fail TEXT,
+    quarantined_until TEXT
+)
+"""
+
+
+def _ensure_quarantine_table(conn):
+    conn.execute(_QUARANTINE_DDL)
+    conn.commit()
+
+
+def _quarantine_state(conn, code):
+    """返回 (fail_count, quarantined_until)；无记录则 (0, None)。"""
+    row = conn.execute(
+        "SELECT fail_count, quarantined_until FROM etf_backfill_quarantine WHERE code=?",
+        (code,)).fetchone()
+    if not row:
+        return 0, None
+    return (row[0] or 0), row[1]
+
+
+def _record_quarantine_fail(conn, code, today):
+    """记录一次全源失败：fail_count+1；达阈值则置 quarantined_until。返回 quarantined_until。"""
+    cur = conn.execute(
+        "SELECT fail_count FROM etf_backfill_quarantine WHERE code=?", (code,)).fetchone()
+    fc = (cur[0] + 1) if cur else 1
+    until = None
+    if fc >= QUARANTINE_AFTER:
+        until = (dt.date.fromisoformat(today)
+                 + dt.timedelta(days=QUARANTINE_DAYS)).isoformat()
+    conn.execute(
+        """INSERT INTO etf_backfill_quarantine(code, fail_count, last_fail, quarantined_until)
+           VALUES(?,?,?,?)
+           ON CONFLICT(code) DO UPDATE SET
+             fail_count=excluded.fail_count,
+             last_fail=excluded.last_fail,
+             quarantined_until=excluded.quarantined_until""",
+        (code, fc, today, until))
+    conn.commit()
+    return until
+
+
+def _clear_quarantine(conn, code):
+    """标的取数成功 ⇒ 重置其隔离计数（解除隔离）。"""
+    conn.execute("DELETE FROM etf_backfill_quarantine WHERE code=?", (code,))
+    conn.commit()
+
+
 def _last_date_for_code(conn, code: str) -> Optional[str]:
     """该标的在 etf_price_history 中已有的最新日期（YYYY-MM-DD），无为 None。"""
     cur = conn.cursor()
@@ -236,10 +312,26 @@ def backfill_etf_price_history(conn, codes: Iterable[str], start: str = "2018010
     ⚠️ 默认 sources=("em","tx") **均为前复权(qfq)源**。**不得**把 "sina" 放回默认链路：
     `fund_etf_hist_sina` 无 adjust 参数、返回未复权价，写入后份额折算日会出现约 -50% 的假收益，
     污染标签与特征（历史事故见 159220 2025-11-10 拆分）。sina fetcher 仅为人工排查保留。
+
+    Returns:
+        BackfillResult —— 含写入行数 rows、实际取数标的数 attempted、
+        全源失败名单 failed、隔离跳过名单 quarantined（见 BackfillResult 文档串）。
+        调用方应以 .rows 取写入行数（向后兼容原 int 语义）。
     """
+    today = dt.date.today().strftime("%Y-%m-%d")
     total = 0
+    attempted = 0
+    failed = []
+    quarantined = []
     for code in codes:
         try:
+            _ensure_quarantine_table(conn)
+            _fc, _until = _quarantine_state(conn, code)
+            if _until and _until > today:
+                # B: 隔离期内跳过，避免每轮全量重试拖慢并污染日志；隔离项单独列示。
+                log(f"[OHLCV] {code} 处于隔离期(至 {_until})，本次跳过重试")
+                quarantined.append(code)
+                continue
             if force:
                 start_i = start
             else:
@@ -254,6 +346,7 @@ def backfill_etf_price_history(conn, codes: Iterable[str], start: str = "2018010
                     start_i = last.replace("-", "")
                 else:
                     start_i = start
+            attempted += 1
             df = None
             used = None
             for src in sources:
@@ -266,7 +359,11 @@ def backfill_etf_price_history(conn, codes: Iterable[str], start: str = "2018010
                 except Exception as e:  # 该源网络/接口异常：尝试下一个源
                     log(f"[OHLCV] {code} {src} 失败: {type(e).__name__}")
             if df is None or df.empty:
-                log(f"[OHLCV] {code} 所有数据源均失败，跳过")
+                # B: 所有源失败——不再静默 continue：计入隔离失败并单独列示（达阈值进入隔离）。
+                _until = _record_quarantine_fail(conn, code, today)
+                log(f"[OHLCV] {code} 所有数据源均失败"
+                    + (f"，已达隔离阈值(至 {_until})" if _until else ""))
+                failed.append(code)
                 continue
             cur = conn.cursor()
             for _, r in df.iterrows():
@@ -279,9 +376,11 @@ def backfill_etf_price_history(conn, codes: Iterable[str], start: str = "2018010
                      _f(r["adj_close"]), r["source"]),
                 )
             conn.commit()
+            _clear_quarantine(conn, code)  # 成功即重置隔离计数
             total += len(df)
             log(f"[OHLCV] {code} 补采 {len(df)} 行 (source={used})")
         except Exception as e:  # 兜底：单代码异常不影响其余
             log(f"[OHLCV] {code} 补采失败（已跳过）: {type(e).__name__}: {e}")
             continue
-    return total
+    return BackfillResult(rows=total, attempted=attempted,
+                          failed=failed, quarantined=quarantined)

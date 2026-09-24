@@ -151,11 +151,11 @@ def test_backfill_default_never_writes_unadjusted_rows(captured, monkeypatch):
     conn.execute("""CREATE TABLE etf_price_history(date TEXT, code TEXT, open REAL, high REAL,
                     low REAL, close REAL, volume REAL, amount REAL, adj_close REAL, source TEXT,
                     PRIMARY KEY(date, code))""")
-    n = ph.backfill_etf_price_history(conn, ["512010"], start="20251101", end="20251130",
+    res = ph.backfill_etf_price_history(conn, ["512010"], start="20251101", end="20251130",
                                       sources=("tx",), log=lambda *_: None)
     rows = conn.execute("SELECT date, close, amount, adj_close, source "
                         "FROM etf_price_history ORDER BY date").fetchall()
-    assert n == 2 and len(rows) == 2
+    assert res.rows == 2 and len(rows) == 2
     for _date, close, amount, adj_close, source in rows:
         assert source == ph.SOURCE_TX
         assert amount is None
