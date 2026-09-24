@@ -159,7 +159,8 @@ INDEX_CODES = {
     "sz399673": "创业板50",
     "sz399987": "中证酒",
     "sz399989": "中证医疗",
-    "sh000015": "红利指数"
+    "sh000015": "红利指数",
+    "sh932000": "中证2000"
 }
 # 反向映射：中文名 -> 代码（用于侧边栏选择器转code）
 BENCHMARK_NAME_TO_CODE = {v: k for k, v in INDEX_CODES.items()}
