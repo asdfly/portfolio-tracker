@@ -14,7 +14,7 @@
 | Task ① 同类放大（新发现） | 09-23 管线 `success` 但 `etf_price_history` 当日 **0 行** → 监控盲区 |
 | Task ② 配置层（INDEX_CODES / NeoData 映射） | 已落地（未提交） |
 | Task ② index_pe_history（932000） | **已完成**：10 行，最新 2026-09-23 |
-| Task ② index_quotes（sh932000） | **阻断**：0 行，本环境四源全不可达 |
+| Task ② index_quotes（sh932000） | **已完成**：500 行（2024-09-03~2026-09-24），westock MCP 回填 + DB 缓存兜底 + 每日自动化 |
 
 ---
 
@@ -108,9 +108,11 @@
 
 - `932000` 共 **10 行，最新 2026-09-23**（NeoData，09-24 回填，写前已备份）。
 
-### 4.3 index_quotes（阻断，0 行 — 2026-09-24 深度复核后结论）
+### 4.3 index_quotes（阻断复核 — 2026-09-24 深度复核；**数据缺口已于 2026-09-24 晚经 westock MCP 闭环，见 §7.5**）
 
-`sh932000` 行数 = **0**。原 §4.3 把阻断归因为「沙箱限制 / 临时上游」，**经 2026-09-24 真机（沙箱内外双跑）逐源探测，结论须更正**：
+> **状态更新（2026-09-24 晚）**：`sh932000` 已由 **westock MCP** 回填 **500 行**（2024-09-03~2026-09-24，交叉验证 PASS），并加 DB 缓存兜底 + 每日自动化维护。下文根因分析（东财 push2his host 级 RST、腾讯不跟踪、NeoData 截断等）**依旧成立、作为「为何选 westock」的背景**；原「本环境无任何可达源」结论已过时——westock-mcp 是例外且可用。
+
+`sh932000` 行数复核（2026-09-24 晚前）= **0**。原 §4.3 把阻断归因为「沙箱限制 / 临时上游」，**经 2026-09-24 真机（沙箱内外双跑）逐源探测，结论须更正**：
 
 | 源 | 实测结果（2026-09-24） | 性质（更正后） |
 |---|---|---|
@@ -147,7 +149,7 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 ## 5. 待办 / 下一步
 
 1. ~~用户决策 §3 的 A–D 产线修复~~ —— **已于 2026-09-24 落地（见 §6）**。
-2. 在**可达网络环境**重跑中证2000 `index_quotes` 回填（命令见 §4.5；`index_pe_history` 已完成）。
+2. ~~在**可达网络环境**重跑中证2000 `index_quotes` 回填~~ —— **已完成（westock MCP，见 §7.5）**，无需异地/代理。
 3. 提交本次改动（含 §6 的 A–D 产线代码 + 既有中证2000 配置/脚本 + 本报告）——**铁律：显式 pathspec，不推送未获授权**。
 
 ---
@@ -206,7 +208,7 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 - **澄清**：`dq_score=null` 是「run incomplete 直接导致」，与 9/17 suppressed 抑制值语义不同，已区分；
   critical 分级逻辑未动，未来若其他必需阶段仍缺仍触发、不降级 warning。
 
-### 7.2 A —— 中证2000 index_quotes 回填：结论「本环境无法落地」
+### 7.2 A —— 中证2000 index_quotes 回填：原结论「本环境无法落地」（**已被 §7.5 刷新：经 westock MCP 已落地**）
 
 按用户授权「直接落地 A」，沙箱内外双跑 `backfill_single_index.py --code sh932000 --name 中证2000 --no-pe`，
 并在发现全源不通后，逐源探测其可达性（详见 §4.3 更正表）。**结论：本机（即生产机）无任何可达且可靠的
@@ -261,3 +263,45 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 - 已删除未提交的探索性脚本 `scripts/backfill/backfill_index_quotes_neodata.py`（其 NeoData 源不可靠，留作 footgun 风险）。
 - 提交：`b4e625e`（7.1 崩溃修复 + 回归测试）、`2de44fc`（§4.3 更正 + §7）已推送 origin/master；
   本次 B1 代理透传 `base.py::resolve_env_proxies` + 本 §7.3 实测更新为新增本地提交（待授权推送）。
+
+---
+
+### 7.5 B / A 终局落地（2026-09-24 晚）：用「已连接连接器」闭环 932000 —— 不再依赖东财 push2his
+
+原 §7.2 结论「本机无可达源、A 无法落地」在**实测所有已连接金融连接器**后被刷新：东财 push2his 依旧 RST，但 **westock-mcp（腾讯自选股）与 mx-ds-mcp（东方财富妙想）可正常返回 932000 时序**，且两源交叉验证一致。鉴于「手写为 932000 专门的数据源/落库代码」有污染风险且不经济，最终采用**「连接器 + DB 缓存兜底 + 每日自动化」**三件套，而非 B2（eastmoney 直连源）代码路径。
+
+#### 7.5.1 已连接连接器 932000 实测（2026-09-24 晚）
+
+| 连接器 | 工具 | 结果 |
+|---|---|---|
+| **westock-mcp** | `data_index`(搜出 `cs932000`) → `data_kline` | ✅ 返回完整日K **~500/600 个交易日**（2024-04-10~2026-09-24），OHLCV 齐全；与东财口径交叉验证一致（volume≈2.95 亿手） |
+| **mx-ds-mcp**（东方财富妙想） | `mx_index_block_finance_data` | ✅ 返回 `932000.CSI` 近 6 日完整数据（9/24 收 3209.63，−1.54%） |
+| tushare | `index_daily` | ❌ 报错 40203 无接口权限 |
+| neodata | `quote_and_kline` | ❌ 返回空；文档明示「中证 .CSI 系列指数暂无技术指标数据」（932000 属 .CSI） |
+| 腾讯 `web.ifzq.gtimg.cn` 直连 | `fqkline` | ❌ `cs932000` 仅返 **1 天**（该指数在腾讯公开 kline 无完整历史；`sh000300` 返 600 天对照） |
+
+→ **westock-mcp 是 932000 在本环境唯一可编程全量源**；mx-ds-mcp 可作交叉校验/补充。
+
+#### 7.5.2 落地三件套（均已实现，待推送）
+
+1. **种子回填脚本 + 数据**：`scripts/backfill/backfill_index_quotes_westock.py` 读取 westock `data_kline` 原始 JSON（`{"ok":true,"data":{"nodes":[...]}}`，收盘字段名 `last`），幂等 upsert 入 `index_quotes`；种子文件 `scripts/backfill/data/cs932000_westock_2026-09-24.json`（500 行，2024-09-03~2026-09-24）。
+   - **运行结果**：`upsert 500 行；sh932000 现有 500 行，区间 2024-09-03 ~ 2026-09-24`；`--verify` 三锚点全 PASS（2026-09-24=3209.63 / 2025-09-18=3139.76 / 2024-09-30=2166.17）。
+2. **DB 缓存兜底（代码，portfolio.py）**：`_fetch_index_quotes` 实时取数失败时，调用新增 `_fallback_index_quote_from_db(code)` 回退到 `index_quotes` 最新一行（带 `_cached=True` 标记；仅当缓存即当日时采信 `change_pct`，否则置 `None`）。**效果：即便东财链继续 RST，主分析 `_fetch_index_quotes` 不再丢弃 932000**，下游模块恒有值。
+   - **集成测试**：模拟全源失败（RST）→ 12 只指数（含 sh932000）全部回退 DB 缓存；sh932000 `price=3209.63, cached=True, date=2026-09-24`；模块 `py_compile` 通过。
+3. **每日自动化（WB automation）**：`748d9a28-0ddd-447d-bc0a-cad17e94200e`「中证2000(932000) 行情每日维护」，`FREQ=DAILY;BYHOUR=21;BYMINUTE=0`，ACTIVE。prompt 指示 LLM agent 用 westock-mcp `data_kline` 取 `cs932000` → 落临时 JSON → 跑本 §7.5.2.1 脚本 `--verify`，并**显式报告失败**（不静默成功）。
+   - 作用：持续刷新 §7.5.2.1 的 DB 缓存，使主分析拿到的 932000 始终是前一交易日收盘（最坏 1 日滞后，由本自动化消除）。
+
+#### 7.5.3 结论与优先级调整
+
+- **A（index_quotes 回填）已落地**，但不是经东财 push2his，而是经 **westock-mcp**（已连接连接器）。原「需异地/代理/VPN」条件不再必要。
+- **B2（eastmoney 直连源）降级为非必需**：westock 已闭环数据需求；B2 仅作为未来「数据源冗余」的可选项，不再阻塞。
+- **B1（出口代理）仍为 ETF 日行情的未解项**：9 只行业 ETF（§1.2）的东财取数仍受 host 级 RST 影响，与 932000 是两回事；ETF 侧仍需 B1 出口或 westock/网易等替代源，另案处理。
+- **NeoData 维持排除**：凭证会话有效 + 行情截断/窗口不确定，仅作会话内 PE 采集（不变）。
+
+#### 7.5.4 待提交清单（新增，待授权推送）
+
+- 新增 `scripts/backfill/backfill_index_quotes_westock.py`
+- 新增 `scripts/backfill/data/cs932000_westock_2026-09-24.json`（种子，500 行）
+- 修改 `src/analysis/portfolio.py`：`_fetch_index_quotes` 加 DB 缓存兜底 + 新增 `_fallback_index_quote_from_db`
+- 新增/更新本报告 §7.5
+- （此前未推送项：`57b52ea` B1 代理透传 `base.py::resolve_env_proxies` 等，一并评估推送）

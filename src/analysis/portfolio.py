@@ -614,6 +614,13 @@ class PortfolioAnalyzer:
         注意 ``get_quote`` 在故障转移（多源）全失败后抛的是 ``DataSourceError``
         （继承 ``Exception``，**非** ``OSError``），故需显式捕获；底层网络异常仍可能
         以 ``OSError`` 形态漏出，一并捕获。
+
+        实时取数失败后**回退 DB 缓存兜底**（2026-09-24 新增，针对中证2000）：
+          中证2000(932000) 既有取数链被 host 级 RST 阻断（东财 push2his 不可达），
+          腾讯 fqkline 仅返 1 天、tushare 无权限、NeoData 无 .CSI 数据。该指数已通过
+          westock MCP 做过全量回填（见 scripts/backfill/backfill_index_quotes_westock.py）。
+          故实时失败时回退到库内最新一行，保证 index_quotes 始终有该基准，避免下游模块读空。
+          回退值带 ``_cached=True`` 标记，change_pct 仅在缓存即当日时采信，否则置 None。
         """
         from src.data_sources.base import DataSourceError
         quotes = {}
@@ -622,8 +629,46 @@ class PortfolioAnalyzer:
                 quote = self.ds_manager.get_quote(code)
                 quotes[code] = quote
             except (DataSourceError, OSError) as e:
-                logger.warning(f"获取指数 {code} 失败，跳过该基准: {e}")
+                logger.warning(f"获取指数 {code} 实时行情失败，尝试回退 DB 缓存: {e}")
+                cached = self._fallback_index_quote_from_db(code)
+                if cached is not None:
+                    quotes[code] = cached
+                    logger.warning(f"指数 {code} 使用 DB 缓存兜底（非实时，日期={cached.get('_cached_date')}）")
+                else:
+                    logger.warning(f"指数 {code} 既无实时也无 DB 缓存，跳过该基准")
         return quotes
+
+    def _fallback_index_quote_from_db(self, code: str) -> Dict[str, Any]:
+        """实时取数失败时的 DB 缓存兜底：取 index_quotes 中该 code 的最新一行。
+
+        返回与 ``get_quote`` 同构的 dict（price/change_pct/volume/amount/name），
+        附加 ``_cached`` 与 ``_cached_date`` 标记供日志/下游识别。取数异常时返回 None。
+        """
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(self.db.db_path))
+            row = conn.execute(
+                "SELECT date, name, close, change_pct, volume, amount "
+                "FROM index_quotes WHERE code=? ORDER BY date DESC LIMIT 1",
+                (code,),
+            ).fetchone()
+            conn.close()
+            if not row:
+                return None
+            d, name, close, change_pct, volume, amount = row
+            is_today = (d == self.today)
+            return {
+                "name": name,
+                "price": close,
+                "change_pct": (change_pct if is_today else None),
+                "volume": volume,
+                "amount": amount,
+                "_cached": True,
+                "_cached_date": d,
+            }
+        except Exception as e:  # 兜底本身不能拖垮主分析
+            logger.warning(f"读取指数 {code} DB 缓存失败: {e}")
+            return None
 
     @staticmethod
     def _pick_number(d: Dict[str, Any], *keys, default=0):
