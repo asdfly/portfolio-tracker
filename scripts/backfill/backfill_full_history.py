@@ -502,12 +502,15 @@ def rebuild_etf_technical(db_path):
 
     conn = get_db_connection(db_path)
     cur = conn.cursor()
+    from config.settings import is_otc_fund, is_delisted
 
     cur.execute("DELETE FROM etf_technical")
     conn.commit()
 
     cur.execute("SELECT DISTINCT code, name FROM portfolio_snapshots ORDER BY code")
-    etfs = cur.fetchall()
+    # 治本：场外基金/已清仓标的不得进入 etf_technical（技术指标表仅覆盖场内 ETF）
+    etfs = [(c, n) for (c, n) in cur.fetchall()
+            if not is_otc_fund(c) and not is_delisted(c)]
 
     total = 0
     for code, name in etfs:

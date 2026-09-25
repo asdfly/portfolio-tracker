@@ -14,6 +14,8 @@ import json
 import time
 import requests as _requests
 
+from config.settings import is_otc_fund, is_delisted
+
 logger = logging.getLogger(__name__)
 
 for _proxy_key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']:
@@ -138,6 +140,10 @@ def fetch_etf_fund_flow(code: str, name: str = '', retries=3, delay=0.8) -> pd.D
 
     返回空 DataFrame 表示失败（调用方按失败计数，不抛异常）。
     """
+    # 治本：场外基金/已清仓标的不得进入 ETF 资金流表（category='etf'）。
+    # 001323/002152 为开放式混合基金，2026-09-25 清理其误标污染并加此拦截。
+    if is_otc_fund(code) or is_delisted(code):
+        return pd.DataFrame()
     market = "sh" if code.startswith('5') or code.startswith('15') or code.startswith('56') or code.startswith('58') else "sz"
     last_err = None
     for attempt in range(retries):
@@ -894,6 +900,8 @@ def fetch_etf_fund_flow_batch(etf_codes: list, date_str: str = None,
                                  large_inflow, large_pct, medium_inflow, medium_pct,
                                  small_inflow, small_pct, category]
     """
+    # 治本：场外基金/已清仓标的不得进入 ETF 资金流表（category='etf'）
+    etf_codes = [c for c in (etf_codes or []) if c and not is_otc_fund(c) and not is_delisted(c)]
     today_str = date_str or _determine_trading_date()
     result = pd.DataFrame()
     try:

@@ -27,7 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from config.settings import DATABASE_PATH  # noqa: E402
+from config.settings import DATABASE_PATH, is_otc_fund, is_delisted  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_JSON = os.path.join(HERE, "data", "data_quality_report.json")
@@ -44,8 +44,9 @@ EM_PRIMARY_TABLES = {
     "index_pe_history": ("stock_zh_index_value_csindex (非EM)", False),
 }
 
-# 已知误标：本应只在基金表，但被混进 ETF 表的个股
-KNOWN_NON_ETF = {"001323", "002152"}  # 慕思股份 / 广电运通（开放式基金，非ETF）
+# 误标污染：任何场外基金(is_otc_fund)或已清仓标的(is_delisted)都不应出现在 ETF 数据表。
+# 不再硬编码具体代码——通用规则覆盖 OTC_FUND_CODES 全集合，作为代码层防御(is_otc_fund
+# 拦截)的回归自检。若仍检出，说明采集入口绕过或未生效。
 
 
 def _q(c, sql, args=()):
@@ -98,11 +99,16 @@ def inspect(c, expect_date):
         # 覆盖代码数（优先 code 列）
         if _col_exists(c, table, "code"):
             info["distinct_codes"] = _q(c, f"SELECT COUNT(DISTINCT code) FROM {table}")[0][0]
-            # 误标污染检测
-            if table in ("etf_fundamental", "etf_top_holdings", "etf_industry_alloc"):
-                bad = _q(c, f"SELECT DISTINCT code FROM {table} WHERE code IN ({','.join('?'*len(KNOWN_NON_ETF))})", tuple(KNOWN_NON_ETF))
+            # 误标污染检测：ETF 数据表不得含场外基金(is_otc_fund)或已清仓标的(is_delisted)
+            if table in ("etf_fundamental", "etf_top_holdings", "etf_industry_alloc",
+                         "etf_technical", "fund_flows"):
+                if table == "fund_flows":
+                    all_codes = [r[0] for r in _q(c, "SELECT DISTINCT code FROM fund_flows WHERE category='etf'")]
+                else:
+                    all_codes = [r[0] for r in _q(c, f"SELECT DISTINCT code FROM {table}")]
+                bad = sorted({cd for cd in all_codes if is_otc_fund(cd) or is_delisted(cd)})
                 if bad:
-                    info["non_etf_contamination"] = [b[0] for b in bad]
+                    info["non_etf_contamination"] = bad
 
         # 日期维度
         date_col = "date" if _col_exists(c, table, "date") else None
@@ -162,7 +168,8 @@ def inspect(c, expect_date):
             report["recommendations"].append(f"{t}: 缺 source 列，无法审计数据来源，建议加 source/is_estimated/confidence。")
         if info.get("non_etf_contamination"):
             report["recommendations"].append(
-                f"{t}: 检测到非ETF个股污染 {info['non_etf_contamination']}，建议在 resolve_target_codes 层剔除。"
+                f"{t}: 检测到非ETF污染(场外基金/已清仓) {info['non_etf_contamination']}，"
+                f"代码层已用 is_otc_fund/is_delisted 拦截，若仍检出说明采集入口绕过或未生效。"
             )
 
     return report

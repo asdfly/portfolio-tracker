@@ -14,6 +14,8 @@ from datetime import datetime
 import pandas as pd
 import sqlite3
 
+from config.settings import is_otc_fund, is_delisted
+
 logger = logging.getLogger(__name__)
 
 
@@ -387,8 +389,15 @@ def run_etf_fundamental_collection(
     if target_date is None:
         target_date = datetime.now().strftime("%Y-%m-%d")
 
-    logger.info(f"[ETF基本面] 开始采集, {len(codes)}只ETF, 日期: {target_date}")
+    # 治本：场外基金（is_otc_fund）与已清仓标的（is_delisted）不得进入 ETF 数据表。
+    # 001323/002152 为开放式混合基金，曾被误当 ETF 拉 F10 写入 etf_fundamental /
+    # etf_industry_alloc / etf_top_holdings，已于 2026-09-25 清理并加此拦截。
+    codes = [c for c in (codes or []) if c and not is_otc_fund(c) and not is_delisted(c)]
+    logger.info(f"[ETF基本面] 开始采集, {len(codes)}只ETF(已排除场外/清仓), 日期: {target_date}")
     stats = {"spot": 0, "industry": 0, "holdings": 0, "valuation": 0, "errors": []}
+    if not codes:
+        logger.warning("[ETF基本面] 过滤后无有效 ETF 标的，跳过采集")
+        return stats
 
     conn = get_db_connection()
     try:
