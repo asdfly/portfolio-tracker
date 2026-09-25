@@ -1,0 +1,199 @@
+{
+  "source": "neodata_mcp",
+  "generated_note": "固化自 neodata fund_allocation(sector) 实测响应",
+  "report_date_tag": "neodata_latest",
+  "etfs": {
+    "510300": {
+      "name": "沪深300ETF华泰柏瑞",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 61.43
+        },
+        {
+          "industry": "金融业",
+          "weight_pct": 16.84
+        },
+        {
+          "industry": "信息传输、软件和信息技术服务业",
+          "weight_pct": 5.14
+        },
+        {
+          "industry": "采矿业",
+          "weight_pct": 4.03
+        },
+        {
+          "industry": "电力、热力、燃气及水生产和供应业",
+          "weight_pct": 2.39
+        },
+        {
+          "industry": "其他",
+          "weight_pct": 6.1
+        }
+      ]
+    },
+    "510500": {
+      "name": "中证500ETF南方",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 71.66
+        },
+        {
+          "industry": "信息传输、软件和信息技术服务业",
+          "weight_pct": 6.18
+        },
+        {
+          "industry": "金融业",
+          "weight_pct": 5.18
+        },
+        {
+          "industry": "采矿业",
+          "weight_pct": 2.91
+        },
+        {
+          "industry": "电力、热力、燃气及水生产和供应业",
+          "weight_pct": 2.29
+        },
+        {
+          "industry": "其他",
+          "weight_pct": 6.91
+        }
+      ]
+    },
+    "512100": {
+      "name": "中证1000ETF南方",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 68.56
+        },
+        {
+          "industry": "信息传输、软件和信息技术服务业",
+          "weight_pct": 9.26
+        },
+        {
+          "industry": "电力、热力、燃气及水生产和供应业",
+          "weight_pct": 2.44
+        },
+        {
+          "industry": "采矿业",
+          "weight_pct": 2.26
+        },
+        {
+          "industry": "金融业",
+          "weight_pct": 2.06
+        },
+        {
+          "industry": "其他",
+          "weight_pct": 10.31
+        }
+      ]
+    },
+    "588000": {
+      "name": "科创50ETF华夏",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 78.43
+        },
+        {
+          "industry": "信息传输、软件和信息技术服务业",
+          "weight_pct": 20.69
+        }
+      ]
+    },
+    "512810": {
+      "name": "军工ETF华宝",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 95.81
+        },
+        {
+          "industry": "信息传输、软件和信息技术服务业",
+          "weight_pct": 3.86
+        },
+        {
+          "industry": "交通运输、仓储和邮政业",
+          "weight_pct": 0.0
+        }
+      ]
+    },
+    "512010": {
+      "name": "医药ETF易方达",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 63.01
+        },
+        {
+          "industry": "科学研究和技术服务业",
+          "weight_pct": 29.2
+        },
+        {
+          "industry": "批发和零售业",
+          "weight_pct": 3.96
+        },
+        {
+          "industry": "卫生和社会工作",
+          "weight_pct": 3.65
+        },
+        {
+          "industry": "电力、热力、燃气及水生产和供应业",
+          "weight_pct": 0.01
+        },
+        {
+          "industry": "其他",
+          "weight_pct": 0.0
+        }
+      ]
+    },
+    "159949": {
+      "name": "创业板50ETF华安",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 87.49
+        },
+        {
+          "industry": "金融业",
+          "weight_pct": 5.79
+        },
+        {
+          "industry": "信息传输、软件和信息技术服务业",
+          "weight_pct": 3.15
+        },
+        {
+          "industry": "批发和零售业",
+          "weight_pct": 1.6
+        },
+        {
+          "industry": "租赁和商务服务业",
+          "weight_pct": 0.78
+        },
+        {
+          "industry": "其他",
+          "weight_pct": 0.83
+        }
+      ]
+    },
+    "159992": {
+      "name": "创新药ETF银华",
+      "industries": [
+        {
+          "industry": "制造业",
+          "weight_pct": 76.34
+        },
+        {
+          "industry": "科学研究和技术服务业",
+          "weight_pct": 20.18
+        },
+        {
+          "industry": "批发和零售业",
+          "weight_pct": 2.55
+        }
+      ]
+    }
+  }
+}

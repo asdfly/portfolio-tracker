@@ -1,0 +1,530 @@
+{
+  "generated_at": "2026-09-25 08:18:59",
+  "price_cross_check": [
+    {
+      "code": "510300",
+      "date": "2026-09-24",
+      "neodata": 4.515,
+      "westock": null,
+      "em_last": 4.608,
+      "em_to_neo_chg_pct": -2.018
+    },
+    {
+      "code": "510300",
+      "date": "2026-09-23",
+      "neodata": 4.59,
+      "westock": null,
+      "em_last": 4.608,
+      "em_to_neo_chg_pct": -0.391
+    },
+    {
+      "code": "510300",
+      "date": "2026-09-22",
+      "neodata": 4.613,
+      "westock": null,
+      "em_last": 4.608,
+      "em_to_neo_chg_pct": 0.109
+    },
+    {
+      "code": "159220",
+      "date": "2026-09-24",
+      "neodata": 0.573,
+      "westock": null,
+      "em_last": 0.573,
+      "em_to_neo_chg_pct": 0.0
+    },
+    {
+      "code": "159220",
+      "date": "2026-09-23",
+      "neodata": 0.57,
+      "westock": null,
+      "em_last": 0.573,
+      "em_to_neo_chg_pct": -0.524
+    },
+    {
+      "code": "159220",
+      "date": "2026-09-22",
+      "neodata": 0.571,
+      "westock": null,
+      "em_last": 0.573,
+      "em_to_neo_chg_pct": -0.349
+    },
+    {
+      "code": "159267",
+      "date": "2026-09-24",
+      "neodata": 0.85,
+      "westock": null,
+      "em_last": 0.884,
+      "em_to_neo_chg_pct": -3.846
+    },
+    {
+      "code": "159267",
+      "date": "2026-09-23",
+      "neodata": 0.864,
+      "westock": null,
+      "em_last": 0.884,
+      "em_to_neo_chg_pct": -2.262
+    },
+    {
+      "code": "159267",
+      "date": "2026-09-22",
+      "neodata": 0.877,
+      "westock": null,
+      "em_last": 0.884,
+      "em_to_neo_chg_pct": -0.792
+    },
+    {
+      "code": "159650",
+      "date": "2026-09-24",
+      "neodata": 108.124,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "159650",
+      "date": "2026-09-23",
+      "neodata": 108.1,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "159650",
+      "date": "2026-09-22",
+      "neodata": 108.11,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "159732",
+      "date": "2026-09-24",
+      "neodata": 1.335,
+      "westock": null,
+      "em_last": 1.377,
+      "em_to_neo_chg_pct": -3.05
+    },
+    {
+      "code": "159732",
+      "date": "2026-09-23",
+      "neodata": 1.382,
+      "westock": null,
+      "em_last": 1.377,
+      "em_to_neo_chg_pct": 0.363
+    },
+    {
+      "code": "159732",
+      "date": "2026-09-22",
+      "neodata": 1.385,
+      "westock": null,
+      "em_last": 1.377,
+      "em_to_neo_chg_pct": 0.581
+    },
+    {
+      "code": "159770",
+      "date": "2026-09-24",
+      "neodata": 0.951,
+      "westock": null,
+      "em_last": 0.968,
+      "em_to_neo_chg_pct": -1.756
+    },
+    {
+      "code": "159770",
+      "date": "2026-09-23",
+      "neodata": 0.962,
+      "westock": null,
+      "em_last": 0.968,
+      "em_to_neo_chg_pct": -0.62
+    },
+    {
+      "code": "159770",
+      "date": "2026-09-22",
+      "neodata": 0.97,
+      "westock": null,
+      "em_last": 0.968,
+      "em_to_neo_chg_pct": 0.207
+    },
+    {
+      "code": "159796",
+      "date": "2026-09-24",
+      "neodata": 0.77,
+      "westock": null,
+      "em_last": 0.791,
+      "em_to_neo_chg_pct": -2.655
+    },
+    {
+      "code": "159796",
+      "date": "2026-09-23",
+      "neodata": 0.786,
+      "westock": null,
+      "em_last": 0.791,
+      "em_to_neo_chg_pct": -0.632
+    },
+    {
+      "code": "159796",
+      "date": "2026-09-22",
+      "neodata": 0.791,
+      "westock": null,
+      "em_last": 0.791,
+      "em_to_neo_chg_pct": 0.0
+    },
+    {
+      "code": "159819",
+      "date": "2026-09-24",
+      "neodata": 1.762,
+      "westock": null,
+      "em_last": 1.78,
+      "em_to_neo_chg_pct": -1.011
+    },
+    {
+      "code": "159819",
+      "date": "2026-09-23",
+      "neodata": 1.795,
+      "westock": null,
+      "em_last": 1.78,
+      "em_to_neo_chg_pct": 0.843
+    },
+    {
+      "code": "159819",
+      "date": "2026-09-22",
+      "neodata": 1.809,
+      "westock": null,
+      "em_last": 1.78,
+      "em_to_neo_chg_pct": 1.629
+    },
+    {
+      "code": "159949",
+      "date": "2026-09-24",
+      "neodata": 1.539,
+      "westock": null,
+      "em_last": 1.591,
+      "em_to_neo_chg_pct": -3.268
+    },
+    {
+      "code": "159949",
+      "date": "2026-09-23",
+      "neodata": 1.58,
+      "westock": null,
+      "em_last": 1.591,
+      "em_to_neo_chg_pct": -0.691
+    },
+    {
+      "code": "159949",
+      "date": "2026-09-22",
+      "neodata": 1.592,
+      "westock": null,
+      "em_last": 1.591,
+      "em_to_neo_chg_pct": 0.063
+    },
+    {
+      "code": "159992",
+      "date": "2026-09-24",
+      "neodata": 0.841,
+      "westock": null,
+      "em_last": 0.869,
+      "em_to_neo_chg_pct": -3.222
+    },
+    {
+      "code": "159992",
+      "date": "2026-09-23",
+      "neodata": 0.87,
+      "westock": null,
+      "em_last": 0.869,
+      "em_to_neo_chg_pct": 0.115
+    },
+    {
+      "code": "159992",
+      "date": "2026-09-22",
+      "neodata": 0.867,
+      "westock": null,
+      "em_last": 0.869,
+      "em_to_neo_chg_pct": -0.23
+    },
+    {
+      "code": "510500",
+      "date": "2026-09-24",
+      "neodata": 7.65,
+      "westock": null,
+      "em_last": 7.872,
+      "em_to_neo_chg_pct": -2.82
+    },
+    {
+      "code": "510500",
+      "date": "2026-09-23",
+      "neodata": 7.818,
+      "westock": null,
+      "em_last": 7.872,
+      "em_to_neo_chg_pct": -0.686
+    },
+    {
+      "code": "510500",
+      "date": "2026-09-22",
+      "neodata": 7.85,
+      "westock": null,
+      "em_last": 7.872,
+      "em_to_neo_chg_pct": -0.279
+    },
+    {
+      "code": "511380",
+      "date": "2026-09-24",
+      "neodata": 13.123,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "511380",
+      "date": "2026-09-23",
+      "neodata": 13.269,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "511380",
+      "date": "2026-09-22",
+      "neodata": 13.332,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "511520",
+      "date": "2026-09-24",
+      "neodata": 118.75,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "511520",
+      "date": "2026-09-23",
+      "neodata": 118.699,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "511520",
+      "date": "2026-09-22",
+      "neodata": 118.696,
+      "westock": null,
+      "em_last": 0.0
+    },
+    {
+      "code": "512010",
+      "date": "2026-09-24",
+      "neodata": 0.375,
+      "westock": null,
+      "em_last": 0.386,
+      "em_to_neo_chg_pct": -2.85
+    },
+    {
+      "code": "512010",
+      "date": "2026-09-23",
+      "neodata": 0.384,
+      "westock": null,
+      "em_last": 0.386,
+      "em_to_neo_chg_pct": -0.518
+    },
+    {
+      "code": "512010",
+      "date": "2026-09-22",
+      "neodata": 0.384,
+      "westock": null,
+      "em_last": 0.386,
+      "em_to_neo_chg_pct": -0.518
+    },
+    {
+      "code": "512100",
+      "date": "2026-09-24",
+      "neodata": 3.079,
+      "westock": null,
+      "em_last": 3.149,
+      "em_to_neo_chg_pct": -2.223
+    },
+    {
+      "code": "512100",
+      "date": "2026-09-23",
+      "neodata": 3.146,
+      "westock": null,
+      "em_last": 3.149,
+      "em_to_neo_chg_pct": -0.095
+    },
+    {
+      "code": "512100",
+      "date": "2026-09-22",
+      "neodata": 3.148,
+      "westock": null,
+      "em_last": 3.149,
+      "em_to_neo_chg_pct": -0.032
+    },
+    {
+      "code": "512810",
+      "date": "2026-09-24",
+      "neodata": 0.656,
+      "westock": null,
+      "em_last": 0.683,
+      "em_to_neo_chg_pct": -3.953
+    },
+    {
+      "code": "512810",
+      "date": "2026-09-23",
+      "neodata": 0.668,
+      "westock": null,
+      "em_last": 0.683,
+      "em_to_neo_chg_pct": -2.196
+    },
+    {
+      "code": "512810",
+      "date": "2026-09-22",
+      "neodata": 0.677,
+      "westock": null,
+      "em_last": 0.683,
+      "em_to_neo_chg_pct": -0.878
+    },
+    {
+      "code": "515010",
+      "date": "2026-09-24",
+      "neodata": 1.204,
+      "westock": null,
+      "em_last": 1.229,
+      "em_to_neo_chg_pct": -2.034
+    },
+    {
+      "code": "515010",
+      "date": "2026-09-23",
+      "neodata": 1.226,
+      "westock": null,
+      "em_last": 1.229,
+      "em_to_neo_chg_pct": -0.244
+    },
+    {
+      "code": "515010",
+      "date": "2026-09-22",
+      "neodata": 1.232,
+      "westock": null,
+      "em_last": 1.229,
+      "em_to_neo_chg_pct": 0.244
+    },
+    {
+      "code": "515120",
+      "date": "2026-09-24",
+      "neodata": 0.63,
+      "westock": null,
+      "em_last": 0.651,
+      "em_to_neo_chg_pct": -3.226
+    },
+    {
+      "code": "515120",
+      "date": "2026-09-23",
+      "neodata": 0.651,
+      "westock": null,
+      "em_last": 0.651,
+      "em_to_neo_chg_pct": 0.0
+    },
+    {
+      "code": "515120",
+      "date": "2026-09-22",
+      "neodata": 0.65,
+      "westock": null,
+      "em_last": 0.651,
+      "em_to_neo_chg_pct": -0.154
+    },
+    {
+      "code": "516160",
+      "date": "2026-09-24",
+      "neodata": 2.265,
+      "westock": null,
+      "em_last": 2.335,
+      "em_to_neo_chg_pct": -2.998
+    },
+    {
+      "code": "516160",
+      "date": "2026-09-23",
+      "neodata": 2.315,
+      "westock": null,
+      "em_last": 2.335,
+      "em_to_neo_chg_pct": -0.857
+    },
+    {
+      "code": "516160",
+      "date": "2026-09-22",
+      "neodata": 2.334,
+      "westock": null,
+      "em_last": 2.335,
+      "em_to_neo_chg_pct": -0.043
+    },
+    {
+      "code": "561910",
+      "date": "2026-09-24",
+      "neodata": 0.659,
+      "westock": null,
+      "em_last": 0.677,
+      "em_to_neo_chg_pct": -2.659
+    },
+    {
+      "code": "561910",
+      "date": "2026-09-23",
+      "neodata": 0.673,
+      "westock": null,
+      "em_last": 0.677,
+      "em_to_neo_chg_pct": -0.591
+    },
+    {
+      "code": "561910",
+      "date": "2026-09-22",
+      "neodata": 0.676,
+      "westock": null,
+      "em_last": 0.677,
+      "em_to_neo_chg_pct": -0.148
+    },
+    {
+      "code": "563020",
+      "date": "2026-09-24",
+      "neodata": 1.164,
+      "westock": null,
+      "em_last": 1.165,
+      "em_to_neo_chg_pct": -0.086
+    },
+    {
+      "code": "563020",
+      "date": "2026-09-23",
+      "neodata": 1.161,
+      "westock": null,
+      "em_last": 1.165,
+      "em_to_neo_chg_pct": -0.343
+    },
+    {
+      "code": "563020",
+      "date": "2026-09-22",
+      "neodata": 1.168,
+      "westock": null,
+      "em_last": 1.165,
+      "em_to_neo_chg_pct": 0.258
+    },
+    {
+      "code": "588000",
+      "date": "2026-09-24",
+      "neodata": 1.713,
+      "westock": null,
+      "em_last": 1.749,
+      "em_to_neo_chg_pct": -2.058
+    },
+    {
+      "code": "588000",
+      "date": "2026-09-23",
+      "neodata": 1.755,
+      "westock": null,
+      "em_last": 1.749,
+      "em_to_neo_chg_pct": 0.343
+    },
+    {
+      "code": "588000",
+      "date": "2026-09-22",
+      "neodata": 1.758,
+      "westock": null,
+      "em_last": 1.749,
+      "em_to_neo_chg_pct": 0.515
+    }
+  ],
+  "em_continuity": [],
+  "summary": {
+    "neodata_rows": 66,
+    "westock_cross_rows": 0,
+    "westock_match_lt_0.5pct": 0
+  }
+}

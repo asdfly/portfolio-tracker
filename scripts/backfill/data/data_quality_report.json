@@ -1,0 +1,124 @@
+{
+  "generated_at": "2026-09-25 08:29:22",
+  "expect_latest_date": "2026-09-24",
+  "tables": {
+    "etf_fundamental": {
+      "exists": true,
+      "rows": 3197,
+      "em_primary_source": "fund_etf_spot_em",
+      "is_em_primary": true,
+      "distinct_codes": 25,
+      "non_etf_contamination": [
+        "001323",
+        "002152"
+      ],
+      "max_date": "2026-09-24",
+      "distinct_dates": 172,
+      "stuck": false,
+      "source_distribution": {
+        "null": 3131,
+        "neodata_mcp": 66
+      }
+    },
+    "etf_top_holdings": {
+      "exists": true,
+      "rows": 380,
+      "em_primary_source": "fund_portfolio_hold_em",
+      "is_em_primary": true,
+      "distinct_codes": 30,
+      "non_etf_contamination": [
+        "001323",
+        "002152"
+      ],
+      "source_distribution": {
+        "null": 300,
+        "neodata_mcp": 80
+      }
+    },
+    "etf_industry_alloc": {
+      "exists": true,
+      "rows": 262,
+      "em_primary_source": "fund_portfolio_industry_allocation_em",
+      "is_em_primary": true,
+      "distinct_codes": 30,
+      "non_etf_contamination": [
+        "001323",
+        "002152"
+      ],
+      "source_distribution": {
+        "null": 257,
+        "neodata_mcp": 5
+      }
+    },
+    "fund_flows": {
+      "exists": true,
+      "rows": 28363,
+      "em_primary_source": "fund_etf_spot_em (资金流字段)",
+      "is_em_primary": true,
+      "distinct_codes": 117,
+      "max_date": "2026-09-24",
+      "distinct_dates": 952,
+      "stuck": false,
+      "source_distribution": {
+        "null": 23090,
+        "ths": 2970,
+        "em_push2his": 1684,
+        "em_spot": 285,
+        "neodata_mcp": 228,
+        "ths_decomp": 90,
+        "kline_est": 13,
+        "ths_agg": 3
+      }
+    },
+    "etf_price_history": {
+      "exists": true,
+      "rows": 31670,
+      "em_primary_source": "fund_etf_hist_em",
+      "is_em_primary": true,
+      "distinct_codes": 23,
+      "max_date": "2026-09-24",
+      "distinct_dates": 2120,
+      "stuck": false,
+      "source_distribution": {
+        "akshare_fund_etf_hist_em": 24529,
+        "akshare_stock_zh_a_hist_tx_qfq": 7058,
+        "westock_mcp": 83
+      }
+    },
+    "index_pe_history": {
+      "exists": true,
+      "rows": 28578,
+      "em_primary_source": "stock_zh_index_value_csindex (非EM)",
+      "is_em_primary": false,
+      "max_date": "2026-09-23",
+      "distinct_dates": 2216,
+      "stuck": true,
+      "days_behind": 1,
+      "source_distribution": {
+        "csindex": 28079,
+        "neodata": 296,
+        "legulegu": 203
+      },
+      "block_reason": "非EM主源滞后（可能良性 T+1，需人工确认）"
+    }
+  },
+  "cross_table": {
+    "latest_date_by_table": {
+      "etf_fundamental": "2026-09-24",
+      "fund_flows": "2026-09-24",
+      "etf_price_history": "2026-09-24",
+      "index_pe_history": "2026-09-23"
+    },
+    "min_latest": "2026-09-23",
+    "max_latest": "2026-09-24",
+    "diverged": true,
+    "divergence_days": 1
+  },
+  "em_blocked_tables": [],
+  "recommendations": [
+    "非EM主源滞后(疑似良性 T+1): index_pe_history，需人工确认是否真缺失。",
+    "etf_fundamental: 检测到非ETF个股污染 ['001323', '002152']，建议在 resolve_target_codes 层剔除。",
+    "etf_top_holdings: 检测到非ETF个股污染 ['001323', '002152']，建议在 resolve_target_codes 层剔除。",
+    "etf_industry_alloc: 检测到非ETF个股污染 ['001323', '002152']，建议在 resolve_target_codes 层剔除。"
+  ]
+}

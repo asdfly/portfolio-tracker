@@ -1,0 +1,776 @@
+{
+  "source": "neodata_mcp",
+  "generated_note": "固化自 neodata fund_quote 日K 实测响应",
+  "etfs": {
+    "510300": {
+      "name": "沪深300ETF华泰柏瑞",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 4.515,
+          "open": 4.578,
+          "high": 4.579,
+          "low": 4.512,
+          "volume": 710251900.0,
+          "amount": 3220888135.0,
+          "turnover_rate": 2.97
+        },
+        {
+          "date": "2026-09-23",
+          "price": 4.59,
+          "open": 4.62,
+          "high": 4.621,
+          "low": 4.586,
+          "volume": 636457500.0,
+          "amount": 2928541597.0,
+          "turnover_rate": 2.65
+        },
+        {
+          "date": "2026-09-22",
+          "price": 4.613,
+          "open": 4.636,
+          "high": 4.658,
+          "low": 4.612,
+          "volume": 644587400.0,
+          "amount": 2987237086.0,
+          "turnover_rate": 2.72
+        }
+      ]
+    },
+    "159220": {
+      "name": "港股通红利低波ETF华宝",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.573,
+          "open": 0.57,
+          "high": 0.573,
+          "low": 0.568,
+          "volume": 17825000.0,
+          "amount": 10182792.0,
+          "turnover_rate": 4.25
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.57,
+          "open": 0.57,
+          "high": 0.573,
+          "low": 0.568,
+          "volume": 22135200.0,
+          "amount": 12631977.0,
+          "turnover_rate": 5.25
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.571,
+          "open": 0.574,
+          "high": 0.575,
+          "low": 0.568,
+          "volume": 15709000.0,
+          "amount": 8952407.0,
+          "turnover_rate": 3.73
+        }
+      ]
+    },
+    "159267": {
+      "name": "航天ETF华安",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.85,
+          "open": 0.86,
+          "high": 0.865,
+          "low": 0.847,
+          "volume": 106646300.0,
+          "amount": 91150499.0,
+          "turnover_rate": 4.3
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.864,
+          "open": 0.875,
+          "high": 0.876,
+          "low": 0.86,
+          "volume": 87197300.0,
+          "amount": 75452489.0,
+          "turnover_rate": 3.52
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.877,
+          "open": 0.887,
+          "high": 0.889,
+          "low": 0.872,
+          "volume": 96424000.0,
+          "amount": 84558319.0,
+          "turnover_rate": 3.91
+        }
+      ]
+    },
+    "159650": {
+      "name": "国开债ETF博时",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 108.124,
+          "open": 108.113,
+          "high": 108.13,
+          "low": 108.11,
+          "volume": 2960000.0,
+          "amount": 320039369.0,
+          "turnover_rate": 5.88
+        },
+        {
+          "date": "2026-09-23",
+          "price": 108.1,
+          "open": 108.15,
+          "high": 108.15,
+          "low": 108.098,
+          "volume": 379300.0,
+          "amount": 41003881.0,
+          "turnover_rate": 0.75
+        },
+        {
+          "date": "2026-09-22",
+          "price": 108.11,
+          "open": 108.11,
+          "high": 108.11,
+          "low": 108.103,
+          "volume": 1018900.0,
+          "amount": 110149307.0,
+          "turnover_rate": 2.05
+        }
+      ]
+    },
+    "159732": {
+      "name": "消费电子ETF华夏",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 1.335,
+          "open": 1.367,
+          "high": 1.37,
+          "low": 1.335,
+          "volume": 163103800.0,
+          "amount": 220198672.0,
+          "turnover_rate": 7.03
+        },
+        {
+          "date": "2026-09-23",
+          "price": 1.382,
+          "open": 1.389,
+          "high": 1.399,
+          "low": 1.376,
+          "volume": 179196900.0,
+          "amount": 248085290.0,
+          "turnover_rate": 7.68
+        },
+        {
+          "date": "2026-09-22",
+          "price": 1.385,
+          "open": 1.393,
+          "high": 1.414,
+          "low": 1.379,
+          "volume": 204870200.0,
+          "amount": 286677572.0,
+          "turnover_rate": 8.83
+        }
+      ]
+    },
+    "159770": {
+      "name": "机器人ETF天弘",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.951,
+          "open": 0.961,
+          "high": 0.971,
+          "low": 0.951,
+          "volume": 78834400.0,
+          "amount": 75721481.0,
+          "turnover_rate": 1.3
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.962,
+          "open": 0.97,
+          "high": 0.971,
+          "low": 0.96,
+          "volume": 60486400.0,
+          "amount": 58329519.0,
+          "turnover_rate": 1.0
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.97,
+          "open": 0.975,
+          "high": 0.983,
+          "low": 0.966,
+          "volume": 90785500.0,
+          "amount": 88535628.0,
+          "turnover_rate": 1.5
+        }
+      ]
+    },
+    "159796": {
+      "name": "电池ETF汇添富",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.77,
+          "open": 0.783,
+          "high": 0.786,
+          "low": 0.769,
+          "volume": 252271000.0,
+          "amount": 195444632.0,
+          "turnover_rate": 4.27
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.786,
+          "open": 0.79,
+          "high": 0.79,
+          "low": 0.783,
+          "volume": 217948700.0,
+          "amount": 171321202.0,
+          "turnover_rate": 3.63
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.791,
+          "open": 0.792,
+          "high": 0.801,
+          "low": 0.788,
+          "volume": 281485000.0,
+          "amount": 223543856.0,
+          "turnover_rate": 4.72
+        }
+      ]
+    },
+    "159819": {
+      "name": "人工智能ETF易方达",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 1.762,
+          "open": 1.786,
+          "high": 1.793,
+          "low": 1.76,
+          "volume": 158139600.0,
+          "amount": 281137756.0,
+          "turnover_rate": 1.33
+        },
+        {
+          "date": "2026-09-23",
+          "price": 1.795,
+          "open": 1.812,
+          "high": 1.816,
+          "low": 1.793,
+          "volume": 162663700.0,
+          "amount": 292934634.0,
+          "turnover_rate": 1.37
+        },
+        {
+          "date": "2026-09-22",
+          "price": 1.809,
+          "open": 1.83,
+          "high": 1.845,
+          "low": 1.802,
+          "volume": 297132600.0,
+          "amount": 542356058.0,
+          "turnover_rate": 2.48
+        }
+      ]
+    },
+    "159949": {
+      "name": "创业板50ETF华安",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 1.539,
+          "open": 1.572,
+          "high": 1.576,
+          "low": 1.536,
+          "volume": 822489800.0,
+          "amount": 1277911604.0,
+          "turnover_rate": 5.22
+        },
+        {
+          "date": "2026-09-23",
+          "price": 1.58,
+          "open": 1.594,
+          "high": 1.6,
+          "low": 1.577,
+          "volume": 586390900.0,
+          "amount": 928890501.0,
+          "turnover_rate": 3.72
+        },
+        {
+          "date": "2026-09-22",
+          "price": 1.592,
+          "open": 1.614,
+          "high": 1.63,
+          "low": 1.585,
+          "volume": 970572700.0,
+          "amount": 1562490528.0,
+          "turnover_rate": 6.12
+        }
+      ]
+    },
+    "159992": {
+      "name": "创新药ETF银华",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.841,
+          "open": 0.863,
+          "high": 0.869,
+          "low": 0.84,
+          "volume": 857086900.0,
+          "amount": 728922252.0,
+          "turnover_rate": 4.51
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.87,
+          "open": 0.867,
+          "high": 0.878,
+          "low": 0.864,
+          "volume": 587135200.0,
+          "amount": 511624356.0,
+          "turnover_rate": 3.07
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.867,
+          "open": 0.867,
+          "high": 0.879,
+          "low": 0.86,
+          "volume": 795125600.0,
+          "amount": 689723558.0,
+          "turnover_rate": 4.15
+        }
+      ]
+    },
+    "510500": {
+      "name": "中证500ETF南方",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 7.65,
+          "open": 7.797,
+          "high": 7.807,
+          "low": 7.65,
+          "volume": 409361400.0,
+          "amount": 3155163193.0,
+          "turnover_rate": 7.46
+        },
+        {
+          "date": "2026-09-23",
+          "price": 7.818,
+          "open": 7.866,
+          "high": 7.875,
+          "low": 7.809,
+          "volume": 332707400.0,
+          "amount": 2607706388.0,
+          "turnover_rate": 5.77
+        },
+        {
+          "date": "2026-09-22",
+          "price": 7.85,
+          "open": 7.936,
+          "high": 7.96,
+          "low": 7.843,
+          "volume": 329170500.0,
+          "amount": 2601280160.0,
+          "turnover_rate": 5.76
+        }
+      ]
+    },
+    "511380": {
+      "name": "可转债ETF博时",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 13.123,
+          "open": 13.249,
+          "high": 13.272,
+          "low": 13.119,
+          "volume": 404957200.0,
+          "amount": 5332090199.0,
+          "turnover_rate": 8.74
+        },
+        {
+          "date": "2026-09-23",
+          "price": 13.269,
+          "open": 13.351,
+          "high": 13.352,
+          "low": 13.262,
+          "volume": 350984400.0,
+          "amount": 4670031066.0,
+          "turnover_rate": 7.58
+        },
+        {
+          "date": "2026-09-22",
+          "price": 13.332,
+          "open": 13.446,
+          "high": 13.469,
+          "low": 13.31,
+          "volume": 380685500.0,
+          "amount": 5098371216.0,
+          "turnover_rate": 8.19
+        }
+      ]
+    },
+    "511520": {
+      "name": "政金债ETF富国",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 118.75,
+          "open": 118.745,
+          "high": 118.78,
+          "low": 118.728,
+          "volume": 21437900.0,
+          "amount": 2545745729.0,
+          "turnover_rate": 5.32
+        },
+        {
+          "date": "2026-09-23",
+          "price": 118.699,
+          "open": 118.706,
+          "high": 118.726,
+          "low": 118.681,
+          "volume": 11276400.0,
+          "amount": 1338546354.0,
+          "turnover_rate": 2.8
+        },
+        {
+          "date": "2026-09-22",
+          "price": 118.696,
+          "open": 118.652,
+          "high": 118.727,
+          "low": 118.652,
+          "volume": 12841300.0,
+          "amount": 1523993784.0,
+          "turnover_rate": 3.19
+        }
+      ]
+    },
+    "512010": {
+      "name": "医药ETF易方达",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.375,
+          "open": 0.383,
+          "high": 0.384,
+          "low": 0.375,
+          "volume": 1055009700.0,
+          "amount": 398673646.0,
+          "turnover_rate": 2.69
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.384,
+          "open": 0.385,
+          "high": 0.388,
+          "low": 0.383,
+          "volume": 663692400.0,
+          "amount": 255228987.0,
+          "turnover_rate": 1.69
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.384,
+          "open": 0.386,
+          "high": 0.389,
+          "low": 0.383,
+          "volume": 835708600.0,
+          "amount": 321693492.0,
+          "turnover_rate": 2.13
+        }
+      ]
+    },
+    "512100": {
+      "name": "中证1000ETF南方",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 3.079,
+          "open": 3.131,
+          "high": 3.144,
+          "low": 3.073,
+          "volume": 784393000.0,
+          "amount": 2433624358.0,
+          "turnover_rate": 12.16
+        },
+        {
+          "date": "2026-09-23",
+          "price": 3.146,
+          "open": 3.159,
+          "high": 3.161,
+          "low": 3.142,
+          "volume": 677720800.0,
+          "amount": 2134483459.0,
+          "turnover_rate": 10.47
+        },
+        {
+          "date": "2026-09-22",
+          "price": 3.148,
+          "open": 3.18,
+          "high": 3.193,
+          "low": 3.143,
+          "volume": 763759900.0,
+          "amount": 2419287473.0,
+          "turnover_rate": 11.68
+        }
+      ]
+    },
+    "512810": {
+      "name": "军工ETF华宝",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.656,
+          "open": 0.668,
+          "high": 0.669,
+          "low": 0.656,
+          "volume": 36797700.0,
+          "amount": 24297043.0,
+          "turnover_rate": 3.83
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.668,
+          "open": 0.678,
+          "high": 0.679,
+          "low": 0.667,
+          "volume": 25855300.0,
+          "amount": 17312146.0,
+          "turnover_rate": 2.69
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.677,
+          "open": 0.684,
+          "high": 0.688,
+          "low": 0.675,
+          "volume": 42205000.0,
+          "amount": 28683515.0,
+          "turnover_rate": 4.41
+        }
+      ]
+    },
+    "515010": {
+      "name": "证券ETF华夏",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 1.204,
+          "open": 1.226,
+          "high": 1.231,
+          "low": 1.201,
+          "volume": 31788300.0,
+          "amount": 38425106.0,
+          "turnover_rate": 1.52
+        },
+        {
+          "date": "2026-09-23",
+          "price": 1.226,
+          "open": 1.232,
+          "high": 1.235,
+          "low": 1.224,
+          "volume": 22345100.0,
+          "amount": 27448462.0,
+          "turnover_rate": 1.07
+        },
+        {
+          "date": "2026-09-22",
+          "price": 1.232,
+          "open": 1.232,
+          "high": 1.241,
+          "low": 1.23,
+          "volume": 39769100.0,
+          "amount": 49073942.0,
+          "turnover_rate": 1.91
+        }
+      ]
+    },
+    "515120": {
+      "name": "创新药ETF广发",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.63,
+          "open": 0.647,
+          "high": 0.651,
+          "low": 0.629,
+          "volume": 715120100.0,
+          "amount": 455532363.0,
+          "turnover_rate": 4.21
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.651,
+          "open": 0.65,
+          "high": 0.658,
+          "low": 0.647,
+          "volume": 599483900.0,
+          "amount": 391207773.0,
+          "turnover_rate": 3.56
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.65,
+          "open": 0.653,
+          "high": 0.659,
+          "low": 0.644,
+          "volume": 651110800.0,
+          "amount": 423322364.0,
+          "turnover_rate": 3.85
+        }
+      ]
+    },
+    "516160": {
+      "name": "新能源ETF南方",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 2.265,
+          "open": 2.309,
+          "high": 2.311,
+          "low": 2.264,
+          "volume": 46850000.0,
+          "amount": 106909675.0,
+          "turnover_rate": 3.0
+        },
+        {
+          "date": "2026-09-23",
+          "price": 2.315,
+          "open": 2.334,
+          "high": 2.334,
+          "low": 2.311,
+          "volume": 38368600.0,
+          "amount": 88945286.0,
+          "turnover_rate": 2.46
+        },
+        {
+          "date": "2026-09-22",
+          "price": 2.334,
+          "open": 2.343,
+          "high": 2.361,
+          "low": 2.329,
+          "volume": 76054200.0,
+          "amount": 178505132.0,
+          "turnover_rate": 4.86
+        }
+      ]
+    },
+    "561910": {
+      "name": "电池ETF招商",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 0.659,
+          "open": 0.67,
+          "high": 0.672,
+          "low": 0.658,
+          "volume": 142123600.0,
+          "amount": 94069855.0,
+          "turnover_rate": 2.99
+        },
+        {
+          "date": "2026-09-23",
+          "price": 0.673,
+          "open": 0.675,
+          "high": 0.677,
+          "low": 0.67,
+          "volume": 76643000.0,
+          "amount": 51552067.0,
+          "turnover_rate": 1.6
+        },
+        {
+          "date": "2026-09-22",
+          "price": 0.676,
+          "open": 0.678,
+          "high": 0.685,
+          "low": 0.675,
+          "volume": 106370200.0,
+          "amount": 72350289.0,
+          "turnover_rate": 2.22
+        }
+      ]
+    },
+    "563020": {
+      "name": "红利低波ETF易方达",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 1.164,
+          "open": 1.161,
+          "high": 1.167,
+          "low": 1.159,
+          "volume": 192316000.0,
+          "amount": 223886438.0,
+          "turnover_rate": 1.83
+        },
+        {
+          "date": "2026-09-23",
+          "price": 1.161,
+          "open": 1.165,
+          "high": 1.166,
+          "low": 1.159,
+          "volume": 164877600.0,
+          "amount": 191466172.0,
+          "turnover_rate": 1.58
+        },
+        {
+          "date": "2026-09-22",
+          "price": 1.168,
+          "open": 1.16,
+          "high": 1.168,
+          "low": 1.159,
+          "volume": 190757500.0,
+          "amount": 221971965.0,
+          "turnover_rate": 1.83
+        }
+      ]
+    },
+    "588000": {
+      "name": "科创50ETF华夏",
+      "records": [
+        {
+          "date": "2026-09-24",
+          "price": 1.713,
+          "open": 1.745,
+          "high": 1.747,
+          "low": 1.712,
+          "volume": 3133943100.0,
+          "amount": 5420006463.0,
+          "turnover_rate": 5.69
+        },
+        {
+          "date": "2026-09-23",
+          "price": 1.755,
+          "open": 1.764,
+          "high": 1.77,
+          "low": 1.749,
+          "volume": 2480424800.0,
+          "amount": 4361901809.0,
+          "turnover_rate": 4.57
+        },
+        {
+          "date": "2026-09-22",
+          "price": 1.758,
+          "open": 1.79,
+          "high": 1.802,
+          "low": 1.748,
+          "volume": 4449571300.0,
+          "amount": 7922340749.0,
+          "turnover_rate": 8.18
+        }
+      ]
+    }
+  }
+}

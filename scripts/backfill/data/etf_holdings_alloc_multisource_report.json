@@ -1,0 +1,1356 @@
+{
+  "generated_at": "2026-09-25 08:28:45",
+  "holdings_cross": [
+    {
+      "code": "510300",
+      "stock_code": "300308",
+      "stock_name": "中际旭创",
+      "neodata": 4.75,
+      "em": 2.55,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 2.2,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "300750",
+      "stock_name": "宁德时代",
+      "neodata": 3.55,
+      "em": 4.27,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.72,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "300502",
+      "stock_name": "新易盛",
+      "neodata": 2.89,
+      "em": 1.77,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 1.12,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "600519",
+      "stock_name": "贵州茅台",
+      "neodata": 2.52,
+      "em": 3.65,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -1.13,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "603986",
+      "stock_name": "兆易创新",
+      "neodata": 1.86,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510300",
+      "stock_code": "688256",
+      "stock_name": "寒武纪",
+      "neodata": 1.8,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510300",
+      "stock_code": "601318",
+      "stock_name": "中国平安",
+      "neodata": 1.73,
+      "em": 2.44,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.71,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "600036",
+      "stock_name": "招商银行",
+      "neodata": 1.49,
+      "em": 1.96,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.47,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "601899",
+      "stock_name": "紫金矿业",
+      "neodata": 1.41,
+      "em": 2.17,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.76,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "000333",
+      "stock_name": "美的集团",
+      "neodata": 1.25,
+      "em": 1.51,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.26,
+      "class": "基本持平"
+    },
+    {
+      "code": "510500",
+      "stock_code": "688498",
+      "stock_name": "XD源杰科",
+      "neodata": 1.59,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "stock_code": "300604",
+      "stock_name": "长川科技",
+      "neodata": 1.27,
+      "em": 0.55,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.72,
+      "class": "基本持平"
+    },
+    {
+      "code": "510500",
+      "stock_code": "001309",
+      "stock_name": "德明利",
+      "neodata": 1.25,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "stock_code": "688347",
+      "stock_name": "华虹宏力",
+      "neodata": 1.14,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "stock_code": "688120",
+      "stock_name": "华海清科",
+      "neodata": 1.05,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "stock_code": "002281",
+      "stock_name": "光迅科技",
+      "neodata": 1.04,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "stock_code": "002008",
+      "stock_name": "大族激光",
+      "neodata": 1.04,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "stock_code": "300857",
+      "stock_name": "协创数据",
+      "neodata": 0.98,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "stock_code": "300136",
+      "stock_name": "信维通信",
+      "neodata": 0.97,
+      "em": 0.63,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.34,
+      "class": "基本持平"
+    },
+    {
+      "code": "510500",
+      "stock_code": "688361",
+      "stock_name": "中科飞测",
+      "neodata": 0.91,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "688766",
+      "stock_name": "普冉股份",
+      "neodata": 0.81,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "000636",
+      "stock_name": "风华高科",
+      "neodata": 0.72,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "603083",
+      "stock_name": "剑桥科技",
+      "neodata": 0.68,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "688110",
+      "stock_name": "东芯股份",
+      "neodata": 0.62,
+      "em": 0.39,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.23,
+      "class": "基本持平"
+    },
+    {
+      "code": "512100",
+      "stock_code": "002484",
+      "stock_name": "江海股份",
+      "neodata": 0.62,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "002428",
+      "stock_name": "云南锗业",
+      "neodata": 0.61,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "688627",
+      "stock_name": "精智达",
+      "neodata": 0.55,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "601208",
+      "stock_name": "东材科技",
+      "neodata": 0.55,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "688409",
+      "stock_name": "富创精密",
+      "neodata": 0.53,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "stock_code": "688630",
+      "stock_name": "芯碁微装",
+      "neodata": 0.52,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "588000",
+      "stock_code": "688256",
+      "stock_name": "寒武纪",
+      "neodata": 9.3,
+      "em": 9.36,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.06,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688008",
+      "stock_name": "澜起科技",
+      "neodata": 8.13,
+      "em": 6.48,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 1.65,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688012",
+      "stock_name": "中微公司",
+      "neodata": 8.0,
+      "em": 6.04,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 1.96,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688041",
+      "stock_name": "海光信息",
+      "neodata": 7.89,
+      "em": 8.83,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.94,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688981",
+      "stock_name": "中芯国际",
+      "neodata": 7.41,
+      "em": 8.49,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -1.08,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688498",
+      "stock_name": "XD源杰科",
+      "neodata": 4.94,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "588000",
+      "stock_code": "688525",
+      "stock_name": "佰维存储",
+      "neodata": 4.83,
+      "em": 3.44,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 1.39,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688521",
+      "stock_name": "芯原股份",
+      "neodata": 4.06,
+      "em": 3.69,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.37,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688072",
+      "stock_name": "拓荆科技",
+      "neodata": 4.03,
+      "em": 3.15,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.88,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688347",
+      "stock_name": "华虹宏力",
+      "neodata": 3.62,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512810",
+      "stock_code": "600150",
+      "stock_name": "中国船舶",
+      "neodata": 9.13,
+      "em": 8.42,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.71,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "002179",
+      "stock_name": "中航光电",
+      "neodata": 3.61,
+      "em": 2.69,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.92,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "688002",
+      "stock_name": "睿创微纳",
+      "neodata": 3.59,
+      "em": 2.33,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 1.26,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "300395",
+      "stock_name": "菲利华",
+      "neodata": 3.48,
+      "em": 2.39,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 1.09,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "600879",
+      "stock_name": "航天电子",
+      "neodata": 3.46,
+      "em": 3.67,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.21,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "002625",
+      "stock_name": "光启技术",
+      "neodata": 3.22,
+      "em": 3.62,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.4,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "600893",
+      "stock_name": "航发动力",
+      "neodata": 3.15,
+      "em": 4.0,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.85,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "600118",
+      "stock_name": "中国卫星",
+      "neodata": 2.99,
+      "em": 3.03,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.04,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "600760",
+      "stock_name": "中航沈飞",
+      "neodata": 2.87,
+      "em": 2.61,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.26,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "stock_code": "601698",
+      "stock_name": "中国卫通",
+      "neodata": 2.36,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "512010",
+      "stock_code": "603259",
+      "stock_name": "药明康德",
+      "neodata": 29.2,
+      "em": 19.85,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 9.35,
+      "class": "时效漂移"
+    },
+    {
+      "code": "512010",
+      "stock_code": "600276",
+      "stock_name": "恒瑞医药",
+      "neodata": 22.02,
+      "em": 20.17,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 1.85,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "300760",
+      "stock_name": "迈瑞医疗",
+      "neodata": 7.81,
+      "em": 8.16,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.35,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "688271",
+      "stock_name": "联影医疗",
+      "neodata": 4.72,
+      "em": 4.52,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.2,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "002001",
+      "stock_name": "新 和 成",
+      "neodata": 4.14,
+      "em": 4.34,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.2,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "002422",
+      "stock_name": "科伦药业",
+      "neodata": 4.06,
+      "em": 3.18,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.88,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "000538",
+      "stock_name": "云南白药",
+      "neodata": 4.01,
+      "em": 4.0,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.01,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "300015",
+      "stock_name": "爱尔眼科",
+      "neodata": 3.65,
+      "em": 3.63,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.02,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "600436",
+      "stock_name": "片仔癀",
+      "neodata": 3.12,
+      "em": 3.73,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.61,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "stock_code": "600196",
+      "stock_name": "复星医药",
+      "neodata": 2.7,
+      "em": 2.77,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.07,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300308",
+      "stock_name": "中际旭创",
+      "neodata": 17.47,
+      "em": 11.22,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 6.25,
+      "class": "时效漂移"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300750",
+      "stock_name": "宁德时代",
+      "neodata": 16.29,
+      "em": 23.77,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -7.48,
+      "class": "时效漂移"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300502",
+      "stock_name": "新易盛",
+      "neodata": 12.02,
+      "em": 9.09,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 2.93,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300059",
+      "stock_name": "东方财富",
+      "neodata": 4.15,
+      "em": 5.61,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -1.46,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300274",
+      "stock_name": "阳光电源",
+      "neodata": 3.73,
+      "em": 5.16,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -1.43,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300476",
+      "stock_name": "胜宏科技",
+      "neodata": 3.36,
+      "em": 3.53,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.17,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300408",
+      "stock_name": "三环集团",
+      "neodata": 3.31,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "159949",
+      "stock_code": "300394",
+      "stock_name": "天孚通信",
+      "neodata": 3.0,
+      "em": 3.06,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.06,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "stock_code": "301308",
+      "stock_name": "江波龙",
+      "neodata": 2.61,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "159949",
+      "stock_code": "300604",
+      "stock_name": "长川科技",
+      "neodata": 2.45,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "159992",
+      "stock_code": "603259",
+      "stock_name": "药明康德",
+      "neodata": 11.32,
+      "em": 11.5,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.18,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "stock_code": "600276",
+      "stock_name": "恒瑞医药",
+      "neodata": 9.89,
+      "em": 9.42,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.47,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "stock_code": "002422",
+      "stock_name": "科伦药业",
+      "neodata": 4.42,
+      "em": 3.87,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.55,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "stock_code": "002821",
+      "stock_name": "凯莱英",
+      "neodata": 3.32,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "159992",
+      "stock_code": "300759",
+      "stock_name": "康龙化成",
+      "neodata": 3.09,
+      "em": 2.87,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.22,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "stock_code": "688578",
+      "stock_name": "艾力斯",
+      "neodata": 3.08,
+      "em": 2.75,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": 0.33,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "stock_code": "688235",
+      "stock_name": "百济神州",
+      "neodata": 3.02,
+      "em": null,
+      "em_quarter": null,
+      "class": "新增持仓(EM无, neodata最新)",
+      "delta": null
+    },
+    {
+      "code": "159992",
+      "stock_code": "600196",
+      "stock_name": "复星医药",
+      "neodata": 2.96,
+      "em": 3.37,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.41,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "stock_code": "300347",
+      "stock_name": "泰格医药",
+      "neodata": 2.57,
+      "em": 2.83,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.26,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "stock_code": "000963",
+      "stock_name": "华东医药",
+      "neodata": 2.55,
+      "em": 3.03,
+      "em_quarter": "2026年1季度股票投资明细",
+      "delta": -0.48,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "stock_code": "601166",
+      "neodata": null,
+      "em": 1.28,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510300",
+      "stock_code": "600900",
+      "neodata": null,
+      "em": 1.33,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "600549",
+      "neodata": null,
+      "em": 0.62,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "002353",
+      "neodata": null,
+      "em": 0.6,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "688525",
+      "neodata": null,
+      "em": 0.69,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "600988",
+      "neodata": null,
+      "em": 0.73,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "000426",
+      "neodata": null,
+      "em": 0.57,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "600487",
+      "neodata": null,
+      "em": 1.05,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "002202",
+      "neodata": null,
+      "em": 0.64,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "600879",
+      "neodata": null,
+      "em": 0.59,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "300666",
+      "neodata": null,
+      "em": 0.34,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "300548",
+      "neodata": null,
+      "em": 0.41,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "300475",
+      "neodata": null,
+      "em": 0.48,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "601869",
+      "neodata": null,
+      "em": 0.43,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "002456",
+      "neodata": null,
+      "em": 0.33,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "603308",
+      "neodata": null,
+      "em": 0.33,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "001309",
+      "neodata": null,
+      "em": 0.59,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "600105",
+      "neodata": null,
+      "em": 0.37,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "688498",
+      "neodata": null,
+      "em": 0.7,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688271",
+      "neodata": null,
+      "em": 2.79,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "588000",
+      "stock_code": "688111",
+      "neodata": null,
+      "em": 2.73,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512810",
+      "stock_code": "000547",
+      "neodata": null,
+      "em": 2.28,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300760",
+      "neodata": null,
+      "em": 2.31,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300124",
+      "neodata": null,
+      "em": 3.04,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "159949",
+      "stock_code": "300014",
+      "neodata": null,
+      "em": 1.9,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "159992",
+      "stock_code": "000661",
+      "neodata": null,
+      "em": 2.82,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "159992",
+      "stock_code": "002294",
+      "neodata": null,
+      "em": 3.41,
+      "class": "退出持仓(EM有, neodata无)"
+    }
+  ],
+  "alloc_cross": [
+    {
+      "code": "510300",
+      "industry": "制造业",
+      "neodata": 61.43,
+      "em": 55.21,
+      "em_report_date": "2026-03-31",
+      "delta": 6.22,
+      "class": "时效漂移"
+    },
+    {
+      "code": "510300",
+      "industry": "金融业",
+      "neodata": 16.84,
+      "em": 20.98,
+      "em_report_date": "2026-03-31",
+      "delta": -4.14,
+      "class": "时效漂移"
+    },
+    {
+      "code": "510300",
+      "industry": "信息传输、软件和信息技术服务业",
+      "neodata": 5.14,
+      "em": 4.13,
+      "em_report_date": "2026-03-31",
+      "delta": 1.01,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "industry": "采矿业",
+      "neodata": 4.03,
+      "em": 6.27,
+      "em_report_date": "2026-03-31",
+      "delta": -2.24,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "industry": "电力、热力、燃气及水生产和供应业",
+      "neodata": 2.39,
+      "em": 2.97,
+      "em_report_date": "2026-03-31",
+      "delta": -0.58,
+      "class": "基本持平"
+    },
+    {
+      "code": "510300",
+      "industry": "其他",
+      "neodata": 6.1,
+      "em": null,
+      "em_report_date": null,
+      "class": "主源缺失(neodata补写)",
+      "delta": null
+    },
+    {
+      "code": "510500",
+      "industry": "制造业",
+      "neodata": 71.66,
+      "em": 66.21,
+      "em_report_date": "2026-03-31",
+      "delta": 5.45,
+      "class": "时效漂移"
+    },
+    {
+      "code": "510500",
+      "industry": "信息传输、软件和信息技术服务业",
+      "neodata": 6.18,
+      "em": 7.61,
+      "em_report_date": "2026-03-31",
+      "delta": -1.43,
+      "class": "基本持平"
+    },
+    {
+      "code": "510500",
+      "industry": "金融业",
+      "neodata": 5.18,
+      "em": 6.47,
+      "em_report_date": "2026-03-31",
+      "delta": -1.29,
+      "class": "基本持平"
+    },
+    {
+      "code": "510500",
+      "industry": "采矿业",
+      "neodata": 2.91,
+      "em": 4.4,
+      "em_report_date": "2026-03-31",
+      "delta": -1.49,
+      "class": "基本持平"
+    },
+    {
+      "code": "510500",
+      "industry": "电力、热力、燃气及水生产和供应业",
+      "neodata": 2.29,
+      "em": 3.02,
+      "em_report_date": "2026-03-31",
+      "delta": -0.73,
+      "class": "基本持平"
+    },
+    {
+      "code": "510500",
+      "industry": "其他",
+      "neodata": 6.91,
+      "em": null,
+      "em_report_date": null,
+      "class": "主源缺失(neodata补写)",
+      "delta": null
+    },
+    {
+      "code": "512100",
+      "industry": "制造业",
+      "neodata": 68.56,
+      "em": 65.17,
+      "em_report_date": "2026-03-31",
+      "delta": 3.39,
+      "class": "时效漂移"
+    },
+    {
+      "code": "512100",
+      "industry": "信息传输、软件和信息技术服务业",
+      "neodata": 9.26,
+      "em": 10.44,
+      "em_report_date": "2026-03-31",
+      "delta": -1.18,
+      "class": "基本持平"
+    },
+    {
+      "code": "512100",
+      "industry": "电力、热力、燃气及水生产和供应业",
+      "neodata": 2.44,
+      "em": 2.79,
+      "em_report_date": "2026-03-31",
+      "delta": -0.35,
+      "class": "基本持平"
+    },
+    {
+      "code": "512100",
+      "industry": "采矿业",
+      "neodata": 2.26,
+      "em": 3.02,
+      "em_report_date": "2026-03-31",
+      "delta": -0.76,
+      "class": "基本持平"
+    },
+    {
+      "code": "512100",
+      "industry": "金融业",
+      "neodata": 2.06,
+      "em": 2.42,
+      "em_report_date": "2026-03-31",
+      "delta": -0.36,
+      "class": "基本持平"
+    },
+    {
+      "code": "512100",
+      "industry": "其他",
+      "neodata": 10.31,
+      "em": null,
+      "em_report_date": null,
+      "class": "主源缺失(neodata补写)",
+      "delta": null
+    },
+    {
+      "code": "588000",
+      "industry": "制造业",
+      "neodata": 78.43,
+      "em": 76.18,
+      "em_report_date": "2026-03-31",
+      "delta": 2.25,
+      "class": "基本持平"
+    },
+    {
+      "code": "588000",
+      "industry": "信息传输、软件和信息技术服务业",
+      "neodata": 20.69,
+      "em": 23.39,
+      "em_report_date": "2026-03-31",
+      "delta": -2.7,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "industry": "制造业",
+      "neodata": 95.81,
+      "em": 95.39,
+      "em_report_date": "2026-03-31",
+      "delta": 0.42,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "industry": "信息传输、软件和信息技术服务业",
+      "neodata": 3.86,
+      "em": 4.06,
+      "em_report_date": "2026-03-31",
+      "delta": -0.2,
+      "class": "基本持平"
+    },
+    {
+      "code": "512810",
+      "industry": "交通运输、仓储和邮政业",
+      "neodata": 0.0,
+      "em": 0.0,
+      "em_report_date": "2026-03-31",
+      "delta": 0.0,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "industry": "制造业",
+      "neodata": 63.01,
+      "em": 67.64,
+      "em_report_date": "2026-03-31",
+      "delta": -4.63,
+      "class": "时效漂移"
+    },
+    {
+      "code": "512010",
+      "industry": "科学研究和技术服务业",
+      "neodata": 29.2,
+      "em": 24.49,
+      "em_report_date": "2026-03-31",
+      "delta": 4.71,
+      "class": "时效漂移"
+    },
+    {
+      "code": "512010",
+      "industry": "批发和零售业",
+      "neodata": 3.96,
+      "em": 4.09,
+      "em_report_date": "2026-03-31",
+      "delta": -0.13,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "industry": "卫生和社会工作",
+      "neodata": 3.65,
+      "em": 3.63,
+      "em_report_date": "2026-03-31",
+      "delta": 0.02,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "industry": "电力、热力、燃气及水生产和供应业",
+      "neodata": 0.01,
+      "em": 0.0,
+      "em_report_date": "2026-06-30",
+      "delta": 0.01,
+      "class": "基本持平"
+    },
+    {
+      "code": "512010",
+      "industry": "其他",
+      "neodata": 0.0,
+      "em": null,
+      "em_report_date": null,
+      "class": "主源缺失(neodata补写)",
+      "delta": null
+    },
+    {
+      "code": "159949",
+      "industry": "制造业",
+      "neodata": 87.49,
+      "em": 82.74,
+      "em_report_date": "2026-03-31",
+      "delta": 4.75,
+      "class": "时效漂移"
+    },
+    {
+      "code": "159949",
+      "industry": "金融业",
+      "neodata": 5.79,
+      "em": 7.85,
+      "em_report_date": "2026-03-31",
+      "delta": -2.06,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "industry": "信息传输、软件和信息技术服务业",
+      "neodata": 3.15,
+      "em": 5.16,
+      "em_report_date": "2026-03-31",
+      "delta": -2.01,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "industry": "批发和零售业",
+      "neodata": 1.6,
+      "em": 1.6,
+      "em_report_date": "2026-06-30",
+      "delta": 0.0,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "industry": "租赁和商务服务业",
+      "neodata": 0.78,
+      "em": 1.22,
+      "em_report_date": "2026-03-31",
+      "delta": -0.44,
+      "class": "基本持平"
+    },
+    {
+      "code": "159949",
+      "industry": "其他",
+      "neodata": 0.83,
+      "em": null,
+      "em_report_date": null,
+      "class": "主源缺失(neodata补写)",
+      "delta": null
+    },
+    {
+      "code": "159992",
+      "industry": "制造业",
+      "neodata": 76.34,
+      "em": 77.38,
+      "em_report_date": "2026-03-31",
+      "delta": -1.04,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "industry": "科学研究和技术服务业",
+      "neodata": 20.18,
+      "em": 18.7,
+      "em_report_date": "2026-03-31",
+      "delta": 1.48,
+      "class": "基本持平"
+    },
+    {
+      "code": "159992",
+      "industry": "批发和零售业",
+      "neodata": 2.55,
+      "em": 3.03,
+      "em_report_date": "2026-03-31",
+      "delta": -0.48,
+      "class": "基本持平"
+    }
+  ],
+  "summary": {
+    "holdings": {
+      "neodata_rows": 107,
+      "matched_to_em": 53,
+      "new": 27,
+      "dropped": 27,
+      "significant_timeliness_drift": 3,
+      "threshold_pct": 3.0
+    },
+    "alloc": {
+      "neodata_rows": 38,
+      "matched_to_em": 33,
+      "em_missing_filled": 5,
+      "significant_timeliness_drift": 7,
+      "threshold_pct": 3.0
+    },
+    "interpretation": "neodata 为最新可得快照，EM 为 Q1 2026 陈旧披露；权重漂移主要由时效性驱动，非数据错误。"
+  }
+}

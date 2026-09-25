@@ -1,0 +1,447 @@
+{
+  "source": "neodata_mcp",
+  "generated_note": "固化自 neodata fund_holdings 实测响应；权重=stock_price_changeratio(列名误标实为权重%)",
+  "quarter_tag": "neodata_latest",
+  "etfs": {
+    "510300": {
+      "name": "沪深300ETF华泰柏瑞",
+      "holdings": [
+        {
+          "stock_code": "300308",
+          "stock_name": "中际旭创",
+          "weight_pct": 4.75
+        },
+        {
+          "stock_code": "300750",
+          "stock_name": "宁德时代",
+          "weight_pct": 3.55
+        },
+        {
+          "stock_code": "300502",
+          "stock_name": "新易盛",
+          "weight_pct": 2.89
+        },
+        {
+          "stock_code": "600519",
+          "stock_name": "贵州茅台",
+          "weight_pct": 2.52
+        },
+        {
+          "stock_code": "603986",
+          "stock_name": "兆易创新",
+          "weight_pct": 1.86
+        },
+        {
+          "stock_code": "688256",
+          "stock_name": "寒武纪",
+          "weight_pct": 1.8
+        },
+        {
+          "stock_code": "601318",
+          "stock_name": "中国平安",
+          "weight_pct": 1.73
+        },
+        {
+          "stock_code": "600036",
+          "stock_name": "招商银行",
+          "weight_pct": 1.49
+        },
+        {
+          "stock_code": "601899",
+          "stock_name": "紫金矿业",
+          "weight_pct": 1.41
+        },
+        {
+          "stock_code": "000333",
+          "stock_name": "美的集团",
+          "weight_pct": 1.25
+        }
+      ]
+    },
+    "510500": {
+      "name": "中证500ETF南方",
+      "holdings": [
+        {
+          "stock_code": "688498",
+          "stock_name": "XD源杰科",
+          "weight_pct": 1.59
+        },
+        {
+          "stock_code": "300604",
+          "stock_name": "长川科技",
+          "weight_pct": 1.27
+        },
+        {
+          "stock_code": "001309",
+          "stock_name": "德明利",
+          "weight_pct": 1.25
+        },
+        {
+          "stock_code": "688347",
+          "stock_name": "华虹宏力",
+          "weight_pct": 1.14
+        },
+        {
+          "stock_code": "688120",
+          "stock_name": "华海清科",
+          "weight_pct": 1.05
+        },
+        {
+          "stock_code": "002281",
+          "stock_name": "光迅科技",
+          "weight_pct": 1.04
+        },
+        {
+          "stock_code": "002008",
+          "stock_name": "大族激光",
+          "weight_pct": 1.04
+        },
+        {
+          "stock_code": "300857",
+          "stock_name": "协创数据",
+          "weight_pct": 0.98
+        },
+        {
+          "stock_code": "300136",
+          "stock_name": "信维通信",
+          "weight_pct": 0.97
+        },
+        {
+          "stock_code": "688361",
+          "stock_name": "中科飞测",
+          "weight_pct": 0.91
+        }
+      ]
+    },
+    "512100": {
+      "name": "中证1000ETF南方",
+      "holdings": [
+        {
+          "stock_code": "688766",
+          "stock_name": "普冉股份",
+          "weight_pct": 0.81
+        },
+        {
+          "stock_code": "000636",
+          "stock_name": "风华高科",
+          "weight_pct": 0.72
+        },
+        {
+          "stock_code": "603083",
+          "stock_name": "剑桥科技",
+          "weight_pct": 0.68
+        },
+        {
+          "stock_code": "688110",
+          "stock_name": "东芯股份",
+          "weight_pct": 0.62
+        },
+        {
+          "stock_code": "002484",
+          "stock_name": "江海股份",
+          "weight_pct": 0.62
+        },
+        {
+          "stock_code": "002428",
+          "stock_name": "云南锗业",
+          "weight_pct": 0.61
+        },
+        {
+          "stock_code": "688627",
+          "stock_name": "精智达",
+          "weight_pct": 0.55
+        },
+        {
+          "stock_code": "601208",
+          "stock_name": "东材科技",
+          "weight_pct": 0.55
+        },
+        {
+          "stock_code": "688409",
+          "stock_name": "富创精密",
+          "weight_pct": 0.53
+        },
+        {
+          "stock_code": "688630",
+          "stock_name": "芯碁微装",
+          "weight_pct": 0.52
+        }
+      ]
+    },
+    "588000": {
+      "name": "科创50ETF华夏",
+      "holdings": [
+        {
+          "stock_code": "688256",
+          "stock_name": "寒武纪",
+          "weight_pct": 9.3
+        },
+        {
+          "stock_code": "688008",
+          "stock_name": "澜起科技",
+          "weight_pct": 8.13
+        },
+        {
+          "stock_code": "688012",
+          "stock_name": "中微公司",
+          "weight_pct": 8.0
+        },
+        {
+          "stock_code": "688041",
+          "stock_name": "海光信息",
+          "weight_pct": 7.89
+        },
+        {
+          "stock_code": "688981",
+          "stock_name": "中芯国际",
+          "weight_pct": 7.41
+        },
+        {
+          "stock_code": "688498",
+          "stock_name": "XD源杰科",
+          "weight_pct": 4.94
+        },
+        {
+          "stock_code": "688525",
+          "stock_name": "佰维存储",
+          "weight_pct": 4.83
+        },
+        {
+          "stock_code": "688521",
+          "stock_name": "芯原股份",
+          "weight_pct": 4.06
+        },
+        {
+          "stock_code": "688072",
+          "stock_name": "拓荆科技",
+          "weight_pct": 4.03
+        },
+        {
+          "stock_code": "688347",
+          "stock_name": "华虹宏力",
+          "weight_pct": 3.62
+        }
+      ]
+    },
+    "512810": {
+      "name": "军工ETF华宝",
+      "holdings": [
+        {
+          "stock_code": "600150",
+          "stock_name": "中国船舶",
+          "weight_pct": 9.13
+        },
+        {
+          "stock_code": "002179",
+          "stock_name": "中航光电",
+          "weight_pct": 3.61
+        },
+        {
+          "stock_code": "688002",
+          "stock_name": "睿创微纳",
+          "weight_pct": 3.59
+        },
+        {
+          "stock_code": "300395",
+          "stock_name": "菲利华",
+          "weight_pct": 3.48
+        },
+        {
+          "stock_code": "600879",
+          "stock_name": "航天电子",
+          "weight_pct": 3.46
+        },
+        {
+          "stock_code": "002625",
+          "stock_name": "光启技术",
+          "weight_pct": 3.22
+        },
+        {
+          "stock_code": "600893",
+          "stock_name": "航发动力",
+          "weight_pct": 3.15
+        },
+        {
+          "stock_code": "600118",
+          "stock_name": "中国卫星",
+          "weight_pct": 2.99
+        },
+        {
+          "stock_code": "600760",
+          "stock_name": "中航沈飞",
+          "weight_pct": 2.87
+        },
+        {
+          "stock_code": "601698",
+          "stock_name": "中国卫通",
+          "weight_pct": 2.36
+        }
+      ]
+    },
+    "512010": {
+      "name": "医药ETF易方达",
+      "holdings": [
+        {
+          "stock_code": "603259",
+          "stock_name": "药明康德",
+          "weight_pct": 29.2
+        },
+        {
+          "stock_code": "600276",
+          "stock_name": "恒瑞医药",
+          "weight_pct": 22.02
+        },
+        {
+          "stock_code": "300760",
+          "stock_name": "迈瑞医疗",
+          "weight_pct": 7.81
+        },
+        {
+          "stock_code": "688271",
+          "stock_name": "联影医疗",
+          "weight_pct": 4.72
+        },
+        {
+          "stock_code": "002001",
+          "stock_name": "新 和 成",
+          "weight_pct": 4.14
+        },
+        {
+          "stock_code": "002422",
+          "stock_name": "科伦药业",
+          "weight_pct": 4.06
+        },
+        {
+          "stock_code": "000538",
+          "stock_name": "云南白药",
+          "weight_pct": 4.01
+        },
+        {
+          "stock_code": "300015",
+          "stock_name": "爱尔眼科",
+          "weight_pct": 3.65
+        },
+        {
+          "stock_code": "600436",
+          "stock_name": "片仔癀",
+          "weight_pct": 3.12
+        },
+        {
+          "stock_code": "600196",
+          "stock_name": "复星医药",
+          "weight_pct": 2.7
+        }
+      ]
+    },
+    "159949": {
+      "name": "创业板50ETF华安",
+      "holdings": [
+        {
+          "stock_code": "300308",
+          "stock_name": "中际旭创",
+          "weight_pct": 17.47
+        },
+        {
+          "stock_code": "300750",
+          "stock_name": "宁德时代",
+          "weight_pct": 16.29
+        },
+        {
+          "stock_code": "300502",
+          "stock_name": "新易盛",
+          "weight_pct": 12.02
+        },
+        {
+          "stock_code": "300059",
+          "stock_name": "东方财富",
+          "weight_pct": 4.15
+        },
+        {
+          "stock_code": "300274",
+          "stock_name": "阳光电源",
+          "weight_pct": 3.73
+        },
+        {
+          "stock_code": "300476",
+          "stock_name": "胜宏科技",
+          "weight_pct": 3.36
+        },
+        {
+          "stock_code": "300408",
+          "stock_name": "三环集团",
+          "weight_pct": 3.31
+        },
+        {
+          "stock_code": "300394",
+          "stock_name": "天孚通信",
+          "weight_pct": 3.0
+        },
+        {
+          "stock_code": "301308",
+          "stock_name": "江波龙",
+          "weight_pct": 2.61
+        },
+        {
+          "stock_code": "300604",
+          "stock_name": "长川科技",
+          "weight_pct": 2.45
+        }
+      ]
+    },
+    "159992": {
+      "name": "创新药ETF银华",
+      "holdings": [
+        {
+          "stock_code": "603259",
+          "stock_name": "药明康德",
+          "weight_pct": 11.32
+        },
+        {
+          "stock_code": "600276",
+          "stock_name": "恒瑞医药",
+          "weight_pct": 9.89
+        },
+        {
+          "stock_code": "002422",
+          "stock_name": "科伦药业",
+          "weight_pct": 4.42
+        },
+        {
+          "stock_code": "002821",
+          "stock_name": "凯莱英",
+          "weight_pct": 3.32
+        },
+        {
+          "stock_code": "300759",
+          "stock_name": "康龙化成",
+          "weight_pct": 3.09
+        },
+        {
+          "stock_code": "688578",
+          "stock_name": "艾力斯",
+          "weight_pct": 3.08
+        },
+        {
+          "stock_code": "688235",
+          "stock_name": "百济神州",
+          "weight_pct": 3.02
+        },
+        {
+          "stock_code": "600196",
+          "stock_name": "复星医药",
+          "weight_pct": 2.96
+        },
+        {
+          "stock_code": "300347",
+          "stock_name": "泰格医药",
+          "weight_pct": 2.57
+        },
+        {
+          "stock_code": "000963",
+          "stock_name": "华东医药",
+          "weight_pct": 2.55
+        }
+      ]
+    }
+  }
+}

@@ -399,3 +399,79 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 - 更新本报告 §7.7
 
 > 数据质量根因备注：`em_spot` 历史资金流对中小盘 ETF 系统性背离已量化（见 §7.7.2），其脏历史经 `--reconcile` 双源修正；`category='etf'` 误标个股（001323/002152）建议后续在 `resolve_target_codes` 层修正，避免再次混入 ETF 取数。
+
+### 7.8 复制「连接器 + MCP 兜底」到 etf_fundamental / etf_top_holdings / etf_industry_alloc + 现有数据质量全面检查方案（2026-09-25）
+
+与 §7.5/§7.6/§7.7 同理，把三件套复制到三张东财主源基本面表，并**落地一套「现有数据质量全面检查方案」**（诊断型，只读，可一键复跑）。
+
+#### 7.8.1 范围与缺口现状（2026-09-25 实测）
+
+| 表 | 主源（akshare 东财） | RST 风险 | 缺口现状（落地前） |
+|---|---|---|---|
+| `etf_fundamental` | `fund_etf_spot_em` | 是 | 23 只 ETF 每日快照卡 **2026-09-21**（与 fund_flows 同期 RST） |
+| `etf_top_holdings` | `fund_portfolio_hold_em` | 是 | 300 行，仅 `2026年1季度` 锚点；无最新可得快照 |
+| `etf_industry_alloc` | `fund_portfolio_industry_allocation_em` | 是 | 257 行，report_date `2026-03-31`（12 行 `2026-06-30`）；无最新可得快照 |
+
+三张表**落地前均无 `source` 列** → 无法审计来源（已由回填脚本 `ALTER TABLE` 补 `source/is_estimated/confidence`）。
+
+#### 7.8.2 多源交叉验证架构
+
+| 表 | 主写（兜底主源） | 交叉校验 | 历史锚点（待核验） |
+|---|---|---|---|
+| `etf_fundamental` | **neodata-mcp `fund_quote`**（日K） | **westock-mcp `data_etf`** overview | 现有 `source IS NULL` 的 EM 行 |
+| `etf_top_holdings` | **neodata-mcp `fund_holdings`** | （EM Q1 锚点） | `fund_portfolio_hold_em` Q1 2026 |
+| `etf_industry_alloc` | neodata-mcp `fund_allocation`(sector) | （EM 最新 report_date 锚点） | `fund_portfolio_industry_allocation_em` |
+
+**关键发现（量化）**：
+- **neodata `fund_quote` 完美补 `etf_fundamental` 缺口**：返回 `{trade_date, latest_price, open, high, low, volume, turnover_value, turnover_rate}`，22/23 只正常补齐 09-22/23/24（**159300 沪深300ETF 在 neodata 无返回**，由每日自动化用 westock 补）。并复用 `fund_flows(neodata_mcp)` 已回填资金流字段（JOIN date+code）。
+- **neodata `fund_holdings` 的 `stock_price_changeratio` 实为权重%**（列名误标，非涨跌幅）：512010 药明康德 29.20 / 恒瑞 22.02 / 迈瑞 7.81；EM Q1 锚点 19.85 / 20.17 / 8.16。
+- **权重漂移本质 = 时效性陈旧，非数据错误**：neodata 为「最新可得」、EM 为 Q1 2026 陈旧披露，故 512010 药明康德 +9.35pct 是正常漂移。验证报告据此把差异分类为 `时效漂移 / 新增持仓 / 退出持仓`（top-10 成分随季更迭，如 510300 把 兆易创新/寒武纪 换入、长江电力/兴业银行 换出）。
+- **`etf_industry_alloc` UNIQUE(code, industry) 无时间维度** → 不能平行快照，严禁覆盖 EM 季度披露。**策略：仅当 (code,industry) 在 EM 完全缺失时才 INSERT neodata（补真缺口）；EM 已有行则跳过，仅在 `--verify` 量化权重漂移。** 实测 38 行 neodata 行业中 33 行 EM 已有（验证）、5 行缺失补齐。
+- **neodata `fund_allocation`(sector)** 返回 `{allocation_name, allocation_ratio}` 干净；`fund_report_date` 恒为 null → 重仓股标 `quarter='neodata_latest'`、行业配置标 `report_date='neodata_latest'`。
+
+#### 7.8.3 现有数据质量全面检查方案（核心交付物之一）
+
+`scripts/backfill/inspect_data_quality.py`（**诊断型、只读、不写库**）一键扫描 6 张东财主源相关表：
+
+- **逐表**：行数 / 覆盖代码数 / 最新日期 / `source` 分布 / 是否卡点（`max_date < 期望交易日`）。
+- **卡点根因区分（关键）**：`EM_PRIMARY_TABLES` 改为 `(em_src, is_em)` 二元组——
+  - `is_em=True` 的表（etf_fundamental / etf_top_holdings / etf_industry_alloc / fund_flows / etf_price_history）卡点 → 归入 `em_blocked_tables`（host 级 RST 阻断）；
+  - `index_pe_history`（`is_em=False`，主源 csindex）滞后 1 天 → 标「非EM主源滞后（疑似良性 T+1）」，**不误报为 RST**。
+- **跨表一致性**：各表最新日期是否收敛（`diverged` / `divergence_days`）。
+- **误标污染检测**：`category='etf'` 表混入的非 ETF 个股（`001323` 慕思股份 / `002152` 广电运通）检出并建议 `resolve_target_codes` 层剔除。
+- **产出**：`scripts/backfill/data/data_quality_report.json` + 控制台 Markdown。
+
+**本轮实测结论（2026-09-25 重跑）**：
+- `etf_fundamental` 卡点已消除（neodata 补齐至 2026-09-24，`neodata_mcp=66` 行）；
+- `index_pe_history` 滞后 1 天被正确判为**良性 T+1**（csindex，非 RST）；
+- **`em_blocked_tables = 无`**（三张基本面表 + fund_flows + etf_price_history 经 §7.5~§7.8 兜底后均不再卡点）；
+- 跨表发散仅 1 天（index_pe_history T+1），良性。
+
+#### 7.8.4 落地：回填脚本 + 三源验证 + 检查方案
+
+1. **`etf_fundamental` 回填** `scripts/backfill/backfill_etf_fundamental_neodata.py`：读 `etf_fundamental_neodata.json`（22 只 ×3 日 = 66 行，固化自 neodata fund_quote，排除 159300），`ALTER TABLE` 加 `source/is_estimated/confidence`，`INSERT OR IGNORE` 补缺口（不覆盖 EM 行），JOIN `fund_flows(neodata_mcp)` 资金流；`--verify` 产 `etf_fundamental_multisource_report.json`（neodata×westock×EM）。初始回填：**3197 行、MAX=2026-09-24、66 行 neodata、588000 09-24 price=1.713/amount=5.42e9/主力净流入=-1.14e9（来自 fund_flows JOIN）**。
+2. **`etf_top_holdings` / `etf_industry_alloc` 回填** `scripts/backfill/backfill_etf_holdings_alloc_neodata.py`：读 `etf_top_holdings_neodata.json`（8 只 ×10 = 80 行）/ `etf_industry_alloc_neodata.json`（8 只 ×~5 = 38 行，固化自 neodata fund_holdings / fund_allocation）。
+   - 持仓：平行补 `quarter='neodata_latest'` 快照（`INSERT OR IGNORE`，与 EM Q1 不冲突）→ 初始 **+80 行**；
+   - 行业：仅补 EM 缺失行业 → 初始 **+5 行**，33 行验证跳过；
+   - `--verify` 产 `etf_holdings_alloc_multisource_report.json`：权重差异分类 `时效漂移/新增持仓/退出持仓`，显式声明「漂移由时效性驱动、非数据错误」。
+3. **种子生成器** `gen_etf_fundamental_seeds.py` / `gen_etf_holdings_alloc_seeds.py`：把已验证 neodata 响应固化为组合种子 JSON（每日自动化可重写扩展至全 23 只）。
+4. **检查方案** `inspect_data_quality.py`（见 §7.8.3）。
+
+#### 7.8.5 每日自动化（WB automation，21:30）
+
+排程 **`FREQ=DAILY;BYHOUR=21;BYMINUTE=30`**（接在 `fund_flows@21:20` 之后），ACTIVE（id `152124e1-199a-4f47-a872-c802d9d927bd`）。prompt 指示 LLM agent：优先用 neodata-mcp 拉全量持仓 ETF 的 `fund_quote`/`fund_holdings`/`fund_allocation` → 固化种子 JSON（neodata 不可达则复用已提交基线）→ 跑 `backfill_etf_fundamental_neodata.py --verify` + `backfill_etf_holdings_alloc_neodata.py --verify` → 跑 `inspect_data_quality.py --expect <最近交易日>` → 输出 `em_blocked_tables` 是否为空、缺口是否补齐、权重漂移是否判为时效陈旧。
+
+#### 7.8.6 待提交清单（新增）
+
+- 新增 `scripts/backfill/inspect_data_quality.py`（现有数据质量全面检查方案，只读诊断）
+- 新增 `scripts/backfill/gen_etf_fundamental_seeds.py`
+- 新增 `scripts/backfill/backfill_etf_fundamental_neodata.py`（含 `--verify` / `--dry-run`）
+- 新增 `scripts/backfill/gen_etf_holdings_alloc_seeds.py`
+- 新增 `scripts/backfill/backfill_etf_holdings_alloc_neodata.py`（含 `--verify` / `--dry-run`）
+- 新增 `scripts/backfill/data/etf_fundamental_neodata.json`（66 行）+ `etf_fundamental_multisource_report.json`
+- 新增 `scripts/backfill/data/etf_top_holdings_neodata.json`（80 行）+ `etf_industry_alloc_neodata.json`（38 行）+ `etf_holdings_alloc_multisource_report.json`
+- 新增 `scripts/backfill/data/data_quality_report.json`（检查报告）
+- 新增每日自动化 `ETF基本面/持仓/行业 neodata 每日维护`（21:30）
+- 更新本报告 §7.8
+
+> 注：`etf_top_holdings` / `etf_industry_alloc` 本轮仅覆盖 8 只代表性 ETF（宽基+军工+医药+成长+创业板）作基线；全 23 只由每日自动化（neodata 实时重写种子）渐进补全，与 §7.7 fund_flows/westock 渐进范式一致。
