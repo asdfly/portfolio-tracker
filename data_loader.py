@@ -311,6 +311,19 @@ def load_calendar_data():
     df["day"] = df["date"].dt.day
     return df
 
+
+def load_portfolio_events(horizon_days: int = 90):
+    """加载与当前持仓相关的真实关键事件（分红除息、财报披露等）。
+
+    当前数据层尚无 etf_dividend / earnings_date 表，故默认返回空列表。
+    待分红数据回填（例如 akshare fund_dividend、westock 公告接口，写入 portfolio_events
+    表）后，此处负责过滤出 horizon_days 内、且 code 命中最新持仓快照的事件，实现事件日历
+    的「持仓个性化」。接口契约（返回 list[dict]，含 icon/title/date/urgency/days_ahead/
+    color/desc）保持稳定，前端无需改动即可无缝接入。
+    """
+    return []
+
+
 def _load_suspect_dates():
     """从 portfolio_nav 加载 is_suspect=1 的失真日期集合（'YYYY-MM-DD'）。
 

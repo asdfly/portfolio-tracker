@@ -6,13 +6,13 @@ from components.ui import render_chart, render_empty_state
 import streamlit as st
 import logging
 logger = logging.getLogger(__name__)
-from datetime import datetime
+from datetime import datetime, timedelta
 import calendar
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 from src.utils.database import get_db_connection
-from data_loader import compute_monthly_returns, load_calendar_data
+from data_loader import compute_monthly_returns, load_calendar_data, load_portfolio_events
 
 
 
@@ -27,6 +27,26 @@ def load_calendar_data():
     """加载全部日历收益数据（委托到 data_loader）"""
     import data_loader as _dl
     return _dl.load_calendar_data()
+
+
+def _load_current_holdings():
+    """读取最新持仓快照中的 ETF 名称列表（用于事件日历持仓上下文）。"""
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT date FROM portfolio_snapshots ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            conn.close()
+            return []
+        latest = row[0]
+        names = [r[0] for r in conn.execute(
+            "SELECT DISTINCT name FROM portfolio_snapshots WHERE date = ?", (latest,)
+        ).fetchall()]
+        conn.close()
+        return names
+    except Exception:
+        return []
 
 
 
@@ -56,7 +76,7 @@ def _render_year_overview(cal_data):
     # 使用 daily_return 连乘计算月度收益率（避免追加投入/赎回导致 total_value 跳变）
     month_returns = year_df.groupby("month").agg(
         pnl_sum=("daily_pnl", "sum"),
-        ret_sum=("daily_return", lambda x: (1 + x / 100).prod() - 1),
+        ret_sum=("daily_return", lambda x: (1 + x).prod() - 1),
         days=("day", "count"),
     ).reset_index()
     yr_monthly = month_returns
@@ -79,7 +99,7 @@ def _render_year_overview(cal_data):
     # --- 年度月度概览（月份按钮在表格内） ---
     yr_total_pnl = year_df["daily_pnl"].sum()
     # 使用 corrected daily_return 累积净值法计算年度收益率，避免 total_value 跳变影响
-    yr_daily = (year_df["daily_return"] / 100).dropna() if "daily_return" in year_df.columns else year_df["total_value"].pct_change().dropna()
+    yr_daily = (year_df["daily_return"]).dropna() if "daily_return" in year_df.columns else year_df["total_value"].pct_change().dropna()
     yr_total_ret = ((1 + yr_daily).prod() - 1) if len(yr_daily) > 0 else 0
     yr_total_days = len(year_df)
     yr_profit_days = len(year_df[year_df["daily_pnl"] > 0])
@@ -114,8 +134,8 @@ def _render_year_overview(cal_data):
         days = int(row["days"])
         profit_d = int(row["profit_days"])
         loss_d = int(row["loss_days"])
-        pnl_color = "#22c55e" if pnl >= 0 else "#ef4444"
-        ret_color = "#22c55e" if ret >= 0 else "#ef4444"
+        pnl_color = "#ef4444" if pnl >= 0 else "#22c55e"
+        ret_color = "#ef4444" if ret >= 0 else "#22c55e"
         is_active = m == sel_month
 
         row_col1, row_col2 = st.columns([1, 5])
@@ -132,8 +152,8 @@ def _render_year_overview(cal_data):
                 f'<div style="flex:1;text-align:right;padding:6px 10px;color:{pnl_color};">¥{pnl:,.0f}</div>'
                 f'<div style="flex:1;text-align:right;padding:6px 10px;color:{ret_color};">{ret*100:+.2f}%</div>'
                 f'<div style="flex:1;text-align:center;padding:6px 10px;">{days}天</div>'
-                f'<div style="flex:1;text-align:center;padding:6px 10px;color:#22c55e;">{profit_d}天</div>'
-                f'<div style="flex:1;text-align:center;padding:6px 10px;color:#ef4444;">{loss_d}天</div>'
+            f'<div style="flex:1;text-align:center;padding:6px 10px;color:#ef4444;">{profit_d}天</div>'
+            f'<div style="flex:1;text-align:center;padding:6px 10px;color:#22c55e;">{loss_d}天</div>'
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -152,20 +172,19 @@ def _render_year_overview(cal_data):
             f'<div style="flex:1;text-align:right;padding:8px 10px;color:{yr_pnl_color};">¥{yr_total_pnl:,.0f}</div>'
             f'<div style="flex:1;text-align:right;padding:8px 10px;color:{yr_ret_color};">{yr_total_ret*100:+.2f}%</div>'
             f'<div style="flex:1;text-align:center;padding:8px 10px;">{yr_total_days}天</div>'
-            f'<div style="flex:1;text-align:center;padding:8px 10px;color:#22c55e;">{yr_profit_days}天</div>'
-            f'<div style="flex:1;text-align:center;padding:8px 10px;color:#ef4444;">{yr_loss_days}天</div>'
+            f'<div style="flex:1;text-align:center;padding:8px 10px;color:#ef4444;">{yr_profit_days}天</div>'
+            f'<div style="flex:1;text-align:center;padding:8px 10px;color:#22c55e;">{yr_loss_days}天</div>'
             f"</div>",
             unsafe_allow_html=True,
         )
 
-    month_df = year_df[year_df["month"] == sel_month]
     return sel_year, year_df, sel_month
 def _render_monthly_view(month_df, sel_year, sel_month):
     # --- 月度汇总 ---
     today_str = datetime.now().strftime("%Y-%m-%d")
     m_pnl = month_df["daily_pnl"].sum()
     # 使用 corrected daily_return 累积净值法计算月度收益率，避免 total_value 跳变影响
-    m_daily = (month_df["daily_return"] / 100).dropna() if "daily_return" in month_df.columns else month_df["total_value"].pct_change().dropna()
+    m_daily = (month_df["daily_return"]).dropna() if "daily_return" in month_df.columns else month_df["total_value"].pct_change().dropna()
     m_return = ((1 + m_daily).prod() - 1) if len(m_daily) > 0 else 0
     m_trading = len(month_df)
     m_profit = len(month_df[month_df["daily_pnl"] > 0])
@@ -209,14 +228,14 @@ def _render_monthly_view(month_df, sel_year, sel_month):
     .cal-table td { padding: 4px; text-align: center; border-radius: 4px; min-height: 48px; vertical-align: top; }
     .cal-non-trading { color: #30363d; }
     .cal-trading { background: #161b22; }
-    .cal-profit { background: rgba(34,197,94,0.15); color: #22c55e; }
-    .cal-loss { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .cal-profit { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .cal-loss { background: rgba(34,197,94,0.15); color: #22c55e; }
     .cal-today { outline: 2px solid #58a6ff; outline-offset: -2px; }
     .cal-day { display: block; font-size: 14px; font-weight: bold; color: #c9d1d9; }
     .cal-pnl { display: block; font-size: 10px; margin-top: 2px; }
-    .cal-pnl-profit { color: #22c55e; }
-    .cal-pnl-loss { color: #ef4444; }
-    .cal-pnl-zero { color: #484f58; }
+    .cal-pnl-profit { color: #ef4444; }
+    .cal-pnl-loss { color: #22c55e; }
+    .cal-pnl-zero { color: #8b949e; }
     </style>""", unsafe_allow_html=True)
 
     cal_html = '<table class="cal-table"><tr>'
@@ -246,15 +265,15 @@ def _render_monthly_view(month_df, sel_year, sel_month):
             today_cls = " cal-today" if dt_str == today_str else ""
 
             # 格式化收益金额
-            if abs(pnl) >= 10000:
-                pnl_text = f"{pnl/10000:.1f}万"
-            elif abs(pnl) >= 1000:
-                pnl_text = f"{pnl/1000:.1f}k"
+            if abs(pnl) >= 1e8:
+                pnl_text = f"{pnl/1e8:.2f}亿"
+            elif abs(pnl) >= 1e4:
+                pnl_text = f"{pnl/1e4:.1f}万"
             else:
                 pnl_text = f"{pnl:.0f}"
 
             cal_html += (
-                f'<td class="{td_cls}{today_cls}" title="{dt_str}  收益: ¥{pnl:,.0f}  ({ret:+.2f}%)">'
+                f'<td class="{td_cls}{today_cls}" title="{dt_str}  收益: ¥{pnl:,.0f}  ({ret*100:+.2f}%)">'
                 f'<span class="cal-day">{day}</span>'
                 f'<span class="{pnl_cls}">{pnl_text}</span>'
                 f"</td>"
@@ -278,10 +297,10 @@ def _render_monthly_view(month_df, sel_year, sel_month):
         detail_df.columns = ["日期", "日收益 (¥)", "日收益率 (%)"]
         detail_df["日期"] = detail_df["日期"].dt.strftime("%Y-%m-%d")
         detail_df["日收益 (¥)"] = detail_df["日收益 (¥)"].apply(
-            lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x:,.2f}</span>'
+            lambda x: f'<span style="color:{"#ef4444" if x >= 0 else "#22c55e"}">{x:,.2f}</span>'
         )
         detail_df["日收益率 (%)"] = detail_df["日收益率 (%)"].apply(
-            lambda x: f'<span style="color:{"#22c55e" if x >= 0 else "#ef4444"}">{x*100:+.2f}%</span>'
+            lambda x: f'<span style="color:{"#ef4444" if x >= 0 else "#22c55e"}">{x*100:+.2f}%</span>'
         )
         st.markdown(detail_df.to_html(index=False, escape=False), unsafe_allow_html=True)
 
@@ -290,7 +309,7 @@ def _render_heatmap():
     # --- 月度收益热力图 ---
     st.markdown("---")
     st.markdown(
-        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">月度收益热力图<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">以热力图形式展示12个月的月度收益，颜色深浅反映收益高低。</span></div>',
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">月度收益热力图<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">各年度分月收益热力图（含年累计列与月均行），颜色深浅反映收益高低。</span></div>',
         unsafe_allow_html=True,
     )
     monthly_pivot = compute_monthly_returns()
@@ -309,7 +328,7 @@ def _render_heatmap():
                 text=heat_z,
                 texttemplate="%{text:.2f}%%",
                 textfont=dict(size=10),
-                colorscale=[[0, "#ef4444"], [0.5, "#0d1117"], [1, "#22c55e"]],
+                colorscale=[[0, "#22c55e"], [0.5, "#0d1117"], [1, "#ef4444"]],
                 zmin=-z_cap,
                 zmax=z_cap,
                 xgap=2,
@@ -333,10 +352,9 @@ def _render_annual_trend(all_cal):
     # --- 年化收益走势图（Phase 5B新增）---
     st.markdown("---")
     st.markdown(
-        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">年化收益走势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">组合累计收益率与年化收益率趋势。</span></div>',
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">年化收益走势<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">实线=累计收益率；虚线=年化收益率(CAGR)。两度量纲不同，分置左右轴，虚线贴近右轴不代表波动小。</span></div>',
         unsafe_allow_html=True,
     )
-    all_cal = load_calendar_data()
     if not all_cal.empty:
         # 使用 corrected daily_return 累积净值计算收益率，避免 total_value 跳变影响
         yearly_data = []
@@ -421,14 +439,13 @@ def _render_boxplot(all_cal):
 def _render_event_calendar():
     st.markdown("---")
     st.markdown(
-        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">关键日期提醒<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">自动检测持仓中的关键事件日期，如财报季、期权到期日等。</span></div>',
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">市场关键日期 &amp; 持仓提示<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span><span class="tip-text" style="left: 4px; top: calc(100% + 10px);">A股通用披露/交割/分红窗口提醒（非持仓个性化）；当前持仓来自最新快照，真实除息/披露日待分红数据回填后接入。</span></div>',
         unsafe_allow_html=True,
     )
 
     # 1. 财报季提醒
-    current_year = datetime.now().year
-    current_month = datetime.now().month
-    current_day = datetime.now().day
+    today = datetime.now()
+    current_year, current_month, current_day = today.year, today.month, today.day
 
     earnings_periods = [
         {"name": "一季报", "start": (4, 1), "end": (4, 30), "icon": "📊"},
@@ -453,27 +470,29 @@ def _render_event_calendar():
     # 4. 系统性风险事件
     events_list = []
 
-    # 财报季
+    # 财报季（支持跨年；窗口与“今天~+90天”有交集或正在进行均展示）
     for ep in earnings_periods:
         s_m, s_d = ep["start"]
         e_m, e_d = ep["end"]
-        days_ahead = 0
-        if current_year == current_year:
-            if s_m == current_month:
-                days_ahead = s_d - current_day
-            elif s_m > current_month:
-                month_diff = s_m - current_month
-                days_ahead = (month_diff * 30) + (s_d - current_day)
-
-        if days_ahead >= 0 and days_ahead <= 90:
-            urgency = "即将到来" if days_ahead <= 14 else ("本月" if days_ahead <= 30 else f"{days_ahead}天后")
+        picked = None
+        for yr in (current_year, current_year + 1):
+            ps = datetime(yr, s_m, s_d)
+            pe = datetime(yr, e_m, e_d)
+            horizon = today + timedelta(days=90)
+            if ps <= horizon and pe >= today:
+                picked = (yr, ps, pe)
+                break
+        if picked:
+            yr, ps, pe = picked
+            days_ahead = (ps - today).days
+            urgency = "进行中" if days_ahead <= 0 else ("即将到来" if days_ahead <= 14 else f"{days_ahead}天后")
             events_list.append(
                 {
                     "icon": ep["icon"],
                     "title": f'{ep["name"]}披露期',
-                    "date": f"{current_year}-{s_m:02d}-{s_d:02d} ~ {current_year}-{e_m:02d}-{e_d:02d}",
+                    "date": f'{ps.strftime("%Y-%m-%d")} ~ {pe.strftime("%Y-%m-%d")}',
                     "urgency": urgency,
-                    "days_ahead": days_ahead,
+                    "days_ahead": max(days_ahead, -999),
                     "color": "#f59e0b" if days_ahead <= 30 else "#8b949e",
                     "desc": f"A股上市公司{ep['name']}集中披露窗口",
                 }
@@ -529,7 +548,7 @@ def _render_event_calendar():
                 )
 
     # 年底/年初换仓提醒
-    if 12 <= current_month <= 12 or 1 <= current_month <= 1:
+    if current_month in (1, 12):
         events_list.append(
             {
                 "icon": "🔄",
@@ -540,6 +559,27 @@ def _render_event_calendar():
                 "color": "#a855f7",
                 "desc": "年末机构调仓高峰，市场风格可能切换",
             }
+        )
+
+    # 真实持仓事件（数据层回填后接入；当前返回空）
+    try:
+        events_list.extend(load_portfolio_events(horizon_days=90))
+    except Exception as e:
+        logger.debug(f"load_portfolio_events skipped: {e}")
+
+    # 当前持仓上下文（来自最新持仓快照，真实个性化）
+    holdings = _load_current_holdings()
+    if holdings:
+        names = "、".join(holdings[:12])
+        more = f" 等{len(holdings)}只" if len(holdings) > 12 else ""
+        st.markdown(
+            f'<div style="background:#161b22;border-radius:6px;padding:10px 14px;margin-bottom:8px;'
+            f'border-left:3px solid #58a6ff;">'
+            f'<div style="font-size:13px;color:#e6edf3;font-weight:bold;">📦 当前持仓（最新快照）</div>'
+            f'<div style="font-size:11px;color:#6e7681;margin-top:4px;line-height:1.6;">{names}{more}'
+            f'　·　真实除息/披露日待分红数据回填后在此高亮</div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
     # Sort by days_ahead
