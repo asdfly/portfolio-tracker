@@ -475,3 +475,33 @@ venv313/Scripts/python.exe scripts/backfill/backfill_single_index.py \
 - 更新本报告 §7.8
 
 > 注：`etf_top_holdings` / `etf_industry_alloc` 本轮仅覆盖 8 只代表性 ETF（宽基+军工+医药+成长+创业板）作基线；全 23 只由每日自动化（neodata 实时重写种子）渐进补全，与 §7.7 fund_flows/westock 渐进范式一致。
+
+### 7.9 前端接入中证2000 指数数据（2026-09-25）
+
+数据已落库（`index_quotes` 500 行 + `index_pe_history` 10 行）+ 已入 `INDEX_CODES`，但**此前仅作为侧边栏可选基准、未在行情看板直观呈现**。本轮在前端「适当位置」显式接入。
+
+#### 7.9.1 接入位置与形态
+- **主接入点：`tab1_net_value.py`（净值走势）顶部新增「📋 宽基指数行情看板」**。
+  该 Tab 本就以「组合净值 vs 基准指数」为核心，宽基指数看板在此最贴合语境：
+  1. **指标卡片网格（4×3）**：遍历 `INDEX_CODES`（12 只），每只显示最新收盘 + 当日涨跌幅；
+     涨跌幅遵循 A 股惯例 **红涨绿跌**（`st.metric(delta_color="inverse")`）。
+     **中证2000 已自然包含其中**（sh932000，close 3209.63 / −1.54% / 2026-09-24）。
+  2. **中证2000 估值提示行**：从 `index_pe_history` 取最新 PE(TTM)/PB（中证2000 ≈ 124.82 / 2.68，2026-09-23，NeoData 兜底）。
+  3. **归一化走势对比图**：宽基子集（上证/沪深300/中证500/中证1000/**中证2000**/创业板指/科创50）近 250 交易日归一化，
+     直观对比大小盘相对强弱——补齐「小盘风格」参考（此前组合 ETF 无跟踪中证2000 的标的，该指数长期缺位）。
+
+#### 7.9.2 支撑层（data_loader.py 新增 3 个只读查询）
+- `load_index_board(codes, days)`：单查返回每只指数 {name, close, change_pct, date, spark}；
+  `change_pct` 缺失时回退到最近两日收盘计算（兼容脏数据/缺字段）。
+- `load_index_trend(codes, days)`：返回归一化走势所需的近期收盘序列。
+- `load_index_pe_latest(index_code)`：**自动剥离开头 sh/sz 前缀**（index_pe_history 用 6 位裸代码 `932000`，
+  index_quotes 用带前缀 `sh932000`），对齐两表口径。
+
+#### 7.9.3 验证
+- 语法编译 + 1904 项 pytest 通过（6 项失败为旧有 stale 测试，与本改动无关，已 `git stash` 验证为历史残留）；
+- 端到端 smoke test（mock Streamlit）确认：12 张卡片全渲染、中证2000 卡片 + 7 迹走势图 + PE 提示行均正确产出。
+
+#### 7.9.4 注：侧边栏基准选择器本已包含中证2000
+`sidebar.py` 基准下拉直接遍历 `INDEX_CODES`（含 sh932000），故中证2000**此前即可作为组合基准**；
+本轮看板是对其行情/估值的**显性可视化补全**，非首次可用。
+

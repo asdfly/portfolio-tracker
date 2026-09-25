@@ -12,7 +12,9 @@ from src.utils.chart_utils import downsample, _add_min_max_annotations, _fmt, _f
 from config.settings import BENCHMARK_NAME_TO_CODE, CHART_DAYS, DOWNSAMPLE_MAX_POINTS, INDEX_CODES
 from src.utils.database import get_db_connection
 import sqlite3
-from data_loader import load_positions, load_summary, load_benchmark_comparison, compute_rolling_metrics
+from data_loader import (load_positions, load_summary, load_benchmark_comparison,
+                     compute_rolling_metrics, load_index_board, load_index_trend,
+                     load_index_pe_latest)
 
 
 
@@ -789,6 +791,99 @@ def _render_annual_returns(summary):
             render_chart(fig_annual)
 
 
+def _render_index_board(selected_date=None):
+    """渲染宽基指数行情看板：A 股主要宽基指数最新行情一览 + 归一化走势对比。
+
+    适时接入中证2000(sh932000) 数据：该指数代表小盘股风格，已通过 index_quotes
+    落地（westock 兜底，含 2024-09 起完整日K），并与沪深300/中证500/中证1000 等大中小盘
+    指数并列展示，补齐"小盘"风格参考。涨跌幅遵循 A 股惯例（红涨绿跌）。
+    """
+    from config.settings import INDEX_CODES
+
+    st.markdown("---")
+    st.markdown(
+        '<div class="tip-title" style="font-size:14px;border-bottom:none;padding:5px 0;">'
+        '📋 宽基指数行情看板'
+        '<span class="tip-arrow" style="left: 4px; top: calc(100% + 5px);"></span>'
+        '<span class="tip-text" style="left: 4px; top: calc(100% + 10px);">'
+        '展示 A 股主要宽基指数的最新收盘与当日涨跌幅，提供市场整体冷暖参考。'
+        '中证2000 代表小盘股风格（数据经 westock 兜底落地，含 2024-09 起完整日K）。'
+        '</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    board = load_index_board()
+    if not board:
+        st.info("暂无指数行情数据，请先运行指数数据采集。")
+        return
+
+    # 指标卡片网格：红涨绿跌（delta_color="inverse"）
+    codes = list(INDEX_CODES.keys())
+    n_cols = 4
+    for row_start in range(0, len(codes), n_cols):
+        row_codes = codes[row_start:row_start + n_cols]
+        cols = st.columns(n_cols)
+        for col, code in zip(cols, row_codes):
+            info = board.get(code)
+            if info and info.get("close") is not None:
+                chg = info["change_pct"]
+                delta = f"{chg:+.2f}%" if chg is not None else None
+                col.metric(
+                    label=info["name"],
+                    value=f"{info['close']:,.2f}",
+                    delta=delta,
+                    delta_color="inverse" if delta is not None else "off",
+                )
+            else:
+                col.metric(label=INDEX_CODES.get(code, code), value="—", delta=None)
+
+    # 中证2000 估值提示（PE 来自 index_pe_history，NeoData 兜底）
+    pe = load_index_pe_latest("sh932000")
+    if pe and pe.get("pe") is not None:
+        st.caption(
+            f"📌 中证2000 估值参考：PE(TTM) ≈ {pe['pe']:.2f}"
+            + (f" / PB ≈ {pe['pb']:.2f}" if pe.get("pb") else "")
+            + f"（截至 {pe['date']}）；数据来自 index_pe_history（NeoData 兜底）。"
+        )
+
+    # 归一化走势对比（宽基子集，含中证2000：覆盖大/中/小盘风格）
+    trend_codes = ["sh000001", "sh000300", "sh000905", "sh000852", "sh932000", "sz399006", "sh000688"]
+    trend_codes = [c for c in trend_codes if c in board]
+    trend = load_index_trend(trend_codes, days=250)
+    if trend:
+        fig = go.Figure()
+        palette = ["#58a6ff", "#f0883e", "#3fb950", "#bc8cff", "#ef4444", "#56d4dd", "#e3b341"]
+        for i, code in enumerate(trend_codes):
+            series = trend[code]
+            if not series:
+                continue
+            dates = [s[0] for s in series]
+            closes = [float(s[1]) for s in series]
+            base = closes[0] if closes[0] else 1
+            norm = [c / base * 100 for c in closes]
+            fig.add_trace(go.Scatter(
+                x=dates, y=norm, mode="lines", name=INDEX_CODES.get(code, code),
+                line=dict(width=1.5, color=palette[i % len(palette)]),
+                hovertemplate=f"%{{x}}<br>{INDEX_CODES.get(code, code)}: %{{y:.1f}}<extra></extra>",
+            ))
+        fig.add_hline(y=100, line_dash="dash", line_color="#8b949e", line_width=1)
+        fig.update_layout(
+            height=320,
+            plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
+            font=dict(color="#c9d1d9", size=11),
+            margin=dict(l=40, r=20, t=10, b=30),
+            xaxis=dict(title="", showgrid=False),
+            yaxis=dict(title="归一化 (起点=100)", showgrid=True, gridcolor="#21262d"),
+            legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+            showlegend=True,
+        )
+        render_chart(fig)
+        st.caption(
+            "宽基指数近 250 交易日归一化走势：上证/沪深300/中证500/中证1000 代表大中小盘，"
+            "中证2000 代表小盘风格——可直观对比大小盘相对强弱。"
+        )
+
+
 def render_tab1():
     selected_date = st.session_state.get("selected_date", "")
     selected_benchmark = st.session_state.get("selected_benchmark", "sh000300")
@@ -810,6 +905,7 @@ def render_tab1():
 
     st.caption("展示组合净值走势与基准对比、日收益率分布、每日盈亏及滚动风险指标")
 
+    _render_index_board(selected_date)
     _render_basic_metrics(positions, summary, {}, selected_date, selected_benchmark, technical, volatility, max_dd, sharpe, cal_data, tech_signals, show_days)
     _render_rolling_charts(summary, selected_date, show_days)
     _render_benchmark_comparison(summary, selected_benchmark, selected_date, show_days)

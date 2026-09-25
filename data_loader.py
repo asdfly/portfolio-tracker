@@ -150,6 +150,91 @@ def load_index_quotes(code="sh000300", days=60, end_date=None):
     conn.close()
     return df
 
+def load_index_board(codes=None, days=60):
+    """加载宽基指数行情看板数据：每个指数最新收盘、涨跌幅、近期走势。
+
+    返回 {code: {name, close, change_pct, date, spark:[closes]}}。
+    中证2000(sh932000) 等指数行情已通过 index_quotes 落地（westock / NeoData 兜底）。
+    """
+    if codes is None:
+        codes = list(INDEX_CODES.keys())
+    if not codes:
+        return {}
+    conn = get_db_connection()
+    try:
+        placeholders = ",".join("?" * len(codes))
+        df = pd.read_sql_query(
+            f"SELECT code, date, close, change_pct FROM index_quotes "
+            f"WHERE code IN ({placeholders}) ORDER BY code, date",
+            conn, params=codes,
+        )
+    finally:
+        conn.close()
+    if df.empty:
+        return {}
+    result = {}
+    for code, g in df.groupby("code"):
+        g = g.sort_values("date").reset_index(drop=True)
+        latest = g.iloc[-1]
+        prev = g.iloc[-2] if len(g) > 1 else None
+        chg = latest["change_pct"]
+        # change_pct 缺失时回退到最近两日收盘计算（兼容历史脏数据/缺字段）
+        if pd.isna(chg) and prev is not None and prev["close"]:
+            chg = (latest["close"] / prev["close"] - 1) * 100
+        result[code] = {
+            "name": INDEX_CODES.get(code, code),
+            "close": latest["close"],
+            "change_pct": None if pd.isna(chg) else float(chg),
+            "date": latest["date"],
+            "spark": g["close"].tail(days).tolist(),
+        }
+    return result
+
+def load_index_trend(codes, days=250):
+    """加载多个指数的近期收盘序列（用于归一化对比走势图）。
+
+    返回 {code: [(date, close), ...]}，已按日期升序；仅取末 days 个交易日。
+    """
+    if not codes:
+        return {}
+    conn = get_db_connection()
+    try:
+        placeholders = ",".join("?" * len(codes))
+        df = pd.read_sql_query(
+            f"SELECT code, date, close FROM index_quotes "
+            f"WHERE code IN ({placeholders}) ORDER BY code, date",
+            conn, params=codes,
+        )
+    finally:
+        conn.close()
+    if df.empty:
+        return {}
+    out = {}
+    for code, g in df.groupby("code"):
+        g = g.sort_values("date").reset_index(drop=True)
+        out[code] = g[["date", "close"]].tail(days).values.tolist()
+    return out
+
+def load_index_pe_latest(index_code):
+    """加载单只指数最新 PE/PB（来自 index_pe_history，NeoData 兜底）。
+
+    注意 index_pe_history 用 6 位裸代码（如 932000），而 index_quotes 用带前缀代码
+    （如 sh932000）—— 此处自动剥离开头 sh/sz 前缀以对齐。
+    """
+    bare = index_code[2:] if index_code[:2] in ("sh", "sz") else index_code
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT pe, pb, date FROM index_pe_history "
+            "WHERE index_code=? ORDER BY date DESC LIMIT 1",
+            (bare,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {"pe": row[0], "pb": row[1], "date": row[2]}
+
 def load_technical(end_date=None):
     """加载技术指标，关联ETF名称
 
