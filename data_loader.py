@@ -312,16 +312,116 @@ def load_calendar_data():
     return df
 
 
-def load_portfolio_events(horizon_days: int = 90):
-    """加载与当前持仓相关的真实关键事件（分红除息、财报披露等）。
+def ensure_portfolio_events_table(conn):
+    """确保 portfolio_events 表存在（读写两处共用，保证读永不因缺表报错）。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL,
+            name        TEXT,
+            event_type  TEXT NOT NULL,
+            event_date  TEXT NOT NULL,
+            per_unit    REAL,
+            cumulative  REAL,
+            detail      TEXT,
+            source      TEXT,
+            created_at  TEXT,
+            UNIQUE(code, event_type, event_date)
+        )
+        """
+    )
 
-    当前数据层尚无 etf_dividend / earnings_date 表，故默认返回空列表。
-    待分红数据回填（例如 akshare fund_dividend、westock 公告接口，写入 portfolio_events
-    表）后，此处负责过滤出 horizon_days 内、且 code 命中最新持仓快照的事件，实现事件日历
-    的「持仓个性化」。接口契约（返回 list[dict]，含 icon/title/date/urgency/days_ahead/
-    color/desc）保持稳定，前端无需改动即可无缝接入。
+
+def _latest_snapshot_codes():
+    """返回最新持仓快照中去重的 code 列表（与 tab4 _load_current_holdings 同源）。"""
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT date FROM portfolio_snapshots ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            conn.close()
+            return []
+        latest = row[0]
+        codes = [r[0] for r in conn.execute(
+            "SELECT DISTINCT code FROM portfolio_snapshots WHERE date = ?", (latest,)
+        ).fetchall()]
+        conn.close()
+        return codes
+    except Exception:
+        return []
+
+
+def load_portfolio_events(horizon_days: int = 90):
+    """加载与当前持仓相关的真实关键事件（分红除息、收益分配公告等）。
+
+    数据来源：portfolio_events 表（由 scripts/backfill/backfill_etf_dividends.py 回填，
+    主通道 akshare fund_etf_dividend_sina / 回退 fund_announcement_dividend_em）。
+
+    过滤规则：event_date 落在 [today-horizon, today+horizon] 且 code 命中最新持仓快照，
+    实现事件日历的「持仓个性化」。返回 list[dict]，契约稳定（icon/title/date/urgency/
+    days_ahead/color/desc），前端 tab4 直接 extend 即可无缝接入。
     """
-    return []
+    try:
+        from datetime import date, timedelta
+
+        conn = get_db_connection()
+        ensure_portfolio_events_table(conn)
+        codes = _latest_snapshot_codes()
+        if not codes:
+            conn.close()
+            return []
+        placeholders = ",".join("?" * len(codes))
+        today = date.today()
+        lo = (today - timedelta(days=horizon_days)).isoformat()
+        hi = (today + timedelta(days=horizon_days)).isoformat()
+        rows = conn.execute(
+            f"""
+            SELECT code, name, event_date, per_unit, cumulative, detail
+            FROM portfolio_events
+            WHERE code IN ({placeholders})
+              AND event_date >= ? AND event_date <= ?
+            ORDER BY event_date
+            """,
+            (*codes, lo, hi),
+        ).fetchall()
+        conn.close()
+
+        events = []
+        for code, name, event_date, per_unit, cumulative, detail in rows:
+            try:
+                d = date.fromisoformat(event_date)
+            except Exception:
+                continue
+            days_ahead = (d - today).days
+            if days_ahead < 0:
+                urgency = f"已派息{-days_ahead}天前"
+            elif days_ahead == 0:
+                urgency = "今日除息"
+            elif days_ahead <= 14:
+                urgency = "即将除息"
+            else:
+                urgency = f"{days_ahead}天后"
+            if per_unit is not None:
+                desc = f"每份 ¥{per_unit:.4f}（累计 ¥{cumulative:.4f}）"
+            else:
+                desc = (detail or "收益分配")[:40]
+            title = f"{name or code} 分红除息"
+            events.append(
+                {
+                    "icon": "💰",
+                    "title": title,
+                    "date": event_date,
+                    "urgency": urgency,
+                    "days_ahead": days_ahead,
+                    "color": "#d29922",  # 分红专属金，区别于通用 A 股日历
+                    "desc": desc,
+                }
+            )
+        return events
+    except Exception:
+        return []
 
 
 def _load_suspect_dates():

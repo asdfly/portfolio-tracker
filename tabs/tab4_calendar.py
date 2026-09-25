@@ -561,9 +561,12 @@ def _render_event_calendar():
             }
         )
 
-    # 真实持仓事件（数据层回填后接入；当前返回空）
+    # 真实持仓事件（分红数据回填后接入 portfolio_events 表）
+    portfolio_ev_count = 0
     try:
-        events_list.extend(load_portfolio_events(horizon_days=90))
+        p_evs = load_portfolio_events(horizon_days=90)
+        events_list.extend(p_evs)
+        portfolio_ev_count = len(p_evs)
     except Exception as e:
         logger.debug(f"load_portfolio_events skipped: {e}")
 
@@ -572,12 +575,16 @@ def _render_event_calendar():
     if holdings:
         names = "、".join(holdings[:12])
         more = f" 等{len(holdings)}只" if len(holdings) > 12 else ""
+        evt_note = (
+            f"　·　近90天 {portfolio_ev_count} 条真实除息事件已高亮（见上方）"
+            if portfolio_ev_count > 0
+            else "　·　真实除息日已按持仓接入（近90天暂无）"
+        )
         st.markdown(
             f'<div style="background:#161b22;border-radius:6px;padding:10px 14px;margin-bottom:8px;'
             f'border-left:3px solid #58a6ff;">'
             f'<div style="font-size:13px;color:#e6edf3;font-weight:bold;">📦 当前持仓（最新快照）</div>'
-            f'<div style="font-size:11px;color:#6e7681;margin-top:4px;line-height:1.6;">{names}{more}'
-            f'　·　真实除息/披露日待分红数据回填后在此高亮</div>'
+            f'<div style="font-size:11px;color:#6e7681;margin-top:4px;line-height:1.6;">{names}{more}{evt_note}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
