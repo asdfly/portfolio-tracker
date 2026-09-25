@@ -506,7 +506,9 @@ def _render_benchmark_comparison_tab1(summary, selected_date, show_days):
     )
 
     bench_options = {k: v for k, v in INDEX_CODES.items()}
-    default_benches = ["sh000300", "sz399006", "sh000852"]
+    # 默认对比基准：沪深300(大盘) / 创业板指(成长) / 中证1000(中小盘) / 中证2000(小盘)
+    # 组合战术超配军工/医药，小盘风格暴露明显，纳入中证2000便于直接对照小盘基准。
+    default_benches = ["sh000300", "sz399006", "sh000852", "sh932000"]
     selected_benches = st.multiselect(
         "选择对比基准（最多5个）",
         options=list(bench_options.keys()),
