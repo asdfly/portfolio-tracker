@@ -180,7 +180,10 @@ def run_watchlist(codes=None, apply_db=True, log=print) -> dict:
             try:
                 # ---- 1) OHLCV：复用既有增量补采（EM 主源 → 新浪兜底） ----
                 before_dates = set(_price_dates(conn, code))
-                n = backfill_etf_price_history(conn, [code], log=log)
+                # backfill_etf_price_history 返回 BackfillResult（富结果），
+                # 历史实现返回裸 int；统一取 .rows（本次写入行数）以兼容两种签名。
+                _bres = backfill_etf_price_history(conn, [code], log=log)
+                n = _bres.rows if hasattr(_bres, "rows") else _bres
                 entry["price_rows"] = n
                 result["price_rows"] += n
                 # 区分「真·新交易日」与「末日重取」：新增是判断幂等的唯一指标
