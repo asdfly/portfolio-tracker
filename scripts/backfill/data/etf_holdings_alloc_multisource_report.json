@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-25 08:28:45",
+  "generated_at": "2026-09-27 21:32:44",
   "holdings_cross": [
     {
       "code": "510300",
@@ -803,23 +803,30 @@
     },
     {
       "code": "510300",
-      "stock_code": "601166",
-      "neodata": null,
-      "em": 1.28,
-      "class": "退出持仓(EM有, neodata无)"
-    },
-    {
-      "code": "510300",
       "stock_code": "600900",
       "neodata": null,
       "em": 1.33,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
-      "code": "510500",
-      "stock_code": "600549",
+      "code": "510300",
+      "stock_code": "601166",
       "neodata": null,
-      "em": 0.62,
+      "em": 1.28,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "600988",
+      "neodata": null,
+      "em": 0.73,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "510500",
+      "stock_code": "002202",
+      "neodata": null,
+      "em": 0.64,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -831,16 +838,16 @@
     },
     {
       "code": "510500",
-      "stock_code": "688525",
+      "stock_code": "600879",
       "neodata": null,
-      "em": 0.69,
+      "em": 0.59,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
       "code": "510500",
-      "stock_code": "600988",
+      "stock_code": "600549",
       "neodata": null,
-      "em": 0.73,
+      "em": 0.62,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -859,23 +866,37 @@
     },
     {
       "code": "510500",
-      "stock_code": "002202",
+      "stock_code": "688525",
       "neodata": null,
-      "em": 0.64,
+      "em": 0.69,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
-      "code": "510500",
-      "stock_code": "600879",
+      "code": "512100",
+      "stock_code": "001309",
       "neodata": null,
       "em": 0.59,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
       "code": "512100",
-      "stock_code": "300666",
+      "stock_code": "603308",
       "neodata": null,
-      "em": 0.34,
+      "em": 0.33,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "600105",
+      "neodata": null,
+      "em": 0.37,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "002456",
+      "neodata": null,
+      "em": 0.33,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -883,6 +904,20 @@
       "stock_code": "300548",
       "neodata": null,
       "em": 0.41,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "688498",
+      "neodata": null,
+      "em": 0.7,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "512100",
+      "stock_code": "300666",
+      "neodata": null,
+      "em": 0.34,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -900,38 +935,10 @@
       "class": "退出持仓(EM有, neodata无)"
     },
     {
-      "code": "512100",
-      "stock_code": "002456",
+      "code": "588000",
+      "stock_code": "688111",
       "neodata": null,
-      "em": 0.33,
-      "class": "退出持仓(EM有, neodata无)"
-    },
-    {
-      "code": "512100",
-      "stock_code": "603308",
-      "neodata": null,
-      "em": 0.33,
-      "class": "退出持仓(EM有, neodata无)"
-    },
-    {
-      "code": "512100",
-      "stock_code": "001309",
-      "neodata": null,
-      "em": 0.59,
-      "class": "退出持仓(EM有, neodata无)"
-    },
-    {
-      "code": "512100",
-      "stock_code": "600105",
-      "neodata": null,
-      "em": 0.37,
-      "class": "退出持仓(EM有, neodata无)"
-    },
-    {
-      "code": "512100",
-      "stock_code": "688498",
-      "neodata": null,
-      "em": 0.7,
+      "em": 2.73,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -939,13 +946,6 @@
       "stock_code": "688271",
       "neodata": null,
       "em": 2.79,
-      "class": "退出持仓(EM有, neodata无)"
-    },
-    {
-      "code": "588000",
-      "stock_code": "688111",
-      "neodata": null,
-      "em": 2.73,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -957,9 +957,9 @@
     },
     {
       "code": "159949",
-      "stock_code": "300760",
+      "stock_code": "300014",
       "neodata": null,
-      "em": 2.31,
+      "em": 1.9,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -971,16 +971,9 @@
     },
     {
       "code": "159949",
-      "stock_code": "300014",
+      "stock_code": "300760",
       "neodata": null,
-      "em": 1.9,
-      "class": "退出持仓(EM有, neodata无)"
-    },
-    {
-      "code": "159992",
-      "stock_code": "000661",
-      "neodata": null,
-      "em": 2.82,
+      "em": 2.31,
       "class": "退出持仓(EM有, neodata无)"
     },
     {
@@ -988,6 +981,13 @@
       "stock_code": "002294",
       "neodata": null,
       "em": 3.41,
+      "class": "退出持仓(EM有, neodata无)"
+    },
+    {
+      "code": "159992",
+      "stock_code": "000661",
+      "neodata": null,
+      "em": 2.82,
       "class": "退出持仓(EM有, neodata无)"
     }
   ],

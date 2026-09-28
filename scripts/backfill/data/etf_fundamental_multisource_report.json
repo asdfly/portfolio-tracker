@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-25 08:18:59",
+  "generated_at": "2026-09-27 21:32:37",
   "price_cross_check": [
     {
       "code": "510300",
@@ -99,24 +99,21 @@
       "date": "2026-09-24",
       "neodata": 1.335,
       "westock": null,
-      "em_last": 1.377,
-      "em_to_neo_chg_pct": -3.05
+      "em_last": null
     },
     {
       "code": "159732",
       "date": "2026-09-23",
       "neodata": 1.382,
       "westock": null,
-      "em_last": 1.377,
-      "em_to_neo_chg_pct": 0.363
+      "em_last": null
     },
     {
       "code": "159732",
       "date": "2026-09-22",
       "neodata": 1.385,
       "westock": null,
-      "em_last": 1.377,
-      "em_to_neo_chg_pct": 0.581
+      "em_last": null
     },
     {
       "code": "159770",

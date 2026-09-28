@@ -85,34 +85,12 @@
       "anchor_examples": []
     },
     "159732": {
-      "anchor_overlap": 16,
-      "anchor_match": 1,
-      "anchor_close": 4,
-      "anchor_mismatch": 11,
-      "anchor_match_rate": 0.0625,
-      "anchor_examples": [
-        {
-          "date": "2026-08-25",
-          "neodata": -15467644.58,
-          "anchor": -7863282.0,
-          "rel_diff": 0.4916,
-          "anchor_src": "em_spot"
-        },
-        {
-          "date": "2026-08-26",
-          "neodata": 17777184.8,
-          "anchor": 22329623.0,
-          "rel_diff": 0.2039,
-          "anchor_src": "em_spot"
-        },
-        {
-          "date": "2026-08-27",
-          "neodata": -5254979.218,
-          "anchor": -8686442.0,
-          "rel_diff": 0.395,
-          "anchor_src": "em_spot"
-        }
-      ]
+      "anchor_overlap": 0,
+      "anchor_match": 0,
+      "anchor_close": 0,
+      "anchor_mismatch": 0,
+      "anchor_match_rate": null,
+      "anchor_examples": []
     },
     "159770": {
       "anchor_overlap": 16,
@@ -427,11 +405,11 @@
       ]
     },
     "515120": {
-      "anchor_overlap": 18,
-      "anchor_match": 2,
-      "anchor_close": 4,
-      "anchor_mismatch": 12,
-      "anchor_match_rate": 0.1111,
+      "anchor_overlap": 23,
+      "anchor_match": 3,
+      "anchor_close": 6,
+      "anchor_mismatch": 14,
+      "anchor_match_rate": 0.1304,
       "anchor_examples": [
         {
           "date": "2026-08-25",
@@ -580,9 +558,9 @@
   "summary": {
     "codes_total": 23,
     "codes_with_westock": 5,
-    "anchor_overlap": 301,
+    "anchor_overlap": 290,
     "anchor_match": 67,
-    "anchor_match_rate": 0.2226,
+    "anchor_match_rate": 0.231,
     "westock_overlap": 115,
     "westock_match": 115,
     "westock_match_rate": 1.0

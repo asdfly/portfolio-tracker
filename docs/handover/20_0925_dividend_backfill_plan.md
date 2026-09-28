@@ -69,10 +69,9 @@ CREATE TABLE IF NOT EXISTS portfolio_events (
 - tab4 持仓卡片文案改为动态：有事件时显示「近90天 N 条真实除息事件已高亮」；无事件时「真实除息日已按持仓接入（近90天暂无）」。
 - 已提交并推送（见 git log）。
 
-## 八、后续（可选，不在本次）
-- 将回填纳入定时维护：分红低频，季度/半年跑一次即可，脚本幂等（`INSERT OR IGNORE`）可安全调度。
-- 若需财报披露日个性化，可再加 `earnings` 类型事件（来源 westock 公告 / fund_announcement_dividend_em 之外）。
-
-## 八、后续（可选，不在本次）
-- 将回填纳入定时维护（分红低频，季度/半年跑一次即可，脚本幂等可安全调度）。
+## 八、定时调度（已落地 2026-09-25）
+- 已通过 WorkBuddy 自动化接入**季度**调度（ID `dbda0204-1805-40b2-998d-f631736d3a93`，状态 ACTIVE）。
+- 周期：`FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0`（每 3 个月 1 号 09:00，首次 2026-10-01）。
+- 自动化 prompt 直接执行 `venv313/Scripts/python.exe scripts/backfill/backfill_etf_dividends.py --verify`，含失败重试一次 + 空转防护 + 结果回报。
+- 若改**半年**：将 rrule 改为 `INTERVAL=6` 即可（其余不变）。
 - 若需财报披露日个性化，可再加 `earnings` 类型事件（来源：`fund_announcement_dividend_em` 之外或 westock 公告）。
