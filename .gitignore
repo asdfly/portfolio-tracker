@@ -57,6 +57,9 @@ Desktop.ini
 *.tmp
 *.bak
 *.swp
+
+# 种子 JSON 本地备份（带日期后缀，手工修复前快照，不入库）
+scripts/backfill/data/*.json.bak*
 timer_config.xml
 
 # 临时测试/调试文件
