@@ -991,6 +991,51 @@
           "turnover_rate": 8.1
         }
       ]
+    },
+    "159300": {
+      "name": "沪深300ETF富国",
+      "records": [
+        {
+          "date": "2026-09-22",
+          "price": 4.95,
+          "open": 4.957,
+          "high": 4.99,
+          "low": 4.944,
+          "volume": 7054400.0,
+          "amount": 35062044.0,
+          "turnover_rate": 2.06
+        },
+        {
+          "date": "2026-09-23",
+          "price": 4.922,
+          "open": 4.959,
+          "high": 4.959,
+          "low": 4.919,
+          "volume": 4843400.0,
+          "amount": 23902181.0,
+          "turnover_rate": 1.41
+        },
+        {
+          "date": "2026-09-24",
+          "price": 4.846,
+          "open": 4.903,
+          "high": 4.919,
+          "low": 4.838,
+          "volume": 13491700.0,
+          "amount": 65627093.0,
+          "turnover_rate": 3.93
+        },
+        {
+          "date": "2026-09-28",
+          "price": 4.736,
+          "open": 4.836,
+          "high": 4.836,
+          "low": 4.715,
+          "volume": 15277500.0,
+          "amount": 72673646.0,
+          "turnover_rate": 4.48
+        }
+      ]
     }
   }
 }

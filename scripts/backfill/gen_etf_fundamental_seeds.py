@@ -8,11 +8,13 @@ scripts/backfill/data/etf_fundamental_neodata.json（组合文件，便于每日
   trade_date        -> date
   latest_price      -> price (收盘价)
   open/high/low     -> open/high/low
-  volume            -> volume (手)
+  volume            -> volume (股, neodata fund_quote 返回的 volume 即为股)
   turnover_value    -> amount (成交额,元)
   turnover_rate     -> turnover_rate (%)
 
-注意：159300 在 neodata 无返回（覆盖缺口），已排除；缺口由每日自动化用 westock 补。
+注意：159300 (沪深300ETF富国) 现已纳入 neodata 覆盖 —— 实测 neodata fund_quote 对 159300.SZ
+正常返回（含 09-28 不复权日K），历史曾误判"neodata 无返回"而 deliberate 排除，已于 2026-09-29 纠正。
+159300 存量历史数据原以"手"为单位，已于 2026-09-29 统一乘 100 转为"股"，与 neodata 口径一致。
 """
 import json
 import os
@@ -22,6 +24,12 @@ OUT = os.path.join(HERE, "data", "etf_fundamental_neodata.json")
 
 # (date, price, open, high, low, volume, amount, turnover_rate)
 RAW = {
+    "159300": [
+        ("2026-09-28", 4.736, 4.836, 4.836, 4.715, 15277500.0, 72673646.0, 4.48),
+        ("2026-09-24", 4.846, 4.903, 4.919, 4.838, 13491700.0, 65627093.0, 3.93),
+        ("2026-09-23", 4.922, 4.959, 4.959, 4.919, 4843400.0, 23902181.0, 1.41),
+        ("2026-09-22", 4.950, 4.957, 4.990, 4.944, 7054400.0, 35062044.0, 2.06),
+    ],
     "510300": [
         ("2026-09-24", 4.515, 4.578, 4.579, 4.512, 710251900.0, 3220888135.0, 2.97),
         ("2026-09-23", 4.590, 4.620, 4.621, 4.586, 636457500.0, 2928541597.0, 2.65),
@@ -135,6 +143,7 @@ RAW = {
 }
 
 NAMES = {
+    "159300": "沪深300ETF富国",
     "510300": "沪深300ETF华泰柏瑞", "159220": "港股通红利低波ETF华宝", "159267": "航天ETF华安",
     "159650": "国开债ETF博时", "159732": "消费电子ETF华夏", "159770": "机器人ETF天弘",
     "159796": "电池ETF汇添富", "159819": "人工智能ETF易方达", "159949": "创业板50ETF华安",
@@ -161,4 +170,4 @@ with open(OUT, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, indent=2)
 print(f"[gen] 写出 {OUT}: {len(out['etfs'])} 只ETF, "
       f"{sum(len(v['records']) for v in out['etfs'].values())} 行")
-print(f"[gen] 缺口(neodata未覆盖): 159300 (由每日自动化用 westock 补)")
+print(f"[gen] 覆盖全部 23 只持仓 ETF (含 159300, neodata 实时口径)")
