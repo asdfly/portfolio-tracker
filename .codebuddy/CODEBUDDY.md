@@ -27,10 +27,10 @@
 6. **休市日勿误补**：如 2026-09-25 中秋休市，补数函数会正确跳过非交易日，不要误以为"缺口"而补空白交易日。
 7. **双数据源容错**：东方财富（主）+ 新浪（`akshare fund_etf_hist_sina`，备）。新浪 `volume` = 股，与 `etf_fundamental` 一致，**无需 ×100**；新浪无 `turnover_rate` 列。
 
-## 五、自动化（工作区级，cwds 绑定本仓库，无需迁移）
+## 五、自动化（定义在客户端/服务端；本地仓库仅存运行时 memory.md，不含定义）
 - `152124e1`：每晚 21:30，etf_fundamental 双兜底（neodata 实时 + akshare 推进）
 - `a191fb16`：一次性复查任务（已运行）
-- 另有 `automation-1785911636011` 等 5 个本地定义目录（`.workbuddy/automations/`）
+- 另有 `automation-1785911636011` 等目录（`.workbuddy/automations/` 下仅存每个自动化的运行时 `memory.md`，**自动化定义/cwds 在客户端服务端，不在本仓库**）；新建项目时是否自动归集取决于客户端按工作目录关联的逻辑，请在客户端「项目 → 自动化」面板核对。
 
 ## 六、项目工作流范式
 并行拉数 → 缺口校验 → 落盘 deliverable → memory append → present；批处理脚本强制 CRLF、用 `venv313`、GitHub 走 SSH-over-443。交付物既要点预测也要内嵌方法论自审（如"指数权重 ≠ 逻辑载体"陷阱）。

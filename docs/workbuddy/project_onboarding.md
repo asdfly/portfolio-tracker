@@ -1,6 +1,6 @@
 # portfolio_tracker × WorkBuddy「项目」功能 接入指引
 
-> 目的：把 portfolio_tracker 工作用 WorkBuddy 真正的「项目」功能组织起来（云端共享指令 / 项目级配置 / 资料库 RAG / 自动化归属）。
+> 目的：把 portfolio_tracker 工作用 WorkBuddy 真正的「项目」功能组织起来（云端共享指令 / 项目级配置 / 资料库 RAG / 自动化归属）。  
 > 本文件由 agent 生成；**其中标注「需你在客户端操作」的步骤，agent 无法直接执行**（无项目实体创建权、无项目资产库写入权）。
 
 ## A. 在客户端新建项目并关联本仓库（需你在客户端操作）
@@ -15,9 +15,12 @@
      数据补齐走akshare兜底；真实库 data/database/portfolio.db；休市日不补空白。
      ```
    - 连接器 / 专家 / 技能：按需添加（如已装相关 Finance 技能可纳入）。
-3. 创建后，在项目详情页将**工作目录关联到本仓库根**：
+3. 创建后，在项目详情页将**工作目录关联到本仓库根**：  
    `/d/HuaweiMoveData/Users/HUAWEI/Documents/lingxi-claw/portfolio_tracker`
-4. **现有 5 个自动化**（cwds 已绑定该目录）会自动归属本项目，**无需迁移**，照常每晚运行。
+   ⚠️ 客户端「工作目录」字段要填 **Windows 路径**，不要填 Git Bash 风格的 `/d/...`：
+   `D:\HuaweiMoveData\Users\HUAWEI\Documents\lingxi-claw\portfolio_tracker`
+   （等价写法 `D:/HuaweiMoveData/Users/HUAWEI/Documents/lingxi-claw/portfolio_tracker` 也可；若误填 `/d/...` 会导致关联失败、`.codebuddy` 不加载）
+4. **现有自动化**（定义在客户端/服务端，cwds 指向该仓库目录）通常会随工作目录关联自动归集到本项目；但 agent 无法从仓库侧证实此绑定，请在客户端「项目 → 自动化」面板核对是否已出现并按计划运行。**若未自动归集，需在该面板手动关联或重建。**
 5. 验证：在本项目下新建任务，确认上下文已自动注入项目指令 + `.codebuddy` 规则（见下方 C）。
 
 ## B. 上传知识文档到项目资产库做 RAG（需你在客户端操作）
@@ -32,14 +35,16 @@
 
 ## C. 验证清单
 
+- [ ] **工作目录路径正确**：新建任务时，客户端顶栏显示的工作目录为 `D:\HuaweiMoveData\...`（不是 `/d/...`）；这是 `.codebuddy` 能被加载的前提
 - [ ] 新任务上下文包含项目指令与 `.codebuddy/` 规则（CODEBUDDY.md + 3 个 rules）
-- [ ] 现有自动化（152124e1 等）仍按原计划运行、未报错
-- [ ] 项目资料库可检索到上传的文档
+- [ ] 现有自动化（152124e1 等）已在「项目 → 自动化」面板出现并按原计划运行、未报错
+- [ ] 项目资料库可检索到上传的文档（若已上传）
 - [ ] 本地 git 状态干净（新增 `.codebuddy/` 与本文档，未卷走其他产物）
 
 ## D. 已落地的项目级配置（agent 已完成）
 
 仓库内已新增 `.codebuddy/`，对所有任务自动生效：
+
 - `CODEBUDDY.md`：项目架构 / 路径 / 常用命令 / 关键陷阱
 - `rules/git-workflow.md`：git 显式提交、不主动 push、跨盘走 Git Bash
 - `rules/data-integrity.md`：成交量单位、neodata 限制、休市日、双源容错
