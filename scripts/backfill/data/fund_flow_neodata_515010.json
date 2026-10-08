@@ -1,9 +1,111 @@
 {
   "code": "515010",
   "name": "证券ETF华夏",
-  "exchange_code": "515010.SH",
-  "source": "neodata_mcp",
   "records": [
+    {
+      "date": "2026-08-06",
+      "main_net_inflow": -7206992.2,
+      "main_inflow": 29242548.2,
+      "main_outflow": 36449540.4,
+      "super_large_net_inflow": -5452332.0,
+      "large_net_inflow": -1754660.1999999993
+    },
+    {
+      "date": "2026-08-07",
+      "main_net_inflow": -4357929.7,
+      "main_inflow": 27974543.9,
+      "main_outflow": 32332473.6,
+      "super_large_net_inflow": -2719731.0,
+      "large_net_inflow": -1638198.700000003
+    },
+    {
+      "date": "2026-08-10",
+      "main_net_inflow": -335148.3,
+      "main_inflow": 27018275.895999998,
+      "main_outflow": 27353424.196000002,
+      "super_large_net_inflow": -1010447.0999999996,
+      "large_net_inflow": 675298.7999999989
+    },
+    {
+      "date": "2026-08-11",
+      "main_net_inflow": -6103115.3,
+      "main_inflow": 36968672.2,
+      "main_outflow": 43071787.5,
+      "super_large_net_inflow": -5026180.199999999,
+      "large_net_inflow": -1076935.1000000015
+    },
+    {
+      "date": "2026-08-12",
+      "main_net_inflow": 227025.6,
+      "main_inflow": 25872880.6,
+      "main_outflow": 25645855.0,
+      "super_large_net_inflow": 625405.0,
+      "large_net_inflow": -398379.4000000004
+    },
+    {
+      "date": "2026-08-13",
+      "main_net_inflow": 3058541.2,
+      "main_inflow": 46671423.7,
+      "main_outflow": 43612882.5,
+      "super_large_net_inflow": 6784893.0,
+      "large_net_inflow": -3726351.8000000007
+    },
+    {
+      "date": "2026-08-14",
+      "main_net_inflow": -15719706.9,
+      "main_inflow": 36242212.400000006,
+      "main_outflow": 51961919.3,
+      "super_large_net_inflow": -12442932.099999998,
+      "large_net_inflow": -3276774.8000000007
+    },
+    {
+      "date": "2026-08-17",
+      "main_net_inflow": 3098272.9,
+      "main_inflow": 40352785.1,
+      "main_outflow": 37254512.2,
+      "super_large_net_inflow": 2462704.3999999985,
+      "large_net_inflow": 635568.5
+    },
+    {
+      "date": "2026-08-18",
+      "main_net_inflow": -9674292.7,
+      "main_inflow": 34645912.1,
+      "main_outflow": 44320204.8,
+      "super_large_net_inflow": -8472771.299999999,
+      "large_net_inflow": -1201521.4000000022
+    },
+    {
+      "date": "2026-08-19",
+      "main_net_inflow": -5567409.672,
+      "main_inflow": 36324731.7,
+      "main_outflow": 41892141.372,
+      "super_large_net_inflow": -5369166.972000001,
+      "large_net_inflow": -198242.69999999925
+    },
+    {
+      "date": "2026-08-20",
+      "main_net_inflow": -151132.7,
+      "main_inflow": 34842252.3,
+      "main_outflow": 34993385.0,
+      "super_large_net_inflow": -1204771.7000000011,
+      "large_net_inflow": 1053639.0
+    },
+    {
+      "date": "2026-08-21",
+      "main_net_inflow": -1465565.5,
+      "main_inflow": 67987766.4,
+      "main_outflow": 69453331.9,
+      "super_large_net_inflow": 2083951.1000000015,
+      "large_net_inflow": -3549516.6000000015
+    },
+    {
+      "date": "2026-08-24",
+      "main_net_inflow": 351247.7,
+      "main_inflow": 37203197.2,
+      "main_outflow": 36851949.5,
+      "super_large_net_inflow": 2428486.8999999985,
+      "large_net_inflow": -2077239.1999999993
+    },
     {
       "date": "2026-08-25",
       "main_net_inflow": -1019848.1,
@@ -183,10 +285,34 @@
     {
       "date": "2026-09-24",
       "main_net_inflow": -4303936.0,
-      "main_inflow": 25204219.0,
-      "main_outflow": 29508154.0,
-      "super_large_net_inflow": -6739106.0,
-      "large_net_inflow": 2435170.0
+      "main_inflow": 25204218.5,
+      "main_outflow": 29508154.5,
+      "super_large_net_inflow": -6739106.1,
+      "large_net_inflow": 2435170.1000000015
+    },
+    {
+      "date": "2026-09-28",
+      "main_net_inflow": -3870784.5,
+      "main_inflow": 29836523.2,
+      "main_outflow": 33707307.7,
+      "super_large_net_inflow": -4457365.600000001,
+      "large_net_inflow": 586581.0999999978
+    },
+    {
+      "date": "2026-09-29",
+      "main_net_inflow": -636006.2,
+      "main_inflow": 25842349.700000003,
+      "main_outflow": 26478355.9,
+      "super_large_net_inflow": 1737888.9000000004,
+      "large_net_inflow": -2373895.0999999996
+    },
+    {
+      "date": "2026-09-30",
+      "main_net_inflow": 1455374.0,
+      "main_inflow": 18205241.0,
+      "main_outflow": 16749867.0,
+      "super_large_net_inflow": -285027.0,
+      "large_net_inflow": 1740401.0
     }
   ]
 }
