@@ -119,12 +119,14 @@ def upsert_from_file(path, code, conn, verify=False):
 
 
 def _code_from_filename(base):
-    """etf_westock_159949.json -> 159949"""
+    """etf_westock_159949.json -> 159949 （兼容 etf_westock_159949_latest.json -> 159949）"""
     name = base
     if name.startswith("etf_westock_"):
         name = name[len("etf_westock_"):]
     if name.endswith(".json"):
         name = name[:-len(".json")]
+    if name.endswith("_latest"):
+        name = name[:-len("_latest")]
     return name
 
 
