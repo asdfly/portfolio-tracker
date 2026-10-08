@@ -493,7 +493,15 @@ class PortfolioAnalyzer:
             results['indices'] = index_quotes
 
             # 保存指数行情
-            self.db.save_index_quotes(self.today, index_quotes)
+            # 🔴 占位行 bug 根治（2026-10-08）：缓存兜底（_cached）行情是陈旧值，若以
+            # self.today 落库会成为「最新日期行」并伪装成今日收盘价，污染 MAX(date) 与下游
+            # gen_combo_report / enhanced_report。故仅持久化真实实时行情行；缓存兜底行只在
+            # 内存中供当日分析使用（change_pct=None 如实反映「无今日真实价」），不写库。
+            fresh_index_quotes = {
+                code: q for code, q in index_quotes.items()
+                if not q.get("_cached")
+            }
+            self.db.save_index_quotes(self.today, fresh_index_quotes)
 
             # 计算技术指标
             logger.info("步骤4: 计算技术指标...")
@@ -617,10 +625,14 @@ class PortfolioAnalyzer:
 
         实时取数失败后**回退 DB 缓存兜底**（2026-09-24 新增，针对中证2000）：
           中证2000(932000) 既有取数链被 host 级 RST 阻断（东财 push2his 不可达），
-          腾讯 fqkline 仅返 1 天、tushare 无权限、NeoData 无 .CSI 数据。该指数已通过
-          westock MCP 做过全量回填（见 scripts/backfill/backfill_index_quotes_westock.py）。
+          腾讯 fqkline 仅返 1 天、tushare 无权限、NeoData 无 .CSI 数据。该指数已由
+          官方中证指数公司源（akshare stock_zh_index_hist_csindex）通过
+          scripts/backfill/refresh_sh932000.py 做全量回填并每日刷新（见
+          scripts/backfill/backfill_index_quotes_westock.py 的「数据源解耦说明」）。
           故实时失败时回退到库内最新一行，保证 index_quotes 始终有该基准，避免下游模块读空。
           回退值带 ``_cached=True`` 标记，change_pct 仅在缓存即当日时采信，否则置 None。
+          ⚠️ 带 ``_cached`` 的行情**不会落库**（见 save_index_quotes 与 analyze 的占位行根治），
+          以免污染 MAX(date) 并伪装成今日收盘价。
         """
         from src.data_sources.base import DataSourceError
         quotes = {}

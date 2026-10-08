@@ -1,26 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-从 westock MCP 导出的原始 JSON（data_kline 的 {"ok":true,"data":{"nodes":[...]}} 形态）
-回填 index_quotes（幂等 upsert）。
+从「westock data_kline 同构」的原始 JSON（{"ok":true,"data":{"nodes":[...]}} 形态，
+收盘字段名 last）回填 index_quotes（幂等 upsert）。
 
-为什么需要这个脚本：
-  中证2000(代码 932000 / 腾讯 cs932000) 在 portfolio 既有取数链里被 host 级 RST 阻断
-  （东财 push2his 不可达）、腾讯 fqkline 仅返 1 天、tushare 无权限、NeoData 无 .CSI 数据。
-  实测 westock-mcp 的 data_kline 能稳定返回该指数 ~500 个交易日完整 OHLCV，且与东财口径交叉验证一致。
-  故采用「westock MCP（LLM agent 运行时）+ 本脚本落库」作为 932000 的持续维护通道，初始回填即用此脚本。
+数据源解耦说明（2026-10-08 起）：
+  本脚本只认 JSON 形态，不绑定任何具体取数源。历史上由 westock-mcp data_kline 产出该
+  JSON；但 westock-mcp 在 WB 自动化运行时长期不可连接，且官方中证指数公司源
+  akshare.stock_zh_index_hist_csindex('932000') 更权威、本机直连可用、不依赖任何连接器。
+  故自 2026-10-08 起，**本任务的取数源正式改为官方 CSIndex**，由同目录
+  refresh_sh932000.py（一步到位：取数→落盘→回填→清毒→终验）调用本脚本完成落库。
+  若仍用 westock 取数，JSON 形态完全一致，可继续喂给本脚本。
 
-输入 JSON 形态（westock data_kline 直出）：
+输入 JSON 形态：
   {"ok":true,"data":{"nodes":[{"date":"2026-09-24","open":...,"last":...,"high":...,"low":...,"volume":...,"amount":...}, ...]}}
 
 用法：
   venv313/Scripts/python.exe scripts/backfill/backfill_index_quotes_westock.py \
-      --raw scripts/backfill/data/cs932000_westock_2026-09-24.json \
+      --raw scripts/backfill/data/cs932000_latest.json \
       --db-code sh932000 --name 中证2000 [--verify]
 
-自动化（WB 每日维护）建议调用方式：
-  LLM agent 用 westock-mcp data_kline(code="cs932000", period="day", limit=800) 取数，
-  把返回的 JSON 落到临时文件，再运行本脚本。
+自动化（WB 每日维护）权威入口：
+  venv313/Scripts/python.exe scripts/backfill/refresh_sh932000.py
+  （内部取 CSIndex 真实数据 → 落盘 westock 同构 JSON → 调用本脚本 --verify → 清毒 → 终验）
 """
 import argparse
 import json

@@ -95,6 +95,12 @@ class DatabaseManager:
 
             from config.settings import INDEX_CODES
             for code, quote in quotes.items():
+                # 🔴 占位行 bug 根治（2026-10-08）：缓存兜底（_cached）行情是陈旧值，
+                # 以 date_str 落库会污染 MAX(date) 并伪装成「今日收盘」。写路径直接拒绝，
+                # 确保任何调用方都不会把占位行写入 index_quotes。
+                if quote.get("_cached"):
+                    logger.debug(f"跳过缓存兜底指数 {code} 的占位写入（非今日实时行情）")
+                    continue
                 std_name = INDEX_CODES.get(code, quote.get('name', ''))
                 cursor.execute("""
                     INSERT OR REPLACE INTO index_quotes
