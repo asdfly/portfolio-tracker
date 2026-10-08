@@ -384,7 +384,7 @@ pytest 会把隔离空库的错误大量写进 `logs/portfolio_YYYYMMDD.log`：
 | P2-8 持仓舆情 | 需 westock / neodata，非 akshare 栈，暂缓 |
 | 其他 P2 | 波动率目标化、IOPV 历史表、分散化相关性 |
 | neodata 凭证 | 12h 有效，仅会话内可采，**生产 `scheduled_run` 调不到** |
-| NAV 恒等式 | `portfolio_nav.total_units` / `total_value` 恒等式破损 |
+| NAV 恒等式（✅已闭环 2026-10-08） | 原 `portfolio_nav.total_units`/`total_value` 恒等式破损，已修复：`nav_engine.py:381` 改 `round(v/unit_nav,2)`，每日 `rebuild_portfolio_nav()` 全表刷正，实测 3493/3493 命中。详见 `07_known_data_issues.md` 问题三。 |
 | `_save_snapshot_from_kline` | 债务（行情表统一 qfq 后**不可再跑**） |
 | 告警被吞 | `run_analysis.py:1405-1406` 告警被 `except Exception` 吞 |
 | rc 被覆盖 | `scheduled_run.bat:20`；周末 rc=1 假失败 |
@@ -392,7 +392,7 @@ pytest 会把隔离空库的错误大量写进 `logs/portfolio_YYYYMMDD.log`：
 | `tab8` periodic | 无 `last_rebalance_date` 来源 |
 | `fetch_etf_ohlcv_sina` | `adj_close` 为**休眠路径** ⇒ 裁定 (a) 维持现状 + 登记到 `11_measurement_conventions.md` |
 | `recompute_summary_window.py` | **结构上补不了缺口**（问题 `#65`）：`:70-72` 日期清单取自 summary 自己（实测只覆盖 7 天）；`:197-203` `o = old[dt]` 对新增日期 `TypeError` 崩在写库前。已修（`8a7173c`：改 `resolve_dates()` 快照∪汇总并集 + `old.get(dt)`），**未执行** |
-| 报告库漂移 | `08_report_library_drift.md`：95 份 HTML vs 库 MATCH 57 / DIFFER 35 / NO_DB_ROW 5；08-03~09-14 窗口 29 条**全部漂移**（差值恒负 −53.6万~−65.7万）。10 个历史改写入口，真正有「写前阻断」的只有 1 个（`recompute_summary_window.py`）⇒ **唯一每天无人值守自动改写历史的入口零校验** |
+| 报告库漂移 | `08_report_library_drift.md`：**2026-10-08 复核** 112 份 HTML → MATCH 62 / DIFFER 46 / NO_DB_ROW 4（较 09-16 的 97/57/35/5，DIFFER +11 仍在扩大）；新增 2026-06-17~06-29 共 9 天统一下调 ≈212（符号为正，独立于原窗口）。⚠️ 归属订正：`recompute_summary_window.py` **不在任何定时链、默认 dry-run**，不是每日改写入口；真正每天自动重写历史的是 `run_analysis.py:1462 rebuild_portfolio_nav()`（nav 全表，异常仅 warning 不阻断）与每晚 ~21:22 `--reconcile`（仅 `fund_flows`），两者**均非** 212 下调元凶（执行者未定位）。「10 个历史改写入口」**全仓无定义出处，禁引用该数字**。 |
 
 ---
 

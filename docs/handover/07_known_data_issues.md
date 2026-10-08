@@ -170,7 +170,7 @@ print("全部结论复核通过")
 |------|--------|--------|------|
 | 一 · `_is_etf` 假阳性 | 中 | 低 | 当前无实际影响（两只已清仓），但属**埋雷**：一旦买入同类场外基金即触发采集失败 + 训练集污染。建议随下次 predictor 模块改动一并修掉。 |
 | 二 · `etf_fundamental` 脏数据 | 低 | 低 | 仅影响统计口径，不影响运行。**必须先定位写入来源再清库**，否则会被采集重新写回。 |
-| 三 · `portfolio_nav.total_units` 错位 | 中 | 中 | 字段 100% 错误，当前无下游读取故影响为零，但任何新消费方都会踩坑（见下）。 |
+| 三 · `portfolio_nav.total_units` 错位 | 中 | 中 | **已修复（2026-10-08 复核）**：字段值已修正为 `total_value / unit_nav`，实测 3493/3493 命中恒等式；原记录与根因见下（保留作历史证据）。 |
 | 四 · `portfolio_nav.mwr_return` 与 TWR 矛盾 | 中 | 中 | **用户可见**：该值已进入 `load_portfolio_nav()` 返回值，展示出来是 −73.5%。 |
 
 前两者均**不构成上线/交接阻断项**，但应写入待办，不要遗忘。
@@ -179,8 +179,8 @@ print("全部结论复核通过")
 
 ## 问题三：`portfolio_nav.total_units` 存的是「前一个交易日的市值」
 
-> 记录时间 2026-09-15 · 发现人 data-engineer · **状态：仅记录，未修复**
-> 本轮同时在做「场外净值写入 portfolio_snapshots」，为避免事后分不清是哪个改动引起的，本 bug 不在本轮修复。
+> 记录时间 2026-09-15 · 发现人 data-engineer · **状态：✅ 已修复（2026-10-08 复核确认）**
+> 修复：`nav_engine.py:381` 改为 `"total_units": round(v / unit_nav, 2)`；每天 15:30 定时链 `run_analysis.py:1462 rebuild_portfolio_nav()` 对 `portfolio_nav` 全表 `INSERT OR REPLACE`，已把历史行刷正。2026-10-08 实测 `total_units × unit_nav ≈ total_value` 命中 **3493/3493**（残差 <1 元）；回归守卫 `tests/test_total_units_identity.py` 在位。以下原文保留作历史证据。
 
 ### 复现查询
 
@@ -240,7 +240,7 @@ prev_v = v                                # ← 在 append 之后才推进
 ```python
 "total_units": round(v / unit_nav, 2) if unit_nav else None,   # nav_engine.py:226
 ```
-改后需全量 `rebuild_portfolio_nav()` 重刷，并补一条断言：`total_units * unit_nav ≈ total_value`。
+**已于 2026-10-08 复核落地**：全量 `rebuild_portfolio_nav()` 已执行（每日定时自动重刷），并已补断言 `total_units * unit_nav ≈ total_value`（`tests/test_total_units_identity.py`）。
 
 ---
 

@@ -2,6 +2,7 @@
 
 > 记录日期：2026-09-16
 > 状态：**已登记，未处置**（处置方案 A1 = 本文件；`data/reports/` 下现有文件一律不动）
+> 2026-10-08 复核：`data/reports/` 已增至 **112 份**，实测 **MATCH 62 / DIFFER 46 / NO_DB_ROW 4**（详见 §十一）。DIFFER 较 09-16 再 +11，漂移仍在扩大，并发现一次新改写（06-17~06-29 统一下调 ≈212）。
 > 证据获取方式：对 `data/database/portfolio.db` 以 `file:...?mode=ro` 只读连接执行 SQL；HTML 仅做文本读取。
 > 全程**未写入、未删除、未移动、未改名** `data/reports/` 下任何文件。
 > 关联：`docs/handover/07_known_data_issues.md`（数据口径陷阱）、task #67（06/07 月场外快照污染）、task #65（09-15 缺口）
@@ -399,3 +400,49 @@ for f in sorted(os.listdir(R)):
    与 **task #66**（`trading_calendar.py` 对覆盖外年份静默退化）是同一根因的两半，已建议合并为独立工单。
 4. **本文件不覆盖**：`run_report_*.json`（已纳入版本库，27 份，含 09-15 事故物证）、
    `alerts.log`、`email_report_*.html`、`组合大盘综合视角_*.html`、`smart_report_*.md` 等其余报告族。
+
+---
+
+## 十一、2026-10-08 复核（相对 §七 基线的增量）
+
+按 §一 完全相同的判定口径重跑（阈值 0.51、精确正则），`data/reports/` 已增至 **112 份** `enhanced_report_*.html`：
+
+| 判定 | 2026-09-16 登记 | 2026-10-08 复核 | 变化 |
+|------|----------------:|----------------:|-----:|
+| `MATCH` | 57 | 62 | +5 |
+| `DIFFER` | 35 | 46 | **+11** |
+| `NO_DB_ROW` | 5 | 4 | -1 |
+| 合计 | 97 | 112 | +15 |
+
+- 新增 15 份里 14 份 `MATCH`（新报告本身健康），劣化来自**历史日期再度被改写**。
+- **新发现的独立改写**：`2026-06-17 ~ 2026-06-29` 共 9 天，原本全 `MATCH`（偏差 <0.5），现全部变 `DIFFER`，统一下调 **≈212 元/天**（211.76~212.56），符号为**正**（库 > HTML），与 §三 窗口「恒负 −53.6万~−65.7万」方向相反 ⇒ 是另一次独立改写。
+- 改写发生窗口经 `PRE_RECONCILE` 备份二分锁定在 **2026-09-16 之后、2026-10-05 之前**；执行者未定位（备份仅保留 4 天，无法再往前）。
+- ⚠️ 归属订正（呼应 `12_engineering_invariants.md` §14）：`recompute_summary_window.py` 仅出现在 tests 与自身 docstring，**不在任何 `.bat`/定时链**，且默认 dry-run ⇒ **它不是**每日自动改写入口。「10 个历史改写入口」在仓库中**无定义出处**，该数字禁引用。
+- 真正每天自动重写历史的两处（作用域已分别证明）：
+  1. `run_analysis.py:1462 → rebuild_portfolio_nav()`：对 `portfolio_nav` 全表 `INSERT OR REPLACE`，异常仅 `warning` 不阻断（`:1466`）；
+  2. 每晚 ~21:22 `--reconcile`（留痕 `data/backups/portfolio_PRE_RECONCILE_*`）：逐行确认**只 `UPDATE fund_flows`**，`portfolio_summary` 窗口值纹丝不动 ⇒ 不是 212 下调元凶。
+
+**处置维持 A1**：`data/reports/` 现有文件一律不动（仍是改写前世界的历史证据）；本文件仅登记增量，不改写 §七 原表。漂移仍在扩大 ⇒ 已部署只读哨兵 `audit/sentinel_report_drift.py`（判据：DIFFER 份数只增不减即告警），详见 `21_20261008_stalled_debt_rca_and_fixplan.md`。
+
+---
+
+## 十一、2026-10-08 复核（相对 §七 基线的增量）
+
+按 §一 完全相同的判定口径重跑（阈值 0.51、精确正则），`data/reports/` 已增至 **112 份** `enhanced_report_*.html`：
+
+| 判定 | 2026-09-16 登记 | 2026-10-08 复核 | 变化 |
+|------|----------------:|----------------:|-----:|
+| `MATCH` | 57 | 62 | +5 |
+| `DIFFER` | 35 | 46 | **+11** |
+| `NO_DB_ROW` | 5 | 4 | -1 |
+| 合计 | 97 | 112 | +15 |
+
+- 新增 15 份里 14 份 `MATCH`（新报告本身健康），劣化来自**历史日期再度被改写**。
+- **新发现的独立改写**：`2026-06-17 ~ 2026-06-29` 共 9 天，原本全 `MATCH`（偏差 <0.5），现全部变 `DIFFER`，统一下调 **≈212 元/天**（211.76~212.56），符号为**正**（库 > HTML），与 §三 窗口「恒负 −53.6万~−65.7万」方向相反 ⇒ 是另一次独立改写。
+- 改写发生窗口经 `PRE_RECONCILE` 备份二分锁定在 **2026-09-16 之后、2026-10-05 之前**；执行者未定位（备份仅保留 4 天，无法再往前）。
+- ⚠️ 归属订正（呼应 `12_engineering_invariants.md` §14）：`recompute_summary_window.py` 仅出现在 tests 与自身 docstring，**不在任何 `.bat`/定时链**，且默认 dry-run ⇒ **它不是**每日自动改写入口。「10 个历史改写入口」在仓库中**无定义出处**，该数字禁引用。
+- 真正每天自动重写历史的两处（作用域已分别证明）：
+  1. `run_analysis.py:1462 → rebuild_portfolio_nav()`：对 `portfolio_nav` 全表 `INSERT OR REPLACE`，异常仅 `warning` 不阻断（`:1466`）；
+  2. 每晚 ~21:22 `--reconcile`（留痕 `data/backups/portfolio_PRE_RECONCILE_*`）：逐行确认**只 `UPDATE fund_flows`**，`portfolio_summary` 窗口值纹丝不动 ⇒ 不是 212 下调元凶。
+
+**处置维持 A1**：`data/reports/` 现有文件一律不动（仍是改写前世界的历史证据）；本文件仅登记增量，不改写 §七 原表。漂移仍在扩大 ⇒ 已部署只读哨兵 `audit/sentinel_report_drift.py`（判据：DIFFER 份数只增不减即告警），详见 `21_20261008_stalled_debt_rca_and_fixplan.md`。
