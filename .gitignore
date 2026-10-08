@@ -24,14 +24,14 @@ venv/
 # 数据文件（数据库、报告、日志）
 data/database/
 data/reports/*
-# 例外: run_report_<date>.json 是**机器可读的运行账本**(1~3KB/份), 记录本次运行
-# 跑完没有(run_status)、dq_score 为何为 null、哪些源/阶段失败 —— 是事故复盘时
-# 唯一的原始物证, 体量小且不可由库重生成。
-# 2026-09-15 的事故(管线 rc=1 却写出 dq_score=100/alerts=[])之所以只能靠转录
-# 进测试来留证, 正是因为该目录整体未纳入版本控制。故只放开这一种文件。
+# 夜间运行报告(run_report_<date>.json)不再纳入版本控制 —— 防 nightly 管线每晚
+# 再生造成的持续 git churn。
+# 背景: 2026-09-15 事故后曾特意放开此一种文件(原 !data/reports/run_report_*.json
+# 反忽略)作为机器可读运行账本物证; 但其为 nightly 每晚重写, 长期提交抖动明显。
+# 2026-10-08 起改回忽略: 历史归档已在 git 历史中保留, 本地文件照常落盘供复盘,
+# 仅停止 git 跟踪。*.html(100KB+, 可由库重生成) 同样继续被排除。
 # 注意: 必须写成 data/reports/* 而非 data/reports/ —— 后者会排除目录本身,
-# git 不再下探, 后面的 ! 规则失效; 而 *.html(100KB+, 可由库重生成) 继续被排除。
-!data/reports/run_report_*.json
+# git 不再下探。
 data/raw/
 data/processed/
 # westock-mcp 自动化每日落盘的实时缓存（覆盖写，避免每日 git 抖动；种子文件 etf_westock_<code>.json / cs932000_westock_*.json 照常提交）
