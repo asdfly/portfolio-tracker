@@ -52,8 +52,32 @@ cur.execute('SELECT MAX(date) FROM portfolio_summary'); DATA_DATE = cur.fetchone
 # 运行日是否为交易日：以日历判断周末（采集器滞后导致 RUN_DATE != DATA_DATE 时，
 # 不能误判为休市日）。组合/持仓数据可能滞后停留在较早交易日（DATA_LAG 标记）。
 _RUN_WD = datetime.strptime(RUN_DATE, '%Y-%m-%d').weekday()  # 0=Mon..6=Sun
-RUN_DATE_IS_TRADING = (_RUN_WD < 5)  # 周一至周五为交易日
+
+# 中国法定节假日（A股休市）：2026 年国务院办公厅放假安排。
+# 维护：每年初据官方通知更新；仅纳入官方明确放假区间，不含调休补班日（补班日为交易日）。
+# 误判真实交易日为休市日的风险高于反之，故宁窄勿宽（承接 evolution #67/#68）。
+def _expand_holiday(s, e):
+    from datetime import timedelta
+    a = datetime.strptime(s, '%Y-%m-%d').date(); b = datetime.strptime(e, '%Y-%m-%d').date()
+    return [(a + timedelta(days=i)).strftime('%Y-%m-%d') for i in range((b - a).days + 1)]
+_CN_HOLIDAY_RANGES = [
+    ('2026-01-01', '2026-01-03'),  # 元旦
+    ('2026-02-15', '2026-02-23'),  # 春节
+    ('2026-04-04', '2026-04-06'),  # 清明
+    ('2026-05-01', '2026-05-05'),  # 劳动
+    ('2026-06-19', '2026-06-21'),  # 端午
+    ('2026-09-25', '2026-09-27'),  # 中秋
+    ('2026-10-01', '2026-10-07'),  # 国庆
+]
+CN_HOLIDAYS = set()
+for _hs, _he in _CN_HOLIDAY_RANGES:
+    CN_HOLIDAYS.update(_expand_holiday(_hs, _he))
+
+RUN_DATE_IS_TRADING = (_RUN_WD < 5) and (RUN_DATE not in CN_HOLIDAYS)  # 周一至周五且非法定节假日
 DATA_LAG = (RUN_DATE != DATA_DATE)   # 组合基准日 != 运行日
+# 「今日」措辞日期感知（evolution #54/#67）：休市日运行时正文首句改用"最近交易日（DATA_DATE）"，
+# 避免把休市冻结快照误读为当日行情。
+_TODAY_TERM = '今日' if RUN_DATE_IS_TRADING else f'最近交易日（{DATA_DATE}）'
 # 盘前运行判定（承接 2026-09-24 数据纪律缺陷）：运行日为交易日但当前时刻早于 15:00，
 # 当日尚未收盘 ⇒ DATA_DATE 停留在上一交易日是「当日数据尚不存在」，**不是采集器滞后**。
 # 归因错误比行号错误更危险，故此处必须显式区分，禁止一律写「采集器滞后」。
@@ -147,6 +171,20 @@ if vs300 is None and '沪深300' in idx and idx['沪深300'][1] is not None:
     vs300 = round(d_ret - idx['沪深300'][1], 4)
 if vs300 is None:
     vs300 = 0.0
+
+# 休市日（法定节假日）运行：采集器写入冻结行 daily_return=0.0，
+# 其与沪深300真实涨跌幅相减得到的「跑赢/跑输」纯属口径假象（evolution #75）。
+# 节后该 delta 不具对比意义，统一标「不适用」，避免误导读者以为组合当日真实落后。
+IS_HOLIDAY_RUN = RUN_DATE in CN_HOLIDAYS
+VS_APPLICABLE = not IS_HOLIDAY_RUN
+if VS_APPLICABLE:
+    _vs_word = '跑赢' if vs300 > 0 else '跑输'
+    _vs_detail = f'{_vs_word}沪深300 {abs(vs300):+.2f}pct'
+    _vs_val = f'{vs300:+.2f}%'
+else:
+    _vs_word = '不适用'
+    _vs_detail = '休市冻结，对比不适用'
+    _vs_val = '—'
 
 # ---------- 3. 资金流（本地 fund_flows）----------
 def _f(v):
@@ -782,7 +820,7 @@ if _mil_against:
 else:
     _mil_txt = (f"；军工系 {_mil_wind}（地面兵装Ⅱ {HP['地面兵装Ⅱ']:+.2f}% / 航空装备Ⅱ {HP['航空装备Ⅱ']:+.2f}%，"
                 f"军工装备 {fy(sec_yi('军工装备'))}）")
-_perf_word = '跑赢' if vs300 > 0 else '跑输'
+_perf_word = _vs_word  # 休市日统一为'不适用'（evolution #75）
 _hw = [x[0] for x in CROSS if x[4] in ('逆风', '强逆风')]
 # 数据纪律（2026-09-24 修复）：对冲方本身若同时被列为逆风方向（如"防御端（债券+红利）"中的
 # 红利当日亦为逆风），会生成"防御端对冲了红利逆风"这类自指矛盾句。此处剔除与对冲方重叠的方向。
@@ -790,7 +828,7 @@ _hedge_names = {'军工系'} if _mil_av > 0 else {'债券系', '红利', '可转
 _hw = [x for x in _hw if x not in _hedge_names]
 _hw_names = '、'.join(_hw) if _hw else '无'
 _tech_w = pct(ind_sum.get('科技系', 0))
-if vs300 >= 0:
+if VS_APPLICABLE and vs300 >= 0:
     if _hw:
         _perf_reason = (f"超配的{'军工系（当日顺风）' if _mil_av > 0 else '防御端（债券+红利）'}对冲了{_hw_names}逆风")
     else:
@@ -817,16 +855,23 @@ _weak_body = '、'.join(f"{n} {_cross_map.get(n,0):+.2f}%" for n in _weak_sector
 _strong_body = '、'.join(f"{n} {_cross_map.get(n,0):+.2f}%" for n in _strong_sectors.split('、')) or '无'
 
 # 3.1 净风向结论段落（完全数据驱动：顺/逆风方向由 CROSS_WIND 实时派生，消除硬编码「普遍逆风/指数涨组合跌」下行日措辞，落实数据纪律）
-if vs300 >= 0:
-    _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。"
+if VS_APPLICABLE and vs300 >= 0:
+    _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_vs_detail}</b>。"
                     f"当日领涨方向为{_main_line_sectors}；组合顺风方向为{_strong_sectors}（{_strong_body}），"
                     f"{'军工系顺风' if _mil_av>0 else '防御端（债券+红利）'}提供支撑，逆风方向（{_weak_sectors}）拖累有限，整体相对宽基占优。")
 else:
-    _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>。"
+    _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_vs_detail}</b>。"
                     f"当日领涨主线集中于{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
-                    f"组合顺风方向为{_strong_sectors}（{_strong_body}）、逆风方向为{_weak_sectors}（{_weak_body}），"
-                    f"叠加领涨主线权重偏低，故相对宽基落后。")
+        f"组合顺风方向为{_strong_sectors}（{_strong_body}）、逆风方向为{_weak_sectors}（{_weak_body}），"
+        f"叠加领涨主线权重偏低，故相对宽基落后。")
+if not VS_APPLICABLE:
+    _perf_reason = "休市日无交易，组合日回报为采集器冻结值 0.00%，相对沪深300 对比不适用"
 
+# evolution #61/#64：绝对量能处缩量区而周线阶段标签为"启动/放量"类时，
+# 该标签指区间位置低位、非当日量能放大，追加括号澄清，避免读者误读为当日放量。
+_stage_note = ('（指区间位置低位，非量能放大）'
+               if ('缩量' in amt_zone and (STAGE.startswith('②') or STAGE.startswith('③')))
+               else '')
 HTML = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>组合+大盘综合视角 {RUN_DATE}</title>
@@ -898,7 +943,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <br>数据源：项目本地数据层（东方财富/新浪）+ NeoData 金融搜索 <span class="ok">✓ 均可用</span>　|　NeoData 查询时间 {MKT_NEO['query_time']}</div>
 
 <div class="tldr">
-<div class="lead">大盘今日<b>{regime_txt}</b>：{_idx_desc}。{_main_line_txt}{_mil_txt}。组合当日回报 <b>{chg(d_ret)}</b>、<b>{_perf_word}沪深300 {abs(vs300):+.2f}pct</b>：{_perf_reason}。</div>
+<div class="lead">大盘{_TODAY_TERM}<b>{regime_txt}</b>：{_idx_desc}。{_main_line_txt}{_mil_txt}。组合当日回报 <b>{chg(d_ret)}</b>、<b>{_vs_detail}</b>：{_perf_reason}。</div>
 <ul>
 {f'<li><b>⚠ 锚定提示</b>：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% <b>方向相反</b>，代理法在本组合结构下方向亦不可信，<b>本报告一律以真值为准</b>。</li>' if (est < 0) != (d_ret < 0) else ''}
 <li><b>核心矛盾</b>：主力资金今日<b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。</li>
@@ -951,7 +996,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="stage">
 {_stage_bar}
 </div>
-<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 {STAGE} —— 今日为箱内{REGIME}，箱体（3900–4000）位置见下方点位观察</b></p>
+<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 {STAGE}{_stage_note} —— 今日为箱内{REGIME}，箱体（3900–4000）位置见下方点位观察</b></p>
 <h3>证据链</h3>
 <table><thead><tr><th>维度</th><th>观察值</th><th>指向</th></tr></thead>
 <tbody>
@@ -995,11 +1040,11 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="kpi"><div class="k">总市值</div><div class="v">¥{tot_val:,.0f}</div><div class="n">成本 ¥{tot_cost:,.0f}</div></div>
 <div class="kpi"><div class="k">累计盈亏</div><div class="v"><span class="up">+¥{tot_pnl:,.0f}</span></div><div class="n">{chg(tot_pnl/tot_cost*100)}（含失真数据，见2.4）</div></div>
 <div class="kpi"><div class="k">当日回报（真值）</div><div class="v">{chg(d_ret)}</div><div class="n"><span class="down">{d_pnl:+,.0f} 元</span></div></div>
-<div class="kpi"><div class="k">相对沪深300</div><div class="v">{chg(vs300, 'pct')}</div><div class="n">{_perf_word}（{'军工顺风+防御对冲' if _mil_av>0 else '防御端缓冲'}）</div></div>
+<div class="kpi"><div class="k">相对沪深300</div><div class="v">{_vs_val}</div><div class="n">{_vs_word}（{'军工顺风+防御对冲' if _mil_av>0 else '防御端缓冲'}）</div></div>
 <div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 {HOLD_N} 只</div></div>
 <div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{f2(sharpe)} / {f2(mdd)}% / {f2(vol)}%</div><div class="n">滚动统计口径（本地未采集标—）</div></div>
 </div>
-<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {DRET_TXT}%，{('跑赢' if vs300>=0 else '跑输')}沪深300 {abs(vs300):.2f}pct）。{EPH_CAVEAT_884}</div>
+<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {DRET_TXT}%，{_vs_detail}{'；休市冻结值，不具对比意义' if not VS_APPLICABLE else ''}）。{EPH_CAVEAT_884}</div>
 </div>
 
 <div class="card">
@@ -1067,7 +1112,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 
 <div class="op"><div class="t">① 持有（维持现状）—— 军工超配 + 红利/债券防御底仓 {def_w+sec_w:.1f}%</div>
 <ul>
-<li>当日已验证其价值：全组合 {DRET_TXT}%、{_perf_word}沪深300 {abs(vs300):+.2f}pct；{_oper_hold_txt}。</li>
+<li>当日已验证其价值：全组合 {DRET_TXT}%、{_vs_detail}；{_oper_hold_txt}。</li>
 <li><span class="cond">维持条件</span>：市场停留在路径 A（箱体震荡）—— 上证守住 MA20 3921、量能 1.7–2.0 万亿。</li>
 <li><span class="cond">加码触发</span>：若出现路径 C 的两条确认信号（破 MA20 + 量能萎缩至 1.5 万亿以下），防御仓位的战略价值上升。</li>
 </ul></div>
@@ -1138,8 +1183,8 @@ print('OK', OUT, os.path.getsize(OUT), 'bytes')
 # 复用本脚本已派生的全部变量，与 HTML TLDR 同源、不会二次失真。
 _tldr_lines = [f"【组合+大盘综合视角】{RUN_DATE}（组合数据基准 {DATA_DATE}；大盘指数 {IDX_DATE} 实时）", ""]
 _tldr_lines.append(
-    f"大盘今日{regime_txt}：{_idx_desc}。{_main_line_txt}{_mil_txt}。"
-    f"组合当日回报 {chg(d_ret)}、{_perf_word}沪深300 {abs(vs300):+.2f}pct：{_perf_reason}。")
+    f"大盘{_TODAY_TERM}{regime_txt}：{_idx_desc}。{_main_line_txt}{_mil_txt}。"
+    f"组合当日回报 {chg(d_ret)}、{_vs_detail}：{_perf_reason}。")
 _tldr_lines.append("")
 if (est < 0) != (d_ret < 0):
     _tldr_lines.append(
@@ -1147,7 +1192,7 @@ if (est < 0) != (d_ret < 0):
         f"代理法在本组合结构下方向亦不可信，本报告一律以真值为准。")
 _tldr_lines.append(
     f"核心矛盾：主力资金今日{main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；"
-    f"两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。")
+    f"两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}；绝对量能{amt_zone}。")
 _tldr_lines.append(
     f"组合最大集中度风险：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（{_aero_verdict} 10% 审慎线）；"
     f"军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 {top3_w:.1f}%。"
