@@ -24,8 +24,15 @@ data/reports/run_report_<date>.json 是 nightly 管线每晚重写的机器可�
 ----
   python scripts/commit_anomaly_reports.py            # 仅调整索引(stage/unstage)，不提交
   python scripts/commit_anomaly_reports.py --commit   # 有变更时自动本地提交（nightly 接入用）
+  python scripts/commit_anomaly_reports.py --commit --push  # 提交后推 origin/master（2026-10-08 授权）
 
-注意：本脚本只动 git 索引，绝不 `git push`（无授权不 push 铁律）。
+推送策略
+--------
+- 默认绝不 push（无授权不 push 铁律）。
+- `--push` 为显式授权：仅在本脚本本次实际产生了提交(新增/更新/退回异常报告)后，
+  才 `git push origin master`；无变更则不推送、不报错。
+- nightly 自动化 `818293dc` 已用 `--commit --push`，使异常报告物证同步到远程，
+  避免本地丢失(2026-09-15 事故教训：仅本地物证不可靠)。
 """
 import glob
 import json
@@ -61,6 +68,7 @@ def _is_tracked(rel_path: str) -> bool:
 
 def main():
     do_commit = "--commit" in sys.argv
+    do_push = "--push" in sys.argv
     pattern = os.path.join(REPORTS_DIR, "run_report_*.json")
     files = sorted(glob.glob(pattern))
 
@@ -118,10 +126,25 @@ def main():
         r = _git("commit", "-m", msg)
         if r.returncode == 0:
             print(f"[anomaly-archive] 已提交: {msg}")
+            committed = True
         else:
             print(f"[anomaly-archive] 提交失败: {r.stderr.strip()}")
+            committed = False
     elif do_commit:
         print("[anomaly-archive] 无变更，未提交")
+        committed = False
+    else:
+        committed = False
+
+    if do_push:
+        if committed:
+            p = _git("push", "origin", "master")
+            if p.returncode == 0:
+                print("[anomaly-archive] 已推送 origin/master")
+            else:
+                print(f"[anomaly-archive] 推送失败: {p.stderr.strip()}")
+        else:
+            print("[anomaly-archive] 本次无提交，跳过推送")
 
 
 if __name__ == "__main__":
