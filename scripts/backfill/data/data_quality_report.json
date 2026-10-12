@@ -1,23 +1,23 @@
 {
-  "generated_at": "2026-10-08 21:33:55",
-  "expect_latest_date": "2026-10-08",
+  "generated_at": "2026-10-11 21:34:14",
+  "expect_latest_date": "2026-10-09",
   "tables": {
     "etf_fundamental": {
       "exists": true,
-      "rows": 3116,
+      "rows": 3139,
       "em_primary_source": "fund_etf_spot_em",
       "is_em_primary": true,
       "distinct_codes": 23,
       "non_etf_contamination": [
         "159732"
       ],
-      "max_date": "2026-10-08",
-      "distinct_dates": 176,
+      "max_date": "2026-10-09",
+      "distinct_dates": 177,
       "stuck": false,
       "source_distribution": {
         "null": 2955,
         "neodata_mcp": 113,
-        "akshare_fund_etf_hist_sina": 47,
+        "akshare_fund_etf_hist_sina": 70,
         "manual_neodata_checked": 1
       }
     },
@@ -45,57 +45,54 @@
     },
     "fund_flows": {
       "exists": true,
-      "rows": 29141,
+      "rows": 29187,
       "em_primary_source": "fund_etf_spot_em (资金流字段)",
       "is_em_primary": true,
       "distinct_codes": 115,
       "non_etf_contamination": [
         "159732"
       ],
-      "max_date": "2026-10-08",
-      "distinct_dates": 962,
+      "max_date": "2026-10-09",
+      "distinct_dates": 963,
       "stuck": false,
       "source_distribution": {
         "null": 22547,
         "ths": 3870,
-        "em_push2his": 1843,
-        "neodata_mcp": 320,
+        "em_push2his": 1677,
+        "neodata_mcp": 561,
         "ths_decomp": 270,
         "kline_est": 164,
-        "em_spot": 124,
+        "em_spot": 95,
         "ths_agg": 3
       }
     },
     "etf_price_history": {
       "exists": true,
-      "rows": 31754,
+      "rows": 31800,
       "em_primary_source": "fund_etf_hist_em",
       "is_em_primary": true,
       "distinct_codes": 23,
-      "max_date": "2026-09-30",
-      "distinct_dates": 2123,
-      "stuck": true,
-      "days_behind": 8,
+      "max_date": "2026-10-09",
+      "distinct_dates": 2125,
+      "stuck": false,
       "source_distribution": {
-        "akshare_fund_etf_hist_em": 24575,
-        "akshare_stock_zh_a_hist_tx_qfq": 7101,
-        "westock_mcp": 76,
-        "akshare_fund_etf_hist_sina_checked": 2
-      },
-      "block_reason": "EM 主源 RST 阻断（卡点）"
+        "akshare_fund_etf_hist_em": 24523,
+        "akshare_stock_zh_a_hist_tx_qfq": 6986,
+        "westock_mcp": 291
+      }
     },
     "index_pe_history": {
       "exists": true,
-      "rows": 28646,
+      "rows": 28663,
       "em_primary_source": "stock_zh_index_value_csindex (非EM)",
       "is_em_primary": false,
-      "max_date": "2026-09-30",
-      "distinct_dates": 2220,
+      "max_date": "2026-10-08",
+      "distinct_dates": 2221,
       "stuck": true,
-      "days_behind": 8,
+      "days_behind": 1,
       "source_distribution": {
         "csindex": 28079,
-        "neodata": 364,
+        "neodata": 381,
         "legulegu": 203
       },
       "block_reason": "非EM主源滞后（可能良性 T+1，需人工确认）"
@@ -103,21 +100,18 @@
   },
   "cross_table": {
     "latest_date_by_table": {
-      "etf_fundamental": "2026-10-08",
-      "fund_flows": "2026-10-08",
-      "etf_price_history": "2026-09-30",
-      "index_pe_history": "2026-09-30"
+      "etf_fundamental": "2026-10-09",
+      "fund_flows": "2026-10-09",
+      "etf_price_history": "2026-10-09",
+      "index_pe_history": "2026-10-08"
     },
-    "min_latest": "2026-09-30",
-    "max_latest": "2026-10-08",
+    "min_latest": "2026-10-08",
+    "max_latest": "2026-10-09",
     "diverged": true,
-    "divergence_days": 8
+    "divergence_days": 1
   },
-  "em_blocked_tables": [
-    "etf_price_history"
-  ],
+  "em_blocked_tables": [],
   "recommendations": [
-    "EM 主源被 host 级 RST 阻断，卡点表: etf_price_history。建议对这些表套用『连接器+MCP 兜底』(neodata/westock) 并加 source 列。",
     "非EM主源滞后(疑似良性 T+1): index_pe_history，需人工确认是否真缺失。",
     "etf_fundamental: 检测到非ETF污染(场外基金/已清仓) ['159732']，代码层已用 is_otc_fund/is_delisted 拦截，若仍检出说明采集入口绕过或未生效。",
     "fund_flows: 检测到非ETF污染(场外基金/已清仓) ['159732']，代码层已用 is_otc_fund/is_delisted 拦截，若仍检出说明采集入口绕过或未生效。"

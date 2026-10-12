@@ -70,22 +70,25 @@ def fetch_etf_spot_batch(codes: List[str]):
         codes: ETF代码列表 (6位数字)
 
     Returns:
-        (df, sina_fallback_codes):
+        (df, sina_fallback_codes, em_error):
             df: 标准化列名的 DataFrame(已含主源+兜底行)
             sina_fallback_codes: 走新浪兜底补齐的代码列表([]表示无兜底)
+            em_error: 主源(fund_etf_spot_em)获取异常信息(str)或 None(成功/部分成功)
     """
     import akshare as ak
     sina_fallback_codes: List[str] = []
+    em_error: Optional[str] = None
     try:
         df = ak.fund_etf_spot_em()
     except Exception as e:
         logger.warning(f"ETF实时行情获取失败: {e}")
         df = pd.DataFrame()
+        em_error = str(e)[:200]
 
     # EM 完全失败时不走新浪全量兜底(避免对全部持仓逐个请求的网络风暴),
     # 仅当 EM 返回了数据但缺漏部分持仓ETF时才降级。
     if df is None or df.empty:
-        return pd.DataFrame(), sina_fallback_codes
+        return pd.DataFrame(), sina_fallback_codes, em_error
 
     col_map = {
         "代码": "code", "名称": "name",
@@ -122,7 +125,7 @@ def fetch_etf_spot_batch(codes: List[str]):
             df = df.reset_index(drop=True)
             logger.info(f"[P3降级] 新浪兜底补齐 {len(sina_fallback_codes)} 只ETF: "
                         f"{sina_fallback_codes}")
-    return df, sina_fallback_codes
+    return df, sina_fallback_codes, em_error
 
 
 def fetch_etf_spot_sina_fallback(codes: List[str]) -> pd.DataFrame:
@@ -246,32 +249,57 @@ def fetch_top_holdings(code: str, top_n: int = 10) -> pd.DataFrame:
     return df.head(top_n)
 
 
-def fetch_index_valuation(index_code: str) -> Dict[str, float]:
-    """获取追踪指数估值(PE/股息率)。
+def fetch_index_valuation(index_code: str, max_retry: int = 2,
+                          retry_wait: float = 1.5) -> Dict[str, float]:
+    """获取追踪指数估值(PE/股息率), 主源 ak.stock_zh_index_value_csindex。
+
+    盲区#8: 该主源自 2026-09-22 起连续多窗口返回空(源端限流/降级), 经
+    2026-10-09 实探**已自愈**(000300/000905/000688/399989 均正常返回)——
+    证实为**暂时性限流**而非永久下线。故本函数新增**重试退避**: 主源空/
+    全零(限流典型表现)时退避后重试, 通常可恢复单窗口估值, 避免整段缺失。
+
+    akshare 无第二指数 PE 源(`stock_zh_index_spot_sina` 仅含行情不含 PE,
+    `index_value_hist_funddb` 等亦不存在), 故**不虚构备用源**; 重试后仍空
+    则如实返回 {} 并由调用方告警(见 run_etf_fundamental_collection 的
+    #7 盲区修复)。个别指数代码(如创业板50 399673)因 csindex 接口 404 失败
+    由 broad except 静默降级为该指数无估值(不阻断其它指数)。
 
     Args:
-        index_code: 中证指数代码(6位数字), e.g. "000300"
+        index_code: 指数代码, e.g. "000300"
+        max_retry: 主源空时的最大重试次数(不含首次)
+        retry_wait: 每次重试前的退避秒数
     Returns:
-        Dict with keys: pe1, pe2, div_yield1, div_yield2, date
+        Dict with keys: pe1, pe2, div_yield1, div_yield2, date, source
+        source == "csindex"; 失败返回 {}
     """
     import akshare as ak
-    try:
-        df = ak.stock_zh_index_value_csindex(symbol=index_code)
-    except Exception as e:
-        logger.debug(f"指数{index_code}估值获取失败: {e}")
-        return {}
-
-    if df is None or df.empty:
-        return {}
-
-    row = df.iloc[0]
-    return {
-        "pe1": float(row.get("市盈率1", 0) or 0),
-        "pe2": float(row.get("市盈率2", 0) or 0),
-        "div_yield1": float(row.get("股息率1", 0) or 0),
-        "div_yield2": float(row.get("股息率2", 0) or 0),
-        "date": str(row.get("日期", "")),
-    }
+    last_err = None
+    for attempt in range(max_retry + 1):
+        try:
+            df = ak.stock_zh_index_value_csindex(symbol=index_code)
+        except Exception as e:
+            last_err = e
+            logger.debug(f"指数{index_code}估值(csindex)获取失败(尝试{attempt+1}): {e}")
+            df = None
+        if df is not None and not df.empty:
+            row = df.iloc[0]
+            pe1 = float(row.get("市盈率1", 0) or 0)
+            pe2 = float(row.get("市盈率2", 0) or 0)
+            # 全零视为无有效估值(源端空壳行/限流典型表现), 触发重试
+            if pe1 == 0 and pe2 == 0:
+                last_err = "全零(疑似限流空壳行)"
+            else:
+                return {
+                    "pe1": pe1, "pe2": pe2,
+                    "div_yield1": float(row.get("股息率1", 0) or 0),
+                    "div_yield2": float(row.get("股息率2", 0) or 0),
+                    "date": str(row.get("日期", "")),
+                    "source": "csindex",
+                }
+        if attempt < max_retry:
+            time.sleep(retry_wait)
+    logger.debug(f"指数{index_code}估值(csindex)重试{max_retry}次仍无效: {last_err}")
+    return {}
 
 
 def save_to_db(conn: sqlite3.Connection, table: str,
@@ -394,7 +422,8 @@ def run_etf_fundamental_collection(
     # etf_industry_alloc / etf_top_holdings，已于 2026-09-25 清理并加此拦截。
     codes = [c for c in (codes or []) if c and not is_otc_fund(c) and not is_delisted(c)]
     logger.info(f"[ETF基本面] 开始采集, {len(codes)}只ETF(已排除场外/清仓), 日期: {target_date}")
-    stats = {"spot": 0, "industry": 0, "holdings": 0, "valuation": 0, "errors": []}
+    stats = {"spot": 0, "industry": 0, "holdings": 0, "valuation": 0,
+              "errors": [], "warnings": []}
     if not codes:
         logger.warning("[ETF基本面] 过滤后无有效 ETF 标的，跳过采集")
         return stats
@@ -405,7 +434,13 @@ def run_etf_fundamental_collection(
 
         # 1. ETF实时行情(含份额/折价/资金流)
         try:
-            df_spot, sina_codes = fetch_etf_spot_batch(codes)
+            df_spot, sina_codes, em_err = fetch_etf_spot_batch(codes)
+            # #7 盲区修复: 主源(fund_etf_spot_em)异常被 fetch 内部吞掉并返回空 df,
+            # 导致 spot/估值整段被跳过却零报错。此处如实记入 warnings, 使静默
+            # 源失败对运维可见(不阻断采集, 仅观测透明)。
+            if em_err:
+                stats["warnings"].append(
+                    f"ETF实时行情主源获取失败: {em_err} (spot/估值均未采集)")
             if not df_spot.empty:
                 # 添加sector信息
                 df_spot["sector"] = df_spot["code"].map(
@@ -417,15 +452,24 @@ def run_etf_fundamental_collection(
                         lambda r: (etf_categories.get(r["code"], {}).get("name", "") or "")
                         if r["code"] in sina_set else (r.get("name") or ""),
                         axis=1)
-                # 添加跟踪指数估值
+                # 添加跟踪指数估值(主源 csindex + 重试退避, 治盲区#8)
                 index_valuations = {}
+                val_attempted = 0
                 for code in codes:
                     idx = ETF_TO_INDEX.get(code)
                     if idx:
+                        val_attempted += 1
                         val = fetch_index_valuation(idx)
                         if val:
                             index_valuations[code] = val
-                            time.sleep(0.5)
+                        time.sleep(0.5)
+                # #7 盲区修复: fetch_index_valuation 异常被 logger.debug 静默吞掉
+                # (返回 {}), 估值连续多窗口=0 却不入 errors。尝试>0 且成功=0 时
+                # 显式告警, 避免"报告无失败项"掩盖指数估值源长期不可用。
+                if val_attempted > 0 and not index_valuations:
+                    stats["warnings"].append(
+                        f"指数估值采集失败: 尝试 {val_attempted} 只, 成功 0 只 "
+                        f"(csindex 主源限流/不可用, 重试后仍空)")
 
                 df_spot["index_code"] = df_spot["code"].map(
                     lambda c: ETF_TO_INDEX.get(c, ""))
@@ -516,6 +560,7 @@ def run_etf_fundamental_collection(
     finally:
         conn.close()
 
-    total = sum(v for k, v in stats.items() if k != "errors")
+    # 仅对整型计数字段求和(errors/warnings 为列表, 排除)
+    total = sum(v for k, v in stats.items() if isinstance(v, int))
     logger.info(f"[ETF基本面] 采集完成, 合计{total}条")
     return stats
