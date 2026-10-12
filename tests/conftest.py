@@ -118,7 +118,7 @@ def _install_sqlite_redirector():
     """给 sqlite3.connect 装兜底拦截器：指向生产库的连接一律改道到临时副本。
 
     为什么需要这一层（env var 重定向还不够）：
-      1) 测试侧硬编码绝对路径：test_d1_margin_research_block.py:9、
+      1) 测试侧硬编码绝对路径：test_d1_margin_research_block.py:9(2026-10-09 已修: 改读 DATABASE_PATH)、
          test_fix_data_quality.py:8、test_market_event_signals.py:8、
          test_p2_reports_utils.py:63。
       2) 【更危险】应用代码硬编码相对路径：src/report/smart_report.py:61

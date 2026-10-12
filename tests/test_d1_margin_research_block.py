@@ -1,4 +1,5 @@
 """Tests for D1: 激活闲置数据分析"""
+import os
 import pytest
 import sqlite3
 import pandas as pd
@@ -7,8 +8,12 @@ from unittest.mock import MagicMock, patch
 from datetime import datetime
 from pathlib import Path
 
-# 生产库路径由仓库根推导：项目已从 C: 迁移到 D:，硬编码绝对路径会导致真实库集成用例全红
-DB_PATH = str(Path(__file__).resolve().parents[1] / "data" / "database" / "portfolio.db")
+# 生产库路径解析（治盲区#1）：优先用 conftest 隔离后的 DATABASE_PATH（指向生产库临时副本，
+# 含真实数据且零污染）；未注入时回退到仓库根推导（独立运行场景）。
+# 早期版本硬编码 C:\Users\HUAWEI\... 绝对路径，项目迁 D 盘后该路径不存在，致 3 个
+# test_*_real_db 集成用例常态失败。现随 conftest 重定向直接命中隔离副本，不再碰生产库。
+_DB_FALLBACK = str(Path(__file__).resolve().parents[1] / "data" / "database" / "portfolio.db")
+DB_PATH = os.environ.get("DATABASE_PATH") or _DB_FALLBACK
 
 @pytest.fixture
 def advisor():

@@ -33,6 +33,8 @@ from data_loader import get_db_connection
 from src.data_sources.collect_core import (
     install_requests_timeout,
     list_pending_retries,
+    list_exhausted_retries,
+    is_trading_date,
 )
 from src.data_sources.market_events import run_pending_margin_retries
 
@@ -44,11 +46,16 @@ logger = logging.getLogger("run_morning")
 
 
 def previous_trading_day(d=None):
-    """向前回溯最近一个工作日(周末回溯; 节假日与主分析 is_trading_day 一致, 不额外处理)。"""
+    """向前回溯最近一个交易日(周末 + 法定节假日均跳过, 治盲区#11)。
+
+    节假日识别走 akshare 交易日历(见 collect_core._load_trade_calendar);
+    日历不可用(网络/接口)时退化为仅跳过周末, 不影响既有流程。
+    回溯上限扩至 30 天, 覆盖春节等长假期。
+    """
     d = d or date.today()
-    for _ in range(7):
+    for _ in range(30):
         d = d - timedelta(days=1)
-        if d.weekday() < 5:   # 0-4 周一至周五
+        if is_trading_date(d.strftime("%Y-%m-%d")):
             return d
     return d - timedelta(days=1)
 
@@ -62,15 +69,19 @@ def summarize_queue(conn):
     return counts
 
 
-# 报告核对的表 -> 日期列。etf_industry_alloc 无日期列(按 code+industry 覆盖写)，故不列入。
+# 报告核对的表 -> 日期列。
+# 注意: etf_fundamental 仅含 spot 快照(price/iopv/mv), 其 date 滞后 ≠
+# "ETF基本面整体陈旧"; 行业配置(etf_industry_alloc.report_date)与重仓股
+# (etf_top_holdings.quarter) 是独立表、独立刷新, 须分开呈现(治盲区#9)。
 DB_LATEST_TABLES = {
     "stock_lhb": "date",
     "stock_margin": "date",
     "stock_holder_change": "date",
     "stock_institution_research": "date",
     "stock_block_trade": "date",
-    "etf_fundamental": "date",
-    "etf_top_holdings": "quarter",
+    "etf_fundamental": "date",            # 仅 spot 快照
+    "etf_industry_alloc": "report_date",  # 行业配置刷新日期(独立表)
+    "etf_top_holdings": "quarter",        # 季度, 无日历滞后
 }
 
 
@@ -91,15 +102,65 @@ def collect_db_latest(conn, target):
             continue
         latest, total = (row[0] if row else None), (row[1] if row else 0)
         item = {"latest": latest, "rows": total}
-        # 季度列(如重仓股)不做日历滞后计算
-        if latest and date_col == "date":
+        # 日历类列(date / report_date)做滞后计算; 季度列(如重仓股)不做。
+        if latest and date_col in ("date", "report_date"):
             try:
-                item["stale_days"] = (
-                    datetime.strptime(target, "%Y-%m-%d")
-                    - datetime.strptime(latest, "%Y-%m-%d")).days
+                sd = (datetime.strptime(target, "%Y-%m-%d")
+                      - datetime.strptime(latest, "%Y-%m-%d")).days
+                if sd < 0:
+                    # 最新日期晚于目标日(如机构调研披露窗口归并): 非"落后/损坏"。
+                    item["stale_days"] = 0
+                    item["coverage"] = "ahead_or_covered"   # 盲区#6
+                else:
+                    item["stale_days"] = sd
+                    item["coverage"] = "stale" if sd > 0 else "fresh"
             except (ValueError, TypeError):
                 pass
         out[table] = item
+    return out
+
+
+def collect_event_coverage(conn, target):
+    """核对事件类表近5交易日(目标日往前4天)的覆盖率与缺失工作日。
+
+    治盲区#2: db_latest 的 stale_days 只看'最新一天', 无法暴露中间断日。
+    本函数显式列出窗口内缺失的工作日, 让断档一眼可见。
+
+    注: 仅把周一~周五视为应有数据(未排除法定节假日), 故节假日会临时误报为
+    缺失属预期(节假日日历待盲区#11 落地后细化)。
+    """
+    tables = ["stock_lhb", "stock_margin", "stock_holder_change",
+              "stock_institution_research", "stock_block_trade"]
+    try:
+        t = datetime.strptime(target, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return {}
+    window_start = (t - timedelta(days=4)).strftime("%Y-%m-%d")
+    out = {}
+    for tbl in tables:
+        try:
+            rows = conn.execute(
+                f"SELECT DISTINCT date FROM {tbl} "
+                f"WHERE date BETWEEN ? AND ?",
+                (window_start, target)).fetchall()
+        except Exception:
+            out[tbl] = {"error": "query_failed"}
+            continue
+        present = {r[0] for r in rows if r[0]}
+        expected, missing = [], []
+        for i in range(4, -1, -1):
+            d = t - timedelta(days=i)
+            if d.weekday() < 5:   # 仅工作日视为应有数据
+                ds = d.strftime("%Y-%m-%d")
+                expected.append(ds)
+                if ds not in present:
+                    missing.append(ds)
+        out[tbl] = {
+            "window": f"{window_start}~{target}",
+            "expected_trading_days": len(expected),
+            "present_days": len(present & set(expected)),
+            "missing_days": missing,
+        }
     return out
 
 
@@ -162,11 +223,25 @@ def main(argv=None):
         logger.info("[次日补采] 队列无该日待重试项")
     queue = summarize_queue(conn)
     pending_after = list_pending_retries(conn, source="stock_margin")
+    # 盲区#10: 列出已 exhausted 的补采缺口(具体哪日/哪源), 而非仅计数
+    exhausted_items = list_exhausted_retries(conn)
+    # 盲区#2: 事件表近5交易日覆盖率/缺失工作日
+    event_coverage = collect_event_coverage(conn, target)
     db_latest = collect_db_latest(conn, target)
+
+    def _fmt_db(t, v):
+        base = f"{t}={v.get('latest')}"
+        cov = v.get("coverage")
+        if cov == "ahead_or_covered":
+            return base + "(已覆盖/超前)"
+        if cov == "stale" and v.get("stale_days"):
+            return base + f"(滞后{v['stale_days']}天)"
+        if cov == "fresh":
+            return base + "(已追平)"
+        return base
+
     logger.info(f"[次日补采] 落库最新日期核对: "
-                + ", ".join(f"{t}={v.get('latest')}"
-                            f"{'(滞后%d天)' % v['stale_days'] if v.get('stale_days') else ''}"
-                            for t, v in db_latest.items()))
+                + ", ".join(_fmt_db(t, v) for t, v in db_latest.items()))
     conn.close()
 
     # ---- 5. 摘要落盘 ----
@@ -181,12 +256,26 @@ def main(argv=None):
         "pending_after": [list(p) for p in pending_after],
         # 各表实际落库最新日期 + 滞后天数(区别于上方按目标日期的采集计数)
         "db_latest": db_latest,
+        # 盲区#10: 已 exhausted 的补采缺口清单(具体哪日/哪源, 而非仅计数)
+        "queue_exhausted_gaps": [
+            {"id": r[0], "target_date": r[1], "source": r[2],
+             "attempts": r[3], "last_tried": r[4]}
+            for r in exhausted_items
+        ],
+        # 盲区#2: 事件类表近5交易日覆盖率/缺失工作日(中间断日可见)
+        "event_coverage": event_coverage,
         # 字段口径说明, 避免把"闸门按预期拒绝"误读为采集失败
         "_notes": {
             "etf_fundamental.spot": (
                 "P2_GATE_REJECTED_HISTORICAL_SNAPSHOT: spot 为实时快照, 无法回溯"
                 "历史日期。请求前一交易日时被真实性闸门整体拒绝属**预期行为**, "
                 "非采集失败; 真实前一日净值由 15:30 主分析 + 新浪兜底负责。"),
+            "etf_fundamental.split": (
+                "etf_fundamental.latest 仅表示 spot 快照(price/iopv/mv)刷新日期;"
+                "行业配置(etf_industry_alloc.report_date)与重仓股"
+                "(etf_top_holdings.quarter)是独立表、独立刷新, 分开列于 db_latest。"
+                "报告'etf_fundamental 滞后'≠ ETF基本面整体陈旧, 仅 spot 快照缺失"
+                "(被 P2 闸门预期拒绝时尤甚)。盲区#9。"),
             "market_events.counts": (
                 "各源计数为本次**尝试写入**行数, 按目标日期归集; 数据实际落库"
                 "按事件真实日期(披露窗口类源可能晚于目标日)。是否追上目标日期"
@@ -195,6 +284,14 @@ def main(argv=None):
                 "机构调研走披露窗口语义, 已列入 DATE_GATE_EXEMPT_TABLES 豁免日期"
                 "闸门, 按实际调研日期落库; 主采集当日返回 0 条不等于无数据, "
                 "可能由健康检查回填以其他查询日批次补入。"),
+            "queue.exhausted_gaps": (
+                "queue_exhausted_gaps 列出已 exhausted 的补采项(target_date/source), "
+                "即'已放弃重试的真实/幻影缺口'——仅看 queue.exhausted 计数无法察觉"
+                "具体哪日数据永久缺失(盲区#10)。"),
+            "event_coverage": (
+                "event_coverage 给出各事件表近5交易日(目标日往前4天)的覆盖率与"
+                "缺失工作日, 让中间断日可见(盲区#2)。仅周一~周五视为应有数据,"
+                "未排除法定节假日, 节假日可能临时误报缺失(节假日日历待盲区#11 落地)。"),
         },
     }
     out = PROJECT_DIR / "data" / "reports" / f"morning_{target}.json"
@@ -212,6 +309,12 @@ def main(argv=None):
                                ("ETF基本面", stats3.get("errors")))
              if v}
     logger.info(f"[次日补采] 失败项: {fails if fails else '无'}")
+    # 源级告警(非致命, 但此前被静默吞掉, 盲区#7): 如实呈现, 不阻断
+    warns = {k: v for k, v in (("ETF基本面", stats3.get("warnings")),) if v}
+    if warns:
+        logger.warning(f"[次日补采] 源级告警(已记入报告): {warns}")
+    else:
+        logger.info("[次日补采] 源级告警: 无")
     return 0
 
 

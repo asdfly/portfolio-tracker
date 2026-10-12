@@ -42,7 +42,7 @@ def fake_spot_batch(codes):
              "volume": 0.0, "amount": 0.0, "change_pct": None,
              "data_date": TODAY} for c in codes]
     df = pd.DataFrame(rows)
-    return df, ALL_SINA
+    return df, ALL_SINA, None
 
 ef.fetch_etf_spot_batch = fake_spot_batch
 ef.fetch_index_valuation = lambda idx: {}
