@@ -19,7 +19,9 @@ import sqlite3
 import sys
 import threading
 import time
-from datetime import datetime
+from typing import List
+
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +399,100 @@ def ensure_retry_queue_table(conn):
     conn.commit()
 
 
+# ---------------------------------------------------------------------------
+# 0.5) 交易日历(治盲区#11: previous_trading_day / enqueue 统一拦截节假日)
+# ---------------------------------------------------------------------------
+_TRADE_CAL_CACHE = None
+
+
+def _load_trade_calendar():
+    """加载交易日历(akshare tool_trade_date_hist_sina), 返回日期集合 YYYY-MM-DD。
+
+    - 成功: 返回交易日期集合(用于判定某日是否交易日)。
+    - 失败/不可用(网络、接口变动): 返回空集合, 调用方须退化为"仅周末判断"。
+    结果模块级缓存, 单次进程只拉一次。
+    """
+    global _TRADE_CAL_CACHE
+    if _TRADE_CAL_CACHE is not None:
+        return _TRADE_CAL_CACHE
+    dates: set = set()
+    try:
+        import akshare as ak
+        try:
+            df = ak.tool_trade_date_hist_sina()
+        except Exception as e:
+            logger.warning(f"[交易日历] 加载失败, 退化为仅周末判断: {e}")
+            df = None
+        if df is not None and not getattr(df, "empty", True):
+            date_col = None
+            for c in df.columns:
+                if "date" in str(c).lower():
+                    date_col = c
+                    break
+            if date_col is None:
+                date_col = df.columns[0]
+            for v in df[date_col].tolist():
+                if v is None:
+                    continue
+                if hasattr(v, "strftime"):
+                    dates.add(v.strftime("%Y-%m-%d"))
+                else:
+                    s = str(v).strip()
+                    if len(s) >= 10:
+                        dates.add(s[:10])
+    except Exception as e:
+        logger.warning(f"[交易日历] 加载异常, 退化为仅周末判断: {e}")
+    _TRADE_CAL_CACHE = dates
+    return _TRADE_CAL_CACHE
+
+
+def is_trading_date(target_date):
+    """target_date 是否为交易日(显式日历判断, 含节假日识别)。
+
+    - 周末 -> False。
+    - 非日历内日期(节假日) -> False。
+    - 日历未加载成功(空集合)时退化为"非周末即视为交易日"(保守,
+      与历史行为一致, 避免误杀真实缺口)。
+    """
+    try:
+        dt = datetime.strptime(str(target_date).strip(), "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return True  # 日期异常不拦截
+    if dt.weekday() >= 5:
+        return False
+    cal = _load_trade_calendar()
+    if cal and target_date not in cal:
+        return False
+    return True
+
+
+def recent_trading_days(end_date: str, n: int) -> List[str]:
+    """返回 end_date(含)往前最近 n 个真实交易日(升序), 基于 is_trading_date。
+
+    用途: 健康检查回填窗口改用"最近 N 个真实交易日"计数, 使法定节假日
+    不再挤占重试窗(治盲区#12根因: 此前窗口依赖 index_quotes 的 DISTINCT
+    日期作"交易日"真相源, 假日污染即产生幻影交易日, 挤掉真实缺口日)。
+
+    - 正常: 返回升序的 n 个真实交易日(若 end_date 自身为交易日则含之)。
+    - 日历加载失败(is_trading_date 退化为非周末): 退化为"非周末即交易日",
+      与 #11 既有退化一致, 不会比现状更差。
+    - 异常入参(end_date 无法解析): 返回空列表, 不抛异常。
+    - 守卫上限 180 天, 避免极端情况死循环。
+    """
+    days: List[str] = []
+    try:
+        d = datetime.strptime(str(end_date).strip(), "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return days
+    guard = 0
+    while len(days) < n and guard < 180:
+        if is_trading_date(d.strftime("%Y-%m-%d")):
+            days.append(d.strftime("%Y-%m-%d"))
+        d -= timedelta(days=1)
+        guard += 1
+    return list(reversed(days))
+
+
 def is_confirmed_non_trading_day(conn, target_date):
     """判断 target_date 是否**确定**为非交易日(用于阻止假缺口入队)。
 
@@ -404,22 +500,23 @@ def is_confirmed_non_trading_day(conn, target_date):
     exhausted 的僵尸项问题 —— 非交易日本就无数据, 补采永远不会成功。
 
     判定策略(保守, 宁可放过不可误杀):
-      - 周六/周日 -> 确定非交易日(无需查库)。
-      - 工作日    -> 仅当 index_quotes 交易日历已覆盖到「晚于 target_date」
-                    的日期(说明日历在该日之后仍有数据), 而 target_date
-                    自身无行时, 才判定为节假日。日历尚未覆盖(如当日数据
-                    还没落库)则返回 False, 正常入队, 避免漏掉真实缺口。
+      - 显式日历优先: 非交易日(周末/法定节假日)直接判非交易日(治盲区#11)。
+      - 日历未覆盖/加载失败时, 退回 DB 判定: 仅当 index_quotes 交易日历
+        已覆盖到「晚于 target_date」的日期(说明日历在该日之后仍有数据),
+        而 target_date 自身无行时, 才判定为节假日。日历尚未覆盖(如当日
+        数据还没落库)则返回 False, 正常入队, 避免漏掉真实缺口。
 
     Returns:
         True 表示确定非交易日, 应跳过入队。
     """
+    # 显式日历优先(治盲区#11: 国庆等节假日不再被当"前一交易日")
+    if not is_trading_date(target_date):
+        return True
+
     try:
         dt = datetime.strptime(str(target_date).strip(), "%Y-%m-%d")
     except (ValueError, TypeError):
         return False  # 日期格式异常, 不拦截
-
-    if dt.weekday() >= 5:
-        return True
 
     try:
         row = conn.execute(
@@ -438,15 +535,28 @@ def is_confirmed_non_trading_day(conn, target_date):
 def enqueue_retry(conn, target_date, source, reason="", max_attempts=3):
     """将一项待补采任务加入队列。
 
-    幂等: 同 (target_date, source) 已存在 pending 时不重复插入。
+    幂等: 同 (target_date, source) 已存在(任意状态: pending/exhausted)时
+    不重复插入, 返回 'already_exists'; 非交易日(周末/已确认节假日)直接跳过,
+    返回 'skipped_non_trading'; 新插入返回 'inserted'。
     max_attempts 仅作占位, 实际次数上限由消费函数控制。
-    非交易日(周末/已确认节假日)直接跳过, 不产生永远补不到的假缺口。
+
+    返回值使调用方能够如实记录(治盲区#10): 此前 enqueue 用 INSERT OR IGNORE,
+    对已 exhausted 的同键项为 no-op, 却仍打"已加入补采队列"误导日志。
     """
     ensure_retry_queue_table(conn)
     if is_confirmed_non_trading_day(conn, target_date):
         logger.info(
             f"[补采队列] 跳过入队 {source}@{target_date}: 非交易日, 本无数据")
-        return
+        return "skipped_non_trading"
+    # 同键已存在(可能是 pending 或 exhausted): INSERT OR IGNORE 为 no-op,
+    # 若仍打"已加入补采队列"会误导运维(见盲区#10)。显式判定后返回状态。
+    cur = conn.execute(
+        "SELECT status FROM collection_retry_queue "
+        "WHERE target_date=? AND source=?", (target_date, source)).fetchone()
+    if cur is not None:
+        logger.info(
+            f"[补采队列] 跳过重复入队 {source}@{target_date}: 已存在(status={cur[0]})")
+        return "already_exists"
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT OR IGNORE INTO collection_retry_queue "
@@ -454,6 +564,7 @@ def enqueue_retry(conn, target_date, source, reason="", max_attempts=3):
         "VALUES (?,?,?,?,0,'pending')",
         (target_date, source, reason, now))
     conn.commit()
+    return "inserted"
 
 
 def list_pending_retries(conn, source=None, target_date=None):
@@ -477,6 +588,26 @@ def list_pending_retries(conn, source=None, target_date=None):
             "SELECT id, target_date, source FROM collection_retry_queue "
             "WHERE status='pending'").fetchall()
     return [(r[0], r[1], r[2]) for r in rows]
+
+
+def list_exhausted_retries(conn, source=None):
+    """返回 exhausted 补采任务 [(id, target_date, source, attempts, last_tried), ...]。
+
+    用于报告呈现"已放弃重试的真实/幻影缺口"(盲区#10): 仅看 pending/done/
+    exhausted 计数无法让运维察觉某日两融是"已 exhausted 的真实缺口"。
+    """
+    ensure_retry_queue_table(conn)
+    if source:
+        rows = conn.execute(
+            "SELECT id, target_date, source, attempts, last_tried "
+            "FROM collection_retry_queue WHERE status='exhausted' AND source=? "
+            "ORDER BY target_date", (source,)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, target_date, source, attempts, last_tried "
+            "FROM collection_retry_queue WHERE status='exhausted' "
+            "ORDER BY target_date").fetchall()
+    return [(r[0], r[1], r[2], r[3], r[4]) for r in rows]
 
 
 # ---------------------------------------------------------------------------

@@ -97,76 +97,74 @@ def fetch_margin_data(date_str: str) -> pd.DataFrame:
 def fetch_holder_change_data(date_str: str) -> pd.DataFrame:
     """获取指定日期的股东增减持明细数据。
 
-    使用 stock_gdfx_free_holding_detail_em 返回个股级别增减持明细。
-    回退方案: 若detail API失败，使用holding_change_em汇总数据。
+    首选 stock_gdfx_free_holding_detail_em (个股明细, 含股票代码列, 可落库)。
+
+    健壮性(治盲区#4/#5): detail 源**任意失败**(异常/返回空 DataFrame, 源端
+    空窗抖动常见)直接判真缺失并返回空 DataFrame —— 缺口交由 morning 报告
+    event_coverage 暴露, 不再浪费 API、不再制造"已恢复"假象。
+
+    ⚠️ 不再回退 stock_gdfx_free_holding_change_em(汇总/十大流通股东): 经实探该源
+    返回**股东级聚合**(股东名称/类型/流通市值统计/持有个股), **不含股票代码列**;
+    而 stock_holder_change 表要求 code TEXT NOT NULL + UNIQUE(date, holder_name, code),
+    故 summary 行必触发 NOT NULL(code) 约束、被 save_market_events 静默丢弃——
+    看似"已兜底"实则零落库(盲区#5)。detail 空即诚实返回空。
 
     Args:
         date_str: 日期字符串, 格式 YYYYMMDD
 
     Returns:
-        DataFrame, 标准化列名
+        DataFrame(含 code 列) 或 空 DataFrame(真缺失)
     """
+    import akshare as ak
+
+    # ---- 首选: detail (个股明细) ----
+    detail_df = None
     try:
-        import akshare as ak
+        detail_df = ak.stock_gdfx_free_holding_detail_em(date=date_str)
+    except Exception as e:
+        logger.debug(f"股东增减持 detail 源异常({date_str}): {e}")
+        detail_df = None
 
-        # 首选: stock_gdfx_free_holding_detail_em (个股明细)
-        try:
-            df = ak.stock_gdfx_free_holding_detail_em(date=date_str)
-        except (TypeError, ValueError, KeyError):
-            df = pd.DataFrame()
-
-        if df is not None and not df.empty:
-            col_map = {
-                '序号': '_seq',
-                '股东名称': 'holder_name', '股东类型': 'holder_type',
-                '股票代码': 'code', '股票简称': 'name',
-                '报告期': 'report_period',
-                '期末持股-数量': 'holding_qty',
-                '期末持股-数量变化': 'qty_change',
-                '期末持股-数量变化比例': 'qty_change_pct',
-                '期末持股-持股变动': 'change_type',
-                '期末持股-流通市值': 'float_mv',
-                '公告日': 'announce_date',
-            }
-            df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
-            if '_seq' in df.columns:
-                df = df.drop(columns=['_seq'])
-            df['date'] = datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
-            # 标准化日期列
-            for dcol in ['report_period', 'announce_date']:
-                if dcol in df.columns:
-                    df[dcol] = df[dcol].apply(lambda x: (
-                        x.strftime('%Y-%m-%d') if hasattr(x, 'strftime') else
-                        str(x)[:10] if x and str(x) != 'nan' else None
-                    ))
-            keep = ['date', 'holder_name', 'holder_type', 'code', 'name',
-                    'report_period', 'holding_qty', 'qty_change', 'qty_change_pct',
-                    'change_type', 'float_mv', 'announce_date']
-            df = df[[c for c in keep if c in df.columns]]
-            return df
-
-        # 回退: stock_gdfx_free_holding_change_em (汇总级别)
-        try:
-            df2 = ak.stock_gdfx_free_holding_change_em(date=date_str)
-        except (TypeError, ValueError, KeyError):
-            return pd.DataFrame()
-        if df2 is None or df2.empty:
-            return pd.DataFrame()
-        col_map2 = {
+    if detail_df is not None and not detail_df.empty:
+        col_map = {
             '序号': '_seq',
             '股东名称': 'holder_name', '股东类型': 'holder_type',
-            '流通市值统计': 'float_mv',
+            '股票代码': 'code', '股票简称': 'name',
+            '报告期': 'report_period',
+            '期末持股-数量': 'holding_qty',
+            '期末持股-数量变化': 'qty_change',
+            '期末持股-数量变化比例': 'qty_change_pct',
+            '期末持股-持股变动': 'change_type',
+            '期末持股-流通市值': 'float_mv',
+            '公告日': 'announce_date',
         }
-        df2 = df2.rename(columns={k: v for k, v in col_map2.items() if k in df2.columns})
-        if '_seq' in df2.columns:
-            df2 = df2.drop(columns=['_seq'])
-        df2['date'] = datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
-        keep2 = ['date', 'holder_name', 'holder_type', 'float_mv']
-        return df2[[c for c in keep2 if c in df2.columns]]
+        df = detail_df.rename(
+            columns={k: v for k, v in col_map.items() if k in detail_df.columns})
+        if '_seq' in df.columns:
+            df = df.drop(columns=['_seq'])
+        df['date'] = datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
+        # 标准化日期列
+        for dcol in ['report_period', 'announce_date']:
+            if dcol in df.columns:
+                df[dcol] = df[dcol].apply(lambda x: (
+                    x.strftime('%Y-%m-%d') if hasattr(x, 'strftime') else
+                    str(x)[:10] if x and str(x) != 'nan' else None
+                ))
+        keep = ['date', 'holder_name', 'holder_type', 'code', 'name',
+                'report_period', 'holding_qty', 'qty_change', 'qty_change_pct',
+                'change_type', 'float_mv', 'announce_date']
+        return df[[c for c in keep if c in df.columns]]
 
-    except (ValueError, TypeError, KeyError, ConnectionError, OSError) as e:
-        logger.warning(f'获取股东增减持数据失败 ({date_str}): {e}')
-        return pd.DataFrame()
+    # ---- detail 空/失败 → 诚实判真缺失(治盲区#5) ----
+    # 不再回退 stock_gdfx_free_holding_change_em: 该汇总源返回股东级聚合、无股票代码列,
+    # 无法满足 stock_holder_change(code TEXT NOT NULL) schema, 落库必被 NOT NULL 约束
+    # 静默丢弃(假兜底)。缺口由 morning 报告 event_coverage 暴露, 不浪费 API、不造假象。
+    logger.debug(
+        f"股东增减持 detail 源空/失败({date_str}); "
+        f"summary 源(stock_gdfx_free_holding_change_em)无股票代码列、"
+        f"无法落 stock_holder_change, 判真缺失"
+    )
+    return pd.DataFrame()
 
 def fetch_institution_research_data(date_str: str) -> pd.DataFrame:
     """获取指定日期的机构调研数据。
@@ -421,9 +419,20 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
             # P3: 空数据 -> 加入补采队列, 由补采窗口/自动化(P4)重试
             if stats["margin"] == 0:
                 from src.data_sources.collect_core import enqueue_retry
-                enqueue_retry(conn, target_date, "stock_margin",
-                              reason="当日两融数据为空,待补采窗口重试")
-                logger.warning(f"  融资融券: 空数据, 已加入补采队列({target_date})")
+                status = enqueue_retry(conn, target_date, "stock_margin",
+                                       reason="当日两融数据为空,待补采窗口重试")
+                if status == "inserted":
+                    logger.warning(
+                        f"  融资融券: 空数据, 已加入补采队列({target_date})")
+                elif status == "already_exists":
+                    # 同键项已存在(pending 或 exhausted), INSERT OR IGNORE 为 no-op,
+                    # 若仍打"已加入补采队列"会误导(盲区#10)。
+                    logger.warning(
+                        f"  融资融券: 空数据, 但 {target_date} 补采项已存在"
+                        f"(status 已记录, 未重复入队)")
+                else:  # skipped_non_trading
+                    logger.info(
+                        f"  融资融券: {target_date} 为非交易日, 不入补采队列")
         except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
             stats["errors"].append(f"融资融券: {e}")
             logger.warning(f"  融资融券失败(跳过): {e}")
@@ -709,13 +718,11 @@ def _check_and_backfill_stale(conn: sqlite3.Connection, target_date: str,
     """
     cursor = conn.cursor()
 
-    # 获取交易日历(用index_quotes判断)
-    cursor.execute("""
-        SELECT DISTINCT date FROM index_quotes
-        WHERE date >= DATE(?, '-30 days') AND date <= ?
-        ORDER BY date
-    """, (target_date, target_date))
-    trading_days = [r[0] for r in cursor.fetchall()]
+    # 获取交易日历(基于 akshare 交易日历, 真实交易日, 不含节假日)
+    # 治盲区#12根因: 此前用 index_quotes 的 DISTINCT 日期作"交易日"真相源,
+    # 假日污染即产生幻影交易日, 挤掉真实缺口日, 致 holder_change 等滑出重试窗。
+    from src.data_sources.collect_core import recent_trading_days
+    trading_days = recent_trading_days(target_date, MAX_BACKFILL_DAYS)
 
     if not trading_days:
         return
