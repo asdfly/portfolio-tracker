@@ -313,6 +313,22 @@
       "main_outflow": 52968336.0,
       "super_large_net_inflow": -7991485.0,
       "large_net_inflow": -347995.0
+    },
+    {
+      "date": "2026-10-08",
+      "main_net_inflow": -31113062.3,
+      "main_inflow": 88589349.69999999,
+      "main_outflow": 119702412,
+      "super_large_net_inflow": -29209158.1,
+      "large_net_inflow": -1903904.200000003
+    },
+    {
+      "date": "2026-10-09",
+      "main_net_inflow": -10025384,
+      "main_inflow": 104064555,
+      "main_outflow": 114089939,
+      "super_large_net_inflow": -13547873,
+      "large_net_inflow": 3522489.0
     }
   ]
 }

@@ -222,15 +222,29 @@ def main():
     TODAY = local_latest_date() or today
     breadth_local = local_breadth_local()
 
+    # 2026-10-10 健壮性修复：三条主查询各自独立容错，单条失败（如 PMI 偶发
+    # empty apiRecall）不再中断整次 fetch，缺失字段交由下游以「—」诚实呈现
+    # （承接 evolution #7 PMI 整体值长期难取、#43 单点查询失败不应阻断全链路）。
     try:
         cb = run_query("今日A股涨跌家数（上涨、下跌、平盘各多少家）、涨停数、跌停数、上涨家数占比、"
                        "两市合计成交额（亿元）及较昨日变化量")
+    except TokenExpired:
+        print("TOKEN_EXPIRED"); sys.exit(2)
+    except Exception as e:
+        cb = ""; print(f"WARN breadth query failed: {e}")
+    try:
         cg = run_query("今日申万一级行业板块涨幅排行前10（板块名称与涨跌幅%）")
+    except TokenExpired:
+        print("TOKEN_EXPIRED"); sys.exit(2)
+    except Exception as e:
+        cg = ""; print(f"WARN gainers query failed: {e}")
+    try:
         cp = run_query("最新一期中国官方制造业PMI、综合PMI产出指数、非制造业商务活动PMI、"
                        "服务业PMI、建筑业PMI及统计发布日期")
     except TokenExpired:
-        print("TOKEN_EXPIRED")
-        sys.exit(2)
+        print("TOKEN_EXPIRED"); sys.exit(2)
+    except Exception as e:
+        cp = ""; print(f"WARN pmi query failed (将标「—」): {e}")
 
     breadth = parse_breadth(cb)
     gainers = parse_gainers(cg)
