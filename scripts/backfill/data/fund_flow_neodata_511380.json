@@ -324,11 +324,27 @@
     },
     {
       "date": "2026-10-09",
-      "main_net_inflow": 80495166,
-      "main_inflow": 5955768669,
-      "main_outflow": 5875273502,
-      "super_large_net_inflow": 665630.0,
-      "large_net_inflow": 79829536
+      "main_net_inflow": 80495166.4,
+      "main_inflow": 5955768668.874001,
+      "main_outflow": 5875273502.474,
+      "super_large_net_inflow": 665629.9430003166,
+      "large_net_inflow": 79829536.45699978
+    },
+    {
+      "date": "2026-10-12",
+      "main_net_inflow": -140810865.275,
+      "main_inflow": 5225637656.931,
+      "main_outflow": 5366448522.205999,
+      "super_large_net_inflow": -124580027.37400007,
+      "large_net_inflow": -16230837.901000023
+    },
+    {
+      "date": "2026-10-13",
+      "main_net_inflow": -257024838.0,
+      "main_inflow": 6033491801.0,
+      "main_outflow": 6290516638.0,
+      "super_large_net_inflow": -193895586.0,
+      "large_net_inflow": -63129251.0
     }
   ]
 }

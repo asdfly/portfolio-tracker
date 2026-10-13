@@ -1,125 +1,125 @@
 {
-  "generated_at": "2026-10-11 21:33:13",
+  "generated_at": "2026-10-13 21:48:58",
   "price_cross_check": [
     {
       "code": "510300",
       "date": "2026-09-24",
       "neodata": 4.515,
       "westock": null,
-      "em_last": 4.608,
-      "em_to_neo_chg_pct": -2.018
+      "em_last": 4.345,
+      "em_to_neo_chg_pct": 3.913
     },
     {
       "code": "510300",
       "date": "2026-09-23",
       "neodata": 4.59,
       "westock": null,
-      "em_last": 4.608,
-      "em_to_neo_chg_pct": -0.391
+      "em_last": 4.345,
+      "em_to_neo_chg_pct": 5.639
     },
     {
       "code": "510300",
       "date": "2026-09-22",
       "neodata": 4.613,
       "westock": null,
-      "em_last": 4.608,
-      "em_to_neo_chg_pct": 0.109
+      "em_last": 4.345,
+      "em_to_neo_chg_pct": 6.168
     },
     {
       "code": "510300",
       "date": "2026-09-28",
       "neodata": 4.417,
       "westock": null,
-      "em_last": 4.608,
-      "em_to_neo_chg_pct": -4.145
+      "em_last": 4.345,
+      "em_to_neo_chg_pct": 1.657
     },
     {
       "code": "510300",
       "date": "2026-09-29",
       "neodata": 4.416,
       "westock": null,
-      "em_last": 4.608,
-      "em_to_neo_chg_pct": -4.167
+      "em_last": 4.345,
+      "em_to_neo_chg_pct": 1.634
     },
     {
       "code": "159220",
       "date": "2026-09-24",
       "neodata": 0.573,
       "westock": null,
-      "em_last": 0.573,
-      "em_to_neo_chg_pct": 0.0
+      "em_last": 0.581,
+      "em_to_neo_chg_pct": -1.377
     },
     {
       "code": "159220",
       "date": "2026-09-23",
       "neodata": 0.57,
       "westock": null,
-      "em_last": 0.573,
-      "em_to_neo_chg_pct": -0.524
+      "em_last": 0.581,
+      "em_to_neo_chg_pct": -1.893
     },
     {
       "code": "159220",
       "date": "2026-09-22",
       "neodata": 0.571,
       "westock": null,
-      "em_last": 0.573,
-      "em_to_neo_chg_pct": -0.349
+      "em_last": 0.581,
+      "em_to_neo_chg_pct": -1.721
     },
     {
       "code": "159220",
       "date": "2026-09-28",
       "neodata": 0.578,
       "westock": null,
-      "em_last": 0.573,
-      "em_to_neo_chg_pct": 0.873
+      "em_last": 0.581,
+      "em_to_neo_chg_pct": -0.516
     },
     {
       "code": "159220",
       "date": "2026-09-29",
       "neodata": 0.576,
       "westock": null,
-      "em_last": 0.573,
-      "em_to_neo_chg_pct": 0.524
+      "em_last": 0.581,
+      "em_to_neo_chg_pct": -0.861
     },
     {
       "code": "159267",
       "date": "2026-09-24",
       "neodata": 0.85,
       "westock": null,
-      "em_last": 0.884,
-      "em_to_neo_chg_pct": -3.846
+      "em_last": 0.824,
+      "em_to_neo_chg_pct": 3.155
     },
     {
       "code": "159267",
       "date": "2026-09-23",
       "neodata": 0.864,
       "westock": null,
-      "em_last": 0.884,
-      "em_to_neo_chg_pct": -2.262
+      "em_last": 0.824,
+      "em_to_neo_chg_pct": 4.854
     },
     {
       "code": "159267",
       "date": "2026-09-22",
       "neodata": 0.877,
       "westock": null,
-      "em_last": 0.884,
-      "em_to_neo_chg_pct": -0.792
+      "em_last": 0.824,
+      "em_to_neo_chg_pct": 6.432
     },
     {
       "code": "159267",
       "date": "2026-09-28",
       "neodata": 0.83,
       "westock": null,
-      "em_last": 0.884,
-      "em_to_neo_chg_pct": -6.109
+      "em_last": 0.824,
+      "em_to_neo_chg_pct": 0.728
     },
     {
       "code": "159267",
       "date": "2026-09-29",
       "neodata": 0.827,
       "westock": null,
-      "em_last": 0.884,
-      "em_to_neo_chg_pct": -6.448
+      "em_last": 0.824,
+      "em_to_neo_chg_pct": 0.364
     },
     {
       "code": "159650",
@@ -196,240 +196,240 @@
       "date": "2026-09-24",
       "neodata": 0.951,
       "westock": null,
-      "em_last": 0.968,
-      "em_to_neo_chg_pct": -1.756
+      "em_last": 0.867,
+      "em_to_neo_chg_pct": 9.689
     },
     {
       "code": "159770",
       "date": "2026-09-23",
       "neodata": 0.962,
       "westock": null,
-      "em_last": 0.968,
-      "em_to_neo_chg_pct": -0.62
+      "em_last": 0.867,
+      "em_to_neo_chg_pct": 10.957
     },
     {
       "code": "159770",
       "date": "2026-09-22",
       "neodata": 0.97,
       "westock": null,
-      "em_last": 0.968,
-      "em_to_neo_chg_pct": 0.207
+      "em_last": 0.867,
+      "em_to_neo_chg_pct": 11.88
     },
     {
       "code": "159770",
       "date": "2026-09-28",
       "neodata": 0.929,
       "westock": null,
-      "em_last": 0.968,
-      "em_to_neo_chg_pct": -4.029
+      "em_last": 0.867,
+      "em_to_neo_chg_pct": 7.151
     },
     {
       "code": "159770",
       "date": "2026-09-29",
       "neodata": 0.932,
       "westock": null,
-      "em_last": 0.968,
-      "em_to_neo_chg_pct": -3.719
+      "em_last": 0.867,
+      "em_to_neo_chg_pct": 7.497
     },
     {
       "code": "159796",
       "date": "2026-09-24",
       "neodata": 0.77,
       "westock": null,
-      "em_last": 0.791,
-      "em_to_neo_chg_pct": -2.655
+      "em_last": 0.738,
+      "em_to_neo_chg_pct": 4.336
     },
     {
       "code": "159796",
       "date": "2026-09-23",
       "neodata": 0.786,
       "westock": null,
-      "em_last": 0.791,
-      "em_to_neo_chg_pct": -0.632
+      "em_last": 0.738,
+      "em_to_neo_chg_pct": 6.504
     },
     {
       "code": "159796",
       "date": "2026-09-22",
       "neodata": 0.791,
       "westock": null,
-      "em_last": 0.791,
-      "em_to_neo_chg_pct": 0.0
+      "em_last": 0.738,
+      "em_to_neo_chg_pct": 7.182
     },
     {
       "code": "159796",
       "date": "2026-09-28",
       "neodata": 0.748,
       "westock": null,
-      "em_last": 0.791,
-      "em_to_neo_chg_pct": -5.436
+      "em_last": 0.738,
+      "em_to_neo_chg_pct": 1.355
     },
     {
       "code": "159796",
       "date": "2026-09-29",
       "neodata": 0.758,
       "westock": null,
-      "em_last": 0.791,
-      "em_to_neo_chg_pct": -4.172
+      "em_last": 0.738,
+      "em_to_neo_chg_pct": 2.71
     },
     {
       "code": "159819",
       "date": "2026-09-24",
       "neodata": 1.762,
       "westock": null,
-      "em_last": 1.78,
-      "em_to_neo_chg_pct": -1.011
+      "em_last": 1.551,
+      "em_to_neo_chg_pct": 13.604
     },
     {
       "code": "159819",
       "date": "2026-09-23",
       "neodata": 1.795,
       "westock": null,
-      "em_last": 1.78,
-      "em_to_neo_chg_pct": 0.843
+      "em_last": 1.551,
+      "em_to_neo_chg_pct": 15.732
     },
     {
       "code": "159819",
       "date": "2026-09-22",
       "neodata": 1.809,
       "westock": null,
-      "em_last": 1.78,
-      "em_to_neo_chg_pct": 1.629
+      "em_last": 1.551,
+      "em_to_neo_chg_pct": 16.634
     },
     {
       "code": "159819",
       "date": "2026-09-28",
       "neodata": 1.681,
       "westock": null,
-      "em_last": 1.78,
-      "em_to_neo_chg_pct": -5.562
+      "em_last": 1.551,
+      "em_to_neo_chg_pct": 8.382
     },
     {
       "code": "159819",
       "date": "2026-09-29",
       "neodata": 1.685,
       "westock": null,
-      "em_last": 1.78,
-      "em_to_neo_chg_pct": -5.337
+      "em_last": 1.551,
+      "em_to_neo_chg_pct": 8.64
     },
     {
       "code": "159949",
       "date": "2026-09-24",
       "neodata": 1.539,
       "westock": null,
-      "em_last": 1.591,
-      "em_to_neo_chg_pct": -3.268
+      "em_last": 1.375,
+      "em_to_neo_chg_pct": 11.927
     },
     {
       "code": "159949",
       "date": "2026-09-23",
       "neodata": 1.58,
       "westock": null,
-      "em_last": 1.591,
-      "em_to_neo_chg_pct": -0.691
+      "em_last": 1.375,
+      "em_to_neo_chg_pct": 14.909
     },
     {
       "code": "159949",
       "date": "2026-09-22",
       "neodata": 1.592,
       "westock": null,
-      "em_last": 1.591,
-      "em_to_neo_chg_pct": 0.063
+      "em_last": 1.375,
+      "em_to_neo_chg_pct": 15.782
     },
     {
       "code": "159949",
       "date": "2026-09-28",
       "neodata": 1.46,
       "westock": null,
-      "em_last": 1.591,
-      "em_to_neo_chg_pct": -8.234
+      "em_last": 1.375,
+      "em_to_neo_chg_pct": 6.182
     },
     {
       "code": "159949",
       "date": "2026-09-29",
       "neodata": 1.462,
       "westock": null,
-      "em_last": 1.591,
-      "em_to_neo_chg_pct": -8.108
+      "em_last": 1.375,
+      "em_to_neo_chg_pct": 6.327
     },
     {
       "code": "159992",
       "date": "2026-09-24",
       "neodata": 0.841,
       "westock": null,
-      "em_last": 0.869,
-      "em_to_neo_chg_pct": -3.222
+      "em_last": 0.82,
+      "em_to_neo_chg_pct": 2.561
     },
     {
       "code": "159992",
       "date": "2026-09-23",
       "neodata": 0.87,
       "westock": null,
-      "em_last": 0.869,
-      "em_to_neo_chg_pct": 0.115
+      "em_last": 0.82,
+      "em_to_neo_chg_pct": 6.098
     },
     {
       "code": "159992",
       "date": "2026-09-22",
       "neodata": 0.867,
       "westock": null,
-      "em_last": 0.869,
-      "em_to_neo_chg_pct": -0.23
+      "em_last": 0.82,
+      "em_to_neo_chg_pct": 5.732
     },
     {
       "code": "159992",
       "date": "2026-09-28",
       "neodata": 0.845,
       "westock": null,
-      "em_last": 0.869,
-      "em_to_neo_chg_pct": -2.762
+      "em_last": 0.82,
+      "em_to_neo_chg_pct": 3.049
     },
     {
       "code": "159992",
       "date": "2026-09-29",
       "neodata": 0.844,
       "westock": null,
-      "em_last": 0.869,
-      "em_to_neo_chg_pct": -2.877
+      "em_last": 0.82,
+      "em_to_neo_chg_pct": 2.927
     },
     {
       "code": "510500",
       "date": "2026-09-24",
       "neodata": 7.65,
       "westock": null,
-      "em_last": 7.872,
-      "em_to_neo_chg_pct": -2.82
+      "em_last": 7.109,
+      "em_to_neo_chg_pct": 7.61
     },
     {
       "code": "510500",
       "date": "2026-09-23",
       "neodata": 7.818,
       "westock": null,
-      "em_last": 7.872,
-      "em_to_neo_chg_pct": -0.686
+      "em_last": 7.109,
+      "em_to_neo_chg_pct": 9.973
     },
     {
       "code": "510500",
       "date": "2026-09-22",
       "neodata": 7.85,
       "westock": null,
-      "em_last": 7.872,
-      "em_to_neo_chg_pct": -0.279
+      "em_last": 7.109,
+      "em_to_neo_chg_pct": 10.423
     },
     {
       "code": "510500",
       "date": "2026-09-28",
       "neodata": 7.44,
       "westock": null,
-      "em_last": 7.872,
-      "em_to_neo_chg_pct": -5.488
+      "em_last": 7.109,
+      "em_to_neo_chg_pct": 4.656
     },
     {
       "code": "510500",
       "date": "2026-09-29",
       "neodata": 7.476,
       "westock": null,
-      "em_last": 7.872,
-      "em_to_neo_chg_pct": -5.03
+      "em_last": 7.109,
+      "em_to_neo_chg_pct": 5.162
     },
     {
       "code": "511380",
@@ -506,400 +506,400 @@
       "date": "2026-09-24",
       "neodata": 0.375,
       "westock": null,
-      "em_last": 0.386,
-      "em_to_neo_chg_pct": -2.85
+      "em_last": 0.376,
+      "em_to_neo_chg_pct": -0.266
     },
     {
       "code": "512010",
       "date": "2026-09-23",
       "neodata": 0.384,
       "westock": null,
-      "em_last": 0.386,
-      "em_to_neo_chg_pct": -0.518
+      "em_last": 0.376,
+      "em_to_neo_chg_pct": 2.128
     },
     {
       "code": "512010",
       "date": "2026-09-22",
       "neodata": 0.384,
       "westock": null,
-      "em_last": 0.386,
-      "em_to_neo_chg_pct": -0.518
+      "em_last": 0.376,
+      "em_to_neo_chg_pct": 2.128
     },
     {
       "code": "512010",
       "date": "2026-09-28",
       "neodata": 0.376,
       "westock": null,
-      "em_last": 0.386,
-      "em_to_neo_chg_pct": -2.591
+      "em_last": 0.376,
+      "em_to_neo_chg_pct": 0.0
     },
     {
       "code": "512010",
       "date": "2026-09-29",
       "neodata": 0.377,
       "westock": null,
-      "em_last": 0.386,
-      "em_to_neo_chg_pct": -2.332
+      "em_last": 0.376,
+      "em_to_neo_chg_pct": 0.266
     },
     {
       "code": "512100",
       "date": "2026-09-24",
       "neodata": 3.079,
       "westock": null,
-      "em_last": 3.149,
-      "em_to_neo_chg_pct": -2.223
+      "em_last": 2.852,
+      "em_to_neo_chg_pct": 7.959
     },
     {
       "code": "512100",
       "date": "2026-09-23",
       "neodata": 3.146,
       "westock": null,
-      "em_last": 3.149,
-      "em_to_neo_chg_pct": -0.095
+      "em_last": 2.852,
+      "em_to_neo_chg_pct": 10.309
     },
     {
       "code": "512100",
       "date": "2026-09-22",
       "neodata": 3.148,
       "westock": null,
-      "em_last": 3.149,
-      "em_to_neo_chg_pct": -0.032
+      "em_last": 2.852,
+      "em_to_neo_chg_pct": 10.379
     },
     {
       "code": "512100",
       "date": "2026-09-28",
       "neodata": 2.968,
       "westock": null,
-      "em_last": 3.149,
-      "em_to_neo_chg_pct": -5.748
+      "em_last": 2.852,
+      "em_to_neo_chg_pct": 4.067
     },
     {
       "code": "512100",
       "date": "2026-09-29",
       "neodata": 2.98,
       "westock": null,
-      "em_last": 3.149,
-      "em_to_neo_chg_pct": -5.367
+      "em_last": 2.852,
+      "em_to_neo_chg_pct": 4.488
     },
     {
       "code": "512810",
       "date": "2026-09-24",
       "neodata": 0.656,
       "westock": null,
-      "em_last": 0.683,
-      "em_to_neo_chg_pct": -3.953
+      "em_last": 0.629,
+      "em_to_neo_chg_pct": 4.293
     },
     {
       "code": "512810",
       "date": "2026-09-23",
       "neodata": 0.668,
       "westock": null,
-      "em_last": 0.683,
-      "em_to_neo_chg_pct": -2.196
+      "em_last": 0.629,
+      "em_to_neo_chg_pct": 6.2
     },
     {
       "code": "512810",
       "date": "2026-09-22",
       "neodata": 0.677,
       "westock": null,
-      "em_last": 0.683,
-      "em_to_neo_chg_pct": -0.878
+      "em_last": 0.629,
+      "em_to_neo_chg_pct": 7.631
     },
     {
       "code": "512810",
       "date": "2026-09-28",
       "neodata": 0.639,
       "westock": null,
-      "em_last": 0.683,
-      "em_to_neo_chg_pct": -6.442
+      "em_last": 0.629,
+      "em_to_neo_chg_pct": 1.59
     },
     {
       "code": "512810",
       "date": "2026-09-29",
       "neodata": 0.64,
       "westock": null,
-      "em_last": 0.683,
-      "em_to_neo_chg_pct": -6.296
+      "em_last": 0.629,
+      "em_to_neo_chg_pct": 1.749
     },
     {
       "code": "515010",
       "date": "2026-09-24",
       "neodata": 1.204,
       "westock": null,
-      "em_last": 1.229,
-      "em_to_neo_chg_pct": -2.034
+      "em_last": 1.193,
+      "em_to_neo_chg_pct": 0.922
     },
     {
       "code": "515010",
       "date": "2026-09-23",
       "neodata": 1.226,
       "westock": null,
-      "em_last": 1.229,
-      "em_to_neo_chg_pct": -0.244
+      "em_last": 1.193,
+      "em_to_neo_chg_pct": 2.766
     },
     {
       "code": "515010",
       "date": "2026-09-22",
       "neodata": 1.232,
       "westock": null,
-      "em_last": 1.229,
-      "em_to_neo_chg_pct": 0.244
+      "em_last": 1.193,
+      "em_to_neo_chg_pct": 3.269
     },
     {
       "code": "515010",
       "date": "2026-09-28",
       "neodata": 1.179,
       "westock": null,
-      "em_last": 1.229,
-      "em_to_neo_chg_pct": -4.068
+      "em_last": 1.193,
+      "em_to_neo_chg_pct": -1.174
     },
     {
       "code": "515010",
       "date": "2026-09-29",
       "neodata": 1.179,
       "westock": null,
-      "em_last": 1.229,
-      "em_to_neo_chg_pct": -4.068
+      "em_last": 1.193,
+      "em_to_neo_chg_pct": -1.174
     },
     {
       "code": "515120",
       "date": "2026-09-24",
       "neodata": 0.63,
       "westock": null,
-      "em_last": 0.651,
-      "em_to_neo_chg_pct": -3.226
+      "em_last": 0.614,
+      "em_to_neo_chg_pct": 2.606
     },
     {
       "code": "515120",
       "date": "2026-09-23",
       "neodata": 0.651,
       "westock": null,
-      "em_last": 0.651,
-      "em_to_neo_chg_pct": 0.0
+      "em_last": 0.614,
+      "em_to_neo_chg_pct": 6.026
     },
     {
       "code": "515120",
       "date": "2026-09-22",
       "neodata": 0.65,
       "westock": null,
-      "em_last": 0.651,
-      "em_to_neo_chg_pct": -0.154
+      "em_last": 0.614,
+      "em_to_neo_chg_pct": 5.863
     },
     {
       "code": "515120",
       "date": "2026-09-28",
       "neodata": 0.628,
       "westock": null,
-      "em_last": 0.651,
-      "em_to_neo_chg_pct": -3.533
+      "em_last": 0.614,
+      "em_to_neo_chg_pct": 2.28
     },
     {
       "code": "515120",
       "date": "2026-09-29",
       "neodata": 0.632,
       "westock": null,
-      "em_last": 0.651,
-      "em_to_neo_chg_pct": -2.919
+      "em_last": 0.614,
+      "em_to_neo_chg_pct": 2.932
     },
     {
       "code": "516160",
       "date": "2026-09-24",
       "neodata": 2.265,
       "westock": null,
-      "em_last": 2.335,
-      "em_to_neo_chg_pct": -2.998
+      "em_last": 2.172,
+      "em_to_neo_chg_pct": 4.282
     },
     {
       "code": "516160",
       "date": "2026-09-23",
       "neodata": 2.315,
       "westock": null,
-      "em_last": 2.335,
-      "em_to_neo_chg_pct": -0.857
+      "em_last": 2.172,
+      "em_to_neo_chg_pct": 6.584
     },
     {
       "code": "516160",
       "date": "2026-09-22",
       "neodata": 2.334,
       "westock": null,
-      "em_last": 2.335,
-      "em_to_neo_chg_pct": -0.043
+      "em_last": 2.172,
+      "em_to_neo_chg_pct": 7.459
     },
     {
       "code": "516160",
       "date": "2026-09-28",
       "neodata": 2.202,
       "westock": null,
-      "em_last": 2.335,
-      "em_to_neo_chg_pct": -5.696
+      "em_last": 2.172,
+      "em_to_neo_chg_pct": 1.381
     },
     {
       "code": "516160",
       "date": "2026-09-29",
       "neodata": 2.224,
       "westock": null,
-      "em_last": 2.335,
-      "em_to_neo_chg_pct": -4.754
+      "em_last": 2.172,
+      "em_to_neo_chg_pct": 2.394
     },
     {
       "code": "561910",
       "date": "2026-09-24",
       "neodata": 0.659,
       "westock": null,
-      "em_last": 0.677,
-      "em_to_neo_chg_pct": -2.659
+      "em_last": 0.628,
+      "em_to_neo_chg_pct": 4.936
     },
     {
       "code": "561910",
       "date": "2026-09-23",
       "neodata": 0.673,
       "westock": null,
-      "em_last": 0.677,
-      "em_to_neo_chg_pct": -0.591
+      "em_last": 0.628,
+      "em_to_neo_chg_pct": 7.166
     },
     {
       "code": "561910",
       "date": "2026-09-22",
       "neodata": 0.676,
       "westock": null,
-      "em_last": 0.677,
-      "em_to_neo_chg_pct": -0.148
+      "em_last": 0.628,
+      "em_to_neo_chg_pct": 7.643
     },
     {
       "code": "561910",
       "date": "2026-09-28",
       "neodata": 0.639,
       "westock": null,
-      "em_last": 0.677,
-      "em_to_neo_chg_pct": -5.613
+      "em_last": 0.628,
+      "em_to_neo_chg_pct": 1.752
     },
     {
       "code": "561910",
       "date": "2026-09-29",
       "neodata": 0.649,
       "westock": null,
-      "em_last": 0.677,
-      "em_to_neo_chg_pct": -4.136
+      "em_last": 0.628,
+      "em_to_neo_chg_pct": 3.344
     },
     {
       "code": "563020",
       "date": "2026-09-24",
       "neodata": 1.164,
       "westock": null,
-      "em_last": 1.165,
-      "em_to_neo_chg_pct": -0.086
+      "em_last": 1.204,
+      "em_to_neo_chg_pct": -3.322
     },
     {
       "code": "563020",
       "date": "2026-09-23",
       "neodata": 1.161,
       "westock": null,
-      "em_last": 1.165,
-      "em_to_neo_chg_pct": -0.343
+      "em_last": 1.204,
+      "em_to_neo_chg_pct": -3.571
     },
     {
       "code": "563020",
       "date": "2026-09-22",
       "neodata": 1.168,
       "westock": null,
-      "em_last": 1.165,
-      "em_to_neo_chg_pct": 0.258
+      "em_last": 1.204,
+      "em_to_neo_chg_pct": -2.99
     },
     {
       "code": "563020",
       "date": "2026-09-28",
       "neodata": 1.158,
       "westock": null,
-      "em_last": 1.165,
-      "em_to_neo_chg_pct": -0.601
+      "em_last": 1.204,
+      "em_to_neo_chg_pct": -3.821
     },
     {
       "code": "563020",
       "date": "2026-09-29",
       "neodata": 1.16,
       "westock": null,
-      "em_last": 1.165,
-      "em_to_neo_chg_pct": -0.429
+      "em_last": 1.204,
+      "em_to_neo_chg_pct": -3.654
     },
     {
       "code": "588000",
       "date": "2026-09-24",
       "neodata": 1.713,
       "westock": null,
-      "em_last": 1.749,
-      "em_to_neo_chg_pct": -2.058
+      "em_last": 1.507,
+      "em_to_neo_chg_pct": 13.67
     },
     {
       "code": "588000",
       "date": "2026-09-23",
       "neodata": 1.755,
       "westock": null,
-      "em_last": 1.749,
-      "em_to_neo_chg_pct": 0.343
+      "em_last": 1.507,
+      "em_to_neo_chg_pct": 16.457
     },
     {
       "code": "588000",
       "date": "2026-09-22",
       "neodata": 1.758,
       "westock": null,
-      "em_last": 1.749,
-      "em_to_neo_chg_pct": 0.515
+      "em_last": 1.507,
+      "em_to_neo_chg_pct": 16.656
     },
     {
       "code": "588000",
       "date": "2026-09-28",
       "neodata": 1.643,
       "westock": null,
-      "em_last": 1.749,
-      "em_to_neo_chg_pct": -6.061
+      "em_last": 1.507,
+      "em_to_neo_chg_pct": 9.025
     },
     {
       "code": "588000",
       "date": "2026-09-29",
       "neodata": 1.657,
       "westock": null,
-      "em_last": 1.749,
-      "em_to_neo_chg_pct": -5.26
+      "em_last": 1.507,
+      "em_to_neo_chg_pct": 9.954
     },
     {
       "code": "159300",
       "date": "2026-09-22",
       "neodata": 4.95,
       "westock": null,
-      "em_last": 4.941,
-      "em_to_neo_chg_pct": 0.182
+      "em_last": 4.66,
+      "em_to_neo_chg_pct": 6.223
     },
     {
       "code": "159300",
       "date": "2026-09-23",
       "neodata": 4.922,
       "westock": null,
-      "em_last": 4.941,
-      "em_to_neo_chg_pct": -0.385
+      "em_last": 4.66,
+      "em_to_neo_chg_pct": 5.622
     },
     {
       "code": "159300",
       "date": "2026-09-24",
       "neodata": 4.846,
       "westock": null,
-      "em_last": 4.941,
-      "em_to_neo_chg_pct": -1.923
+      "em_last": 4.66,
+      "em_to_neo_chg_pct": 3.991
     },
     {
       "code": "159300",
       "date": "2026-09-28",
       "neodata": 4.736,
       "westock": null,
-      "em_last": 4.941,
-      "em_to_neo_chg_pct": -4.149
+      "em_last": 4.66,
+      "em_to_neo_chg_pct": 1.631
     },
     {
       "code": "159300",
       "date": "2026-09-29",
       "neodata": 4.737,
       "westock": null,
-      "em_last": 4.941,
-      "em_to_neo_chg_pct": -4.129
+      "em_last": 4.66,
+      "em_to_neo_chg_pct": 1.652
     }
   ],
   "em_continuity": [],
