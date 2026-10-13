@@ -775,13 +775,20 @@ class RunReporter:
         """
         detail = (f"missing_required={missing} errored_required={errored} "
                   f"run_failed={self.run_failed_reason or '-'}")
+        # A3 分级(2026-10-13): 按 missing/errored/run_failed 分流判级。
+        #   - 任一为真 ⇒ 确属"运行不完整/硬失败" ⇒ critical（真·流水线错误型，须保留）。
+        #   - 全为假(仅被 error 级质量告警降级, 如 otc_nav T+1) ⇒ warning，
+        #     避免对 benign 滞后误报 critical（2026-09-17/09-28 盲区）。
+        #   注: 通知按 kind(pipeline_incomplete) 推送而非 level, 降级不影响送达。
         if missing or errored or self.run_failed_reason:
+            level = "critical"
             # 真有缺失/异常阶段，或运行硬失败：确属"未完整执行"。
             message = (f"本次运行未完整执行(run_status={run_status}): "
                        f"缺失必需阶段 {missing or '[]'}, 异常阶段 {errored or '[]'}"
                        + (f"; 运行失败: {self.run_failed_reason}"
                           if self.run_failed_reason else ""))
         else:
+            level = "warning"
             # run_status != ok 但**无缺失/异常必需阶段** ⇒ 降级来自 error 级质量告警，
             # 而非"运行不完整"。原文"未完整执行"在此语义下自相矛盾（列空却说未完整），
             # 故改述以对齐判级语义：触发降级的是 error 级告警，不是阶段缺失。
@@ -790,7 +797,7 @@ class RunReporter:
             message = (f"运行被降级(run_status={run_status}): 无缺失/异常必需阶段，"
                        f"降级由 error 级质量告警触发（非运行不完整）")
         self.alerts.append(dict(
-            level="critical", kind=PIPELINE_INCOMPLETE_KIND,
+            level=level, kind=PIPELINE_INCOMPLETE_KIND,
             message=message, detail=detail))
 
     # --- 终态 ---

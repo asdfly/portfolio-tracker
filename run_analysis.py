@@ -1290,7 +1290,11 @@ def main(argv=None):
             etf_codes = list(ETF_CATEGORIES.keys())
             f10_stats = run_etf_fundamental_collection(etf_codes, ETF_CATEGORIES,
                                                        target_date=backfill_date)
-            f10_total = sum(v for k, v in f10_stats.items() if k != 'errors')
+            # A1 修复(2026-10-13): f10_stats 含 "warnings": [] 列表键,
+            # 原 sum() 会对 int+list 抛 "unsupported operand" => etf_fundamental
+            # stage 误判 error。仅对整型值求和, 排除 errors/warnings 列表键。
+            f10_total = sum(v for k, v in f10_stats.items()
+                            if k != 'errors' and isinstance(v, int))
             logger.info(f"ETF基本面采集完成: {f10_total} 条 ({f10_stats})")
             _reporter.stage("etf_fundamental", "ok")
             _reporter.record_source("ETF_FUNDAMENTAL", ok=f10_total,

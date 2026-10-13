@@ -22,7 +22,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_DIR))
 
-from config.settings import DATABASE_PATH
+from config.settings import DATABASE_PATH, OTC_FUND_CODES
 from data_loader import get_db_connection
 from src.data_sources.collect_core import (
     install_requests_timeout,
@@ -65,6 +65,42 @@ def read_run_report(date_str):
         return None
 
 
+def probe_otc_nav_freshness(conn, today):
+    """A4(2026-10-13): 主报告缺失时的 otc_nav 新鲜度 DB 直验替代路径。
+
+    场外基金净值写入 portfolio_snapshots, 取每只 OTC 代码最新 date 与今日比较,
+    输出 per-code 滞后天数与状态。主报告存在时该信息已在 otc_nav_missing 告警中,
+    此处补"报告缺失"场景下原缺失的观测路径(盲区 2026-10-10)。
+    """
+    codes = sorted(OTC_FUND_CODES or [])
+    if not codes:
+        return None
+    placeholders = ",".join("?" * len(codes))
+    try:
+        rows = conn.execute(
+            f"SELECT code, MAX(date) FROM portfolio_snapshots "
+            f"WHERE code IN ({placeholders}) GROUP BY code", codes).fetchall()
+    except Exception as e:
+        logger.warning(f"[A4] otc_nav 直验查询失败: {e}")
+        return None
+    latest = {r[0]: r[1] for r in rows}
+    out = []
+    for code in codes:
+        d = latest.get(code)
+        if d is None:
+            out.append({"code": code, "latest": None, "lag_days": None,
+                        "status": "无数据"})
+            continue
+        try:
+            lag = (datetime.strptime(today, "%Y-%m-%d")
+                   - datetime.strptime(d, "%Y-%m-%d")).days
+        except Exception:
+            lag = None
+        out.append({"code": code, "latest": d, "lag_days": lag,
+                    "status": "OK" if (lag is not None and lag <= 1) else "滞后"})
+    return out
+
+
 def main(argv=None):
     args = argparse.ArgumentParser(description="投资组合补采巡检(16:30/次日重试)")
     args.add_argument("--date", dest="date_", default=None,
@@ -99,6 +135,7 @@ def main(argv=None):
 
     # 3) 读取当日主分析报告摘要
     report = read_run_report(date_display)
+    otc_probe = None  # A4: 仅当主报告缺失时做 DB 直验, 否则置 None 不重复
     if report:
         # run_status 是主分析"本次是否跑完整"的唯一判据(失败时 dq_score 为 null)。
         # 不打印它, 16:30 的巡检就会看着一份 run_report 说"一切正常", 而同一时刻
@@ -119,6 +156,16 @@ def main(argv=None):
     else:
         logger.info(f"[补采巡检] 未找到 run_report_{date_display}.json "
                     "(主分析尚未运行或未启用P5)")
+        # A4: 主报告缺失时, 用 DB 直验路径补 otc_nav 新鲜度观测
+        try:
+            otc_probe = probe_otc_nav_freshness(conn, date_display)
+        except Exception as e:
+            logger.warning(f"[补采巡检·A4] otc_nav 直验异常: {e}")
+            otc_probe = None
+        if otc_probe:
+            lagged = [o for o in otc_probe if o["status"] != "OK"]
+            logger.info(f"[补采巡检·A4] otc_nav DB直验: {len(otc_probe)}只, "
+                        f"滞后 {len(lagged)}只; 最新示例 {otc_probe[:3]}")
 
     # 4) 输出 JSON 摘要(供自动化解析)
     summary = {
@@ -131,6 +178,7 @@ def main(argv=None):
         # 新增键(不动 main_report 三元组的元数, 避免破坏既有消费方);
         # 旧格式报告无该字段时为 None
         "main_run_status": report.get("run_status") if report else None,
+        "otc_nav_probe": otc_probe,  # A4: 仅主报告缺失时有值, 否则 None
         "run_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     out = PROJECT_DIR / "data" / "reports" / f"supplemental_{date_display}.json"

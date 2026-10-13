@@ -488,7 +488,10 @@ def run_market_events_collection(target_date: Optional[str] = None) -> Dict[str,
     finally:
         conn.close()
     
-    total = sum(v for k, v in stats.items() if k != "errors")
+    # A1 防御(2026-10-13): 与 run_analysis.py:1293 同源, 仅对整型值求和,
+    # 排除 errors(列表) 等可能混入的非整型键, 杜绝 int+list 求和异常。
+    total = sum(v for k, v in stats.items()
+                if k != "errors" and isinstance(v, int))
     logger.info(f"[市场事件] 采集完成, 合计 {total} 条")
     return stats
 
@@ -508,12 +511,24 @@ def run_pending_margin_retries(conn, date_display: Optional[str] = None,
     Returns:
         {"attempted": int, "succeeded": int, "still_pending": int}
     """
-    from src.data_sources.collect_core import list_pending_retries
+    from src.data_sources.collect_core import (
+        list_pending_retries, is_confirmed_non_trading_day)
 
     pending = list_pending_retries(conn, source="stock_margin", target_date=date_display)
     attempted = succeeded = still_pending = 0
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for rid, tdate, _source in pending:
+        # A2 假期日历法守卫(2026-10-13): 与 enqueue_retry 的 is_confirmed_non_trading_day
+        # 守卫呼应, 堵住"消费端漏判"缺口 —— 确证非交易日(周末/法定节假日)直接终态化,
+        # 不再 burning 3 次 attempts 后才落 exhausted 且无可读诊断。既防未来假期日僵尸
+        # 累积, 也能在下次窗口把历史上漏判而残留的 pending 假期项一键终态化。
+        if is_confirmed_non_trading_day(conn, tdate):
+            conn.execute(
+                "UPDATE collection_retry_queue SET status='exhausted', "
+                "reason='非交易日(周末/法定节假日), 本无两融明细', "
+                "attempts=attempts WHERE id=?", (rid,))
+            logger.info(f"  两融补采跳过({tdate}): 确证非交易日, 直接终态(不消耗重试)")
+            continue
         attempted += 1
         ymd = tdate.replace("-", "")
         try:
