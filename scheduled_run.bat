@@ -19,5 +19,9 @@ set analysis_rc=%ERRORLEVEL%
 :: 收盘分析完成后推送日报邮件（HTML 附件，免确认；未启用 SMTP 时脚本内部自动跳过）
 call "%~dp0send_report_email.bat" >> logs\scheduled_run.log 2>&1
 
-:: 最终退出码反映收盘分析是否成功（邮件步骤仍照常执行，不影响其返回码被捕获）
+:: 运行后哨兵：独立检测当日 run_report 是否缺失（硬死/进程被强杀的无痕窗口），
+:: 缺失则经现有邮件通道告警并记账。仅记录/告警，不影响下方最终退出码。
+call "%~dp0run_sentinel.bat" >> logs\sentinel.log 2>&1
+
+:: 最终退出码反映收盘分析是否成功（邮件/哨兵步骤仍照常执行，不影响其返回码被捕获）
 exit /b %analysis_rc%
