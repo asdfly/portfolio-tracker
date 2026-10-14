@@ -1,0 +1,64 @@
+{
+  "_meta": {
+    "name": "申万一级31行业 → 证监会门类 映射表",
+    "purpose": "整合方案 Tier 4（D1=方案A）：把投研线 sector_fund_flow 的申万一级行业数据向上聚合到证监会门类，与组合线 etf_industry_alloc 的门类口径对齐，从而实现门类级行业暴露归因。",
+    "src_system": "申万一级行业（31 个，源自投研线 history.json / sector_fund_flow.sector_name）",
+    "dst_system": "证监会上市公司行业分类门类（2012 版，19 类 + 综合；源自组合线 etf_industry_alloc.industry）",
+    "version": "1.0",
+    "created": "2026-10-14",
+    "maintainer_note": "修改映射后请同步更新 version 与 modified 字段，并重跑 scripts/research/attribute_sector_exposure.py 验证覆盖率。",
+
+    "_警告_必须阅读": [
+      "两套分类体系【不同源、不同颗粒度】，映射为【一对多】且【存在信息损失】。",
+      "证监会『制造业』是一个巨型门类，申万的 电子/电力设备/机械设备/汽车/家用电器/食品饮料/医药生物/基础化工/钢铁/有色金属/建筑材料/纺织服饰/轻工制造/美容护理 共 14 个一级行业全部落入其中，无法再拆分。",
+      "confidence=low 的 4 个行业（社会服务/传媒/石油石化/环保）存在实质性的跨门类拆分，其主映射仅为『取主体构成』的近似，归因结果存在已知偏差，已在产物中单独披露。",
+      "本表不得用于任何精确到申万一级行业的推断——那属于方案 B（个股级映射）的范畴，当前未实施。"
+    ],
+
+    "confidence_levels": {
+      "exact": "一对一精确映射，两体系在该处定义一致或近乎一致",
+      "high": "主体构成明确，但存在少量子行业外溢（如医药生物中的医疗服务归入卫生和社会工作）",
+      "low": "跨多个门类拆分，无法唯一映射；取主体构成为主映射，归因存在实质偏差"
+    }
+  },
+
+  "map": {
+    "农林牧渔": {"csrc": "农、林、牧、渔业", "confidence": "exact", "note": ""},
+    "煤炭":     {"csrc": "采矿业", "confidence": "exact", "note": "煤炭开采和洗选业"},
+    "石油石化": {"csrc": "采矿业", "confidence": "low",   "note": "跨门类：油气开采→采矿业，石油炼化→制造业。取开采为主映射"},
+    "基础化工": {"csrc": "制造业", "confidence": "exact", "note": "化学原料及化学制品制造业"},
+    "钢铁":     {"csrc": "制造业", "confidence": "exact", "note": "黑色金属冶炼和压延加工业（非采选）"},
+    "有色金属": {"csrc": "制造业", "confidence": "high",  "note": "有色金属冶炼和压延加工业为主体；少量矿采选属采矿业"},
+    "电子":     {"csrc": "制造业", "confidence": "exact", "note": "计算机、通信和其他电子设备制造业"},
+    "汽车":     {"csrc": "制造业", "confidence": "exact", "note": "汽车制造业"},
+    "家用电器": {"csrc": "制造业", "confidence": "exact", "note": "电气机械和器材制造业 / 家用电力器具制造"},
+    "食品饮料": {"csrc": "制造业", "confidence": "exact", "note": "酒饮料精制茶制造业 + 食品制造业"},
+    "纺织服饰": {"csrc": "制造业", "confidence": "exact", "note": "纺织业、纺织服装服饰业"},
+    "轻工制造": {"csrc": "制造业", "confidence": "exact", "note": "造纸、家具、文教工美体育娱乐用品等"},
+    "医药生物": {"csrc": "制造业", "confidence": "high",  "note": "医药制造业为主体；医疗服务子行业属卫生和社会工作"},
+    "建筑材料": {"csrc": "制造业", "confidence": "high",  "note": "非金属矿物制品业"},
+    "电力设备": {"csrc": "制造业", "confidence": "exact", "note": "电气机械和器材制造业"},
+    "国防军工": {"csrc": "制造业", "confidence": "high",  "note": "铁路船舶航空航天和其他运输设备制造业"},
+    "机械设备": {"csrc": "制造业", "confidence": "exact", "note": "通用设备、专用设备制造业"},
+    "美容护理": {"csrc": "制造业", "confidence": "high",  "note": "化学原料和化学制品制造业（个护用品）"},
+    "公用事业": {"csrc": "电力、热力、燃气及水生产和供应业", "confidence": "exact", "note": ""},
+    "建筑装饰": {"csrc": "建筑业", "confidence": "exact", "note": ""},
+    "商贸零售": {"csrc": "批发和零售业", "confidence": "exact", "note": ""},
+    "交通运输": {"csrc": "交通运输、仓储和邮政业", "confidence": "exact", "note": ""},
+    "房地产":   {"csrc": "房地产业", "confidence": "exact", "note": ""},
+    "银行":     {"csrc": "金融业", "confidence": "exact", "note": ""},
+    "非银金融": {"csrc": "金融业", "confidence": "exact", "note": ""},
+    "通信":     {"csrc": "信息传输、软件和信息技术服务业", "confidence": "exact", "note": "电信、广播电视和卫星传输服务"},
+    "计算机":   {"csrc": "信息传输、软件和信息技术服务业", "confidence": "high",  "note": "软件和信息技术服务业"},
+    "传媒":     {"csrc": "文化、体育和娱乐业", "confidence": "low",   "note": "跨门类：出版/影视/游戏→文化体育娱乐业，互联网广告/信息服务→信息传输。取前者为主映射"},
+    "社会服务": {"csrc": "住宿和餐饮业", "confidence": "low",   "note": "跨门类：酒店餐饮→住宿和餐饮业，教育→教育，专业服务/旅游→租赁和商务服务业。取住宿餐饮为主映射"},
+    "环保":     {"csrc": "水利、环境和公共设施管理业", "confidence": "low",   "note": "跨门类：环境治理→水利环境和公共设施管理业，环保技术服务→科学研究和技术服务业。取前者为主映射"},
+    "综合":     {"csrc": "综合", "confidence": "exact", "note": ""}
+  },
+
+  "unmapped_fallback": {
+    "csrc": "未映射",
+    "confidence": "none",
+    "note": "申万行业名未在本表中出现时归入此项，不参与门类聚合。出现此类情况说明映射表需更新。"
+  }
+}
