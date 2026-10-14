@@ -755,6 +755,62 @@ for i in range(10):
     ni, vi = top_in[i]; no, vo = top_out[i]
     rows_flow += f'''<tr><td class="num">{i+1}</td><td>{E(ni)}</td><td class="num">{money(vi)}</td>
 <td>{E(no)}</td><td class="num">{money(vo)}</td></tr>'''
+
+# ---------- 1.5 行业资金流 TOP5（申万一级 · 投研线 sector_fund_flow）----------
+# 数据源：投研线 outputs/history.json 经 scripts/research/sync_rotation_to_db.py 入库。
+# 与 1.4 的口径差异（不可混淆）：
+#   1.4 = 东方财富 fund_flows，90 个申万「二级」板块，日期为当日 DATA_DATE；
+#   1.5 = 投研线 sector_fund_flow，31 个申万「一级」行业，日期为表内 MAX(date)。
+# 时序约束：投研线每日 18:15 同步（P1 错峰后），而本日报 18:00 生成，故 SW_DATE 通常为
+#   「上一交易日」。此处严格取 MAX(date) 并显式标注日期，不假设为当日、不编造、不外推。
+SW_DATE, rows_sw_flow, SW_TLDR_TXT = None, '', ''
+try:
+    cur.execute("SELECT MAX(date) FROM sector_fund_flow")
+    _swr = cur.fetchone()
+    SW_DATE = _swr[0] if (_swr and _swr[0]) else None
+except Exception as _e:
+    print('[WARN] sector_fund_flow 查询失败（表未建？）:', _e)
+    SW_DATE = None
+
+SW_DATE_F = SW_DATE if SW_DATE else '—'
+if SW_DATE:
+    try:
+        cur.execute("SELECT sector_name, change_pct, main_net_inflow FROM sector_fund_flow "
+                    "WHERE date=? AND main_net_inflow IS NOT NULL", (SW_DATE,))
+        _sw_all = cur.fetchall()
+    except Exception as _e:
+        print('[WARN] sector_fund_flow 明细查询失败:', _e)
+        _sw_all = []
+    if _sw_all:
+        _sw_in = sorted(_sw_all, key=lambda x: -x[2])[:5]
+        _sw_out = sorted(_sw_all, key=lambda x: x[2])[:5]
+        for i in range(5):
+            _ni, _pi, _fi = _sw_in[i]
+            _no, _po, _fo = _sw_out[i]
+            rows_sw_flow += (
+                f'''<tr><td class="num">{i+1}</td><td>{E(_ni)}</td><td class="num">{chg(_pi)}</td>'''
+                f'''<td class="num">{money(_fi)}</td><td>{E(_no)}</td><td class="num">{chg(_po)}</td>'''
+                f'''<td class="num">{money(_fo)}</td></tr>''')
+        _sw_lag = '（滞后一日：投研线 18:15 同步当日数据，本日报 18:00 生成）' if SW_DATE != DATA_DATE else ''
+        SW_TLDR_TXT = (
+            f"申万一级行业资金流（{SW_DATE}{_sw_lag}）：净流入前列 "
+            + '、'.join(f"{n} {v:+.2f}亿" for n, _, v in _sw_in)
+            + '；净流出前列 '
+            + '、'.join(f"{n} {v:+.2f}亿" for n, _, v in _sw_out) + '。')
+    else:
+        SW_TLDR_TXT = (f"申万一级行业资金流：sector_fund_flow 在 {SW_DATE} 无有效明细，"
+                       f"本项标「—」（未编造）。")
+else:
+    SW_TLDR_TXT = ("申万一级行业资金流：本地 sector_fund_flow 无数据（投研线尚未入库），"
+                   "本项标「—」（未编造）。")
+
+if not rows_sw_flow:
+    rows_sw_flow = ('<tr><td colspan="7" class="note">本地 sector_fund_flow 暂无可用明细，'
+                    '本项标「—」。可先运行 scripts/research/sync_rotation_to_db.py 完成回填。</td></tr>')
+sw_lag_note = ('投研线每日 <b>18:15</b> 同步当日数据，而本日报 <b>18:00</b> 生成，'
+               '故该日期通常为<b>上一交易日</b>，属预期滞后而非数据缺失。'
+               if SW_DATE and SW_DATE != DATA_DATE else
+               ('本节数据日期与组合基准日一致。' if SW_DATE else ''))
 con.close()
 
 main_proxy_txt = '（90申万板块合计代理；全市场main_fund口径今日本地缺失）' if main_est else ''
@@ -1027,7 +1083,14 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 </div>
 
 <div class="card">
-<h3>1.5 宏观与利率</h3>
+<h3>1.5 行业资金流 TOP5（申万一级 · 投研线，{SW_DATE_F}）</h3>
+<table><thead><tr><th class="num">#</th><th>净流入 TOP5</th><th class="num">涨跌幅</th><th class="num">金额</th><th>净流出 TOP5</th><th class="num">涨跌幅</th><th class="num">金额</th></tr></thead>
+<tbody>{rows_sw_flow}</tbody></table>
+<div class="note">口径提示：本节为申万<b>一级 31 行业</b>（投研线「A股行业轮动仪表盘」产出，经 history.json 入库），与 1.4 的东方财富 90 个申万<b>二级板块不同源、不同颗粒度</b>，二者不可直接比较或相加。{sw_lag_note}金额为主力资金净流入（大单+特大单口径，亿元）；涨跌幅缺失标「—」，未做任何推算。</div>
+</div>
+
+<div class="card">
+<h3>1.6 宏观与利率</h3>
 <table><thead><tr><th>指标</th><th class="num">最新值</th><th class="num">前值</th><th>解读</th></tr></thead>
 <tbody>{rows_pmi}</tbody></table>
 <div class="note">PMI 来源：国家统计局（季调值）/ 中国人民银行（高技术、装备制造），经 NeoData 宏观数据库返回，统计截止 {PMI['stat']}。⚠ 制造业PMI<b>整体值</b>与大型/中型/小型企业值经查询未直接返回，标「—」，未做任何推算；仅综合PMI产出/非制造业/服务业/建筑业可用。利率其余字段（10Y国债/中美利差）本地 macro_daily 当日未采集，标「—」。</div>
@@ -1158,6 +1221,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 &nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币，PMI 仍缺）<br>
 &nbsp;&nbsp;· market_breadth：{BL.get('date','—')}（zt={loc_zt}/dt={loc_dt} 已采集）<br>
 &nbsp;&nbsp;· <span class="mid">{EPH_SRC_LINE}</span><br>
+&nbsp;&nbsp;· sector_fund_flow：{SW_DATE_F}（申万<b>一级 31 行业</b>涨跌幅+主力净流入，投研线 history.json 入库；与上方 fund_flows 的东财 90 个申万<b>二级</b>板块不同源、不同颗粒度，不可直接比较）<br>
 <b>✓ NeoData 金融搜索</b> —— 本次可用（查询时间 {MKT_NEO['query_time']}，凭证经 connect_cloud_service 重取）<br>
 &nbsp;&nbsp;· 三大指数统一行情（与本地交叉核对一致）、大盘市场宽度（涨跌 {BR['up']}:{BR['down']}）<br>
 &nbsp;&nbsp;· 板块涨跌排行（{top_gain_names} 等）+ 申万板块当日涨跌幅（航天装备/生物制品/半导体 等完整召回）<br>
@@ -1193,6 +1257,7 @@ if (est < 0) != (d_ret < 0):
 _tldr_lines.append(
     f"核心矛盾：主力资金今日{main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；"
     f"两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}；绝对量能{amt_zone}。")
+_tldr_lines.append(SW_TLDR_TXT)
 _tldr_lines.append(
     f"组合最大集中度风险：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（{_aero_verdict} 10% 审慎线）；"
     f"军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 {top3_w:.1f}%。"
