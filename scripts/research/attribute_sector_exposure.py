@@ -51,6 +51,7 @@ from config.settings import DATABASE_PATH
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAP_PATH = os.path.join(HERE, 'data', 'sw_to_csrc_map.json')
+GICS_MAP_PATH = os.path.join(HERE, 'data', 'gics_to_csrc_map.json')
 
 # 报告期口径：动态取 etf_industry_alloc 中**最新且为日期格式**的 report_date。
 #
@@ -106,6 +107,15 @@ def load_map():
         return json.load(fh)
 
 
+def load_gics_map():
+    """加载 GICS 风格标签 → 证监会门类映射。返回 (map, aliases)。"""
+    if not os.path.exists(GICS_MAP_PATH):
+        return {}, {}
+    with open(GICS_MAP_PATH, encoding='utf-8') as fh:
+        j = json.load(fh)
+    return j.get('map', {}), j.get('aliases', {})
+
+
 def _max_date(cur, table, col):
     cur.execute(f"SELECT MAX({col}) FROM {table}")
     r = cur.fetchone()
@@ -129,20 +139,45 @@ def main():
     ap.add_argument('--verify', action='store_true', help='打印校验信息')
     ap.add_argument('--report', action='store_true',
                     help='额外落盘 markdown 报告到 research/sector_rotation/')
+    ap.add_argument('--no-gics-map', action='store_true',
+                    help='关闭 GICS 标签→证监会门类的二次映射（退回全部计入不可映射桶）')
     args = ap.parse_args()
 
     mj = load_map()
     sw2csrc = {k: v for k, v in mj['map'].items()}
     fallback = mj['unmapped_fallback']['csrc']
 
+    gics_map, gics_aliases = load_gics_map()
+    gics_enabled = (not args.no_gics_map) and bool(gics_map)
+
     con = sqlite3.connect(str(DATABASE_PATH))
     cur = con.cursor()
 
     # ---------- 1. 组合侧：持仓市值 → 门类暴露 ----------
-    snap_date = args.date or _max_date(cur, 'portfolio_snapshots', 'date')
-    if not snap_date:
+    # 【归因基准日的选择 —— 必须同日口径】
+    # 组合快照由 15:30 主分析写入（当日盘中即可入库），而投研线行业行情
+    # sector_fund_flow 要等 18:15 才同步当日。若直接取 MAX(快照日)，会在
+    # 15:30~18:15 之间出现「当日持仓 × 前一日行情」的跨日期拼接 —— 这正是
+    # 项目历史上「portfolio_summary 与 portfolio_snapshots 跨日期拼接、
+    # 金额差 6735 元」同类陷阱。故默认以**行情日**为基准，保证同日自洽。
+    snap_max = _max_date(cur, 'portfolio_snapshots', 'date')
+    mkt_date = _max_date(cur, 'sector_fund_flow', 'date')
+    if not snap_max:
         print('[ERROR] portfolio_snapshots 无数据')
         return 2
+
+    if args.date:
+        snap_date, date_note = args.date, '命令行 --date 指定'
+    elif mkt_date and mkt_date <= snap_max and \
+            cur.execute("SELECT COUNT(*) FROM portfolio_snapshots WHERE date=?",
+                        (mkt_date,)).fetchone()[0] > 0:
+        snap_date = mkt_date
+        date_note = ('同日口径：以行情日 %s 为准' % mkt_date)
+        if mkt_date != snap_max:
+            date_note += ('（快照已更新至 %s，行情仅到 %s，已回退到行情日避免跨期拼接）'
+                          % (snap_max, mkt_date))
+    else:
+        snap_date, date_note = snap_max, '回退到快照最新日 %s（无可用行情日）' % snap_max
 
     alloc_rd = _latest_alloc_report_date(cur)
     if not alloc_rd:
@@ -165,10 +200,15 @@ def main():
             continue
         alloc[code].append((industry, float(w)))
 
-    exposure = defaultdict(float)     # csrc -> 组合暴露 %
+    exposure = defaultdict(float)     # csrc -> 组合暴露 %（结构快照口径，含 GICS 映射）
+    base = defaultdict(float)         # csrc -> 可用于计算贡献的暴露（剔除跨市场错配）
+    gics_exp = defaultdict(float)     # csrc -> 其中来自 GICS 二次映射的暴露
+    offshore_exp = defaultdict(float)  # csrc -> 纯境外持仓贡献的暴露（结构可见，贡献不可用）
     unattr = defaultdict(float)       # 原因 -> 未归因占比
     non_csrc = defaultdict(lambda: defaultdict(float))  # code -> 非证监会标签 -> 权重%
-    mixed_codes = {}                  # code -> (证监会权重和, 非证监会权重和)
+    unmap_tags = defaultdict(float)   # 未命中映射的标签 -> 权重合计
+    mixed_codes = {}                  # code -> 明细 dict
+    offshore_codes = set()            # 非证监会权重占比 > 90%（视为纯境外持仓）
     for code, mv in holdings:
         pct = mv / total_mv * 100
         if code not in alloc:
@@ -179,21 +219,49 @@ def main():
             else:
                 unattr['场外基金（无门类配置数据）'] += pct
             continue
-        in_sum = out_sum = 0.0
-        for industry, w in alloc[code]:
+
+        rows_alloc = alloc[code]
+        in_sum = sum(w for ind, w in rows_alloc if ind in CSRC_SECTORS)
+        out_sum = sum(w for ind, w in rows_alloc if ind not in CSRC_SECTORS)
+        total_w = in_sum + out_sum
+        # 纯境外持仓（如港股通 ETF）：当地市场与 A 股申万不联动，贡献数字不成立
+        is_off = total_w > 0 and (out_sum / total_w) > 0.9
+        if is_off:
+            offshore_codes.add(code)
+
+        mapped_sum = unmapped_sum = 0.0
+        for industry, w in rows_alloc:
+            contrib_w = pct * (w / 100.0)
             if industry in CSRC_SECTORS:
-                exposure[industry] += pct * (w / 100.0)
-                in_sum += w
+                exposure[industry] += contrib_w
+                base[industry] += contrib_w
+                continue
+            non_csrc[code][industry] += w
+            key = gics_aliases.get(industry, industry)
+            m = gics_map.get(key) if gics_enabled else None
+            if m and m.get('csrc'):
+                t = m['csrc']
+                exposure[t] += contrib_w
+                gics_exp[t] += contrib_w
+                mapped_sum += w
+                if is_off:
+                    offshore_exp[t] += contrib_w      # 结构可见，但贡献不可用
+                else:
+                    base[t] += contrib_w
             else:
-                # 非证监会分类体系（QDII/港美股 GICS 标签等）：不可映射，如实占位
-                non_csrc[code][industry] += w
-                out_sum += w
+                unmapped_sum += w
+                unmap_tags[key] += w
+
         if out_sum > 0.5:             # 仅记录实质混用的，忽略 0.0 占位噪声
-            mixed_codes[code] = (in_sum, out_sum)
-            unattr['非证监会分类体系（不可映射，GICS 风格标签）'] += pct * (out_sum / 100.0)
+            mixed_codes[code] = {
+                'csrc': in_sum, 'non_csrc': out_sum,
+                'mapped': mapped_sum, 'unmapped': unmapped_sum, 'offshore': is_off,
+            }
+        if unmapped_sum > 0:
+            unattr['非证监会标签且无映射（不可映射）'] += pct * (unmapped_sum / 100.0)
 
     # ---------- 2. 市场侧：申万一级 → 门类聚合 ----------
-    mkt_date = _max_date(cur, 'sector_fund_flow', 'date')
+    # mkt_date 已在第 1 步提前取得（用于选择归因基准日），此处不再重复取
     agg = defaultdict(lambda: {'chg': [], 'flow': [], 'members': [], 'conf': []})
     unmapped_sw = []
     if mkt_date:
@@ -223,11 +291,16 @@ def main():
         mkt_chg = sum(a['chg']) / len(a['chg']) if a['chg'] else None
         mkt_flow = sum(a['flow']) if a['flow'] else None
         exp = exposure.get(c, 0.0)
-        contrib = (exp * mkt_chg / 100.0) if (mkt_chg is not None and exp) else None
+        b = base.get(c, 0.0)
+        # 贡献只基于 base（已剔除纯境外持仓的跨市场错配部分）
+        contrib = (b * mkt_chg / 100.0) if (mkt_chg is not None and b) else None
         worst = max(a['conf'], key=lambda x: conf_rank.get(x, 9)) if a['conf'] else 'none'
         rows.append({
             'csrc_sector': c,
             'exposure_pct': round(exp, 4),
+            'base_pct': round(b, 4),
+            'gics_exposure_pct': round(gics_exp.get(c, 0.0), 4),
+            'offshore_exposure_pct': round(offshore_exp.get(c, 0.0), 4),
             'mkt_change_pct': round(mkt_chg, 4) if mkt_chg is not None else None,
             'mkt_fund_flow_yi': round(mkt_flow, 2) if mkt_flow is not None else None,
             'contribution_pct': round(contrib, 4) if contrib is not None else None,
@@ -253,13 +326,21 @@ def main():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (date, csrc_sector)
         )""")
+    # 增量加列（老库平滑升级）：GICS 映射引入的新字段
+    _cols = {r[1] for r in cur.execute("PRAGMA table_info(csrc_sector_exposure)")}
+    for col, typ in (('base_pct', 'REAL'), ('gics_exposure_pct', 'REAL'),
+                     ('offshore_exposure_pct', 'REAL')):
+        if col not in _cols:
+            cur.execute(f"ALTER TABLE csrc_sector_exposure ADD COLUMN {col} {typ}")
     for r in rows:
         cur.execute("""
             INSERT OR REPLACE INTO csrc_sector_exposure
-            (date, mkt_date, csrc_sector, exposure_pct, mkt_change_pct, mkt_fund_flow_yi,
+            (date, mkt_date, csrc_sector, exposure_pct, base_pct, gics_exposure_pct,
+             offshore_exposure_pct, mkt_change_pct, mkt_fund_flow_yi,
              contribution_pct, sw_members, map_confidence, alloc_report_date, source)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (snap_date, mkt_date, r['csrc_sector'], r['exposure_pct'],
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (snap_date, mkt_date, r['csrc_sector'], r['exposure_pct'], r['base_pct'],
+             r['gics_exposure_pct'], r['offshore_exposure_pct'],
              r['mkt_change_pct'], r['mkt_fund_flow_yi'], r['contribution_pct'],
              json.dumps(r['sw_members'], ensure_ascii=False), r['map_confidence'],
              alloc_rd, 'portfolio_snapshots+etf_industry_alloc+sector_fund_flow'))
@@ -273,6 +354,7 @@ def main():
     eff_exp = sum(r['exposure_pct'] for r in eff)
     gap_exp = sum(r['exposure_pct'] for r in gap)
     contrib_sum = sum(r['contribution_pct'] for r in eff)
+    base_total = sum(r['base_pct'] for r in eff)   # 仅可对照门类，即真正参与贡献的部分
 
     # 真值对照
     cur.execute("SELECT daily_return FROM portfolio_summary WHERE date=?", (snap_date,))
@@ -290,8 +372,12 @@ def main():
     lag_txt = f'{lag_months} 个月' if lag_months is not None else '未知'
 
     print(f"\n{'='*82}")
-    print(f"组合行业暴露归因（证监会门类级）　快照日 {snap_date}　行业行情日 {mkt_date}")
+    print(f"组合行业暴露归因（证监会门类级）　归因基准日 {snap_date}　行业行情日 {mkt_date}")
     print(f"持仓结构口径：etf_industry_alloc.report_date = {alloc_rd}（滞后约 {lag_txt}）")
+    print(f"基准日选择：{date_note}")
+    if snap_date != mkt_date:
+        print(f"⚠ 持仓日({snap_date}) ≠ 行情日({mkt_date})，两者跨期，"
+              f"以下贡献数字不成立，仅供参考")
     print(f"{'='*82}")
     print(f"{'门类':<26}{'暴露%':>8}{'涨跌%':>9}{'资金流亿':>11}{'贡献pct':>10}  置信  状态")
     print('-' * 82)
@@ -305,7 +391,8 @@ def main():
         st = '映射缺口' if r['mkt_change_pct'] is None else '可对照'
         print(f"{r['csrc_sector']:<26}{e:>8}{c:>9}{f:>11}{k:>10}  {r['map_confidence']:<5} {st}")
     print('-' * 82)
-    print(f"{'有效归因（可对照市场）':<26}{eff_exp:>8.2f}")
+    print(f"{'有效归因（可对照市场）':<26}{eff_exp:>8.2f}   ← 结构覆盖口径")
+    print(f"{'其中：贡献计算基数':<26}{base_total:>8.2f}   ← 已剔除跨市场错配部分")
     print(f"{'已归入门类但无市场数据':<26}{gap_exp:>8.2f}   ← 映射缺口")
     print(f"{'未归因':<26}{unattr_total:>8.2f}")
     for reason, v in sorted(unattr.items(), key=lambda x: -x[1]):
@@ -314,7 +401,8 @@ def main():
     print(f"\n【与真实回报对照】")
     if true_ret is not None:
         print(f"  组合真实当日回报（portfolio_summary.daily_return）：{true_ret:+.4f}%")
-        print(f"  归因模型贡献合计（仅覆盖 {eff_exp:.1f}%）：{contrib_sum:+.4f} pct")
+        print(f"  归因模型贡献合计（基数 {base_total:.1f}%，非覆盖 {eff_exp:.1f}%）："
+              f"{contrib_sum:+.4f} pct")
         diff = contrib_sum - true_ret
         print(f"  偏差：{diff:+.4f} pct" +
               ("　⚠ **方向相反**" if (contrib_sum * true_ret < 0) else ""))
@@ -335,11 +423,24 @@ def main():
     if low:
         print(f"  · ⚠ 含低置信映射的门类（跨门类拆分，归因存在已知偏差）：{('、'.join(low))}")
     if mixed_codes:
-        print(f"  · ⚠ 分类体系混用（含 QDII/港美股 GICS 风格标签，已按白名单剔除、未强行映射）：")
-        for code, (ins, outs) in sorted(mixed_codes.items(), key=lambda x: -x[1][1]):
+        tag = '已启用 GICS 二次映射' if gics_enabled else '已关闭映射(--no-gics-map)'
+        print(f"  · ⚠ 分类体系混用基金（含 QDII/港股 GICS 风格标签，{tag}）：")
+        for code, d in sorted(mixed_codes.items(), key=lambda x: -x[1]['non_csrc']):
             tags = '、'.join(sorted(non_csrc[code], key=lambda k: -non_csrc[code][k])[:6])
-            print(f"      {code}：证监会 {ins:.2f}% + 非证监会 {outs:.2f}%　标签例：{tags}")
-        print(f"    处置：非证监会部分计入「未归因」，**不猜测映射**。")
+            flag = '　🌏 纯境外持仓→贡献不可用' if d['offshore'] else ''
+            print(f"      {code}：证监会 {d['csrc']:.2f}% + 非证监会 {d['non_csrc']:.2f}%"
+                  f"（已映射 {d['mapped']:.2f}% / 不可映射 {d['unmapped']:.2f}%）{flag}")
+            print(f"         标签例：{tags}")
+    if gics_exp:
+        tot_g = sum(gics_exp.values())
+        tot_o = sum(offshore_exp.values())
+        print(f"  · ⚠ GICS 二次映射引入暴露 {tot_g:.2f}%（**二级归类，误差累积**）；"
+              f"其中跨市场错配 {tot_o:.2f}% 已剔除出贡献计算")
+        print(f"    跨市场错配含义：这些持仓在港股/境外市场，与 A 股申万行业涨跌不联动，"
+              f"用 A 股行情归因不成立。")
+    if unmap_tags:
+        print(f"  · ⚠ 未命中映射的标签（保留在不可映射桶，不猜测）："
+              f"{('、'.join(sorted(unmap_tags, key=lambda k: -unmap_tags[k])))}")
     if gap:
         print(f"  · ⚠ 映射缺口门类（组合侧有暴露、但无对应申万一级行业来源）："
               f"{('、'.join(r['csrc_sector'] for r in gap))}")
@@ -402,12 +503,23 @@ def main():
             fh.write(f"5. 低置信映射门类：{('、'.join(low)) if low else '无'}；\n")
             fh.write(f"6. 映射缺口门类：{('、'.join(r['csrc_sector'] for r in gap)) if gap else '无'}，市场数据一律 NULL，不猜测替代；\n")
             if mixed_codes:
-                fh.write("7. 分类体系混用（QDII/港美股 GICS 标签）已按证监会白名单剔除，"
-                         "明细如下，**未强行映射**：\n\n")
-                fh.write("| 代码 | 证监会权重% | 非证监会权重% | 非证监会标签（例） |\n|---|---|---|---|\n")
-                for code, (ins, outs) in sorted(mixed_codes.items(), key=lambda x: -x[1][1]):
+                act = ('已通过 GICS→证监会二次映射并入门类'
+                       if gics_enabled else '未启用二次映射，全部计入不可映射')
+                fh.write(f"7. 分类体系混用基金（QDII/港股 GICS 标签）{act}，明细如下：\n\n")
+                fh.write("| 代码 | 证监会权重% | 非证监会权重% | 已映射% | 不可映射% | 纯境外持仓 | 标签（例） |\n"
+                         "|---|---|---|---|---|---|---|\n")
+                for code, d in sorted(mixed_codes.items(), key=lambda x: -x[1]['non_csrc']):
                     tags = '、'.join(sorted(non_csrc[code], key=lambda k: -non_csrc[code][k])[:6])
-                    fh.write(f"| {code} | {ins:.2f} | {outs:.2f} | {tags} |\n")
+                    off = '是（贡献不可用）' if d['offshore'] else '否'
+                    fh.write(f"| {code} | {d['csrc']:.2f} | {d['non_csrc']:.2f} | "
+                             f"{d['mapped']:.2f} | {d['unmapped']:.2f} | {off} | {tags} |\n")
+                fh.write("\n")
+            if gics_exp:
+                fh.write(f"8. **跨市场口径错配（关键）**：GICS 二次映射引入暴露 "
+                         f"{sum(gics_exp.values()):.2f}%，其中 {sum(offshore_exp.values()):.2f}% "
+                         f"来自纯境外持仓基金（实测 159220 港股通红利低波ETF，98.70% 为港股）。\n"
+                         f"   港股与 A 股申万行业涨跌**不联动**，该部分仅计入结构快照，"
+                         f"**不参与贡献计算**。\n")
         print(f"\n[REPORT] {p}")
 
     con.close()
