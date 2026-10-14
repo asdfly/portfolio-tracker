@@ -20,6 +20,8 @@ import sys
 import os
 import time
 import json
+import argparse
+from datetime import date
 
 import akshare as ak
 
@@ -63,20 +65,32 @@ def fetch_one(symbol):
 
 
 def main():
+    ap = argparse.ArgumentParser(description="akshare-Sina fallback fetcher for etf_price_history backfill")
+    ap.add_argument("--codes", default=",".join(CODES),
+                    help="逗号分隔的 prefix+code 列表，默认全量 23 只")
+    ap.add_argument("--start", default=START, help=f"起始日(含)，默认 {START}")
+    ap.add_argument("--end", default=date.today().isoformat(),
+                    help="截止日(含)，默认今天")
+    ap.add_argument("--sleep", type=float, default=2.0, help="每只之间的间隔秒数，默认 2")
+    args = ap.parse_args()
+
+    symbols = [s.strip() for s in args.codes.split(",") if s.strip()]
+    start, end = args.start, args.end
+
     results = {}
-    for sym in CODES:
+    for sym in symbols:
         code6 = sym[2:]  # strip sz/sh/bj
         df, err = fetch_one(sym)
         if df is None:
             print(f"[SKIP] {sym}: {err}")
             results[sym] = "SKIP"
-            time.sleep(2)
+            time.sleep(args.sleep)
             continue
 
         nodes = []
         for _, row in df.iterrows():
             d = norm_date(row["date"])
-            if d < START or d > END:
+            if d < start or d > end:
                 continue
             vol = row.get("volume")
             amt = row.get("amount")
@@ -91,9 +105,9 @@ def main():
             })
 
         if not nodes:
-            print(f"[SKIP] {sym}: no rows in [{START},{END}]")
+            print(f"[SKIP] {sym}: no rows in [{start},{end}]")
             results[sym] = "NODATA"
-            time.sleep(2)
+            time.sleep(args.sleep)
             continue
 
         out = {"ok": True, "data": {"nodes": nodes}}
@@ -102,13 +116,14 @@ def main():
             json.dump(out, fh, ensure_ascii=False)
         print(f"[OK] {sym} ({code6}): {len(nodes)} nodes, max={nodes[-1]['date']}")
         results[sym] = "OK"
-        time.sleep(2)  # gentle between codes
+        time.sleep(args.sleep)  # gentle between codes
 
     ok = [k for k, v in results.items() if v == "OK"]
     bad = {k: v for k, v in results.items() if v != "OK"}
     print(f"\nSUMMARY ok={len(ok)} bad={len(bad)}")
     if bad:
         print("BAD:", bad)
+    sys.exit(1 if bad else 0)
 
 
 if __name__ == "__main__":
