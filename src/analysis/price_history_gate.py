@@ -107,9 +107,6 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
     global_max = row[0] if row and row[0] else None
     if not global_max:
         return []
-    cal = _reference_calendar(conn, lookback_days)
-    if not cal:
-        return []
 
     snap_row = conn.execute("SELECT MAX(date) FROM portfolio_snapshots").fetchone()
     snap_max = snap_row[0] if snap_row and snap_row[0] else None
@@ -123,6 +120,13 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
     # OHLCV 取数失败。此判定独立于参考日历，能抓到「全表 0 行」——旧逻辑只看参考日历，
     # 而参考日历由数据本身推导，0 行时日历冻结 ⇒ 漏检（这正是 09-23 漏报的根因）。
     # 注：周末/节假日 snapshot 不会前进，故 snap_max == ohlcv_max，不会误报。
+    #
+    # ⚠ 顺序约束（2026-10-14 修复，勿回退）：A 必须排在参考日历计算**之前**。
+    #   原实现先 `cal = _reference_calendar(...)`、`if not cal: return []`，
+    #   于是"参考日历为空"时整个函数提前返回，A 一次都没机会执行 —— 而 A 唯一要抓的
+    #   恰恰就是"参考日历退化 / 全表 0 行"这个场景。属注释承诺独立、实现却依赖的
+    #   #130 式陷阱（测试 A 用 lookback 窗口外的日期即可复现：原实现 gaps=[]）。
+    #   A 只依赖两张表的 MAX(date)，本身不需要 cal。
     if global_max and snap_max and snap_max > global_max:
         try:
             _lag = (_dt.date.fromisoformat(snap_max)
@@ -136,6 +140,12 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
             "note": (f"etf_price_history 全局最新日({global_max})落后 portfolio_snapshots "
                      f"最新日({snap_max}) {_lag} 天，疑似当日全量回填失败/源中断"),
         })
+
+    # --- 参考日历：仅用于下方「单标的缺口」判定，故允许为空并在此提前返回 ---
+    #    （A 的结论必须在此之前已经产出并留在 gaps 里）
+    cal = _reference_calendar(conn, lookback_days)
+    if not cal:
+        return gaps
 
     # --- 单标的缺口 ---
     tail_start = (_dt.date.fromisoformat(global_max)

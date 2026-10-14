@@ -49,7 +49,14 @@ def _ohlcv(conn, code, dates):
 
 
 def test_A_freshness_detects_systemic_zero_rows():
-    """etf_price_history 全局最新日(09-22) < snapshot 最新日(09-23) ⇒ 系统性 error。"""
+    """etf_price_history 全局最新日(09-22) < snapshot 最新日(09-23) ⇒ 系统性 error。
+
+    ⚠ 保留这批"落在 lookback 窗口之外"的绝对日期，是刻意的契约验证（2026-10-14）：
+      A 鲜度闸门按设计必须**独立于参考日历**（否则抓不到「全表 0 行 → 日历冻结」
+      这个它唯一存在的理由）。旧实现把 A 排在 `if not cal: return []` 之后，
+      日历一空就整体提前返回 ⇒ 这里 gaps=[] 假失败。日期越旧，此契约越好使。
+      （依赖参考日历的用例见 test_D，那里必须改用相对日期。）
+    """
     import tempfile, pathlib
     with tempfile.TemporaryDirectory() as td:
         conn = _mkdb(pathlib.Path(td))
@@ -66,17 +73,25 @@ def test_A_freshness_detects_systemic_zero_rows():
 
 
 def test_D_per_code_escalates_accumulated_gap():
-    """9 只缺口标的全局最新日(09-21)落后 snapshot 最新日(09-24) ≥3 天 ⇒ 各自 error。"""
+    """9 只缺口标的全局最新日落后 snapshot 最新日 ≥3 天 ⇒ 各自 error。
+
+    ⚠ 日期必须相对 `today` 生成（2026-10-14 修复）：本用例依赖参考日历，而
+      `_reference_calendar` 只取 `today - GAP_LOOKBACK_DAYS(=15)` 之后的数据。
+      原用例写死 2026-09-19~09-24，距当天已超 lookback 窗口 ⇒ 日历为空 ⇒
+      单标的判定整段跳过 → 假失败。用相对日期后与时点无关，永久有效。
+    """
     import tempfile, pathlib
+    ref = _dt.date.today() - _dt.timedelta(days=8)      # 锚点，位于 lookback 窗口内
+    d = lambda n: (ref - _dt.timedelta(days=n)).isoformat()   # noqa: E731
     with tempfile.TemporaryDirectory() as td:
         conn = _mkdb(pathlib.Path(td))
-        # 参照标的更新到 09-24（使参考日历包含 09-22/23/24）
-        _snap(conn, "2026-09-24", _HELD + _OTHER)
+        # 参照标的更新到锚点日（使参考日历覆盖 ref-3..ref）
+        _snap(conn, d(0), _HELD + _OTHER)
         for c in _OTHER:
-            _ohlcv(conn, c, ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24"])
-        # 9 只缺口标的：有完整历史但停在 09-21（真实场景是滞后而非新纳入）
+            _ohlcv(conn, c, [d(3), d(2), d(1), d(0)])
+        # 9 只缺口标的：有完整历史但停在 ref-3（真实场景是滞后而非新纳入）
         for c in _HELD:
-            _ohlcv(conn, c, ["2026-09-19", "2026-09-20", "2026-09-21"])
+            _ohlcv(conn, c, [d(5), d(4), d(3)])
         gaps = gate.detect_etf_price_gaps(conn)
         errs = {g["code"]: g for g in gaps if g["severity"] == "error"}
         for c in _HELD:
