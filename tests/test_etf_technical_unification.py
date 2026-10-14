@@ -55,7 +55,13 @@ def _cleanup_db(path):
         pass  # 临时文件由系统清理，不阻断测试
 
 
-def _make_db(prices, dates, code="159732"):
+def _make_db(prices, dates, code="512100"):
+    """⚠ 样本代码必须是**在场**的场内 ETF（2026-10-14 修复）。
+
+    原用例随手用了 159732（消费电子ETF华夏），恰好已清仓并进入 DELISTED_CODES，
+    而 rebuild_etf_technical 按设计会跳过 is_delisted 标的 ⇒ 恒写出 0 行，
+    测试以「rebuild 未写出最新行」假失败。改用组合在册代码，与时点无关。
+    """
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     conn = sqlite3.connect(path)
@@ -108,7 +114,7 @@ def test_compute_matches_rebuild_on_sample():
     rng = np.random.default_rng(7)
     prices = list(100 + np.cumsum(rng.normal(0, 1, n)) + np.arange(n) * 0.3)
     dates = _dates(n)
-    code = "159732"
+    code = "512100"
     path = _make_db(prices, dates, code)
     try:
         rebuild_etf_technical(path)
@@ -146,7 +152,7 @@ def test_rebuild_latest_uses_kline_last_day_not_today():
     prices = [100 + i * 0.4 for i in range(n)]
     dates = _dates(n, end="2026-09-10")  # 最后一日 = 2026-09-10
     assert dates[-1] == "2026-09-10"
-    code = "159732"
+    code = "512100"
     path = _make_db(prices, dates, code)
     try:
         dm = DatabaseManager(path)
@@ -175,7 +181,7 @@ def test_backfill_dates_align_to_snapshots():
     n = 60
     prices = list(100 + np.cumsum(np.random.default_rng(3).normal(0, 1, n)))
     dates = _dates(n)
-    code = "159732"
+    code = "512100"
     path = _make_db(prices, dates, code)
     try:
         total = rebuild_etf_technical(path)

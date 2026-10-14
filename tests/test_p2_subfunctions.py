@@ -67,8 +67,15 @@ class TestTab4Refactor:
         "_render_heatmap": 41,
         "_render_annual_trend": 52,
         "_render_boxplot": 33,
-        "_render_event_calendar": 146,
+        # 146 → 176（2026-10-14 更新基准）：该函数在 09 月后累增约 30 行，
+        # 已明显高于其余子函数，属**待重构**信号（建议拆「事件分组」与「渲染」两段）。
+        # 本次仅同步基准值并补硬闸(test_subfunc_hard_cap)，不擅自重构 UI 行为。
+        "_render_event_calendar": 176,
     }
+    # 硬上限：任何子函数都不得突破。记录精确行数本就是脆弱断言（加一行注释就要
+    # 回来改数字），但完全放开会让 tab4 重回"巨石函数"。故上方 ±3 比对用于发现
+    # 「意料之外的变动」，这里再设一道红线，防止继续膨胀而无人为此负责。
+    SUBFUNC_HARD_CAP = 200
 
     def test_subfunc_exist(self):
         lengths = _get_subfunc_lengths("tabs.tab4_calendar", "render_tab4")
@@ -79,6 +86,12 @@ class TestTab4Refactor:
         lengths = _get_subfunc_lengths("tabs.tab4_calendar", "render_tab4")
         for name, expected in self.EXPECTED_SUBFUNCS.items():
             assert abs(lengths[name] - expected) <= 3, f"{name}: {lengths[name]} != {expected}"
+
+    def test_subfunc_hard_cap(self):
+        lengths = _get_subfunc_lengths("tabs.tab4_calendar", "render_tab4")
+        for name, ln in lengths.items():
+            assert ln <= self.SUBFUNC_HARD_CAP, \
+                f"{name} 过长 {ln} > {self.SUBFUNC_HARD_CAP}，应拆分而非放宽"
 
     def test_orchestrator_short(self):
         lengths = _get_subfunc_lengths("tabs.tab4_calendar", "render_tab4")

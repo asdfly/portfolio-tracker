@@ -56,8 +56,15 @@ class TestScriptsBackfillExists:
         assert (PROJECT_DIR / "scripts" / "backfill" / "backfill_full_history.py").exists()
 
     def test_backfill_count(self):
+        """backfill 目录须容纳全部归档脚本，且随新增脚本单调增长。
+
+        ⚠ 2026-10-14 修复：原来断言 ``== 6``。那只是 D6 当时的快照值，此后脚本
+        增至 35 个（每次新增都要回来改数字），属典型的脆弱计数断言。
+        真正要约束的是「该归档的都已归档」——6 项必要性已由上方各 ``*_exists``
+        用例逐个锁死，这里只校验总数为下界，与时点无关。
+        """
         scripts = list((PROJECT_DIR / "scripts" / "backfill").glob("*.py"))
-        assert len(scripts) == 6
+        assert len(scripts) >= 6, f"backfill 脚本过少: {len(scripts)}"
 
 
 class TestScriptsSetupExists:

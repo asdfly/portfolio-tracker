@@ -45,9 +45,21 @@ class TestGitHubActionsCI:
         content = (PROJECT_DIR / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         assert "pull_request:" in content
 
-    def test_ci_uses_python_312(self):
+    def test_ci_python_version_matches_local(self):
+        """CI 的 python-version 必须与本地解释器一致（防环境漂移）。
+
+        ⚠ 2026-10-14 修复：原用例硬编码 ``"3.12"``，而项目随 venv313 已迁到 3.13
+          ⇒ 每次 Python 升级都假失败一次。硬编码版本号会周期性腐烂；真正要防的是
+          「CI 与开发/运行环境版本漂移」，故改为与当前解释器比对。
+        """
+        import re
+        import sys
+
         content = (PROJECT_DIR / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        assert "3.12" in content
+        m = re.search(r'python-version:\s*["\']?(\d+\.\d+)', content)
+        assert m, "ci.yml 未声明 python-version"
+        local = f"{sys.version_info.major}.{sys.version_info.minor}"
+        assert m.group(1) == local, f"CI Python {m.group(1)} != 本地 {local}"
 
 
 class TestRequirementsTxt:
