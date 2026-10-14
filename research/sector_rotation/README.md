@@ -50,10 +50,27 @@ research/sector_rotation/
 
 **与组合线的口径差异**：组合线 `etf_industry_alloc` 使用**证监会门类**（粗，且为 2026-03-31 季报口径），本目录数据为**申万一级 31 行业**（细）。二者映射为一对多且存在信息损失，行业归因须按**证监会门类级**进行（整合方案 D1 决策 = 方案 A）。
 
-## 同步机制
+## 同步机制（2026-10-14 已接入自动化）
 
-- **当前**：静态归集（2026-10-14 一次性复制）。
-- **后续**：投研线自动化每日写入 `history.json` 后，追加一步增量复制到本目录；与 Tier 1（入 `portfolio.db`）的增量同步合并为同一改动，避免多次修改自动化 prompt。
+投研线每日自动化在写完 `history.json` 后自动执行两步（幂等，重复执行不产生重复行）：
+
+1. **复制到本目录**：`cp outputs/history.json → research/sector_rotation/history.json`（跨盘备份）
+2. **入库**：`sync_rotation_to_db.py --date <当日> --verify` → 写入 `portfolio.db`
+
+入库产出 4 张表（`scripts/research/sync_rotation_to_db.py` 自动建表）：
+
+| 表 | 来源字段 | 行数（截至 10-13） | 说明 |
+|---|---|---|---|
+| `sector_fund_flow` | `snapshots[].sectors[31]` | **1395** | 申万 31 行业日度涨跌幅 + 主力净流入，`UNIQUE(date, sector_name)` |
+| `northbound_daily` | `snapshots[].northbound[]` | **49** | 北向成交总额日度序列（由各快照的滚动序列跨快照去重），`UNIQUE(nb_date)` |
+| `style_ladder` | `snapshots[].ladder[5]` | **225** | 规模谱系（上证50→中证2000）日度涨跌幅 |
+| `style_growth_value` | `snapshots[].gv[3]` | **135** | 成长/价值指数对涨跌幅与剪刀差 `gap` |
+
+**数据集纪律**：缺值一律写 `NULL`，绝不填 0 或编造。北向 `v:null` 表示未披露（当前 2026-08-20~08-31 共 8 天为 NULL，属真实缺口）。
+
+**不产出 `style_compass` 表**：风格坐标（罗盘 `x/y`）仅存在于仪表盘 HTML 的 SNAPS 中，经核实该字段在 HTML 内无法稳定提取（正则 0 命中，且 SNAPS 段内日期键数异常），故风格维度改由上表 `style_ladder` + `style_growth_value` 的原始可靠数据表达。
+
+**git 提交策略**：自动化**不执行 git commit**（避免每日 churn，与 `data/reports` 治理同源原则），归集目录的入库由人工定期处理。
 
 ## 相关文档
 
