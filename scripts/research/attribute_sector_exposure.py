@@ -5,7 +5,7 @@
 
 链路：
     portfolio_snapshots(持仓市值)
-      → etf_industry_alloc(ETF→证监会门类权重, report_date='2026-03-31')
+      → etf_industry_alloc(ETF→证监会门类权重, 取最新有效 report_date)
       → sector_fund_flow(申万一级行业日度涨跌/资金流) --[映射聚合]--> 证监会门类
       → 组合门类暴露 × 门类市场表现 = 贡献度
 
@@ -15,14 +15,20 @@
 1. 【口径】组合侧用证监会门类（etf_industry_alloc），市场侧原始为申万一级
    （sector_fund_flow）。两套体系不同源、不同颗粒度，映射为**一对多且带信息
    损失**。证监会「制造业」一个门类吞掉申万 14 个一级行业，无法再细分。
-2. 【滞后】etf_industry_alloc 的 report_date=2026-03-31（季报口径，滞后约
-   6 个月）。归因用的是**半年前的持仓结构**，与当前实际持仓存在偏移。
+2. 【滞后】etf_industry_alloc 为季报口径，脚本自动取**最新有效 report_date**
+   （如 2026-06-30，滞后约 3.5 个月）。归因用的是**上一季报的持仓结构**，
+   与当前实际持仓存在偏移，季度间调仓不可见。
 3. 【近似】门类内的申万行业权重未知（无行业成交额/市值数据），故门类市场
    涨跌幅采用**等权平均**、资金流采用**求和**。等权平均是近似，非真实加权。
-4. 【未归因】场外基金（无门类数据）+ 4 只缺门类数据的 ETF 计入「未归因」，
-   如实占位，**不摊派、不编造**。
+4. 【未归因】场外基金（无门类数据）+ 债券类 ETF（无行业配置属业务性质）
+   + 采集失败的代码，均计入「未归因」，如实占位，**不摊派、不编造**。
 5. 【低置信】4 个跨门类行业（社会服务/传媒/石油石化/环保）的映射为「取主体
    构成」的近似，产物中单列披露。
+6. 【分类体系混用】部分基金（实测 008269 大成睿享混合A、159220）的持仓含
+   QDII/港股部分，其行业标签采用 **GICS 风格**（通讯/科技/工业/必需消费品/
+   非必需消费品/医疗保健/能源/材料 等）而非证监会门类。脚本采用**证监会门类
+   白名单**过滤：不在白名单内的标签一律计入「非证监会分类（不可映射）」桶，
+   **不猜测映射、不强行归类**。混用基金的可归因部分会因此被低估。
 
 产物中所有数字均带口径标注；无法核实的一律 NULL，不做推算填充。
 ════════════════════════════════════════════════════════════════════════
@@ -35,6 +41,7 @@
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from collections import defaultdict
@@ -45,12 +52,42 @@ from config.settings import DATABASE_PATH
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAP_PATH = os.path.join(HERE, 'data', 'sw_to_csrc_map.json')
 
-# 仅采用该报告期的门类明细。理由（实测诊断，2026-10-14）：
-#   · '2026-03-31'  19 只 ETF 的完整门类明细，各 ETF 权重合计 96.4~100.0，唯一成体系；
-#   · '2026-06-30'  仅 7 行零碎补丁（多为 0.0/0.01），不成体系，排除后损失极小；
-#   · 'neodata_latest' 5 只 ETF 的笼统「其他」行，分类体系非证监会门类，且与其
-#     03-31 明细**并存导致权重合计超 100%（如 512100 达 106.96）**，是重复污染源。
-ALLOC_REPORT_DATE = '2026-03-31'
+# 报告期口径：动态取 etf_industry_alloc 中**最新且为日期格式**的 report_date。
+#
+# 历史背景（2026-10-14 修复，勿回退）：
+#   原表 UNIQUE(code, industry) 缺 report_date，而东财 EM 源一次返回多期，
+#   save_to_db 用 INSERT OR REPLACE 逐行覆盖 → 新报告期被旧报告期反向覆盖，
+#   导致 06-30 只剩 7 行零碎补丁。修复后（refresh_etf_industry_alloc.py --rebuild
+#   --refresh）06-30 已完整落库 226 行 / 30 只，覆盖率由 50.84% 提升至 88.65%。
+#
+# 必须过滤非日期格式的 report_date（如 'neodata_latest'）：
+#   字符串比较下 'neodata_latest' > '2026-xx-xx'，若不过滤会被 MAX() 选中，
+#   而其只有笼统的「其他」一行，将导致归因完全失真。
+DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+# 证监会门类白名单（A 股标准分类）。凡不在此集合内的行业标签，一律视为
+# 非证监会分类体系（多为 QDII/港美股持仓的 GICS 风格标签），计入不可映射桶。
+# 依据：中国证监会《上市公司行业分类指引》门类。
+CSRC_SECTORS = {
+    '农、林、牧、渔业',
+    '采矿业',
+    '制造业',
+    '电力、热力、燃气及水生产和供应业',
+    '建筑业',
+    '批发和零售业',
+    '交通运输、仓储和邮政业',
+    '住宿和餐饮业',
+    '信息传输、软件和信息技术服务业',
+    '金融业',
+    '房地产业',
+    '租赁和商务服务业',
+    '科学研究和技术服务业',
+    '水利、环境和公共设施管理业',
+    '教育',
+    '卫生和社会工作',
+    '文化、体育和娱乐业',
+    '综合',
+}
 
 # 场内 ETF canonical 23 只（与 sync_rotation_to_db.py / 「ETF OHLCV 全量兜底巡检」
 # 自动化保持一致）。用于把「未归因」进一步拆分为「场外基金」与「场内 ETF 缺门类数据」。
@@ -59,6 +96,9 @@ CANONICAL_ETF = {
     '159949', '159992', '510300', '510500', '511380', '511520', '512010', '512100',
     '512810', '515010', '515120', '516160', '561910', '563020', '588000',
 }
+
+# 债券类 ETF：业务性质上无股票行业配置，缺数据属预期，非采集缺陷。
+BOND_ETF = {'511380', '511520', '159650'}
 
 
 def load_map():
@@ -70,6 +110,17 @@ def _max_date(cur, table, col):
     cur.execute(f"SELECT MAX({col}) FROM {table}")
     r = cur.fetchone()
     return r[0] if r else None
+
+
+def _latest_alloc_report_date(cur):
+    """取 etf_industry_alloc 中最新且为日期格式的 report_date。
+
+    过滤 neodata_latest 等非日期值：字符串比较下它们大于任何 'YYYY-MM-DD'，
+    不过滤会被 MAX() 误选，而其数据为笼统的「其他」单行业行，将致归因失真。
+    """
+    cur.execute("SELECT DISTINCT report_date FROM etf_industry_alloc")
+    dates = [r[0] for r in cur.fetchall() if r[0] and DATE_RE.match(str(r[0]))]
+    return sorted(dates)[-1] if dates else None
 
 
 def main():
@@ -93,6 +144,11 @@ def main():
         print('[ERROR] portfolio_snapshots 无数据')
         return 2
 
+    alloc_rd = _latest_alloc_report_date(cur)
+    if not alloc_rd:
+        print('[ERROR] etf_industry_alloc 无有效日期格式的 report_date')
+        return 2
+
     cur.execute("SELECT code, SUM(market_value) FROM portfolio_snapshots "
                 "WHERE date=? GROUP BY code", (snap_date,))
     holdings = [(r[0], r[1] or 0.0) for r in cur.fetchall() if (r[1] or 0) > 0]
@@ -102,7 +158,7 @@ def main():
         return 2
 
     cur.execute("SELECT code, industry, weight_pct FROM etf_industry_alloc "
-                "WHERE report_date=?", (ALLOC_REPORT_DATE,))
+                "WHERE report_date=?", (alloc_rd,))
     alloc = defaultdict(list)
     for code, industry, w in cur.fetchall():
         if w is None:
@@ -111,16 +167,30 @@ def main():
 
     exposure = defaultdict(float)     # csrc -> 组合暴露 %
     unattr = defaultdict(float)       # 原因 -> 未归因占比
+    non_csrc = defaultdict(lambda: defaultdict(float))  # code -> 非证监会标签 -> 权重%
+    mixed_codes = {}                  # code -> (证监会权重和, 非证监会权重和)
     for code, mv in holdings:
         pct = mv / total_mv * 100
         if code not in alloc:
-            if code in CANONICAL_ETF:
+            if code in BOND_ETF:
+                unattr['债券类 ETF（业务性质无股票行业配置）'] += pct
+            elif code in CANONICAL_ETF:
                 unattr['场内 ETF 缺门类数据（etf_industry_alloc 未采集）'] += pct
             else:
                 unattr['场外基金（无门类配置数据）'] += pct
             continue
+        in_sum = out_sum = 0.0
         for industry, w in alloc[code]:
-            exposure[industry] += pct * (w / 100.0)
+            if industry in CSRC_SECTORS:
+                exposure[industry] += pct * (w / 100.0)
+                in_sum += w
+            else:
+                # 非证监会分类体系（QDII/港美股 GICS 标签等）：不可映射，如实占位
+                non_csrc[code][industry] += w
+                out_sum += w
+        if out_sum > 0.5:             # 仅记录实质混用的，忽略 0.0 占位噪声
+            mixed_codes[code] = (in_sum, out_sum)
+            unattr['非证监会分类体系（不可映射，GICS 风格标签）'] += pct * (out_sum / 100.0)
 
     # ---------- 2. 市场侧：申万一级 → 门类聚合 ----------
     mkt_date = _max_date(cur, 'sector_fund_flow', 'date')
@@ -192,7 +262,7 @@ def main():
             (snap_date, mkt_date, r['csrc_sector'], r['exposure_pct'],
              r['mkt_change_pct'], r['mkt_fund_flow_yi'], r['contribution_pct'],
              json.dumps(r['sw_members'], ensure_ascii=False), r['map_confidence'],
-             ALLOC_REPORT_DATE, 'portfolio_snapshots+etf_industry_alloc+sector_fund_flow'))
+             alloc_rd, 'portfolio_snapshots+etf_industry_alloc+sector_fund_flow'))
     con.commit()
 
     # ---------- 5. 输出 ----------
@@ -209,8 +279,19 @@ def main():
     _r = cur.fetchone()
     true_ret = float(_r[0]) if (_r and _r[0] is not None) else None
 
+    # 滞后月数（用于口径披露）
+    try:
+        from datetime import date as _date
+        _y1, _m1 = int(alloc_rd[:4]), int(alloc_rd[5:7])
+        _y2, _m2 = int(snap_date[:4]), int(snap_date[5:7])
+        lag_months = (_y2 - _y1) * 12 + (_m2 - _m1)
+    except Exception:
+        lag_months = None
+    lag_txt = f'{lag_months} 个月' if lag_months is not None else '未知'
+
     print(f"\n{'='*82}")
     print(f"组合行业暴露归因（证监会门类级）　快照日 {snap_date}　行业行情日 {mkt_date}")
+    print(f"持仓结构口径：etf_industry_alloc.report_date = {alloc_rd}（滞后约 {lag_txt}）")
     print(f"{'='*82}")
     print(f"{'门类':<26}{'暴露%':>8}{'涨跌%':>9}{'资金流亿':>11}{'贡献pct':>10}  置信  状态")
     print('-' * 82)
@@ -237,19 +318,28 @@ def main():
         diff = contrib_sum - true_ret
         print(f"  偏差：{diff:+.4f} pct" +
               ("　⚠ **方向相反**" if (contrib_sum * true_ret < 0) else ""))
-        print(f"  ⚠ 结论：当前归因**不可用于解释当日盈亏**——覆盖不足（{eff_exp:.1f}%）、")
-        print(f"    持仓结构滞后约 6 个月、门类内等权平均为近似，三者叠加导致方向性偏差。")
-        print(f"    本产物当前定位：**门类级结构快照**（看「钱在哪个门类」），非盈亏归因。")
+        if abs(diff) < 0.05 and (contrib_sum * true_ret > 0):
+            print(f"  ✓ 偏差在 0.05pct 内且方向一致，可用于**结构性解释**（非精确盈亏归因）。")
+        else:
+            print(f"  ⚠ 结论：当前归因**不可用于解释当日盈亏**——覆盖不足（{eff_exp:.1f}%）、")
+            print(f"    持仓结构滞后约 {lag_txt}、门类内等权平均为近似，三者叠加导致方向性偏差。")
+            print(f"    本产物当前定位：**门类级结构快照**（看「钱在哪个门类」），非盈亏归因。")
     else:
         print(f"  portfolio_summary {snap_date} 无 daily_return，无法对照")
 
     print(f"\n【口径与偏差披露】")
     print(f"  · 门类涨跌幅 = 门类内申万一级行业的**等权平均**（缺门类内行业权重，属近似，非真实加权）")
     print(f"  · 门类资金流 = 门类内申万一级行业主力净流入**求和**（亿元）")
-    print(f"  · 持仓结构为 report_date={ALLOC_REPORT_DATE} 季报口径（滞后约 6 个月）")
+    print(f"  · 持仓结构为 report_date={alloc_rd} 季报口径（滞后约 {lag_txt}）")
     low = [r['csrc_sector'] for r in rows if r['map_confidence'] == 'low']
     if low:
         print(f"  · ⚠ 含低置信映射的门类（跨门类拆分，归因存在已知偏差）：{('、'.join(low))}")
+    if mixed_codes:
+        print(f"  · ⚠ 分类体系混用（含 QDII/港美股 GICS 风格标签，已按白名单剔除、未强行映射）：")
+        for code, (ins, outs) in sorted(mixed_codes.items(), key=lambda x: -x[1][1]):
+            tags = '、'.join(sorted(non_csrc[code], key=lambda k: -non_csrc[code][k])[:6])
+            print(f"      {code}：证监会 {ins:.2f}% + 非证监会 {outs:.2f}%　标签例：{tags}")
+        print(f"    处置：非证监会部分计入「未归因」，**不猜测映射**。")
     if gap:
         print(f"  · ⚠ 映射缺口门类（组合侧有暴露、但无对应申万一级行业来源）："
               f"{('、'.join(r['csrc_sector'] for r in gap))}")
@@ -277,7 +367,7 @@ def main():
         with open(p, 'w', encoding='utf-8') as fh:
             fh.write(f"# 组合行业暴露归因（证监会门类级）· {snap_date}\n\n")
             fh.write(f"- 组合快照日：{snap_date}　行业行情日：{mkt_date}\n")
-            fh.write(f"- 持仓结构口径：`etf_industry_alloc.report_date = {ALLOC_REPORT_DATE}`（季报，滞后约 6 个月）\n")
+            fh.write(f"- 持仓结构口径：`etf_industry_alloc.report_date = {alloc_rd}`（季报，滞后约 {lag_txt}）\n")
             fh.write(f"- 有效归因（可对照市场）：**{eff_exp:.2f}%**　映射缺口：{gap_exp:.2f}%　未归因：{unattr_total:.2f}%\n\n")
             if true_ret is not None:
                 fh.write(f"## 与真实回报对照\n\n")
@@ -285,9 +375,12 @@ def main():
                 fh.write(f"- 归因模型贡献合计（覆盖 {eff_exp:.1f}%）：{contrib_sum:+.4f} pct\n")
                 fh.write(f"- 偏差：{contrib_sum - true_ret:+.4f} pct"
                          + ("（**方向相反**）\n" if contrib_sum * true_ret < 0 else "\n"))
-                fh.write(f"\n> ⚠ 当前归因**不可用于解释当日盈亏**。覆盖不足、持仓滞后 6 个月、\n")
-                fh.write(f"> 门类内等权平均为近似，三者叠加导致方向性偏差。本产物定位为\n")
-                fh.write(f"> **门类级结构快照**（看「钱在哪个门类」），非盈亏归因。\n\n")
+                if abs(contrib_sum - true_ret) < 0.05 and (contrib_sum * true_ret > 0):
+                    fh.write(f"\n> ✓ 偏差在 0.05pct 内且方向一致，可用于**结构性解释**（非精确盈亏归因）。\n\n")
+                else:
+                    fh.write(f"\n> ⚠ 当前归因**不可用于解释当日盈亏**。覆盖不足（{eff_exp:.1f}%）、\n")
+                    fh.write(f"> 持仓滞后约 {lag_txt}、门类内等权平均为近似，三者叠加导致方向性偏差。\n")
+                    fh.write(f"> 本产物定位为**门类级结构快照**（看「钱在哪个门类」），非盈亏归因。\n\n")
             fh.write("## 门类明细\n\n")
             fh.write("| 门类 | 暴露% | 涨跌% | 资金流(亿) | 贡献(pct) | 映射置信 | 状态 |\n|---|---|---|---|---|---|---|\n")
             for r in rows:
@@ -304,10 +397,17 @@ def main():
             fh.write(f"\n## 方法论自审\n\n")
             fh.write("1. 组合侧证监会门类 vs 市场侧申万一级，映射**一对多且带信息损失**；\n")
             fh.write("2. 门类涨跌幅为门类内申万行业的**等权平均**（近似，非真实加权）；\n")
-            fh.write("3. 持仓结构滞后约 6 个月；\n")
-            fh.write("4. 未归因部分（场外基金 + 缺门类数据的 ETF）**不摊派、不编造**；\n")
+            fh.write(f"3. 持仓结构为季报口径，**滞后约 {lag_txt}**；\n")
+            fh.write("4. 未归因部分（场外基金 + 债券类 ETF + 采集失败代码）**不摊派、不编造**；\n")
             fh.write(f"5. 低置信映射门类：{('、'.join(low)) if low else '无'}；\n")
-            fh.write(f"6. 映射缺口门类：{('、'.join(r['csrc_sector'] for r in gap)) if gap else '无'}，市场数据一律 NULL，不猜测替代。\n")
+            fh.write(f"6. 映射缺口门类：{('、'.join(r['csrc_sector'] for r in gap)) if gap else '无'}，市场数据一律 NULL，不猜测替代；\n")
+            if mixed_codes:
+                fh.write("7. 分类体系混用（QDII/港美股 GICS 标签）已按证监会白名单剔除，"
+                         "明细如下，**未强行映射**：\n\n")
+                fh.write("| 代码 | 证监会权重% | 非证监会权重% | 非证监会标签（例） |\n|---|---|---|---|\n")
+                for code, (ins, outs) in sorted(mixed_codes.items(), key=lambda x: -x[1][1]):
+                    tags = '、'.join(sorted(non_csrc[code], key=lambda k: -non_csrc[code][k])[:6])
+                    fh.write(f"| {code} | {ins:.2f} | {outs:.2f} | {tags} |\n")
         print(f"\n[REPORT] {p}")
 
     con.close()
