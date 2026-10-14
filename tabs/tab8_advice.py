@@ -1736,15 +1736,30 @@ def _render_post_market_panel():
                 today = report.report_date
                 flow_data = []
                 for fc in report.fund_flow_changes[:20]:
-                    today_val = round(fc["today_flow"])
-                    # 裁定 (ii)：今日资金流 as-of ≠ 当日 → 标注
-                    if fc.get("today_date") and fc["today_date"] != today:
-                        today_val = f"{today_val} (as-of {fc['today_date']})"
-                    yest_val = round(fc["yesterday_flow"])
-                    if fc.get("yesterday_date") and fc["yesterday_date"] != today:
-                        yest_val = f"{yest_val} (as-of {fc['yesterday_date']})"
-                    flow_data.append({"代码": fc["code"], "今日(万)": today_val,
-                                      "昨日(万)": yest_val,
+                    # 裁定 (ii)：资金流 as-of ≠ 当日 → 必须标注 as-of 日期（#130）。
+                    #
+                    # ⚠ 实现约束（2026-10-14 实测踩坑，勿回退）：
+                    #   标注**不得**拼进数值列。原写法 `today_val = f"{today_val}
+                    #   (as-of ...)"` 会让该列变成 int/str 混合的 object dtype，
+                    #   pyarrow 按首行推断 int64，遇到字符串行抛 ArrowInvalid
+                    #   （"Could not convert '11823 (as-of 2026-10-13)' ..."），
+                    #   Streamlit 只能降级重试，且丧失列排序/数值语义。
+                    #   正解：数值列保持纯 int，口径信息单独走字符串列承载。
+                    today_asof = fc.get("today_date") or ""
+                    if not today_asof:
+                        today_cal = "无数据"
+                    elif today_asof == today:
+                        today_cal = "当日"
+                    else:
+                        today_cal = f"as-of {today_asof}"
+                    yest_asof = fc.get("yesterday_date") or ""
+                    # 昨日本就是"上一可用日"，不等于当日属正常，仅标注不告警
+                    yest_cal = f"as-of {yest_asof}" if yest_asof else "无数据"
+                    flow_data.append({"代码": fc["code"],
+                                      "今日(万)": round(fc["today_flow"]),
+                                      "今日口径": today_cal,
+                                      "昨日(万)": round(fc["yesterday_flow"]),
+                                      "昨日口径": yest_cal,
                                       "变化(万)": round(fc["flow_change"])})
                 st.dataframe(flow_data, width="stretch", hide_index=True)
         if report.news_highlights:
