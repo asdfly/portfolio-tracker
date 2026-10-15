@@ -365,19 +365,21 @@ def backfill_etf_price_history(conn, codes: Iterable[str], start: str = "2018010
                     + (f"，已达隔离阈值(至 {_until})" if _until else ""))
                 failed.append(code)
                 # A: 「连接器 + MCP 兜底」可见标记——实时 em/tx 全失败时，下游读 etf_price_history
-                #    会命中由 westock-mcp / tdx 自动化维护的缓存行（source IN ('westock_mcp','tdx'）；
+                #    会命中由兜底自动化维护的缓存行（source IN ('westock_mcp','tdx','akshare_sina')；
                 #    此处显式标注，避免「静默丢更新却无人知晓」。（不伪造数据，仅让兜底可审计、可告警。）
                 #    改源说明：westock 硬性限频时，6 只行业 ETF 改用 tdx-connector 取数并标 source='tdx'
-                #    （见 docs/westock_alt_source_evaluation_20261009.md），故兜底缓存识别两种源。
+                #    （见 docs/westock_alt_source_evaluation_20261009.md）；2026-10-15 起每日 OHLCV
+                #    兜底巡检走 akshare-Sina 并标 source='akshare_sina'（backfill_etf_price_history_
+                #    westock.py --source akshare_sina），故兜底缓存识别三种源。
                 _cache = conn.execute(
                     """SELECT source, MAX(date) FROM etf_price_history
-                       WHERE code=? AND source IN ('westock_mcp','tdx')
+                       WHERE code=? AND source IN ('westock_mcp','tdx','akshare_sina')
                        GROUP BY source ORDER BY MAX(date) DESC LIMIT 1""",
                     (code,)).fetchone()
                 if _cache and _cache[1]:
                     log(f"[OHLCV][缓存兜底] {code} em/tx 全失败，下游回退 {_cache[0]} 缓存(最新 {_cache[1]})")
                 else:
-                    log(f"[OHLCV][无缓存] {code} em/tx 全失败且无 westock_mcp/tdx 缓存，缺口将持续——建议检查 westock/tdx 自动化")
+                    log(f"[OHLCV][无缓存] {code} em/tx 全失败且无 westock_mcp/tdx/akshare_sina 缓存，缺口将持续——建议检查兜底自动化")
                 continue
             cur = conn.cursor()
             for _, r in df.iterrows():
