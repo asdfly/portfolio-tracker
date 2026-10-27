@@ -86,6 +86,13 @@ def parse_breadth(content):
     up_pct = re.search(r'上涨家数占比全市场\s*(\d+)%', content)
     if up_pct:
         d['up_pct'] = int(up_pct.group(1))
+    # 2026-10-19 健壮性修复：NeoData 偶发不返回「上涨家数占比全市场 X%」字面量
+    # 时 up_pct 为 None，致下游 gen_combo_report 在 `100 - up_pct` 崩溃（exit1）。
+    # 回退用 up/(up+down) 推算占比（非编造，属同口径派生），确保 schema 字段不缺失。
+    elif d['up'] is not None and d['down'] is not None:
+        tot = d['up'] + d['down']
+        if tot:
+            d['up_pct'] = round(d['up'] / tot * 100, 1)
     amt = re.search(r'\|\s*两市汇总\s*\|[^|]*\|\s*([\d,]+\.?\d*)\s*\|', content)
     if amt:
         d['amount_yi'] = round(float(amt.group(1).replace(',', '')) / 1e8, 2)
@@ -276,18 +283,23 @@ def main():
     # 主线文本（基于真实数据，不做主观判断）
     top3 = gainers[:3]
     top3_txt = '、'.join(f"{n}{p:+.2f}%" for n, p in top3)
-    mil_vals = [heavy.get('地面兵装Ⅱ'), heavy.get('航空装备Ⅱ'), heavy.get('军工电子Ⅱ'),
-                heavy.get('航海装备Ⅱ')]
-    mil_vals = [v for v in mil_vals if v is not None]
-    if mil_vals:
-        mil_best = max(mil_vals)
-        mil_names = {'地面兵装Ⅱ': '地面兵装', '航空装备Ⅱ': '航空装备',
-                     '军工电子Ⅱ': '军工电子', '航海装备Ⅱ': '航海装备'}
-        best_name = next((mil_names[k] for k in ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ', '航海装备Ⅱ']
-                          if heavy.get(k) == mil_best), '')
-        main_line = (f"板块涨幅居前：{top3_txt}。"
-                     f"重仓相关板块中军工系（地面兵装Ⅱ/航空装备Ⅱ/军工电子Ⅱ/航海装备Ⅱ）最优涨跌幅 "
-                     f"{mil_best:+.2f}%（{best_name}），为当日主线方向。")
+    # 军工系集合须与 gen_combo_report.MIL_SECTORS 同口径（2026-10-27 修 evolution #2026-09-18）：
+    #   原集合仅 4 个、漏掉 航天装备Ⅱ——该板块在 HEAVY 里一直有采（实测 10-26 为 -0.69%），
+    #   漏掉会让「系内最优」报出非真实最优值（9-18 航天 +3.29 强于航海 +2.26 却被排除在 max 之外）。
+    _MIL_ALL = ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ', '航海装备Ⅱ', '航天装备Ⅱ']
+    mil_pairs = [(s, heavy.get(s)) for s in _MIL_ALL if heavy.get(s) is not None]
+    if mil_pairs:
+        best_name_s, mil_best = max(mil_pairs, key=lambda x: x[1])
+        _mil_set_txt = '/'.join(_MIL_ALL)
+        if mil_best < 0:
+            # 全系为负时「最不差者」不是主线方向（2026-10-27 修 evolution #2026-09-28）：
+            #   普跌日 max(heavy)<0 仍称「为当日主线方向」，会让快读读者误判该方向当日是正向主线。
+            main_line = (f"板块涨幅居前：{top3_txt}。重仓相关板块中军工系（{_mil_set_txt}）"
+                         f"最优涨跌幅 {mil_best:+.2f}%（{best_name_s}）——"
+                         f"全系当日均为负值，属普跌中最抗跌方向，不可读作正向主线。")
+        else:
+            main_line = (f"板块涨幅居前：{top3_txt}。重仓相关板块中军工系（{_mil_set_txt}）"
+                         f"最优涨跌幅 {mil_best:+.2f}%（{best_name_s}），为当日主线方向。")
     else:
         main_line = f"板块涨幅居前：{top3_txt}。军工系涨跌幅数据缺失。"
 

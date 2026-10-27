@@ -429,6 +429,15 @@ for _fmt in (DATA_DATE, DATA_DATE.replace('-', '')):
     if _r: _cur_breadth = _r; break
 loc_zt = _cur_breadth[0] if _cur_breadth else None
 loc_dt = _cur_breadth[1] if _cur_breadth else None
+# 展示层 None 降级（2026-10-27 落地 evolution #2026-10-25）：
+#   🔴 原先 2 处把 loc_zt / loc_dt 直接插值进模板，列为 NULL 时会把字面量「zt=None」印进报告
+#      （本改动起因：跨日测试库实测被 FINAL_GATE 拦下 4 处，证明这不是理论风险）。
+#   与「缺失不臆造」一致：显示「—」，并且**不再断言「已采集」**——该列为空本身就是没采到值。
+_ZT_DISP = '—' if loc_zt is None else loc_zt
+_DT_DISP = '—' if loc_dt is None else loc_dt
+_BR_LOC_TXT = ('当日已采集（zt=%s、dt=%s）作为交叉核对基准' % (_ZT_DISP, _DT_DISP)
+               if (loc_zt is not None or loc_dt is not None) else
+               '当日该行 zt/dt 列为空（显示「—」，未臆造数字）')
 
 # ---------- 5. 宏观 ----------
 cur.execute("SELECT indicator_code,value FROM macro_daily WHERE date=?", (DATA_DATE,))
@@ -689,6 +698,28 @@ PROXY_UNC_W = pct(sum(mv for _, _, mv in _PROXY_UNC))
 if PROXY_UNC_N:
     print('[WARN] PROXY 未覆盖 %d 只 / 权重 %.2f%%（按 0 贡献计入 est，非真实为 0）：%s'
           % (PROXY_UNC_N, PROXY_UNC_W, '、'.join(f'{c}({n})' for c, n, _ in _PROXY_UNC)))
+# 代理覆盖率分级降级（2026-10-27 落地 evolution #78 / #116 / #118 / #119）：
+#   根因：proxy−真值 gap 同时含「代理板块选错」与「X% 权重口径缺失」两个来源，覆盖率越低后者越主导；
+#   原实现只在 3.2 正文一句「仅覆盖 X%」里提，无分级处置 → 读者可能把 gap 当作代理法误差量级。
+#   分级：≥70% 正常陈述；50~70% 弱化（提示不可据此推断误差量级）；<50% 显式强降级（结论参考性极低）。
+if PROXY_W >= 70:
+    _PROXY_GRADE, _PROXY_GRADE_TXT = 'full', ''
+elif PROXY_W >= 50:
+    _PROXY_GRADE = 'weak'
+    _PROXY_GRADE_TXT = ('<div style="background:#3a2a0d;border-left:4px solid #e3a33c;color:#e3a33c;'
+                        'padding:9px 13px;margin:10px 0;border-radius:5px;font-size:13px">'
+                        f'<b>⚠ 代理覆盖率偏低（{PROXY_W:.2f}%）</b>：本次 est 仅覆盖 {PROXY_N} 只场内 ETF，'
+                        f'其余 {PROXY_UNC_W:.2f}% 权重（{PROXY_UNC_N} 只场外基金）无当日口径、按 0 计入。'
+                        f'「偏离」一项<b>不可用于推断代理法自身的误差量级</b>，仅作方向性参考。</div>')
+else:
+    _PROXY_GRADE = 'severe'
+    _PROXY_GRADE_TXT = ('<div style="background:#3a0d0d;border-left:4px solid #ff5252;color:#ff8a80;'
+                        'padding:9px 13px;margin:10px 0;border-radius:5px;font-size:13px">'
+                        f'<b>⚠ 代理覆盖率严重不足（{PROXY_W:.2f}%，低于 50%）——结论参考性极低</b>：'
+                        f'est 仅覆盖 {PROXY_N} 只场内 ETF，另有 <b>{PROXY_UNC_W:.2f}%</b> 权重'
+                        f'（{PROXY_UNC_N} 只场外基金）无当日涨跌口径、按 0 贡献计入，'
+                        f'即 est 天然缺失过半仓位的当日贡献。本项<b>不得用于归因或业绩判断</b>，'
+                        f'当日表现一律以真值 {chg(d_ret)} 为准。</div>')
 est = sum(pct(mv) / 100 * (PROXY.get(c) or 0) for c, n, mv, _, _, _ in hold)
 
 # 集中度
@@ -789,7 +820,14 @@ signal_state = {
 }
 
 # ④ 军工主线延续性（读 sector_daily_change 历史表，跨日信号；不依赖报告 HTML 文本）
-MIL_SECTORS = ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ', '航海装备Ⅱ']
+# 军工系细分集合（2026-10-27 补齐 航天装备Ⅱ，与 fetch_market_data.HEAVY/主线口径统一）：
+#   🔴 原为 4 个、漏掉 航天装备Ⅱ，而 HEAVY 一直在采该板块（实测 10-26 = -0.69%）。漏采后果：
+#      「系内最优」可能报出非真实最优值（9-18 航天 +3.29 强于航海 +2.26 却被排除在 max 之外），
+#      且与 fetch main_line 的集合口径不一致（evolution #2026-09-18 指出的正是此点）。
+#   ⚠ 连带效应（已核）：WATCH12 由 13 → 14；下游 `_complete = c >= 12` 只判「当日至少 12 个板块
+#      有行」，与集合长度无关，故判据不需改；mil_up_streak 的 max 取值会随集合变完整而变，
+#      属如期修正（原口径低估系内最强）。
+MIL_SECTORS = ['地面兵装Ⅱ', '航空装备Ⅱ', '军工电子Ⅱ', '航海装备Ⅱ', '航天装备Ⅱ']
 WATCH12 = MIL_SECTORS + ['化学制药', '生物制品', '医疗服务', '证券Ⅱ', '电池', '光伏设备',
                         '半导体', '通信设备', '种植业']
 
@@ -1053,6 +1091,14 @@ except Exception as _e:
     SW_DATE = None
 
 SW_DATE_F = SW_DATE if SW_DATE else '—'
+# 申万滞后交易日数（2026-10-27 落地 evolution #2026-10-21）：
+#   🔴 原实现写死「滞后一日：投研线 18:15 同步当日数据」，10-21 实测实为 **2 个交易日**，
+#      属写死陈述与实际不符。日期/计数类断言一律现算（项目铁律）。
+#   交易日轴刻意沿用本脚本既有做法（index_quotes DISTINCT date），与上方 EPH_LAG_TD 同源同法；
+#       **不 import** src.utils.trading_calendar（脚本以 sys.path[0]=scripts/ 运行，必然失败，
+#       等于给日报引入新的静默失败面，见 etf_price_history 段的同类历史决策）。
+#   取不到则保持 None ⇒ 措辞回落「若干交易日」，不臆造数字。
+_sw_lag_td = None
 if SW_DATE:
     try:
         cur.execute("SELECT sector_name, change_pct, main_net_inflow FROM sector_fund_flow "
@@ -1071,7 +1117,20 @@ if SW_DATE:
                 f'''<tr><td class="num">{i+1}</td><td>{E(_ni)}</td><td class="num">{chg(_pi)}</td>'''
                 f'''<td class="num">{money(_fi)}</td><td>{E(_no)}</td><td class="num">{chg(_po)}</td>'''
                 f'''<td class="num">{money(_fo)}</td></tr>''')
-        _sw_lag = '（滞后一日：投研线 18:15 同步当日数据，本日报 18:00 生成）' if SW_DATE != DATA_DATE else ''
+        # 滞后天数动态现算（禁写死「一日」）。括号设计：外层已由调用方提供，故 _sw_lag 内
+        # 不再自带括号——原实现嵌套致 TLDR 出现「（2026-10-19（滞后一日…））」双右括号。
+        _sw_lag = ''
+        if SW_DATE and SW_DATE != DATA_DATE:
+            try:
+                _sw_lag_td = cur.execute(
+                    'SELECT COUNT(DISTINCT date) FROM index_quotes WHERE date > ? AND date <= ?',
+                    (SW_DATE, DATA_DATE)).fetchone()[0]
+            except Exception as _e:
+                print('[WARN] 申万滞后交易日数计算失败，措辞回落「若干」:', _e)
+                _sw_lag_td = None
+            _n_txt = f'{_sw_lag_td} 个交易日' if _sw_lag_td else '若干交易日'
+            _sw_lag = (f'，较组合基准日 {DATA_DATE} 滞后 {_n_txt}'
+                       f'；投研线 18:15 同步、本日报 18:00 生成，属预期滞后')
         SW_TLDR_TXT = (
             f"申万一级行业资金流（{SW_DATE}{_sw_lag}）：净流入前列 "
             + '、'.join(f"{n} {v:+.2f}亿" for n, _, v in _sw_in)
@@ -1087,8 +1146,10 @@ else:
 if not rows_sw_flow:
     rows_sw_flow = ('<tr><td colspan="7" class="note">本地 sector_fund_flow 暂无可用明细，'
                     '本项标「—」。可先运行 scripts/research/sync_rotation_to_db.py 完成回填。</td></tr>')
-sw_lag_note = ('投研线每日 <b>18:15</b> 同步当日数据，而本日报 <b>18:00</b> 生成，'
-               '故该日期通常为<b>上一交易日</b>，属预期滞后而非数据缺失。'
+sw_lag_note = (f'投研线每日 <b>18:15</b> 同步当日数据，而本日报 <b>18:00</b> 生成；'
+               f'实测该日期较组合基准日 <b>{DATA_DATE}</b> 滞后 '
+               f'<b>{(_sw_lag_td if _sw_lag_td else "若干")} 个交易日</b>'
+               f'（按本地 index_quotes 交易日轴现算，非写死值），属预期滞后而非数据缺失。'
                if SW_DATE and SW_DATE != DATA_DATE else
                ('本节数据日期与组合基准日一致。' if SW_DATE else ''))
 con.close()
@@ -1098,9 +1159,12 @@ if FLOW_LAG:
     # 🔴 资金流滞后守卫（evolution 2026-10-16）：main_fund 取数日=FLOW_DATE≠DATA_DATE 时，所有主力资金
     # 口径提及处（HTML 与 TLDR）必须显式标注取数日，避免"今日净流出"误读为组合基准日数据。
     main_proxy_txt += f'（资金流取数日 {FLOW_DATE}，较组合基准 {DATA_DATE} 滞后）'
-zt_show = loc_zt if loc_zt is not None else BR['zt']
-dt_show = loc_dt if loc_dt is not None else BR['dt']
-zt_src = '本地' if loc_zt is not None else 'NeoData'
+zt_show = (loc_zt if loc_zt is not None
+           else (BR['zt'] if BR.get('zt') is not None else '—'))
+dt_show = (loc_dt if loc_dt is not None
+           else (BR['dt'] if BR.get('dt') is not None else '—'))
+zt_src = ('本地' if loc_zt is not None
+          else ('NeoData' if BR.get('zt') is not None else '两源均缺'))
 
 # PMI 行
 def _pmi_cell(v, up_good=True):
@@ -1127,6 +1191,21 @@ rows_pmi += f'''<tr><td>SHIBOR 隔夜</td><td class="num">{macro.get('SHIBOR_ON'
 
 # 叙事段落（数据驱动）
 regime_txt = REGIME
+
+# ---------- 跨日口径标注（2026-10-27 落地；evolution「跨日口径混同」同根因复现 12 次，复现率最高）----------
+# 根因：TLDR / 正文把「NeoData 广度（查询时点当日）」与「本地指数（IDX_DATE）」并置同一句且不标取数日，
+#   DATA_LAG 时读者会把 T 日广度误读为 T-1 指数的背景（10-22 广度上涨占比 9.7% 配 10-21 指数即典型）。
+# 处置：NeoData 广度/资金为外部查询结果、无官方交易日字段 ⇒ **一律以「查询时点 query_time」为事实口径**
+#   标注，不推断其归属于哪个交易日（数据纪律：缺失/不可知即显式声明，不臆造）；指数以本地库里实际的
+#   IDX_DATE 标注。两者与组合基准日 DATA_DATE 不等时，分别出标签，避免读者自行脑补同一日。
+_BD_DATE = str(MKT_NEO.get('query_time') or '')[:10] or None
+# 标签形态刻意做成「内联前缀/短括注」而非整段括号，避免出现「（…）（…）」双括号
+# （同 2026-10-21 申万滞后那条的病）。_TAG_IDX 插进既有括号内；_TAG_BD 自成一短括号紧跟其后。
+_TAG_IDX = (f'本地 index_quotes {IDX_DATE}；'
+            if IDX_DATE and IDX_DATE != DATA_DATE else '')
+_TAG_BD = (f'（NeoData 时点 {_BD_DATE}）' if _BD_DATE
+           else '（NeoData 时点未知）') if (_BD_DATE != IDX_DATE) else ''
+
 main_line_txt = MKT_NEO.get('main_line', '')
 amt_chg_txt = f"{amt_chg:+,.0f} 亿" if amt_chg is not None else '—'
 # 主力资金方向
@@ -1135,34 +1214,66 @@ main_dir = '净流出' if (main_in_yi and main_in_yi < 0) else '净流入'
 # ---- 数据驱动叙事辅助（修复硬编码下行日措辞，避免与当日行情背离，落实数据纪律）----
 _idx4 = {k: idx[k][1] for k in idx_keys if k in idx}
 if REGIME == '普涨':
-    _idx_desc = (f"主要指数全线收红（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+    _idx_desc = (f"主要指数全线收红（{_TAG_IDX}上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
                  f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），"
-                 f"涨跌家数 {BR['up']}:{BR['down']}（上涨占比 {BR['up_pct']}%），呈<b>指数与个股同步走强</b>的普涨格局")
+                 f"涨跌家数{_TAG_BD}{BR['up']}:{BR['down']}（上涨占比 {BR['up_pct']}%），呈<b>指数与个股同步走强</b>的普涨格局")
 elif REGIME == '普跌回调':
-    _idx_desc = (f"主要指数全线收绿（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+    _idx_desc = (f"主要指数全线收绿（{_TAG_IDX}上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
                  f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），"
-                 f"涨跌家数 {BR['up']}:{BR['down']}（上涨占比 {BR['up_pct']}%），呈<b>指数与个股同步走弱</b>的普跌格局")
+                 f"涨跌家数{_TAG_BD}{BR['up']}:{BR['down']}（上涨占比 {BR['up_pct']}%），呈<b>指数与个股同步走弱</b>的普跌格局")
 elif REGIME == '指数回调·个股分化':
-    _idx_desc = (f"指数回调（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
-                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%）但上涨个股占比 {BR['up_pct']}%，呈<b>指数弱、个股分化</b>格局")
+    _idx_desc = (f"指数回调（{_TAG_IDX}上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%）但上涨个股占比{_TAG_BD}{BR['up_pct']}%，呈<b>指数弱、个股分化</b>格局")
 else:
-    _idx_desc = (f"主要指数涨跌互现（上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
-                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），上涨占比 {BR['up_pct']}%，呈<b>震荡分化</b>格局")
+    _idx_desc = (f"主要指数涨跌互现（{_TAG_IDX}上证 {idx['上证指数'][1]:+.2f}%、深成指 {idx['深证成指'][1]:+.2f}%、"
+                 f"创业板指 {idx['创业板指'][1]:+.2f}%、沪深300 {idx['沪深300'][1]:+.2f}%），上涨占比{_TAG_BD}{BR['up_pct']}%，呈<b>震荡分化</b>格局")
 _main_line_sectors = '、'.join(n for n, v in sec_in[:2]) if sec_in else (top_ind if top_ind else '—')
-_main_line_txt = f"当日主线为<b>{_main_line_sectors}</b>（涨幅居前 {top_gain_names}；资金净流入 {money_in_txt}）"
+# 主线「双定义」显式分离（2026-10-27 落地 evolution #2026-09-10 / #2026-10-17）：
+#   病根：_main_line_sectors 取「资金净流入 top2」（本地 fund_flows 口径），却与「涨幅居前」
+#     （NeoData 申万价格口径）并置同句、并统一冠以「当日主线」，形成「主线=银行证券，但涨幅
+#     第一是地面兵装」的似矛盾三连（#2026-09-10 原案）。两者都是真值，错在没标口径。
+#   处置：把钱流口径与价格口径**分别命名**并显式声明「口径不同、不构成同一排序」，
+#     不做跨口径合并（合并会造出一个两种口径都不成立的伪排序）。
+#   🔴 追加（2026-10-27 实测发现，本改动首版即踩）：`_main_line_sectors` 在 sec_in 为空时
+#     **回落到 top_ind（market_breadth 涨停最集中行业）**，此时它根本不是资金流口径。若仍统一
+#     标「fund_flows 净流入口径」，等于用新标签复刻旧病（标签与实际来源不符）。故按来源三态标注。
+if sec_in:
+    _ml_lead_txt = (f"当日<b>资金主线</b>为<b>{_main_line_sectors}</b>"
+                    f"（本地 fund_flows 主力净流入口径：{money_in_txt}）")
+elif top_ind:
+    _ml_lead_txt = (f"当日<b>情绪主线</b>为<b>{_main_line_sectors}</b>"
+                    f"（本地 market_breadth 涨停最集中行业口径——本地 fund_flows 无可用板块明细，"
+                    f"故<b>非资金口径</b>）")
+else:
+    _ml_lead_txt = "当日主线线索缺失（本地 fund_flows 与 market_breadth 均无有效数据，未编造）"
+_main_line_txt = (f"{_ml_lead_txt}；而<b>价格涨幅</b>居前为 {top_gain_names}"
+                  f"（NeoData 申万价格口径）——各口径排序依据不同，<b>不构成同一排序</b>")
 _mil = next((x for x in CROSS if x[0] == '军工系'), None)
 _mil_wind = _mil[4] if _mil else '—'
 _mil_av = _mil[5] if (_mil and _mil[5] is not None) else 0.0
+# 军工系「单点 vs 系均值」（2026-10-27 落地 evolution #2026-09-11，承接 #26）：
+#   系均值会掩盖单点强势——如 地面兵装Ⅱ +4.44%（全市场涨幅第一）被 航空-0.45/航天-0.76/航海-2.29
+#   拉平为「弱逆风 +0.19%」，读者只看到均值会误判该方向无亮点。判据：系内最强细分高于所呈现的
+#   系均值 ≥3pct 时显式标注。
+#   ⚠ 口径：此处「系均值」严格取 CROSS_WIND 的 _mil_av（= 报告中表格实际呈现的那个数），
+#     不用 4 个细分的简单均值——否则会出现「标注说 A、表格说 B」的两套口径（#2026-09-10 同类病）。
+_mil_spike = ''
+_mil_hp = [(s, HP.get(s)) for s in MIL_SECTORS if HP.get(s) is not None]
+if _mil_hp:
+    _bs, _bv = max(_mil_hp, key=lambda _x: _x[1])
+    if _bv - _mil_av >= 3.0:
+        _mil_spike = (f"，<b>单点 {_bs} {_bv:+.2f}% 为系内最强、高于系均值 "
+                      f'{(_bv - _mil_av):+.2f}pct</b>（系均值被其余细分拖累）')
 _med = next((x for x in CROSS if x[0] == '医药系'), None)
 _med_wind = _med[4] if _med else '—'
 _med_av = _med[5] if (_med and _med[5] is not None) else 0.0
 _mil_against = (avg_idx > 0.5) and (_mil_av < 0)
 if _mil_against:
     _mil_txt = (f"；军工系逆市走弱（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}，"
-                f"军工装备 {fy(sec_yi('军工装备'))}），与大盘背离")
+                f"军工装备 {fy(sec_yi('军工装备'))}），与大盘背离{_mil_spike}")
 else:
     _mil_txt = (f"；军工系 {_mil_wind}（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}，"
-                f"军工装备 {fy(sec_yi('军工装备'))}）")
+                f"军工装备 {fy(sec_yi('军工装备'))}）{_mil_spike}")
 _perf_word = _vs_word  # 休市日统一为'不适用'（evolution #75）
 _hw = [x[0] for x in CROSS if x[4] in ('逆风', '强逆风')]
 # 数据纪律（2026-09-24 修复）：对冲方本身若同时被列为逆风方向（如"防御端（债券+红利）"中的
@@ -1177,7 +1288,7 @@ if VS_APPLICABLE and vs300 >= 0:
     else:
         _perf_reason = (f"超配方向{'军工系（当日顺风）' if _mil_av > 0 else '防御端（债券+红利）'}支撑、其余方向逆风有限，相对宽基占优")
 else:
-    _perf_reason = (f"当日领涨主线集中于{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
+    _perf_reason = (f"当日主线线索为 {_main_line_sectors}、价格涨幅居前为 {top_gain_names}（两口径不同），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
                     f"超配方向中军工系 {_mil_wind} {_mil_av:+.2f}%、证券 {chg(HP['证券Ⅱ'])}、红利 {idx['红利指数'][1]:+.2f}%，"
                     f"领涨主线权重偏低，故相对宽基落后")
 # 防御底仓（红利+债券）当日状态：由 CROSS_WIND 实算派生，禁止写死"稳定"
@@ -1204,7 +1315,7 @@ if VS_APPLICABLE and vs300 >= 0:
                     f"{'军工系顺风' if _mil_av>0 else '防御端（债券+红利）'}提供支撑，逆风方向（{_weak_sectors}）拖累有限，整体相对宽基占优。")
 else:
     _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_vs_detail}</b>。"
-                    f"当日领涨主线集中于{_main_line_sectors}（科技/电子为主），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
+                    f"当日主线线索为 {_main_line_sectors}、价格涨幅居前为 {top_gain_names}（两口径不同），但组合科技系权重仅 {_tech_w:.1f}%、对组合拉动有限；"
         f"组合顺风方向为{_strong_sectors}（{_strong_body}）、逆风方向为{_weak_sectors}（{_weak_body}），"
         f"叠加领涨主线权重偏低，故相对宽基落后。")
 if not VS_APPLICABLE:
@@ -1309,7 +1420,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 </div>
 <table><thead><tr><th>指数</th><th class="num">收盘</th><th class="num">涨跌幅</th><th class="num">成交额</th></tr></thead>
 <tbody>{rows_idx}</tbody></table>
-<div class="note">指数数据：项目本地 index_quotes（{IDX_DATE}）与 NeoData 统一行情交叉核对一致；涨跌家数/涨停跌停来自 NeoData 大盘市场宽度统计，涨停/跌停本地 market_breadth 当日已采集（zt={loc_zt}、dt={loc_dt}）作为交叉核对基准。⚠ 完整跌幅榜 NeoData 仍仅返回涨幅榜（系统性限制），跌幅口径以指数/重仓板块当日涨跌幅替代。</div>
+<div class="note">指数数据：项目本地 index_quotes（{IDX_DATE}）与 NeoData 统一行情交叉核对一致；涨跌家数/涨停跌停来自 NeoData 大盘市场宽度统计，涨停/跌停本地 market_breadth {_BR_LOC_TXT}。⚠ 完整跌幅榜 NeoData 仍仅返回涨幅榜（系统性限制），跌幅口径以指数/重仓板块当日涨跌幅替代。</div>
 </div>
 
 <div class="card">
@@ -1457,6 +1568,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <tr><td>偏离</td><td class="num"><span class="mid">{est-d_ret:+.2f} pct</span></td><td>代理与真值偏差 {abs(est-d_ret):.2f}pct，方向{'一致' if (est<0)==(d_ret<0) else '背离'}（代理{est:+.2f}%、实际{d_ret:+.2f}%）</td></tr>
 </tbody></table>
 <div class="note">诊断结论：本组合结构下代理法<b>方向亦可能失真</b>（人工智能/机器人/新能源南方等 ETF 实际跟踪指数与所取代理板块不一致），绝对幅度与方向均不可采信，当日表现一律以真值为准。<b>另需注意口径残缺</b>：est 仅覆盖 {PROXY_N} 只场内 ETF 的 {PROXY_W:.2f}% 权重，其余 {PROXY_UNC_W:.2f}%（{PROXY_UNC_N} 只场外基金）无当日涨跌口径、在 est 中被当作 0 贡献，故上表「偏离」同时包含「代理板块选择误差」与「{PROXY_UNC_W:.2f}% 权重口径缺失」两个来源，<b>不可据此推断代理法自身的误差量级</b>。该项已列入自我进化改进项。</div>
+{_PROXY_GRADE_TXT}
 </div>
 
 <h2>四、操作取向（条件框架，非买卖指令）</h2>
@@ -1507,7 +1619,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 &nbsp;&nbsp;· index_quotes：{IDX_DATE}（11 个指数收盘/涨跌/成交额）{f'　⚠ 较组合基准 {DATA_DATE} 更新（采集器滞后）' if IDX_DATE != DATA_DATE else ''}<br>
 &nbsp;&nbsp;· fund_flows：{FLOW_DATE}（90 个申万板块 + 23 只 ETF{FLOW_LAG_TXT}；main_fund 行缺失，主资金以 90 板块合计代理）<br>
 &nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币，PMI 仍缺）<br>
-&nbsp;&nbsp;· market_breadth：{BL.get('date','—')}（zt={loc_zt}/dt={loc_dt} 已采集）<br>
+&nbsp;&nbsp;· market_breadth：{BL.get('date','—')}（zt={_ZT_DISP}/dt={_DT_DISP}{'' if (loc_zt is not None or loc_dt is not None) else '，列为空未臆造'}）<br>
 &nbsp;&nbsp;· <span class="mid">{EPH_SRC_LINE}</span><br>
 &nbsp;&nbsp;· sector_fund_flow：{SW_DATE_F}（申万<b>一级 31 行业</b>涨跌幅+主力净流入，投研线 history.json 入库；与上方 fund_flows 的东财 90 个申万<b>二级</b>板块不同源、不同颗粒度，不可直接比较）<br>
 <b>✓ NeoData 金融搜索</b> —— 本次可用（查询时间 {MKT_NEO['query_time']}，凭证经 connect_cloud_service 重取）<br>
@@ -1573,7 +1685,12 @@ print('OK', OUT, os.path.getsize(OUT), 'bytes')
 
 # 落盘纯文本 TLDR（evolution #27）：供邮件 --body 直读，消除 agent 人工复述漂移。
 # 复用本脚本已派生的全部变量，与 HTML TLDR 同源、不会二次失真。
-_tldr_lines = [f"【组合+大盘综合视角】{RUN_DATE}（组合数据基准 {DATA_DATE}；大盘指数 {IDX_DATE} 实时）", ""]
+_BD_HDR = (f'；NeoData 广度/资金查询时点 {_BD_DATE}'
+           if _BD_DATE and _BD_DATE != IDX_DATE else '')
+# 首行原写「大盘指数 {IDX_DATE} 实时」——IDX_DATE 为 T-1 时「实时」二字属失真陈述
+# （2026-10-27 修，与跨日口径同一根因）。此处只陈述取数日，让读者自行对齐。
+_tldr_lines = [f"【组合+大盘综合视角】{RUN_DATE}"
+               f"（组合数据基准 {DATA_DATE}；大盘指数取数日 {IDX_DATE}{_BD_HDR}）", ""]
 _tldr_lines.append(
     f"大盘{_TODAY_TERM}{regime_txt}：{_idx_desc}。{_main_line_txt}{_mil_txt}。"
     f"组合当日回报 {chg(d_ret)}、{_vs_detail}：{_perf_reason}。")
@@ -1582,6 +1699,14 @@ if (est < 0) != (d_ret < 0):
     _tldr_lines.append(
         f"⚠ 锚定提示：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% 方向相反，"
         f"代理法在本组合结构下方向亦不可信，本报告一律以真值为准。")
+# 代理覆盖率分级提示同步进 TLDR（2026-10-27）：读者多数只读 TLDR/邮件正文，
+# 覆盖率不足的事实必须出现在这里，而不是只埋在 3.2 表格的说明列。
+if _PROXY_GRADE != 'full':
+    _tldr_lines.append(
+        f"⚠ 代理覆盖率{('严重不足' if _PROXY_GRADE == 'severe' else '偏低')}"
+        f"（{PROXY_W:.2f}%）：{PROXY_UNC_N} 只场外基金、{PROXY_UNC_W:.2f}% 权重无当日涨跌口径、"
+        f"按 0 贡献计入 est，故 est 与真值的偏离<b>不可用于推断代理法自身误差量级</b>"
+        f"{'，本项结论参考性极低、不得用于归因或业绩判断' if _PROXY_GRADE == 'severe' else ''}。")
 _tldr_lines.append(
     f"核心矛盾：主力资金今日{main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；"
     f"两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}；绝对量能{amt_zone}。")
@@ -1592,7 +1717,8 @@ _tldr_lines.append(
     f"军工系 {_mil_wind}（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}，"
     f"军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。")
 _tldr_lines.append(
-    f"亮点/风险：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），"
+    f"亮点/风险：{_ml_lead_txt}；"
+    f"价格涨幅居前另为 {top_gain_names}（NeoData 申万价格口径，与上非同一排序）；"
     f"{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；"
     f"红利+债券防御底仓（{def_w:.1f}%）{_def_txt}；{_mil_against_txt}；"
     f"医药系{_med_wind}（化学制药 {chg(HP['化学制药'])}/生物制品 {chg(HP['生物制品'])}）{'拖累有限' if _med_av < 0 else '提供正向贡献'}。")
