@@ -9,8 +9,13 @@
 本闸门在每日管线阶段 3.25（预测底座增量维护、etf_price_history 刷新之后）运行，做三件事：
   1. 只读快照，推导「参考交易日历」= 活跃标的中覆盖最完整的那只的日期集合；
      （系统级断崖 / A 鲜度闸门：用 portfolio_snapshots 的最新日作对照，若 etf_price_history
-      全局最新日**严格落后**（哪怕 1 天）⇒ 视为当日全量回填失败/全市场源中断，单独 error 告警。
-      正常 post-close 跑批后两者应相等，故严格 `>` 即可，无需宽限阈值。）
+      全局最新日**落后 ≥2 个交易日** ⇒ 视为当日全量回填失败/全市场源中断，单独 error 告警。
+      🔴 2026-10-27 修正：原为「严格落后哪怕 1 天即 error」，前提是「正常 post-close 跑批后
+      两者应相等」——但本管线 15:30 跑批，当日日线要到收盘后才有、21:45 才兜底回填，
+      故 15:34 时「当日尚未回填」是常态而非断崖。实测 2026-10-13~10-26 每个被判 error 的
+      日期事后全部补齐、无一天真缺，却累计 14 条 error 并拦掉 15/18 次日报。
+      现按交易日计宽限：滞后 1 个交易日 ⇒ warning「待回填」；≥2 ⇒ error。
+      当日真缺由 21:45 兜底巡检（check_etf_price_gaps.py）判定。见 SYSTEMIC_GRACE_TD。）
   2. 对每只活跃标的，统计窗口内缺失的交易日 = 参考日历 − 该标的有数据的日期
      （只计该标的最早日期之后的参考日，避免把「新纳入标的」的早期缺失误判为断崖）；
   3. 缺失 ≥ 1 天 ⇒ warning 级（不写 alerts 表、不降级 run_status，避免每日拦死日报）；
@@ -47,6 +52,24 @@ MIN_HISTORY_DATES = 2
 # 2026-09-24 A 落地后改为严格 `snap_max > global_max`（见 detect_etf_price_gaps 顶部），
 # 因正常 post-close 跑批后两者必相等，1 天滞后即代表当日全量回填失败。
 SYSTEMIC_LAG_THRESHOLD = 4
+
+# 🔴 系统级「待回填」宽限（2026-10-27 新增，交易日口径）。
+# 上面「正常 post-close 跑批后两者必相等」这个前提在 15:30 的调度下**不成立**：
+#   portfolio_snapshots 由本管线 15:30 写入（当日），而 etf_price_history 的当日日线
+#   由预测底座阶段（3.25）+ 21:45 兜底巡检回填，源端（em/tx）收盘后才发布日线。
+#   于是 15:34 跑闸门时「当日 OHLCV 尚未产出」是**常态**，实测：
+#     2026-10-13~10-26 每个被判 error 的日期，事后全部补齐为 23 只（无一天真缺）；
+#     alerts 表累计 14 条 etf_price_gap error；15/18 次日报拒发由它触发。
+#   即该判据在 15:30 携带的信息量接近 0，却持续拦死日报 —— 典型告警疲劳制造机。
+# 取舍：滞后 **1 个交易日** ⇒ warning「待回填」（不写 alerts、不降级 run_status）；
+#       滞后 **≥2 个交易日** ⇒ error（09-23 形态整表 0 行实测滞后 4 个交易日，仍必抓）。
+#   当日缺口是否真回填失败，由 21:45 的 ETF OHLCV 兜底巡检（check_etf_price_gaps.py，
+#   以「当日 ≥2 码有行」定义 market_last）负责 —— 那是为当日缺口设计的判据，本闸门不是。
+# 另：报告侧 gen_combo_report.EPH_CAVEAT_884 本就把该滞后显式标注为
+#   「禁止用其估算当日逐 ETF 损益」，即报告设计上允许带着该滞后发出；
+#   采集侧在此处硬阻断，属跨层口径矛盾。
+# 逃生阀：ETF_GAP_STRICT=1 ⇒ 恢复旧行为（滞后 1 天即 error）。
+SYSTEMIC_GRACE_TD = 1
 
 KIND = "etf_price_gap"
 
@@ -95,6 +118,47 @@ def _reference_calendar(conn, lookback_days):
     return best
 
 
+def _trading_day_lag(older, newer):
+    """(older, newer] 区间内的交易日数，用于系统级宽限判定。
+
+    🔴 为什么**不用** index_quotes 的 DISTINCT date 当交易日轴（gen_combo_report.EPH_LAG_TD
+    用的是那套）：实测 2026-01-01 起 index_quotes 在休市日也有行（国庆 10-01~10-07 逐日有行，
+    系 2026-10-27 之前的采集器缺陷，现已由 holiday_write_guard 拦住新增）。用它会算出
+    「09-30 → 10-08 = 6 个交易日」这种荒谬值，把节后首日的常态待回填判成断崖。
+    故改用本地离线休市表 src.utils.trading_calendar（2024/2025/2026 官方表）。
+    该年无官方表时它退化为「仅周末」口径，对本判据的影响是可能多计（节假日算进来），
+    与改动前行为同向，不会放松到漏拦。
+
+    退化路径：连导入都失败时（按文件路径直跑本模块）退回「自然日剔除周末」计数。
+    """
+    try:
+        try:
+            from ..utils.trading_calendar import is_trading_day
+        except ImportError:
+            from src.utils.trading_calendar import is_trading_day
+    except Exception:                                  # noqa: BLE001
+        is_trading_day = None
+
+    try:
+        d0 = _dt.date.fromisoformat(str(older)[:10])
+        d1 = _dt.date.fromisoformat(str(newer)[:10])
+    except (TypeError, ValueError):
+        return None, "unparsed"
+    if d1 <= d0:
+        return 0, "empty"
+
+    cnt, cur = 0, d0 + _dt.timedelta(days=1)
+    while cur <= d1:
+        if is_trading_day is None:
+            ok = cur.weekday() < 5
+        else:
+            ok = bool(is_trading_day(cur))
+        if ok:
+            cnt += 1
+        cur += _dt.timedelta(days=1)
+    return cnt, ("trading_calendar" if is_trading_day is not None else "weekday")
+
+
 def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
                           active_tail_days=ACTIVE_TAIL_DAYS,
                           min_history_dates=MIN_HISTORY_DATES):
@@ -116,8 +180,9 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
 
     # --- A: 鲜度闸门（修复 09-23「success 假象」盲区）---
     # etf_price_history 全局最新日 严格落后 portfolio_snapshots 最新日 ⇒ 当日全量回填失败
-    # （如 09-23 全源中断→整日 0 行）。正常 post-close 跑批后两者应相等；snapshot 领先即
-    # OHLCV 取数失败。此判定独立于参考日历，能抓到「全表 0 行」——旧逻辑只看参考日历，
+    # （如 09-23 全源中断→整日 0 行）。原判据「snapshot 领先即 error」已按交易日加宽限，
+    # 见 SYSTEMIC_GRACE_TD：15:30 跑批时领先 1 个交易日是常态，领先 ≥2 才是断崖。
+    # 此判定独立于参考日历，能抓到「全表 0 行」——旧逻辑只看参考日历，
     # 而参考日历由数据本身推导，0 行时日历冻结 ⇒ 漏检（这正是 09-23 漏报的根因）。
     # 注：周末/节假日 snapshot 不会前进，故 snap_max == ohlcv_max，不会误报。
     #
@@ -129,16 +194,37 @@ def detect_etf_price_gaps(conn, lookback_days=GAP_LOOKBACK_DAYS,
     #   A 只依赖两张表的 MAX(date)，本身不需要 cal。
     if global_max and snap_max and snap_max > global_max:
         try:
-            _lag = (_dt.date.fromisoformat(snap_max)
-                    - _dt.date.fromisoformat(global_max)).days
+            _lag_nd = (_dt.date.fromisoformat(snap_max)
+                       - _dt.date.fromisoformat(global_max)).days
         except (TypeError, ValueError):
-            _lag = 0
+            _lag_nd = 0
+        _lag_td, _axis = _trading_day_lag(global_max, snap_max)
+        _strict = os.environ.get("ETF_GAP_STRICT") == "1"
+        # 交易日口径优先；轴不可解析时才退回自然日（不会比交易日更小）
+        _lag = _lag_td if _lag_td is not None else _lag_nd
+        _pending = (not _strict) and (_lag is not None) and (_lag <= SYSTEMIC_GRACE_TD)
+        if _pending and _lag == 0:
+            # snap_max 前进了但区间内无新增交易日（休市日快照行进；2026-10-27 前
+            # 采集器会在休市日写快照，现已由 holiday_write_guard 拦住新增）。
+            _note = (f"etf_price_history 最新日({global_max}) 与 portfolio_snapshots "
+                     f"最新日({snap_max}) 之间无新增交易日（跨休市）⇒ 非缺口（交易日轴={_axis}）")
+        elif _pending:
+            _note = (f"etf_price_history 全局最新日({global_max})落后 portfolio_snapshots "
+                     f"最新日({snap_max}) {_lag} 个交易日（{_lag_nd} 自然日）：属**当日 OHLCV "
+                     f"尚未回填**（收盘后日线发布 + 21:45 兜底回填窗口均晚于本次跑批）⇒ "
+                     f"待回填，不据此拒发日报；当日是否真缺由 21:45 兜底巡检判定"
+                     f"（交易日轴={_axis}）")
+        else:
+            _note = (f"etf_price_history 全局最新日({global_max})落后 portfolio_snapshots "
+                     f"最新日({snap_max}) {_lag} 个交易日（{_lag_nd} 自然日），"
+                     f"疑似当日全量回填失败/源中断"
+                     + ("；ETF_GAP_STRICT=1 强制按断崖处理" if _strict else ""))
         gaps.append({
             "code": "(systemic)", "latest": global_max,
             "first_in_window": None, "missing_count": _lag,
-            "missing_dates": [], "severity": "error",
-            "note": (f"etf_price_history 全局最新日({global_max})落后 portfolio_snapshots "
-                     f"最新日({snap_max}) {_lag} 天，疑似当日全量回填失败/源中断"),
+            "missing_dates": [],
+            "severity": "warning" if _pending else "error",
+            "note": _note,
         })
 
     # --- 参考日历：仅用于下方「单标的缺口」判定，故允许为空并在此提前返回 ---
@@ -272,13 +358,21 @@ def check_etf_price_history_gaps(db_path, auto_repair=False, log=logger.info):
 
     errs = [g for g in gaps if g["severity"] == "error"]
     warns = [g for g in gaps if g["severity"] == "warning"]
+    # 「待回填」与「缺口」必须分开表述：前者是 15:30 跑批的正常形态，
+    # 混写成「缺口」会让下一轮排查把它当断崖（也正是旧文案造成的误读来源）。
+    _pending_only = bool(warns) and not errs and any(
+        g["code"] == "(systemic)" for g in warns)
     detail = "; ".join(
         (f"{g['code']} 缺{g['missing_count']}天"
          f"({g['missing_dates'][0]}~{g['missing_dates'][-1]})"
          if g["missing_dates"] else f"{g['code']}: {g.get('note','')}")
         for g in gaps[:20])
-    message = (f"[{KIND}] etf_price_history 缺口: error {len(errs)} 只 / "
-               f"warning {len(warns)} 只。明细: {detail}")
+    if _pending_only:
+        message = (f"[{KIND}] etf_price_history 待回填（非缺口）: warning {len(warns)} 只，"
+                   f"不降级、不拒发。明细: {detail}")
+    else:
+        message = (f"[{KIND}] etf_price_history 缺口: error {len(errs)} 只 / "
+                   f"warning {len(warns)} 只。明细: {detail}")
 
     repaired = 0
     if auto_repair and errs:

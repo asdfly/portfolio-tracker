@@ -49,7 +49,15 @@ def _ohlcv(conn, code, dates):
 
 
 def test_A_freshness_detects_systemic_zero_rows():
-    """etf_price_history 全局最新日(09-22) < snapshot 最新日(09-23) ⇒ 系统性 error。
+    """etf_price_history 全局最新日(09-22) < snapshot 最新日(09-23) ⇒ 系统性**待回填 warning**。
+
+    ⚠ 契约变更（2026-10-27）：原断言为 `severity == "error"`。改为 warning 的理由是实测
+      推翻了原前提「正常 post-close 跑批后两者应相等」——本管线 15:30 跑批，当日日线要到
+      收盘后才有、21:45 才兜底回填 ⇒ 15:34 时「当日尚未回填」是常态。实测 2026-10-13~10-26
+      每个被判 error 的日期事后全部补齐（无一天真缺），却累计 14 条 error 并拦掉 15/18 次日报。
+      现按交易日宽限：滞后 1 个交易日 ⇒ warning；≥2 ⇒ error（见下一条用例）。
+      「全表 0 行」这个 A 唯一存在的理由仍成立 —— 真断崖会随时间累积到 ≥2 个交易日。
+      本用例保留「日期落在 lookback 窗口之外」的写法，仍用于验证 A 独立于参考日历：
 
     ⚠ 保留这批"落在 lookback 窗口之外"的绝对日期，是刻意的契约验证（2026-10-14）：
       A 鲜度闸门按设计必须**独立于参考日历**（否则抓不到「全表 0 行 → 日历冻结」
@@ -60,16 +68,100 @@ def test_A_freshness_detects_systemic_zero_rows():
     import tempfile, pathlib
     with tempfile.TemporaryDirectory() as td:
         conn = _mkdb(pathlib.Path(td))
-        # snapshot 前进到 09-23；OHLCV 只到 09-22 ⇒ 当日全量回填失败
+        # snapshot 前进到 09-23；OHLCV 只到 09-22 ⇒ 落后 1 个交易日 = 当日待回填
         _snap(conn, "2026-09-23", _HELD + _OTHER)
         for c in _HELD + _OTHER:
             _ohlcv(conn, c, ["2026-09-21", "2026-09-22"])
         gaps = gate.detect_etf_price_gaps(conn)
         sys = [g for g in gaps if g["code"] == "(systemic)"]
         assert sys, "应检测到系统性鲜度缺口"
-        assert sys[0]["severity"] == "error"
+        assert sys[0]["severity"] == "warning", "1 个交易日 ⇒ warning（待回填，不拒发）"
+        assert sys[0]["missing_count"] == 1, "宽限必须按交易日计，不是自然日"
         assert "2026-09-23" in sys[0]["note"]
+        assert "待回填" in sys[0]["note"]
+        assert "全量回填失败" not in sys[0]["note"], "待回填不得写成断崖"
         conn.close()
+
+
+def _systemic_case(snap_date, price_dates, monkeypatch=None, strict=False):
+    """构造「snapshot 前进、OHLCV 落后」的最小库，返回 systemic gap。"""
+    import tempfile, pathlib
+    if strict:
+        monkeypatch.setenv("ETF_GAP_STRICT", "1")
+    else:
+        monkeypatch.delenv("ETF_GAP_STRICT", raising=False)
+    with tempfile.TemporaryDirectory() as td:
+        conn = _mkdb(pathlib.Path(td))
+        _snap(conn, snap_date, _HELD + _OTHER)
+        for c in _HELD + _OTHER:
+            _ohlcv(conn, c, price_dates)
+        gaps = gate.detect_etf_price_gaps(conn)
+        sys = [g for g in gaps if g["code"] == "(systemic)"]
+        conn.close()
+    assert sys, "应产出 systemic 判定"
+    return sys[0]
+
+
+def test_A_systemic_two_trading_days_is_error(monkeypatch):
+    """落后 2 个交易日 ⇒ error（09-23 形态仍必须抓到）。"""
+    g = _systemic_case("2026-09-24", ["2026-09-21", "2026-09-22"], monkeypatch)
+    assert g["severity"] == "error"
+    assert g["missing_count"] == 2
+    assert "全量回填失败" in g["note"]
+
+
+def test_A_systemic_weekend_span_counts_one_td(monkeypatch):
+    """周五 → 周一：自然日 3 天、交易日 1 天 ⇒ warning。
+
+    这是「按自然日算宽限」会漏掉的分支：实测 2026-10-19（周一）被判 error，
+    而它只是「周一当日 OHLCV 未回填」。若宽限按自然日实现，本用例会红。
+    """
+    g = _systemic_case("2026-10-19", ["2026-10-15", "2026-10-16"], monkeypatch)
+    assert g["severity"] == "warning"
+    assert g["missing_count"] == 1
+
+
+def test_A_systemic_holiday_span_counts_one_td(monkeypatch):
+    """节前 09-30 → 节后首日 10-08：自然日 8 天、交易日 1 天 ⇒ warning。
+
+    ⚠ 这条同时是「不能用 index_quotes 当交易日轴」的守卫：库内 index_quotes 在
+      国庆 10-01~10-07 有历史行（旧采集器缺陷），用它会算出 6 个交易日 ⇒ 误判 error。
+    """
+    g = _systemic_case("2026-10-08", ["2026-09-29", "2026-09-30"], monkeypatch)
+    assert g["severity"] == "warning"
+    assert g["missing_count"] == 1
+
+
+def test_A_strict_env_restores_old_behaviour(monkeypatch):
+    """ETF_GAP_STRICT=1 ⇒ 恢复旧行为：滞后 1 个交易日也判 error（逃生阀）。"""
+    g = _systemic_case("2026-10-27", ["2026-10-23", "2026-10-26"], monkeypatch, strict=True)
+    assert g["severity"] == "error"
+    assert "ETF_GAP_STRICT=1" in g["note"]
+
+
+def test_check_pending_does_not_write_alert_and_is_ok(monkeypatch):
+    """待回填 ⇒ ok=True、alert_level=warning、**不写 alerts 表**（不产生告警疲劳）。"""
+    import pathlib
+    import tempfile
+    monkeypatch.delenv("ETF_GAP_STRICT", raising=False)
+    with tempfile.TemporaryDirectory() as td:
+        db = pathlib.Path(td) / "p.db"
+        conn = sqlite3.connect(str(db))
+        init_all_tables(conn)
+        _snap(conn, "2026-10-27", _HELD + _OTHER)
+        for c in _HELD + _OTHER:
+            _ohlcv(conn, c, ["2026-10-23", "2026-10-26"])
+        conn.close()
+
+        res = gate.check_etf_price_history_gaps(str(db))
+        assert res["ok"] is True
+        assert res["alert_level"] == "warning"
+        assert "待回填（非缺口）" in res["message"]
+        conn = sqlite3.connect(str(db))
+        n = conn.execute("SELECT COUNT(*) FROM alerts WHERE rule_name='etf_price_gap'").fetchone()[0]
+        conn.close()
+        assert n == 0, "warning 级不得写 alerts 表"
+
 
 
 def test_D_per_code_escalates_accumulated_gap():
