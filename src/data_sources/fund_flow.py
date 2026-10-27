@@ -15,6 +15,7 @@ import time
 import requests as _requests
 
 from config.settings import is_otc_fund, is_delisted
+from src.utils.holiday_write_guard import check_write_date
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +31,34 @@ _OriginalSessionInit = copy.deepcopy(_requests.Session.__init__)
 
 def _determine_trading_date() -> str:
     """确定当前交易日日期
-    
+
     在开盘前（9:30前）运行时，API返回的是前一交易日的数据，
     因此应使用前一交易日作为日期。
+
+    🔴 2026-10-27 修正（P1#11 采集侧）：原实现是
+    `days_back = 3 if 周一 else 1` + `now - timedelta(days=days_back)` —— **完全不认节假日**。
+    实测反例：节后首日 2026-10-08（周四）08:00 运行时 days_back=1 ⇒ 回退到 2026-10-07，
+    而 10-07 是国庆休市日，API 实际返回的是 09-30 的收盘 ⇒ 收盘数据被贴上 10-07 的日期。
+    这正是 `fund_flows` 里 10-01~10-07 出现「与 09-30 逐字相同的行」的成因之一：
+    **不是复制逻辑写错了，是日期算错了**，复制只是"拿到旧收盘 + 盖上休市日戳"的必然结果。
+
+    改为调用交易日历的 `prev_trading_day`（严格早于今天），节假日自动跳过。
+    日历缺表年份退化为仅周末规则（与 `is_trading_day` 同口径），此时行为等价于原实现。
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime
     now = datetime.now()
     current_time = now.hour * 100 + now.minute
     if current_time < 930:
-        days_back = 3 if now.weekday() == 0 else 1
-        trading_date = now - timedelta(days=days_back)
-        return trading_date.strftime('%Y-%m-%d')
+        try:
+            from src.utils.trading_calendar import prev_trading_day
+            return prev_trading_day(now.date()).strftime('%Y-%m-%d')
+        except ImportError:
+            # 日历不可用 ⇒ 退回旧口径（仅周末近似），显式告警而非静默
+            from datetime import timedelta
+            logger.warning("[fund_flow] 交易日历不可用 ⇒ 开盘前日期回退沿用"
+                           "「周一退3天、其余退1天」旧口径，节假日仍可能错位")
+            days_back = 3 if now.weekday() == 0 else 1
+            return (now - timedelta(days=days_back)).strftime('%Y-%m-%d')
     return now.strftime('%Y-%m-%d')
 
 
@@ -546,6 +564,40 @@ def save_fund_flows(conn: sqlite3.Connection, df: pd.DataFrame):
     for col in ['date', 'category']:
         if col not in df.columns:
             return 0
+
+    # ------------------------------------------------------------------
+    # P1#11 采集侧：非交易日行拒绝写入（2026-10-27）
+    # ------------------------------------------------------------------
+    # 实测污染（不是"多写了空行"）：2026-10-01~10-07 国庆 6 个非交易日，本表每日写入
+    # 90 行，且与 09-30 的 90 行**逐字相同**（含 net_inflow 数值）——等于把前一交易日
+    # 的资金流向伪装成新交易日的数据。下游「较上一交易日」「连续净流入天数」「主力资金
+    # 趋势」都会把这段复制当成真实变化。
+    #
+    # 🔴 判据按**行内 date 列**而不是运行当天：本函数也被历史回填调用
+    # （`backfill_sector_fund_flow` 写 2026-07 的历史日期），按运行日会把合法回填全部
+    # 误杀。按行内日期则"写历史交易日"照过、"写节假日"被拦。
+    # 整列日期先去重再判，避免 90 行触发 90 次日历查询。
+    _drop_dates = []
+    try:
+        _all_dates = list(df['date'].astype(str).str.slice(0, 10).unique())
+        _keep_dates = []
+        for _d in _all_dates:
+            _allow, _st, _rs = check_write_date(_d, table='fund_flows')
+            (_keep_dates if _allow else _drop_dates).append(_d)
+        if _drop_dates:
+            _n_before = len(df)
+            df = df[df['date'].astype(str).str.slice(0, 10).isin(_keep_dates)]
+            logger.warning(
+                "[休市守卫:fund_flows] 剔除非交易日 %s：%d 行 → %d 行",
+                ", ".join(sorted(_drop_dates)), _n_before, len(df))
+            if df.empty:
+                return 0
+    except Exception as _guard_err:
+        # 不静默：守卫自身异常时显式告警并**照旧写入**（拒绝写入会把一个守卫 bug
+        # 放大成整表断流，代价更高）。⚠️ 这意味着本行日志是"守卫可能未生效"的唯一线索。
+        logger.warning("[休市守卫:fund_flows] 守卫执行异常(%s) ⇒ 本次未过滤，照旧写入",
+                       _guard_err)
+
     _ensure_fund_flows_columns(conn)
     extra_cols = ['net_inflow_pct', 'super_large_inflow', 'super_large_pct',
                   'large_inflow', 'large_pct', 'medium_inflow', 'medium_pct', 'small_inflow', 'small_pct']

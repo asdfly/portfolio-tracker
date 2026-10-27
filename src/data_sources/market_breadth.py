@@ -21,6 +21,8 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+from src.utils.holiday_write_guard import check_write_date
+
 logger = logging.getLogger(__name__)
 
 TABLE = "market_breadth"
@@ -70,7 +72,33 @@ def _num(s) -> float:
 
 
 def collect_market_breadth(conn, date_str: str) -> Dict:
-    """采集某日涨停/跌停家数 + 连板高度 + 主线行业，幂等落库。"""
+    """采集某日涨停/跌停家数 + 连板高度 + 主线行业，幂等落库。
+
+    P1#11 采集侧（2026-10-27）：`date_str` 非交易日 ⇒ **不采集、不落库**，返回
+    `skipped=True`。实测污染：本表在 2026-10-01~10-07 国庆 6 个非交易日均有行，
+    与 `fund_flows` / `sector_daily_change` 同型 —— 休市日拿到的涨停池是前值残留。
+
+    为什么在这里早退而不是只在写库前拦：涨停池/跌停池是两次外部 HTTP 请求，
+    休市日跑出来的结果注定要丢弃，先取再丢纯属浪费配额并放大被限频的风险。
+    调用方（`run_analysis`）据 `skipped` 走 `stage=skipped` 而非 `ok`。
+    """
+    # 建表提前到守卫之前：本表 DDL 由本模块自建（未注册 db_schema.TABLE_DEFS）。
+    # 若把 CREATE TABLE 留在守卫之后，空库首次运行恰好落在休市日时**表就不会被创建**，
+    # 下游 `fetch_market_data.local_breadth_local()` 的裸 `SELECT MAX(date)` 会直接抛
+    # OperationalError（该函数没有 try 包）。建表是幂等无害 DDL，与"是否写数据"无关，
+    # 故先建表、再判能不能写。
+    _ensure_table(conn)
+
+    _allow, _st, _rs = check_write_date(date_str, table=TABLE)
+    if not _allow:
+        logger.warning("%s ⇒ 跳过市场广度采集与落库", _rs)
+        return {
+            "date": date_str, "zt_count": None, "dt_count": None,
+            "max_lianban": None, "zt_avg_turnover": None,
+            "top_industry": None, "top_industry_count": None,
+            "skipped": True, "skip_reason": _rs,
+        }
+
     zt = fetch_zt_pool(date_str)
     dt = fetch_dtgc_pool(date_str)
 
@@ -92,7 +120,7 @@ def collect_market_breadth(conn, date_str: str) -> Dict:
                 top_ind = str(vc.index[0])
                 top_ind_n = int(vc.iloc[0])
 
-    _ensure_table(conn)
+    _ensure_table(conn)   # 幂等；函数入口已建过一次，此处保留以防未来调整调用顺序
     conn.execute(
         "INSERT OR REPLACE INTO market_breadth "
         "(date, zt_count, dt_count, max_lianban, zt_avg_turnover, "
@@ -106,6 +134,7 @@ def collect_market_breadth(conn, date_str: str) -> Dict:
         "date": date_str, "zt_count": zt_count, "dt_count": dt_count,
         "max_lianban": max_lb, "zt_avg_turnover": avg_to,
         "top_industry": top_ind, "top_industry_count": top_ind_n,
+        "skipped": False,
     }
 
 

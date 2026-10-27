@@ -1407,10 +1407,19 @@ def main(argv=None):
                 _mb = collect_market_breadth(_mb_conn, _mb_date)
             finally:
                 _mb_conn.close()
-            logger.info(f"市场广度采集完成: 涨停 {_mb['zt_count']} 跌停 {_mb['dt_count']} "
-                        f"最高 {_mb['max_lianban']} 板 主线 {_mb.get('top_industry')}")
-            _reporter.stage("market_breadth", "ok")
-            _reporter.record_source("MARKET_BREADTH", ok=1, source_used="em_zt_pool")
+            # P1#11 采集侧：休市日 collector 会早退并返回 skipped=True。
+            # 必须记 skipped 而非 ok —— 记 ok 等于宣称"当日涨停池采集成功"，
+            # 而实际上什么都没采。这正是本项目反复踩的「状态断言失真」。
+            if _mb.get('skipped'):
+                logger.info("市场广度采集跳过（非交易日 %s，不落库）: %s",
+                            _mb_date, _mb.get('skip_reason'))
+                _reporter.stage("market_breadth", "skipped",
+                                note="非交易日，未采集未落库")
+            else:
+                logger.info(f"市场广度采集完成: 涨停 {_mb['zt_count']} 跌停 {_mb['dt_count']} "
+                            f"最高 {_mb['max_lianban']} 板 主线 {_mb.get('top_industry')}")
+                _reporter.stage("market_breadth", "ok")
+                _reporter.record_source("MARKET_BREADTH", ok=1, source_used="em_zt_pool")
         except Exception as e:
             logger.warning(f"市场广度采集失败(不影响主流程): {e}")
             _reporter.stage("market_breadth", "error", note=str(e)[:160])

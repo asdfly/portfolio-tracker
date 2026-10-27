@@ -27,15 +27,53 @@ class DatabaseManager:
             logger.info("数据库初始化完成")
 
     def save_portfolio_snapshot(self, date_str: str, holdings: List[Dict[str, Any]]):
-        """保存持仓快照"""
+        """保存持仓快照 + 同事务写「写入完成标记」（P1#13 遗留补齐，2026-10-27）
+
+        ## 为什么快照也需要完成标记
+
+        P1#13 第一轮只给 `index_quotes` 加了 `ingest_markers`，快照侧仍靠
+        `run_sentinel._snapshot_probe()` **数行数**间接判断（P0#2）。数行数的固有盲区：
+        「写入 12 行后进程被杀」与「本来就只该有 12 行」在库里完全同形 —— 2026-10-26
+        那次 35→12 的塌缩正是靠比对近 5 日中位数才识别出来的，属于事后推断，
+        而不是写入方留下的直接证据。
+
+        加标记后，写入方**主动声明**本次意图写入多少行（`rows_expected`）、实际落库
+        多少行（`rows_written`）。于是三种形态可直接区分：
+
+        | 库内形态 | 含义 |
+        |---|---|
+        | 有行 + `status=complete` | 正常写完 |
+        | 有行 + 无标记 | **orphan**：写入方中途被杀（有行无标） |
+        | 无行 + `status=empty` | 写入方跑过但产出 0 行（如持仓文件读空） |
+
+        ## 为什么同事务
+
+        标记与业务行必须要么一起可见、要么都不见。若先 commit 行再单独写标记，
+        两次 commit 之间被杀就又回到「有行无标」——而这恰恰是我们要区分出来的异常态，
+        真异常与竞态会混在一起，标记就失去判别力。
+
+        ## 为什么不像 `index_quotes` 那样改 `executemany`
+
+        该函数被 `run_daily_analysis` 调用**两次**（步骤 2.5 首次落快照、拿到实时价后
+        再更新一次价格）。逐行 `INSERT OR REPLACE` 与 `executemany` 对 (date, code)
+        主键语义等价，但改成 executemany 会顺带改动「两次调用之间的可见性」这一
+        无关变量，而快照层是全项目风险最高的地方（`total_value` 静默失真的源头）。
+        本函数只新增标记写入，**不动既有写入节奏**。
+        """
         with get_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
+            written = 0
+            missing_code = []
             for holding in holdings:
                 # 优先使用实时行情数据（来自新浪API），确保与summary一致
                 current_price = holding.get('realtime_price', holding.get('current_price'))
                 market_value = holding.get('realtime_market_value', holding.get('market_value'))
                 pnl = holding.get('realtime_pnl', holding.get('pnl'))
+
+                if not holding.get('code'):
+                    missing_code.append(str(holding.get('name') or '<无名>'))
+                    continue
 
                 cursor.execute("""
                     INSERT OR REPLACE INTO portfolio_snapshots 
@@ -55,8 +93,30 @@ class DatabaseManager:
                     holding.get('ytd_return'),
                     holding.get('beta')
                 ))
+                written += 1
+
+            # 完成标记：与业务行同一事务提交
+            if not written:
+                status = 'empty'
+            elif missing_code:
+                status = 'partial'
+            else:
+                status = 'complete'
+            detail = ''
+            if missing_code:
+                detail = '缺 code 跳过: ' + ','.join(missing_code[:10])
+            cursor.execute("""
+                INSERT OR REPLACE INTO ingest_markers
+                (table_name, date, rows_written, rows_expected, skipped, status, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                'portfolio_snapshots', date_str, written, len(holdings),
+                len(missing_code), status, detail
+            ))
 
             conn.commit()
+            logger.info("[portfolio_snapshots] %s 写入 %d/%d 行（跳过缺code %d，status=%s）",
+                        date_str, written, len(holdings), len(missing_code), status)
             logger.info(f"保存持仓快照: {date_str}, {len(holdings)}条记录")
 
     def save_portfolio_summary(self, date_str: str, summary: Dict[str, Any]):

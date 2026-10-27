@@ -286,8 +286,148 @@ ETF估值台账 14 条防坑判据（凭证过期识别、T+1 发布、`index_co
 
 **遗留（不假冒完成）**：
 
-1. **fetch 侧未动**：`fund_flows` / `market_breadth` / `sector_daily_change` 仍由 `fetch_market_data.py` 在休市日写入。本轮 #11 只覆盖 `portfolio_snapshots / portfolio_summary / index_quotes / etf_technical` 四张主表 —— 这也是「报告 DATA_DATE 跳到休市日」的直接原因（报告取 `index_quotes` 的 `MAX(date)`），但**盘面类表的冻结行仍在**，下一轮应同样接日历。
+1. ~~**fetch 侧未动**：`fund_flows` / `market_breadth` / `sector_daily_change` 仍由 `fetch_market_data.py` 在休市日写入。本轮 #11 只覆盖 `portfolio_snapshots / portfolio_summary / index_quotes / etf_technical` 四张主表 —— 这也是「报告 DATA_DATE 跳到休市日」的直接原因（报告取 `index_quotes` 的 `MAX(date)`），但**盘面类表的冻结行仍在**，下一轮应同样接日历。~~
+   🔴 **本条归因错误，已订正（2026-10-27 第三轮，见 §12.0）**：`fetch_market_data.py` **全文没有任何写库调用** —— 它只有 3 处 `SELECT`（读 `fund_flows` / `market_breadth` 的最新日期与合计）和一次写 `data/.neotmp/neodata_market.json`，不可能污染任何表。
+   结论（"盘面类表的冻结行仍在"）**成立**，但**写错了是谁写的**。真实写入方是四个互不相干的点：
+   `fund_flow.save_fund_flows()`、`market_breadth.collect_market_breadth()`、
+   `gen_combo_report._upsert_sectors()`、`backfill_sector_change.py`。
+   订正理由：留着错误归因，下一轮会去改一个根本不写库的脚本，而真正的污染路径继续每天跑。
 2. **#12 的「18:00 对齐」只做了一半**：现在能**判定**未结算，但没把结算时点提前。要真对齐需把 `run_analysis` 的调度从 15:30 挪到收盘后（或增量补算），属调度层改动，未动。
-3. **#13 的标记只覆盖 `index_quotes`**：`portfolio_snapshots` 无同类标记，目前靠 `run_sentinel._snapshot_probe` 数行数间接发现（P0#2）。
+3. ~~**#13 的标记只覆盖 `index_quotes`**：`portfolio_snapshots` 无同类标记，目前靠 `run_sentinel._snapshot_probe` 数行数间接发现（P0#2）。~~
+   ✅ **已补齐（2026-10-27 第三轮，见 §12.3）**：`save_portfolio_snapshot` 同事务写 `ingest_markers(table_name='portfolio_snapshots')`，三态 `complete/partial/empty`；哨兵按标记交叉核对，新增 `orphan`（有行无标）与 `marker_mismatch`（行数≠标记）两类判定。
+   另设 `SNAPSHOT_MARKER_SINCE='2026-10-27'` 边界：启用日之前的历史日期永远无标记，**不得**判 orphan，否则每次回溯历史都刷假告警。
 4. **历史日期无 `daily_return_settled`**：NULL 一律按「未知」处理，不标未结算；若要对历史做判定，需另跑一次回溯计算（未做，理由同 11.2）。
 5. **本轮验证时发现一个既存失败（非本轮引入）**：`tests/test_predictor_base.py::test_stored_features_scale_matches_recompute` 报 `vol_20d 存量与现算不一致(max|Δ|=0.00289)`，容差 `1e-6`。证据：该测试依赖链（`src/analysis/predictor/features.py` → numpy/pandas/sqlite3 + `split_merge_guard`）**不含本轮任何改动文件**；且第 11.3 节全部验证均不触及 `etf_features`。推测为「特征先算、价格后同步」造成的当日存量滞后（`etf_features` 与 `etf_price_history` 的 `MAX(date)` 同为 2026-10-27）。需单独排查，本轮未处理 —— 记在此处以免下一轮误以为是本次改造的回归。
+
+---
+
+## 十二、采集侧下半场：盘面三表守卫 + 快照标记（2026-10-27 第三轮）
+
+承接 §11 的四条遗留。本轮目标是**把 #11 修完**（上一轮只覆盖四张主表）、**补完 #13**（快照无标记）、并**订正一条错误归因**。
+
+### 12.0 先订正：上一轮的写入方归属是错的
+
+§11.5 遗留第 1 条写「`fund_flows` / `market_breadth` / `sector_daily_change` 仍由
+`fetch_market_data.py` 在休市日写入」。**这句是错的**，且错得会误导下一轮排查。
+
+实测：`fetch_market_data.py` 全文 341 行，**没有任何写库调用** ——
+只有 3 处 `SELECT`（读 `fund_flows.MAX(date)`、`market_breadth.MAX(date)` 及其明细）
+和一次 `json.dump` 写 `data/.neotmp/neodata_market.json`。
+
+真实写入方是四个互不相干的点：
+
+| 表 | 写入点 | 日期来源 |
+|---|---|---|
+| `fund_flows` | `src/data_sources/fund_flow.py::save_fund_flows()` | DataFrame 行内 `date` 列 |
+| `market_breadth` | `src/data_sources/market_breadth.py::collect_market_breadth()` | 调用方传的 `date_str` |
+| `sector_daily_change` | `scripts/gen_combo_report.py::_upsert_sectors()` | 报告 `DATA_DATE` |
+| `sector_daily_change` | `scripts/backfill_sector_change.py` | NeoData K 线行日期 |
+
+订正的意义不只是「名字写错」：若按原记载去改 `fetch_market_data.py`，改完会得出
+「已修复」的结论，而真正的四条污染路径一条都没被拦住。
+
+### 12.1 污染不是「多写了空行」，是「把前值伪装成新交易日」
+
+逐行实测（生产库，只读）：
+
+| 表 | 国庆 10-01~10-07 |
+|---|---|
+| `fund_flows` | 每天 90 行，与 09-30 的 90 行**逐字相同**（含 `net_inflow` 数值），100% 重合 |
+| `sector_daily_change` | 10-01 / 10-07 的 13 行 MIN/MAX 与 09-30 完全一致（−2.99 / 4.18） |
+| `market_breadth` | 同期同样有行 |
+
+另发现 `market_breadth.date` **格式与其它表不一致**：41/41 行是 `YYYYMMDD`（`20261027`），
+其它表是 `YYYY-MM-DD`。报告侧已用双格式回退兼容（`for _fmt in (DATA_DATE, DATA_DATE.replace('-',''))`），
+但守卫若只认带横线格式就会在**这一张表上整表失效** —— 于是出现「主表拦住、market_breadth 照写」
+的分裂，比不修更糟。守卫因此同时支持两种格式。
+
+### 12.2 实现：共享守卫 + 四个写入点
+
+新增 `src/utils/holiday_write_guard.py`，核心是 `check_write_date(d, table)` 返回
+**三态**而非 bool：
+
+| status | allow | 含义 |
+|---|---|---|
+| `allow` | True | 确认是交易日 |
+| `deny` | False | 确认非交易日 ⇒ 调用方必须跳过并计数 |
+| `allow_degraded` | True | 该年无官方休市表，**判不了** ⇒ 按旧行为放行 + WARNING |
+| `allow_forced` | True | `PT_FORCE_PERSIST=1` |
+| `allow_unparsed` | True | 日期不可解析 ⇒ 放行但留痕 |
+
+`allow_degraded` 单独成一态的理由：「放行」有两种完全不同的原因 —— 一种是**有把握它是交易日**，
+一种是**没有能力判断**。都返回 True 但混在一起，就等于把「判不了」伪装成「判过了」，
+这正是本项目反复出现的静默失真型缺陷。
+
+🔴 最关键的设计取舍：**按「被写入的日期」判，不按「运行日」判。**
+`backfill_sector_change.py` 合法地写 2026-07 的历史日期；若按运行日判定，
+会把整批合法回填误杀。这是本模块与 §11 上半场 `_compute_persist_enabled`
+（运行级判定）的本质区别，也是不能直接复用它的原因。
+
+同时修正 `fund_flow._determine_trading_date()`：原实现 `days_back = 3 if 周一 else 1`，
+**完全不认节假日**。反例：节后首日 2026-10-08（周四）08:00 运行 ⇒ 回退到 10-07（休市日），
+而 API 实际返回 09-30 的收盘 ⇒ 收盘数据被贴上 10-07 的日期。这解释了国庆行的成因之一：
+**不是复制逻辑写错了，是日期算错了**，复制只是「拿到旧收盘 + 盖上休市日戳」的必然结果。
+已改用 `prev_trading_day`。
+
+### 12.3 快照完成标记（#13 遗留）
+
+`save_portfolio_snapshot` 改为同事务写 `ingest_markers(table_name='portfolio_snapshots')`，
+三态 `complete / partial / empty`。三种库内形态从此可判别：
+
+| 形态 | 含义 |
+|---|---|
+| 有行 + `complete` | 正常写完 |
+| 有行 + 无标记 | **orphan**：写完业务行、写标记前被杀 |
+| 无行 + `empty` | 写入方跑过但产出 0 行 |
+
+刻意**没有**把逐行 `execute` 改成 `executemany`（与 `index_quotes` 的做法不同）：
+该函数被 `run_daily_analysis` 调用两次（首次落快照、拿到实时价后再更新），
+改批量写入会顺带改动「两次调用之间的可见性」这个无关变量，而快照层是全项目风险最高的地方。
+
+哨兵侧：`_snapshot_probe` 新增 `marker` / `marker_flag`，`orphan` 与 `marker_mismatch`
+均置 `snap_bad=True`（不记 `sentinel_ok`）。
+边界 `SNAPSHOT_MARKER_SINCE='2026-10-27'`：启用日之前的历史日期永远无标记，**不得**判 orphan ——
+否则每次回溯历史都刷一条假告警，告警疲劳是守卫失效最常见的死法。
+
+### 12.4 验证（当轮实测）
+
+| 项 | 手段 | 结果 |
+|---|---|---|
+| 守卫日期判定 | 12 个用例（国庆首/中/末、节后开市、周末、春节、`YYYYMMDD`、带时间尾巴、2023 缺表年） | 12/12 |
+| 隔离验证全量 | `scripts/_tmp_verify_p1c.py`（生产库副本） | **28/28** |
+| `fund_flows` 过滤 | 混合批次 / 全休市批次 / 历史交易日回填 | 1 行 / 0 行 / **1 行（历史不被误杀）** |
+| `market_breadth` 早退 | 猴补两个 fetch 函数计数 | 休市日请求数 **0/0**，落库 0 行；交易日 1 次、落库 1 行 |
+| 快照标记三态 | `complete(3/3)` / `partial(2/3,skip=1)` / `empty(0/0)` | 3/3 |
+| 哨兵交叉核对 | 有标 / orphan / 历史日期 / 行数≠标记 | 4/4，历史日期不误报 |
+| 报告脚本可达性 | 在 `scripts/` 下真实运行（`sys.path[0]=scripts`） | 守卫可 import |
+| 报告侧真跑（交易日） | 生产库 `GEN_COMBO_DATE=2026-10-27` | 守卫放行，`upsert 写入0行/幂等跳过9行`，`FINAL_GATE ok` |
+| 报告侧真跑（休市日） | 副本库 `MAX(summary.date)=2026-10-05` | 打出 `[休市守卫:sector_daily_change] … ⇒ 跳过 upsert`，副本 13 行**未被改写** |
+| 回归测试 | 新增 `tests/test_holiday_write_guard.py` 30 项 | 30/30 |
+| 受影响既有测试 | 8 个文件 91 项 | 91 passed |
+| 全量 | `pytest -q` | **1969 passed / 1 failed / 4 skipped** |
+
+唯一失败的 `test_predictor_base::test_stored_features_scale_matches_recompute`
+（`vol_20d max|Δ|=0.00289366`）与上一轮记录**数值完全一致**，属既存债务，非本轮引入。
+
+### 12.5 本轮发现的两个意外
+
+1. **`market_breadth` 建表位置**：`_ensure_table(conn)` 原本在函数中部，守卫早退会让空库首次
+   运行恰好落在休市日时**表不被创建**，而 `fetch_market_data.local_breadth_local()` 的
+   `SELECT MAX(date)` 没有 try 包裹 ⇒ 直接 `OperationalError`。已把建表提到守卫之前
+   （幂等 DDL，与「是否写数据」无关）。这是**新增回归测试抓出来的**，不是靠读代码想到的。
+2. **报告文件名按 RUN_DATE 命名**：用副本库做离线验证时，产物会覆盖当日的真实日报
+   （实测把 10-27 的日报覆盖成 10-05 的内容）。已用生产库重生成还原。
+   这是既存设计（`OUT` 用 `RUN_DATE` 而非 `DATA_DATE`），非本轮引入，但**每次离线验证都会踩**，
+   记在此处作为操作纪律：**跑 `GEN_COMBO_DB=<副本>` 之前先把 `data/reports/` 当日文件备份**。
+
+### 12.6 未做（不假冒完成）
+
+1. **国庆等历史污染行未删除**：`fund_flows` 10-01~10-07 共 6 天 × ~90 行、
+   `sector_daily_change` 6 天 × 13 行、`market_breadth` 6 行、`portfolio_summary` 5 行
+   （`total_value` 全为 1564503.62、`daily_return` 全为 0.0）**仍在库内**。
+   本轮只做「不再新增」，未做「清理历史」—— 删除历史行会改变历史聚合口径，
+   且与 `复制行守卫` 的既有判据存在交叉，需单独排期并逐日核对，不在本轮擅动。
+2. **#12 的「18:00 对齐」仍只做了一半**：能判定未结算，未把结算时点前移（需改调度）。
+3. **`market_breadth.date` 格式不统一**：未改（改格式会波及所有既有查询与历史行），
+   仅在守卫层做双格式兼容并在报告侧保留回退。
+4. **`ingest_markers` 生产库仍为 0 行**：标记自本轮起才有，需等下一交易日正式运行后才产生。

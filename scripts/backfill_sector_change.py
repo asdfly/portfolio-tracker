@@ -125,10 +125,24 @@ def main():
     ap.add_argument('--sectors', nargs='*', default=WATCHLIST)
     args = ap.parse_args()
 
+    # P1#11 采集侧（2026-10-27）：K 线里若混入非交易日行，逐行拒绝写入。
+    # 本脚本是**历史回填**，按运行日判定会把整批合法历史数据误杀，故只能按行内日期判。
+    # 实测污染形态：sector_daily_change 里 2026-10-01/10-07 的 13 行 MIN/MAX 与 09-30
+    # 完全一致（−2.99 / 4.18），即 K 线接口在休市区间重复吐出节前最后一日。
+    try:
+        if ROOT not in sys.path:
+            sys.path.insert(0, ROOT)
+        from src.utils.holiday_write_guard import filter_rows_by_trading_date
+    except Exception as _ge:
+        filter_rows_by_trading_date = None
+        print('[WARN] 休市守卫不可用(%s: %s) ⇒ 回填未做交易日校验'
+              % (type(_ge).__name__, _ge))
+
     os.makedirs(os.path.join(ROOT, 'data', '.neotmp'), exist_ok=True)
     con = sqlite3.connect(DB)
     ensure_table(con)
     total = 0
+    dropped_total = 0
     for sec in args.sectors:
         try:
             rows, sec_name = query_sector(sec, args.start, args.end)
@@ -138,6 +152,15 @@ def main():
         if rows is None:
             print(f"  [SKIP] {sec}: {sec_name}")
             continue
+        if filter_rows_by_trading_date is not None and rows:
+            rows, _dropped, _sum = filter_rows_by_trading_date(
+                rows, date_getter=lambda r: r[0], table='sector_daily_change')
+            if _sum:
+                print(f"  {_sum}")
+                dropped_total += sum(_dropped.values())
+            if not rows:
+                print(f"  [SKIP] {sec_name}: 全部行落在非交易日，无一行可写")
+                continue
         for d, code, name, chg, close, prev in rows:
             con.execute(
                 "INSERT OR REPLACE INTO sector_daily_change "
@@ -153,7 +176,7 @@ def main():
             print(f"  [EMPTY] {sec}: 解析到 0 行（可能名称不匹配或接口异常）")
         time.sleep(1.0)  # 轻量限速，避免触发频率限制
     con.close()
-    print(f"\nDONE total upserted={total}")
+    print(f"\nDONE total upserted={total}  （非交易日剔除 {dropped_total} 行）")
 
 
 if __name__ == '__main__':

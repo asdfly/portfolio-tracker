@@ -881,8 +881,31 @@ def _upsert_sectors(date_str, secdict):
     DEFAULT CURRENT_TIMESTAMP 刷新，改写该行的历史写入时间戳——严格说并非 no-op
     （已用库副本隔离实测确认：13/13 行的 change_pct/source 不变，created_at 全部被改写）。
     生产库应保持只读；正常换日运行时目标日期无行，仍会照常写入。
+
+    P1#11 采集侧（2026-10-27 补）：非交易日拒绝 upsert。
+    本函数上游 `DATA_DATE` 取自 `SELECT MAX(date) FROM portfolio_summary`，而该表自
+    P1#11 上半场起已做休市门控 ⇒ 正常情况下这里拿到的一定是交易日，本守卫属**第二道**。
+    之所以仍要加：`GEN_COMBO_DATE` 可用于离线重放任意日期，重放一个休市日时会绕过上游门控
+    直接往盘面表写（实测 2026-10-01/10-07 的 13 行与 09-30 逐字相同，即由此类路径产生）。
+    为什么不用脚本内的 `CN_HOLIDAYS`：那个集合只展开 2026 年，跨年会静默失效；这里改用
+    `src.utils.holiday_write_guard` 保持与采集侧**同源同值**（阈值/判据必须单一来源，
+    否则会出现「一边拦住一边放行」）。本脚本以 `sys.path[0]=scripts/` 运行，故需临时
+    把项目根插进 `sys.path`；失败时**显式打 WARN 并放行**（守卫自身不可用不应导致写库断流）。
     """
     try:
+        _allow = True
+        try:
+            _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
+            from src.utils.holiday_write_guard import check_write_date as _cw
+            _allow, _gst, _grs = _cw(date_str, table='sector_daily_change')
+        except Exception as _ge:
+            print('[WARN] 休市守卫不可用(%s) ⇒ sector_daily_change upsert 未做交易日校验: %s'
+                  % (type(_ge).__name__, _ge))
+        if not _allow:
+            print('[WARN] %s ⇒ 跳过 sector_daily_change upsert(%s)' % (_grs, date_str))
+            return
         _w = _skip = 0
         for _nm, _val in secdict.items():
             if _val is None:

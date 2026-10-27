@@ -70,6 +70,11 @@ SNAP_MIN_ROWS = 20          # 绝对下限
 SNAP_MEDIAN_RATIO = 0.70    # 相对近 N 日中位数的最小比例
 SNAP_BASELINE_N = 5         # 基线窗口（个快照日）
 
+# 快照写入完成标记启用日（P1#13 遗留补齐，2026-10-27）。
+# 该日之前的历史日期库里永远不会有 ingest_markers 行，若对此也判「有行无标」，
+# 每次回溯历史都会刷一条假告警 ⇒ 告警疲劳 ⇒ 信号失效。故以此日为界。
+SNAPSHOT_MARKER_SINCE = "2026-10-27"
+
 # run_status 取值（与 src/data_sources/collect_core.py 的 RUN_STATUS_* 同义）。
 _BLOCKING_STATUS = ("partial", "failed", "degraded")
 
@@ -223,6 +228,7 @@ def _snapshot_probe(date_str: str, db_path: str = None):
         return None
     try:
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        _mk = None
         try:
             cur = con.cursor()
             rows = cur.execute(
@@ -232,6 +238,14 @@ def _snapshot_probe(date_str: str, db_path: str = None):
                 "SELECT COUNT(*) FROM portfolio_snapshots WHERE date < ? "
                 "GROUP BY date ORDER BY date DESC LIMIT ?", (date_str, SNAP_BASELINE_N)
             ).fetchall()
+            # 写入完成标记（P1#13 遗留补齐）：单独 try，标记表缺失不应让整个探针失败
+            try:
+                _mk = cur.execute(
+                    "SELECT rows_written, rows_expected, skipped, status "
+                    "FROM ingest_markers WHERE table_name='portfolio_snapshots' AND date=?",
+                    (date_str,)).fetchone()
+            except sqlite3.OperationalError:
+                _mk = None
         finally:
             con.close()
     except Exception as exc:
@@ -249,9 +263,27 @@ def _snapshot_probe(date_str: str, db_path: str = None):
         verdict = "collapsed"
     else:
         verdict = "ok"
+
+    # ---------- 标记交叉核对（P1#13 遗留补齐，2026-10-27）----------
+    # 约束：`ingest_markers` 自 2026-10-27 起才有快照类标记，**历史日期永远无标记**，
+    # 故不能把「无标记」一律判成异常 —— 那会让每天回溯历史时都刷一条假告警，
+    # 几次之后这条信号就没人看了。只在标记启用日之后才认 orphan。
+    marker = None
+    marker_flag = None
+    if _mk is not None:
+        marker = {'rows_written': _mk[0], 'rows_expected': _mk[1],
+                  'skipped': _mk[2], 'status': _mk[3]}
+        if marker['rows_written'] is not None and rows != marker['rows_written']:
+            marker_flag = 'marker_mismatch'
+    elif rows > 0 and date_str >= SNAPSHOT_MARKER_SINCE:
+        # 有行无标：写入方在写完行之后、写标记之前被杀（或绕过了 save_portfolio_snapshot）
+        marker_flag = 'orphan'
+
     return {"date": date_str, "rows": rows, "median": med,
             "baseline_dates": len(base), "verdict": verdict,
-            "detail": f"SNAP_ROWS={rows}/{med}"}
+            "marker": marker, "marker_flag": marker_flag,
+            "detail": f"SNAP_ROWS={rows}/{med}"
+                      + (f" marker={marker['status']}" if marker else "")}
 
 
 def _index_quotes_probe(date_str: str, db_path: str = None):
@@ -515,6 +547,25 @@ def main() -> int:
         _log(f"快照完整性 {probe['detail']} verdict={probe['verdict']} "
              f"(floor={SNAP_MIN_ROWS}, ratio={SNAP_MEDIAN_RATIO:.0%}, "
              f"baseline_n={probe['baseline_dates']})")
+        # ---------- 标记交叉核对（P1#13 遗留补齐）----------
+        # 与「数行数」互补：数行数只能回答「行够不够」，标记能回答「写入方自己认为写完了吗」。
+        # 二者都不通过才叫塌缩；标记单独异常（有行无标 / 行数≠标记）说明**写入过程本身可疑**，
+        # 即使行数看着够也不能记 sentinel_ok —— 否则又是「用总量正确掩盖过程错误」。
+        _mflag = probe.get("marker_flag")
+        if _mflag == "orphan":
+            snap_bad = True
+            _log(f"⚠ {date_str} 快照有 {probe['rows']} 行但**无写入完成标记**（orphan）："
+                 f"写入方可能在写完业务行、写标记之前被强杀 ⇒ 行数可能不完整")
+            _ledger("sentinel_snapshot_orphan", "degraded",
+                    f"SNAP_ROWS={probe['rows']} 但 ingest_markers 无该日标记")
+        elif _mflag == "marker_mismatch":
+            snap_bad = True
+            _log(f"⚠ {date_str} 快照行数与写入标记不一致：库内 {probe['rows']} 行 vs "
+                 f"标记声明 {probe['marker']['rows_written']} 行"
+                 f"（status={probe['marker']['status']}）⇒ 疑被外部改写或回填")
+            _ledger("sentinel_snapshot_marker_mismatch", "degraded",
+                    f"DB={probe['rows']} MARK={probe['marker']['rows_written']} "
+                    f"status={probe['marker']['status']}")
         # 🔴 非交易日豁免：周末/节假日**本就不写快照**（实测生产库 2026-10-25 周日 = 0 行），
         #   此时 rows=0 是正常状态而非故障。不加此豁免，任何非交易日的手动/调试运行
         #   （--no-calendar-skip）都会误报 CRITICAL，几次之后这条告警就会被无视——
