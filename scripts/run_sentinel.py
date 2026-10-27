@@ -28,7 +28,7 @@
 
 退出码：
   0  正常（报告存在 / 非交易日跳过 / 过早跳过 / 夜线仍在运行跳过）
-  2  检测到报告缺失 / 损坏（已发或尝试发告警 + 已记账）
+  2  检测到报告缺失 / 损坏 / **快照行数塌缩**（已发或尝试发告警 + 已记账）
   3  参数 / 内部前置错误
 """
 from __future__ import annotations
@@ -37,6 +37,8 @@ import argparse
 import datetime
 import json
 import os
+import sqlite3
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -56,6 +58,17 @@ NIGHTLY_TRIGGER_MIN = 30
 DEFAULT_GRACE_MIN = 0
 # 告警去重标记文件（落 logs/，不进 git）
 FLAG_FILE = os.path.join(ROOT, "logs", "sentinel_alerted.json")
+
+# ============ 快照完整性探针阈值（P0#2，2026-10-27 落地）============
+# 🔴 事故：2026-10-22~10-26 组合快照由 35 行塌缩至 12 行（ETF 行全缺、仅剩场外基金），
+#    而 run_report 仍 run_status=ok ⇒ 原哨兵「报告存在即正常」对这类**数据失真完全失明**，
+#    全靠人工核验才发现。daily_return 因此被算成 -21.62%（真值 +0.157%）。
+# 🔴 阈值必须与 scripts/gen_combo_report.py 的生成前熔断**同源同值**：
+#    两处判据不一致会出现「哨兵报异常但生成器放行」或反之，比不检更危险。
+#    改动任何一侧，必须同步另一侧（grep 关键字：SNAP_MEDIAN_RATIO）。
+SNAP_MIN_ROWS = 20          # 绝对下限
+SNAP_MEDIAN_RATIO = 0.70    # 相对近 N 日中位数的最小比例
+SNAP_BASELINE_N = 5         # 基线窗口（个快照日）
 
 # run_status 取值（与 src/data_sources/collect_core.py 的 RUN_STATUS_* 同义）。
 _BLOCKING_STATUS = ("partial", "failed", "degraded")
@@ -195,8 +208,89 @@ def _build_html(date_str: str, reason: str) -> str:
 </html>"""
 
 
-def _send_alert(date_str: str, reason: str, dry_run: bool) -> tuple:
-    """通过现有通道 send_generic_email.py 发告警；返回 (sent_bool, detail)。"""
+def _snapshot_probe(date_str: str, db_path: str = None):
+    """只读探测当日组合快照行数完整性。返回 dict 或 None（库/表不可用）。
+
+    db_path 仅供离线验证（默认生产库），生产调用不传。
+
+    🔴 业务库**只读**（URI mode=ro）：哨兵绝不写业务库，与既有铁律一致。
+    返回键：date / rows / median / baseline_dates / verdict / detail
+    verdict ∈ {'ok','missing','collapsed','no_baseline'}
+    """
+    db = db_path or os.path.join(ROOT, "data", "database", "portfolio.db")
+    if not os.path.exists(db):
+        _log(f"快照探针跳过：业务库不存在 {db}")
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            cur = con.cursor()
+            rows = cur.execute(
+                "SELECT COUNT(*) FROM portfolio_snapshots WHERE date=?", (date_str,)
+            ).fetchone()[0] or 0
+            base = cur.execute(
+                "SELECT COUNT(*) FROM portfolio_snapshots WHERE date < ? "
+                "GROUP BY date ORDER BY date DESC LIMIT ?", (date_str, SNAP_BASELINE_N)
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception as exc:
+        _log(f"快照探针失败（不影响主判定）: {exc}")
+        return None
+
+    med = int(statistics.median([r[0] for r in base])) if base else 0
+    if rows == 0:
+        verdict = "missing"
+    elif med == 0:
+        verdict = "no_baseline"
+    elif rows < med * SNAP_MEDIAN_RATIO:
+        verdict = "collapsed"
+    elif med >= SNAP_MIN_ROWS and rows < SNAP_MIN_ROWS:
+        verdict = "collapsed"
+    else:
+        verdict = "ok"
+    return {"date": date_str, "rows": rows, "median": med,
+            "baseline_dates": len(base), "verdict": verdict,
+            "detail": f"SNAP_ROWS={rows}/{med}"}
+
+
+def _build_snap_text(p: dict) -> str:
+    """快照塌缩告警正文（与缺失告警区分，附修复路径）。"""
+    why = ("当日快照 0 行（数据完全未写入）" if p["verdict"] == "missing"
+           else f"当日快照仅 {p['rows']} 行，远低于近 {p['baseline_dates']} 个快照日中位数 "
+                f"{p['median']} 行")
+    return (
+        f"投资组合快照完整性告警（SNAP_ROWS 探针）\n"
+        f"业务日期：{p['date']}\n"
+        f"触发时间：{datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n\n"
+        f"现象：{why}。\n"
+        f"SNAP_ROWS：{p['rows']}/{p['median']}（当日 / 近 {SNAP_BASELINE_N} 日中位数）\n"
+        f"判据：< 中位数×{SNAP_MEDIAN_RATIO:.0%} 或 < 绝对下限 {SNAP_MIN_ROWS} 行\n\n"
+        f"根因推断：与 2026-10-22~10-26 事故同形态 —— ETF 行情子源断供后，采集器只写入\n"
+        f"场外基金行（约 12 行），ETF 行缺失。此时组合合计市值与 daily_return 会同步失真\n"
+        f"（该次 -21.62% vs 真值 +0.157%），而 run_report 的 run_status 仍可能为 ok，\n"
+        f"故本探针不依赖 run_status。\n\n"
+        f"影响：\n"
+        f"  1. 当日「组合+大盘综合视角」日报已被生成前熔断拦下（SNAP_ROWS 同源判据）；\n"
+        f"  2. 知识库推送应 withholding，不得入库失真内容；\n"
+        f"  3. 累计净值/收益曲线若已写入，需回填后重算（recompute_summary_window.py）。\n\n"
+        f"修复路径：\n"
+        f"  1. 补采 ETF 收盘价（backfill_etf_price_history / 兜底巡检脚本）；\n"
+        f"  2. 用历史收盘价补齐当日缺失的 ETF 快照行（切勿改动既有场外行）；\n"
+        f"  3. recompute_summary_window.py --start-date 当日 --end-date 当日 --apply --rebuild-nav；\n"
+        f"  4. 重跑 gen_combo_report.py 还原日报。\n\n"
+        f"本告警由运行后哨兵（scripts/run_sentinel.py）自动发出。"
+    )
+
+
+def _send_alert(date_str: str, reason: str, dry_run: bool,
+                subject: str = None, text: str = None,
+                with_html: bool = True) -> tuple:
+    """通过现有通道 send_generic_email.py 发告警；返回 (sent_bool, detail)。
+
+    subject/text 可覆盖默认「运行账本缺失」文案（供快照探针复用同一通道，
+    不新造 SMTP 逻辑——哨兵铁律）。
+    """
     env = load_env_simple(os.path.join(ROOT, ".env"))
     enabled = (env.get("EMAIL_ENABLED", "false").lower() == "true")
     recipients = [r.strip() for r in env.get("EMAIL_RECIPIENTS", "").split(",") if r.strip()]
@@ -204,18 +298,19 @@ def _send_alert(date_str: str, reason: str, dry_run: bool) -> tuple:
     if not enabled or not recipients or not username:
         return False, ("邮件未启用/收件人未配置"
                        "（EMAIL_ENABLED/EMAIL_RECIPIENTS/EMAIL_USERNAME）")
-    subject = f"[CRITICAL] 投资组合夜线运行账本缺失 {date_str}（疑似硬死）"
-    text = _build_text(date_str, reason)
-    html = _build_html(date_str, reason)
+    subject = subject or f"[CRITICAL] 投资组合夜线运行账本缺失 {date_str}（疑似硬死）"
+    text = text or _build_text(date_str, reason)
+    html = _build_html(date_str, reason) if with_html else None
     html_path = None
-    try:
-        fd, html_path = tempfile.mkstemp(suffix=".html",
-                                         prefix=f"sentinel_alert_{date_str}_")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(html)
-    except Exception as exc:
-        _log(f"临时 HTML 生成失败({exc})，仅发文本")
-        html_path = None
+    if with_html:
+        try:
+            fd, html_path = tempfile.mkstemp(suffix=".html",
+                                             prefix=f"sentinel_alert_{date_str}_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(html)
+        except Exception as exc:
+            _log(f"临时 HTML 生成失败({exc})，仅发文本")
+            html_path = None
     cmd = [sys.executable, os.path.join(ROOT, "scripts", "send_generic_email.py"),
            "--to", ",".join(recipients),
            "--subject", subject,
@@ -335,6 +430,60 @@ def main() -> int:
         _ledger("sentinel_run_report_corrupt", "failed", reason)
         return 2
 
+    # 3.5) 快照完整性探针（P0#2，2026-10-27 落地）
+    # 位置刻意放在「报告存在」之后：报告缺失已单独告警（更根本），此处专抓
+    # 「run_report 正常但快照塌缩」这一哨兵历史盲区，且避免同夜双封告警。
+    # 探针自身任何异常都不改变原判定（原哨兵职责不可被新功能削弱）。
+    snap_bad = False
+    try:
+        # db_path 覆盖仅供离线验证（造塌缩库）；生产不设该环境变量 ⇒ 走生产库。
+        probe = _snapshot_probe(date_str, os.environ.get("SENTINEL_DB_PATH") or None)
+    except Exception as exc:
+        _log(f"快照探针异常（不影响主判定）: {exc}")
+        probe = None
+    if probe:
+        _log(f"快照完整性 {probe['detail']} verdict={probe['verdict']} "
+             f"(floor={SNAP_MIN_ROWS}, ratio={SNAP_MEDIAN_RATIO:.0%}, "
+             f"baseline_n={probe['baseline_dates']})")
+        # 🔴 非交易日豁免：周末/节假日**本就不写快照**（实测生产库 2026-10-25 周日 = 0 行），
+        #   此时 rows=0 是正常状态而非故障。不加此豁免，任何非交易日的手动/调试运行
+        #   （--no-calendar-skip）都会误报 CRITICAL，几次之后这条告警就会被无视——
+        #   告警疲劳是守卫失效最常见的方式（承接 2026-10 审阅结论）。
+        _nontrading_zero = (probe["verdict"] == "missing"
+                            and not is_trading_day_safe(bdate))
+        if _nontrading_zero:
+            _log(f"{date_str} 非交易日且当日无快照行 ⇒ 属正常（休市不写快照），不告警")
+        if probe["verdict"] in ("missing", "collapsed") and not _nontrading_zero:
+            snap_bad = True
+            _snap_reason = (f"当日快照 {probe['rows']} 行 / 近 {probe['baseline_dates']} 个快照日"
+                            f"中位数 {probe['median']} 行 ⇒ 组合合计市值与当日回报率必然失真。")
+            _snap_key = date_str + ":snap"
+            if _already_alerted(flag, _snap_key):
+                _log("本日快照告警 24h 内已发过，跳过重复发送；仅补账本")
+            else:
+                sent, detail = ((False, "dry-run") if args.no_email
+                                else _send_alert(
+                                    date_str, _snap_reason, args.dry_run,
+                                    subject=(f"[CRITICAL] 组合快照不完整 {date_str}"
+                                             f"（SNAP_ROWS={probe['rows']}/{probe['median']}）"),
+                                    text=_build_snap_text(probe), with_html=False))
+                _log(f"快照告警发送: sent={sent} {detail}")
+                flag[_snap_key] = {"ts": now.strftime("%Y-%m-%d %H:%M:%S"),
+                                   "status": "missing", "detail": detail}
+                _save_flag(flag)
+            _ledger("sentinel_snapshot_degraded", "degraded",
+                    f"SNAP_ROWS={probe['rows']}/{probe['median']} "
+                    f"(baseline_n={probe['baseline_dates']}) | {_snap_reason}")
+        elif probe["verdict"] == "no_baseline":
+            _log("快照完整性：无中位数基线可比，放行（首个可对照日）")
+        else:
+            _log("快照完整性正常")
+            # 该日曾因快照塌缩告警过、本次已恢复 ⇒ 清标记，便于未来真异常能再报
+            _snap_key = date_str + ":snap"
+            if _snap_key in flag:
+                del flag[_snap_key]
+                _save_flag(flag)
+
     # 存在且可解析
     if run_status in _BLOCKING_STATUS:
         _log(f"报告存在但 run_status={run_status}（日报闸门已拒发 + daily_report_not_sent "
@@ -343,15 +492,21 @@ def main() -> int:
         if date_str in flag:  # 若该日曾误报，重置以便未来真缺失能再报
             del flag[date_str]
             _save_flag(flag)
-        return 0
+        return 2 if snap_bad else 0
 
     # ok / 未知（缺字段）
-    _log(f"报告存在且状态正常（run_status={run_status or '未知/缺字段'}），夜线已正常收尾")
-    _ledger("sentinel_ok", "ok", f"run_status={run_status}")
+    if snap_bad:
+        # 快照塌缩时不得再记 sentinel_ok：账本同时出现 degraded 与 ok 会让「本夜是否正常」
+        # 这个问题在事后审计时无解（两条记录互相矛盾，谁后写谁覆盖判断）。
+        _log(f"报告存在且状态正常（run_status={run_status or '未知/缺字段'}），"
+             f"但快照行数塌缩 ⇒ 本夜判定为异常（见 sentinel_snapshot_degraded）")
+    else:
+        _log(f"报告存在且状态正常（run_status={run_status or '未知/缺字段'}），夜线已正常收尾")
+        _ledger("sentinel_ok", "ok", f"run_status={run_status}")
     if date_str in flag:
         del flag[date_str]
         _save_flag(flag)
-    return 0
+    return 2 if snap_bad else 0
 
 
 if __name__ == "__main__":

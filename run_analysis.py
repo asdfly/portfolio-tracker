@@ -76,6 +76,95 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 
+def _install_interrupt_traps(logger):
+    """外部终止的可观测化（P0#5，2026-10-27 落地）。
+
+    背景（2026-10-21/22/23 连续三日中断的取证结论）：
+      三天 run_report 全缺 ⇒ `finally` 从未执行，日志只剩半截、**无任何终止原因**。
+      事后靠两条旁证才定位：① conhost 在收到控制台事件时写进重定向文件的字面 "^C"
+      （实测原文件 0x03 字节数为 0，故非编码假象）；② 系统日志 Kernel-Power 507/566
+      （AC↔DC 切换）恰好落在中断前 32~35 秒。真因＝笔记本切电池后计划任务
+      `StopIfGoingOnBatteries=True` 触发「停止任务」：先发 CTRL_BREAK（conhost 记 ^C），
+      再 TerminateProcess（finally 来不及跑）。任务设置已于 2026-10-27 改为不因电池停止。
+
+    本函数不试图"优雅收尾"——外部硬杀时本就没时间。它只做一件事：
+    **在死前留下可归因的痕迹**，把"静默消失"变成"有明确信号名与最后执行位置"。
+    写入按「最快最重要」排序：evidence.json(fsync) → 日志 → 运行账本(best-effort)。
+    """
+    import json as _json
+    import signal as _signal
+
+    _names = {}
+    for _n in ('SIGINT', 'SIGBREAK', 'SIGTERM'):
+        _s = getattr(_signal, _n, None)
+        if _s is not None:
+            _names[_s] = _n
+
+    def _on_term(signum, frame):
+        _sig_name = _names.get(signum, str(signum))
+        _ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        _log_file = PROJECT_DIR / "logs" / f"portfolio_{date.today():%Y%m%d}.log"
+        _tail = []
+        try:
+            with open(_log_file, 'r', encoding='utf-8', errors='replace') as _f:
+                _tail = [ln.rstrip() for ln in _f.readlines()[-6:]]
+        except Exception:
+            pass
+
+        # 1) evidence 文件优先：不依赖 logging（handler 可能与主线程抢 logging 锁而死锁）
+        _evp = None
+        try:
+            # 🔴 必须用 datetime.now() 而非 date.today()：date 对象无时分秒，
+            #    格式化会静默产出 _000000，同一进程多次中断会互相覆盖（实测过）。
+            _evp = PROJECT_DIR / "logs" / (
+                f"interrupt_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}.json")
+            with open(_evp, 'w', encoding='utf-8') as _f:
+                _json.dump({
+                    'signal': _sig_name, 'at': _ts, 'pid': os.getpid(),
+                    'argv': sys.argv,
+                    'guess': ('SIGBREAK 多见于 Task Scheduler「停止任务」'
+                              '（StopIfGoingOnBatteries / 手动 End / 超时）；'
+                              'SIGINT 多见于控制台 Ctrl+C；SIGTERM 多见于 taskkill。'),
+                    'last_log_lines': _tail,
+                }, _f, ensure_ascii=False, indent=2)
+                _f.flush()
+                os.fsync(_f.fileno())
+        except Exception:
+            _evp = None
+
+        # 2) 日志（best-effort）
+        try:
+            logger.error(f"[INTERRUPT] 收到 {_sig_name}（pid={os.getpid()}），即将退出；"
+                         f"evidence={_evp}")
+            for _ln in _tail[-3:]:
+                logger.error(f"[INTERRUPT] 最后日志: {_ln[:180]}")
+        except Exception:
+            pass
+
+        # 3) 运行账本（best-effort；不得因账本失败而改变退出）
+        try:
+            Monitor(str(DATABASE_PATH), MONITOR_CONFIG).log_execution(
+                'portfolio_daily_analysis', 'interrupted',
+                f"{_sig_name} at {_ts} | evidence={_evp}")
+        except Exception:
+            pass
+
+        # 4) 以 128+signum 退出（shell 惯例：130=SIGINT / 131=SIGBREAK）
+        raise SystemExit(128 + (signum or 0))
+
+    _installed = []
+    for _s, _n in _names.items():
+        try:
+            _signal.signal(_s, _on_term)
+            _installed.append(_n)
+        except Exception as _e:
+            logger.warning(f"注册 {_n} 处理器失败(不影响主流程): {_e}")
+    if _installed:
+        logger.info(f"[INTERRUPT] 已注册外部终止处理器: {','.join(_installed)}"
+                    f"（死前写 evidence 到 logs/interrupt_*.json）")
+    return _installed
+
+
 def run_stage0_otc_nav(date_str=None):
     """阶段0: 场外基金净值采集 —— 必须在阶段一之前跑。
 
@@ -976,6 +1065,10 @@ def main(argv=None):
 
     setup_logging()
     logger = logging.getLogger(__name__)
+
+    # P0#5: 外部终止可观测化。必须在任何重活之前注册——10-22 那次是启动后 35 秒被杀，
+    # 若注册得晚，恰好落在"无保护窗口"里就白装了。
+    _install_interrupt_traps(logger)
 
     backfill_date = args.date
     _reporter = None   # P5 运行报告器; 仅在真正开始采集后创建
