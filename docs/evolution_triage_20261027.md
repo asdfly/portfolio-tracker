@@ -89,7 +89,7 @@
 
 ### P1 — 本月（口径正确性）
 
-**执行状态（2026-10-27 更新）**：#6 #7 #8 #9 #10 已落地并实测（报告侧口径层，销账台账 12 条）；#11~#14 属采集侧，未动。
+**执行状态（2026-10-27 更新）**：#6 #7 #8 #9 #10 已落地并实测（报告侧口径层，销账台账 12 条）；#11~#14 属采集侧，**同日第二轮已全部落地**（见下文「采集侧执行结果」）。
 
 | # | 工单 | 落点 | 状态 |
 |---|---|---|---|
@@ -98,10 +98,10 @@
 | 8 | 主线口径跨脚本统一 + 全系逆风日措辞 | `fetch_market_data.py` / `gen_combo_report.py` | ✅ 报告侧三态标注（资金/情绪/缺失）+ 声明「不构成同一排序」；fetch 侧全负日改述「最抗跌方向，不可读作正向主线」；军工系集合 4→5 补齐航天 |
 | 9 | 军工系聚合显式标注单点强于系均值 | `CROSS_WIND` 输出层 | ✅ `_mil_spike`，阈值 ≥3pct；口径取 `_mil_av`（表格实呈值），不用细分简单均值 |
 | 10 | proxy 覆盖率 <50% 强制强化降级 | 3.2 归因块 | ✅ 三级 `_PROXY_GRADE`（70%/50%）+ 同步进 TLDR；实测 10-26 58.50% → weak |
-| 11 | 休市日采集器不写当日快照/summary 行 | `watchers` / 采集流水线 | ⬜ 未动（采集侧） |
-| 12 | `daily_return` 结算时点与日报 18:00 对齐 | 采集器 + 报告端轮询 | ⬜ 未动（采集侧） |
-| 13 | `index_quotes` 整批写入或加「当日写入完成」标记 | 采集侧 | ⬜ 未动（仅报告侧兜底已有） |
-| 14 | `portfolio_summary` 12 列 NULL 回填 | 采集器 | ⬜ 未动（采集侧） |
+| 11 | 休市日采集器不写当日快照/summary 行 | `src/analysis/portfolio.py` | ✅ `_compute_persist_enabled()` 接 `trading_calendar`；4 处写库点全部 `persist` 门控 + AST 源码守卫；10 个日期用例全过 |
+| 12 | `daily_return` 结算时点与日报 18:00 对齐 | 采集器 + 报告端 | ✅ **改判据不改数值**：新增 `daily_return_settled` 列（0/1），避免写 NULL 经 `cumprod` 毁 NAV；报告 6 处渲染按 0 降级 |
+| 13 | `index_quotes` 整批写入 + 「当日写入完成」标记 | `database.save_index_quotes` | ✅ `executemany` 单事务 + 同事务写 `ingest_markers`；`run_sentinel` 新增 `_index_quotes_probe` 读标记 |
+| 14 | `portfolio_summary` 12 列 NULL 回填 | `analyze()` 组装层 | ✅ **只做了能做的 3 列**：`max_drawdown_60d/_1y/_all` 本就算出、只是组装时丢键；另 12 列（sharpe/mdd/vol 的 3239 行）判为「不回填」，理由见下 |
 
 > 附：本轮顺带修复报告中 `zt=None、dt=None` 裸字漏出（`_ZT_DISP/_DT_DISP/_BR_LOC_TXT`）。该缺陷是 P0#3 终检在跨日测试库上**拦下**的——即在 P0 阶段被误记为「已由终检兜底保证」，实为「被拦住 ≠ 已修好」，已在台账 P0 条目加订正。
 
@@ -235,3 +235,58 @@ ETF估值台账 14 条防坑判据（凭证过期识别、T+1 发布、`index_co
 2. P0#5 的验收另一半「连续 5 交易日无 SIGINT」需时间验证，最早可判定期为 **2026-11-03**（自 10-28 起算 5 个交易日）。
 3. `GEN_COMBO_DB` / `GEN_COMBO_NO_ALERT` / `SENTINEL_DB_PATH` 三个环境变量为离线验证开关，默认不设；若被误设会让熔断/探针指向测试库，已在代码注释中标注「仅测试用」。
 
+
+---
+
+## 十一、P1 采集侧执行结果（2026-10-27 第二轮）
+
+报告侧口径层（#6~#10）之后，本轮攻采集侧 #11~#14 —— 剩余待办里唯一的**根因层**。
+
+### 11.1 四项落地
+
+| # | 工单 | 根因（实测坐实） | 实现 |
+|---|---|---|---|
+| 11 | 休市日不写快照/summary 行 | `run_analysis.is_trading_day()` 只判 weekday；国庆 10-01~10-07 实测每日写入 `total_value=1564503.62` 冻结行 + `daily_return=0.0`，`MAX(date)` 被顶到休市日 | `portfolio._compute_persist_enabled()` 接 `src.utils.trading_calendar`（2024-2026 官方休市表）；分析照跑、**4 处写库点全部 `persist` 门控**；`PT_FORCE_PERSIST=1` 逃生阀 |
+| 12 | `daily_return` 结算时点 | 10-16 实测 18:02 时 `daily_return=0.0` 而快照已写、`vs_hs300` 已算；0.0 与「真实平价」在库内同形 | **改判据不改数值**：新增 `daily_return_settled` 列（1=当日新价结算 / 0=不构成收益证据）；写 NULL 的方案被否 —— 会经 `nav_engine` 的 `cumprod` 把 NaN 传播成整条 NAV 失真 |
+| 13 | `index_quotes` 整批写入 + 完成标记 | 10-22/10-23 实测当日仅 1 行（`sh932000`，补采脚本单独写），主分析被 SIGINT 硬杀；失败与成功在库里同形 | `save_index_quotes` 改 `executemany` 单事务 + **同事务**写 `ingest_markers`（rows_written / rows_expected / skipped / status）；`run_sentinel._index_quotes_probe()` 读标记 |
+| 14 | `portfolio_summary` NULL 回填 | `max_drawdown_60d/_1y/_all` 实测 3506/3506 行 100% NULL —— 但 `risk.py` 一直在算、`_calculate_summary` 一直在收，是 `analyze()` 组装写库字典时**只挑 3 个键**导致的后半段丢键 | 补 3 键。**其余列判为不回填**，见 11.2 |
+
+### 11.2 明确不做：sharpe/mdd/vol 的 3239 行历史 NULL
+
+不做，且理由必须写清（否则下一轮又会被当「漏项」捡回来）：
+
+1. **不是同一个缺陷**。那 3239 行 NULL 是「当日之前不足 20 个历史点，`_calculate_portfolio_metrics` 直接返回 `{'error': '历史数据不足'}`」，属于**当时确实算不出**，不是丢键。
+2. **回填等于用今天的算法重写历史**。这些列与 `run_report_<date>.json` 同性质：一旦被就地覆盖就失去物证价值，事后无法分辨「当时算的」与「后来补的」。
+3. **报告层已有兜底**（`f2()` 缺失即印「—」），补历史不会改善任何一版已发报告，只会让「历史 vs 当期」的可比性变得不可信。
+
+### 11.3 验证（全部当轮实测）
+
+| 项 | 手段 | 结果 |
+|---|---|---|
+| #11 判定 | 10 个日期用例（国庆首/中/末、节后首日、春节、周末） | 10/10 符合预期；`PT_FORCE_PERSIST=1` 生效 |
+| #11 门控完整性 | AST 源码守卫：`run_daily_analysis` 内所有 `self.db.save_*` 必须落在 `persist` 块或早退之后 | 首次运行即**抓到** `save_portfolio_summary@643` 靠早退保护未被识别 → 守卫补上「早退模式」后通过 |
+| #12 四场景 | `tests/test_daily_return_settled.py` | 4/4：平价日 settled=1（反证：若按「值=0」判未结算则红）／全陈旧+总值不动 settled=0+告警／全陈旧但总值动了 settled=1／无前日基准 settled=0 |
+| #13 三场景 | 临时库 | partial（跳 1 个 `_cached`）／complete／empty 全部标记正确 |
+| #14 计算侧 | 只读库全序列调用 `calculate_drawdown_metrics` | 60d=18.49、1y=19.74、all=51.31，三键均非 None |
+| 报告渲染 | `GEN_COMBO_DB` 指向注入 `settled=0` 的副本 | `FINAL_GATE ok`；「未结算」10 处落位正确；TLDR 含结算状态行；偏离行改「不可计算」 |
+| 生产库迁移 | 先 `sqlite3.backup()` 备份，再 `DatabaseManager()` 迁移 | `integrity_check=ok`；17 列（原 16 + `daily_return_settled`）；`ingest_markers` 已建；3506 行不变；10-27/10-26 数值逐字未变 |
+
+### 11.4 顺带修掉的三个「凭空立论」
+
+加未结算分支时暴露的既有文案缺陷（都属同一类：拿不成立的比较结果讲故事）：
+
+1. `_perf_reason` 原把「VS 不适用」一律写成「休市日无交易，组合日回报为采集器冻结值 **0.00%**」——非休市日却写休市，且 0.00% 写死（实测该日 -2.13%）。改为按实际原因分派 + 取 `DRET_TXT` 真值。
+2. `_perf_detail` 在休市/未结算时仍走「故相对宽基落后」分支 —— 拿不可比的差值下结论。改为「该日不做相对宽基归因」。
+3. 「操作取向 ① 持有」原写「**当日已验证其价值**」，未结算日属凭空立论。改为「当日收益不可归因，以下取向仅基于结构与板块风向」。
+
+### 11.5 安全措施与遗留
+
+- 代码备份 `data/backups/p1b_pre_20261027/`（5 文件 + sha256）；生产库备份 `data/backups/portfolio_PRE_P1B_20261027.db`（sha256 `849646bd…`）
+- 回滚：覆盖上述 5 文件即可；库侧只新增列/表，无需回滚数据
+
+**遗留（不假冒完成）**：
+
+1. **fetch 侧未动**：`fund_flows` / `market_breadth` / `sector_daily_change` 仍由 `fetch_market_data.py` 在休市日写入。本轮 #11 只覆盖 `portfolio_snapshots / portfolio_summary / index_quotes / etf_technical` 四张主表 —— 这也是「报告 DATA_DATE 跳到休市日」的直接原因（报告取 `index_quotes` 的 `MAX(date)`），但**盘面类表的冻结行仍在**，下一轮应同样接日历。
+2. **#12 的「18:00 对齐」只做了一半**：现在能**判定**未结算，但没把结算时点提前。要真对齐需把 `run_analysis` 的调度从 15:30 挪到收盘后（或增量补算），属调度层改动，未动。
+3. **#13 的标记只覆盖 `index_quotes`**：`portfolio_snapshots` 无同类标记，目前靠 `run_sentinel._snapshot_probe` 数行数间接发现（P0#2）。
+4. **历史日期无 `daily_return_settled`**：NULL 一律按「未知」处理，不标未结算；若要对历史做判定，需另跑一次回溯计算（未做，理由同 11.2）。

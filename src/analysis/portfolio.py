@@ -395,6 +395,53 @@ class PortfolioAnalyzer:
         }
         return merged, info
 
+    def _compute_persist_enabled(self) -> bool:
+        """本次运行是否应把结果写入日频表（P1#11，2026-10-27）。
+
+        ## 为什么休市日「可以跑，但不能写」
+
+        休市日（周末 / 法定节假日）运行时，行情源返回的是**上一交易日的冻结价**。
+        这些价格本身没毛病，问题在落库的 `date`：一旦写成 `self.today`（休市日），
+        `MAX(date)` 就跳到了休市日 —— 而 `MAX(date)` 在整个下游被当作「最近交易日」
+        的同义词使用（报告 DATA_DATE、NAV 结算、补采队列基准、风险指标窗口）。
+
+        实测代价（2026-10-01~10-07 国庆）：连续 7 天写入 `total_value=1564503.62`
+        的冻结行、`daily_return=0.0`，报告 `DATA_DATE` 逐日跳到休市日，并在正文里
+        拿冻结的 0.0 与真实沪深300涨幅相减去讲「跑输」。台账为此建了 5 条独立待办
+        （#67/#68/#75/#29/#60），全部指向同一个根因：**采集器不认节假日**。
+
+        ## 为什么不是「休市日直接不跑」
+
+        休市日仍需产出报告（读者要看「最近交易日收盘情况」的复盘），因此**分析照跑**，
+        只把写库这一步关掉。报告侧早已按 `RUN_DATE ∈ CN_HOLIDAYS` 做了文案降级
+        （`IS_HOLIDAY_RUN`），数据源取到的是最近交易日真实收盘 —— 不写库反而更准。
+
+        ## 退化与逃生
+        - 年份无官方休市表时 `trading_calendar` 退化为「仅周末」，此时判为交易日
+          ⇒ 行为与本改动前完全一致（不为历史年份引入新的静默差异）。
+        - `PT_FORCE_PERSIST=1` 强制写库（排查/回填需要时用），并打 WARNING 留痕。
+        """
+        import os as _os
+        if _os.environ.get('PT_FORCE_PERSIST') == '1':
+            logger.warning("[P1#11] PT_FORCE_PERSIST=1 ⇒ 忽略交易日判定，强制写库"
+                           "（休市日会写入冻结行，仅限排查/回填使用）")
+            return True
+        try:
+            from src.utils.trading_calendar import is_trading_day as _cal_is_td
+        except ImportError:
+            # 不静默放行：日历不可用时退回「周末规则」——与本改动前同一口径，
+            # 即节假日仍会写行。显式 WARNING 而非静默。
+            logger.warning("[P1#11] 交易日历不可用 ⇒ 退回仅周末规则，节假日仍会写库")
+            return datetime.strptime(str(self.today)[:10], "%Y-%m-%d").weekday() < 5
+        d = datetime.strptime(str(self.today)[:10], "%Y-%m-%d").date()
+        if _cal_is_td(d):
+            return True
+        logger.warning(
+            "[P1#11] %s 为休市日（周末或法定节假日）⇒ 分析照跑、**不写日频表**："
+            "portfolio_snapshots / portfolio_summary / index_quotes / etf_technical "
+            "一律跳过，避免 MAX(date) 被冻结行顶到休市日", self.today)
+        return False
+
     def run_daily_analysis(self) -> Dict[str, Any]:
         """执行每日分析
         
@@ -416,6 +463,11 @@ class PortfolioAnalyzer:
             'risk': {},
             'summary': {}
         }
+
+        # P1#11：休市日分析照跑、写库关闭。所有 save_* 调用统一由该布尔门控，
+        # 避免「漏改一处就连带污染一张表」。
+        persist = self._compute_persist_enabled()
+        results['persist'] = persist
 
         try:
             # 检测持仓文件是否有更新
@@ -446,8 +498,11 @@ class PortfolioAnalyzer:
                 self._update_realtime_quotes(positions)
 
                 # 保存持仓快照（新持仓数据写入数据库）
-                logger.info("步骤2.5: 保存新持仓快照到数据库...")
-                self.db.save_portfolio_snapshot(self.today, positions)
+                if persist:
+                    logger.info("步骤2.5: 保存新持仓快照到数据库...")
+                    self.db.save_portfolio_snapshot(self.today, positions)
+                else:
+                    logger.info("步骤2.5: 休市日 ⇒ 跳过持仓快照写入（P1#11）")
 
             else:
                 # ========== 持仓无更新：从数据库加载最近持仓 ==========
@@ -482,8 +537,11 @@ class PortfolioAnalyzer:
                 self._update_realtime_quotes(positions)
 
                 # 用更新后的价格重新保存今日持仓快照（保持持仓结构不变，仅更新价格）
-                logger.info("步骤2.5: 更新持仓价格数据到数据库...")
-                self.db.save_portfolio_snapshot(self.today, positions)
+                if persist:
+                    logger.info("步骤2.5: 更新持仓价格数据到数据库...")
+                    self.db.save_portfolio_snapshot(self.today, positions)
+                else:
+                    logger.info("步骤2.5: 休市日 ⇒ 跳过持仓快照写入（P1#11）")
 
             # ========== 以下步骤每天都会执行 ==========
 
@@ -501,7 +559,11 @@ class PortfolioAnalyzer:
                 code: q for code, q in index_quotes.items()
                 if not q.get("_cached")
             }
-            self.db.save_index_quotes(self.today, fresh_index_quotes)
+            if persist:
+                self.db.save_index_quotes(self.today, fresh_index_quotes)
+            else:
+                logger.info("步骤3: 休市日 ⇒ 跳过指数行情写入（P1#11），"
+                            "报告取库内最近交易日收盘")
 
             # 计算技术指标
             logger.info("步骤4: 计算技术指标...")
@@ -509,8 +571,11 @@ class PortfolioAnalyzer:
             results['technical'] = tech_results
 
             # 保存技术指标
-            for code, indicators in tech_results.items():
-                self.db.save_technical_indicators(self.today, code, indicators)
+            if persist:
+                for code, indicators in tech_results.items():
+                    self.db.save_technical_indicators(self.today, code, indicators)
+            else:
+                logger.info("步骤4: 休市日 ⇒ 跳过技术指标写入（P1#11）")
 
             # 风险分析
             logger.info("步骤5: 风险分析...")
@@ -533,6 +598,17 @@ class PortfolioAnalyzer:
             #   total_value 只剩场内 ETF 的 933,195.10（真实 1,527,928.85，少 38.1%），
             #   残缺值被写进库并推给用户；2026-09-17 08:59 的无人值守回填运行又把
             #   刚修好的 09-16 summary 打回同一个残缺值 —— 一次拒绝比十次事后补救便宜。
+            #
+            # P1#11：休市日**不写** snapshot/summary，闸门的前提（「当日快照存在」）
+            # 本就不成立；此时跑闸门必然判 not ok 并写一条 error 级告警 —— 那是纯噪音，
+            # 且会把「休市」误报成「快照塌缩」。故在闸门之前先短路。
+            if not persist:
+                # summary 仍放进 results 供报告侧使用（报告要展示「最近交易日」的
+                # 分析结果，只是不落库）。
+                logger.info("步骤6.5/7: 休市日 ⇒ 跳过快照闸门与 portfolio_summary 写入（P1#11）")
+                logger.info("分析完成(休市日, 仅分析不落库)!")
+                return results
+
             gate = check_snapshot_baseline(self.db.db_path, self.today, positions,
                                            computed_total_value=summary.get('total_value'))
             results['snapshot_gate'] = gate
@@ -547,11 +623,22 @@ class PortfolioAnalyzer:
             # 保存组合汇总
             logger.info("步骤7: 保存汇总数据到数据库...")
             risk_summary = summary.get('risk_summary', {})
+            # P1#14a（2026-10-27）：回撤分窗口三列此前**从未落库**（实测 3506/3506 行
+            # 100% NULL）。根因不是算不出来——risk.py 的 drawdown_metrics 一直在返回
+            # max_drawdown_60d/_1y/_all，_calculate_summary 也一直把它们收进
+            # risk_summary；是**这里组装写库字典时只挑了 3 个键**，另外 3 个被静默丢弃。
+            # 即「算出来了、也传进来了、最后一步没写」——纯丢键，不是数据缺口。
             summary_with_risk = {
                 **summary,
                 'sharpe_ratio': risk_summary.get('sharpe_ratio'),
                 'max_drawdown': risk_summary.get('max_drawdown'),
-                'volatility': risk_summary.get('annual_volatility')
+                'max_drawdown_60d': risk_summary.get('max_drawdown_60d'),
+                'max_drawdown_1y': risk_summary.get('max_drawdown_1y'),
+                'max_drawdown_all': risk_summary.get('max_drawdown_all'),
+                'volatility': risk_summary.get('annual_volatility'),
+                # P1#12：结算标记随值一起落库（`**summary` 已带上，此处显式化以防
+                # 有人把 `**summary` 拆掉时静默丢键——这两列的缺失是静默失败而非报错）
+                'daily_return_settled': summary.get('daily_return_settled'),
             }
             self.db.save_portfolio_summary(self.today, summary_with_risk)
 
@@ -1035,9 +1122,59 @@ class PortfolioAnalyzer:
         else:
             coverage.setdefault("caliber", "fresh_price_basket")
 
+        # ===== P1#12（2026-10-27）：日收益「是否已结算」显式标记 =====
+        # 症状（台账 2026-10-16）：真实交易日 18:02 报告时点 daily_return 仍 =0.0，
+        # 而当日快照已写、vs_hs300 已算 —— 这个 0.0 与「今天真的不涨不跌」在库内
+        # **完全同形**，下游没有任何判据能区分「已结算的平价」与「价格没更新」。
+        #
+        # 为什么写标记列而不是把 daily_return 写成 NULL：
+        #   `daily_return` 是 nav_engine 的主口径输入（`cumprod(1+r)`）。写 NULL 后
+        #   pandas 读成 NaN 会被 cumprod 传播成整条 NAV 失真，代价远大于收益。
+        #   单独一列 `daily_return_settled` 既做到「显式标记」，又不动既有数值语义。
+        #
+        # 判据（全部基于当轮实测值，不含写死常量）：
+        #   ① `daily_return_computed == False` —— 没有任何标的的**当日新价**进入分子；
+        #   ② 且未从「全持仓回退口径」拿到非 0 变化 —— 回退口径能给出非 0 值说明
+        #      total_value 确实动了（如场外 NAV 补更新），值有信息量，只是口径不同
+        #      （caliber='total_value_fallback' 已单独标注）；
+        #   ③ 于是剩下的 0.0 只可能来自「旧价对旧价」——判为未结算。
+        # 注意：**有**新鲜价时哪怕算出 0.0 也必须保留为「已结算」。真实平价日是合法值，
+        # 把它一并判成未结算会让平价日批量消失，那比现在的问题更糟。
+        _inc = coverage.get("included_n")
+        daily_return_settled = True
+        daily_return_unsettled_reason = None
+        if not daily_return_computed:
+            if coverage.get("caliber") == "total_value_fallback" and daily_return:
+                pass  # 回退口径有非 0 变化：值可用，口径差异由 caliber 标记
+            else:
+                daily_return_settled = False
+                daily_return_unsettled_reason = (
+                    f"无共同篮子当日新价（included_n={_inc}, "
+                    f"prev_value={prev_value}, guard_fired={guard_fired}, "
+                    f"caliber={coverage.get('caliber')}）"
+                )
+                logger.warning(
+                    "[P1#12] daily_return 未结算 ⇒ 标记 daily_return_settled=0：%s"
+                    "（该行 daily_return=%.2f 不得读作「真实平价」）",
+                    daily_return_unsettled_reason, daily_return
+                )
+                record_error_alert(
+                    self.db.db_path,
+                    "daily_return_unsettled",
+                    "daily_return 未结算（无当日新价）："
+                    f"date={self.today}, {daily_return_unsettled_reason}",
+                )
+        coverage["settled"] = daily_return_settled
+        if daily_return_unsettled_reason:
+            coverage["unsettled_reason"] = daily_return_unsettled_reason
+
         # 对比沪深300
         hs300_quote = index_quotes.get('sh000300', {})
-        hs300_change = hs300_quote.get('change_pct', 0)
+        # 防 None：`dict.get('change_pct', 0)` 的默认值只在**键缺失**时生效，
+        # 键存在但值为 None（缓存兜底行情）时会让下面这行抛 TypeError。
+        hs300_change = hs300_quote.get('change_pct')
+        if hs300_change is None:
+            hs300_change = 0
         vs_hs300 = daily_return - hs300_change
 
         # 盈亏统计
@@ -1100,6 +1237,10 @@ class PortfolioAnalyzer:
                                  else (round(total_pnl / total_cost * 100, 2) if total_cost and total_cost > 0 else 0),
             'daily_pnl': round(daily_pnl, 2),
             'daily_return': round(daily_return, 2),
+            # P1#12（2026-10-27）：0/1 显式标记「该行 daily_return 是否由当日新价结算」。
+            # 0 ⇒ 值仍是 0.0，但**不得**读作真实平价（价格未更新 / 无前日基准）。
+            'daily_return_settled': 1 if daily_return_settled else 0,
+            'daily_return_unsettled_reason': daily_return_unsettled_reason,
             # 口径 B（2026-09-17）：daily_return 的**覆盖度**必须随值一起走，
             # 否则「22 只口径的收益率」会被读者拿去乘「34 只的总市值」。
             # 报告侧读不到本键时须显式印「覆盖度未记录」，不许静默省略。

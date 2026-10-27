@@ -67,8 +67,9 @@ class DatabaseManager:
                 INSERT OR REPLACE INTO portfolio_summary 
                 (date, total_value, total_cost, total_pnl, daily_pnl, daily_return,
                  vs_hs300, profit_count, loss_count, sharpe_ratio, max_drawdown,
-                 max_drawdown_60d, max_drawdown_1y, max_drawdown_all, volatility)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 max_drawdown_60d, max_drawdown_1y, max_drawdown_all, volatility,
+                 daily_return_settled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 date_str,
                 summary.get('total_value'),
@@ -84,29 +85,47 @@ class DatabaseManager:
                 summary.get('max_drawdown_60d'),
                 summary.get('max_drawdown_1y'),
                 summary.get('max_drawdown_all'),
-                summary.get('volatility')
+                summary.get('volatility'),
+                # P1#12（2026-10-27）：0/1 标记 daily_return 是否由当日新价结算。
+                # 缺失（None）与 1 等价处理：历史行没有该列值，不能被当成「未结算」，
+                # 否则所有历史行会被下游批量标成不可信。只有显式写 0 才是「未结算」。
+                summary.get('daily_return_settled'),
             ))
             conn.commit()
 
     def save_index_quotes(self, date_str: str, quotes: Dict[str, Dict[str, Any]]):
-        """保存指数行情"""
+        """保存指数行情（整批写入 + 同事务写「写入完成标记」，P1#13）
+
+        P1#13（2026-10-27）改造前的三个缺陷：
+        1. 逐条 `cursor.execute()` —— 语法上确实在一个事务里（commit 在循环外），
+           但**没有任何持久痕迹说明这次是「全部写完」还是「写到一半被杀」**。
+           2026-10-22 实测当日 index_quotes 只有 1 行（sh932000，补采脚本单独写的），
+           而当天主分析是被 SIGINT 硬杀的；两者在库里无从区分。
+        2. `_cached` 被跳过是**正确**的（宁缺不假），但跳过后当日行数天然少于
+           INDEX_CODES 全集，下游 `SELECT MAX(date)` 拿到该日时无法判断「12 行是正常
+           缩减」还是「只采到 12 个」。
+        3. 空 quotes 直接静默 commit，等于「什么都没写但也没报错」。
+
+        改造后：先在内存里筛出全部待写行 → `executemany` 一次落库 → **同一事务内**
+        写一行 `ingest_markers`（rows_written / rows_expected / skipped / status）。
+        有行必有标，下游可用 `status='complete'` 判定该日 index_quotes 可信。
+        """
         with get_db_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             from config.settings import INDEX_CODES
+            rows = []
+            skipped_codes = []
             for code, quote in quotes.items():
                 # 🔴 占位行 bug 根治（2026-10-08）：缓存兜底（_cached）行情是陈旧值，
                 # 以 date_str 落库会污染 MAX(date) 并伪装成「今日收盘」。写路径直接拒绝，
                 # 确保任何调用方都不会把占位行写入 index_quotes。
                 if quote.get("_cached"):
                     logger.debug(f"跳过缓存兜底指数 {code} 的占位写入（非今日实时行情）")
+                    skipped_codes.append(code)
                     continue
                 std_name = INDEX_CODES.get(code, quote.get('name', ''))
-                cursor.execute("""
-                    INSERT OR REPLACE INTO index_quotes
-                    (date, code, name, close, change_pct, volume, amount)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
+                rows.append((
                     date_str,
                     code,
                     std_name,
@@ -116,7 +135,34 @@ class DatabaseManager:
                     quote.get('amount')
                 ))
 
+            # 整批写入：单条 executemany，异常即整批回滚，不留半截日
+            if rows:
+                cursor.executemany("""
+                    INSERT OR REPLACE INTO index_quotes
+                    (date, code, name, close, change_pct, volume, amount)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, rows)
+
+            # 完成标记与业务表同事务提交 —— 二者要么一起可见，要么都不见
+            status = 'complete' if not skipped_codes else 'partial'
+            if not rows:
+                status = 'empty'
+            detail = ''
+            if skipped_codes:
+                detail = '缓存兜底跳过: ' + ','.join(sorted(skipped_codes))
+            cursor.execute("""
+                INSERT OR REPLACE INTO ingest_markers
+                (table_name, date, rows_written, rows_expected, skipped, status, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                'index_quotes', date_str, len(rows), len(quotes),
+                len(skipped_codes), status, detail
+            ))
+
             conn.commit()
+            logger.info("[index_quotes] %s 写入 %d/%d 行（跳过缓存 %d，status=%s）",
+                        date_str, len(rows), len(quotes), len(skipped_codes), status)
+
 
     def save_technical_indicators(self, date_str: str, code: str, 
                                    indicators: Dict[str, Any]):

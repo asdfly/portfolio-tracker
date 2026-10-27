@@ -17,7 +17,9 @@ class TestDbSchema:
         expected = {
             "portfolio_snapshots", "portfolio_summary", "index_quotes", "etf_technical",
             "fund_flows", "macro_daily", "market_sentiment", "daily_news",
-            "alerts", "execution_logs", "custom_indicators",
+            # ingest_markers：P1#13（2026-10-27）日频采集「写入完成标记」表，
+            # 与业务表同事务提交，供下游区分「整批写完」与「写了一半」
+            "alerts", "execution_logs", "ingest_markers", "custom_indicators",
             "indicator_backtest_results",
             "stock_lhb", "stock_margin", "stock_holder_change",
             "stock_institution_research", "stock_block_trade",
@@ -28,7 +30,7 @@ class TestDbSchema:
             "etf_predictions",
         }
         assert set(tables) == expected
-        assert len(tables) == 27
+        assert len(tables) == 28
 
     def test_ddl_syntax_valid(self):
         """Each DDL should be executable SQL."""
@@ -68,14 +70,14 @@ class TestDbSchema:
                 assert t in all_tables, f"{t} not in registered tables"
 
     def test_init_all_tables(self):
-        """init_all_tables should create all 27 tables."""
+        """init_all_tables should create all 28 tables."""
         from src.utils.db_schema import init_all_tables
         conn = sqlite3.connect(":memory:")
         init_all_tables(conn)
         cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         tables = {r[0] for r in cur.fetchall()}
         tables.discard("sqlite_sequence")
-        assert len(tables) == 27
+        assert len(tables) == 28
 
     def test_market_event_tables_unique_constraints(self):
         """New market event tables should have UNIQUE constraints."""

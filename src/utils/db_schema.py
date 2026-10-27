@@ -52,7 +52,8 @@ TABLE_DEFS = [
             max_drawdown_60d REAL,
             max_drawdown_1y REAL,
             max_drawdown_all REAL,
-            volatility REAL
+            volatility REAL,
+            daily_return_settled INTEGER
         )
     """, [
         "CREATE INDEX IF NOT EXISTS idx_summary_date ON portfolio_summary(date)",
@@ -190,6 +191,28 @@ TABLE_DEFS = [
             message TEXT,
             duration_seconds REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """, []),
+
+    # P1#13（2026-10-27）：日频采集的「写入完成标记」。
+    # 存在的理由：index_quotes / portfolio_summary 都是「按主键 INSERT OR REPLACE」，
+    # 部分写入与全量写入在库里长得一模一样。2026-10-22 实测当日 index_quotes 仅 1 行
+    # （只有补采脚本写的 sh932000），gen_combo_report 取 SELECT MAX(date) 拿到这个
+    # 残缺日，avg_idx=statistics.mean([]) 直接抛 StatisticsError。事后审计只能靠人肉
+    # 数行数，且数出来的「12 行」既可能是正常（10 个缓存兜底被跳过）也可能是残缺。
+    # 因此把「本次写入覆盖了多少、跳过了多少、属于 complete 还是 partial」落成显式行，
+    # 与业务表在**同一事务**内提交 —— 有行必有标，不会出现「写了一半还声称完整」。
+    ("ingest_markers", """
+        CREATE TABLE IF NOT EXISTS ingest_markers (
+            table_name TEXT NOT NULL,
+            date TEXT NOT NULL,
+            rows_written INTEGER,
+            rows_expected INTEGER,
+            skipped INTEGER,
+            status TEXT,
+            detail TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (table_name, date)
         )
     """, []),
 
@@ -625,11 +648,18 @@ def ensure_etf_features_v2_columns(conn):
 
 
 def ensure_portfolio_summary_drawdown_columns(conn):
-    """对已存在的 portfolio_summary 表幂等补齐 P1-3 回撤分窗口列（迁移用）。"""
+    """对已存在的 portfolio_summary 表幂等补齐 P1-3 回撤分窗口列（迁移用）。
+
+    同时补 P1#12（2026-10-27）的 `daily_return_settled`：`daily_return=0.0` 既可能是
+    真实平价日，也可能是「当日完全没有新价」的未结算占位值，二者在库内同形。
+    单独开一列标记，比把 `daily_return` 写成 NULL 破坏性小得多 —— 后者会经
+    nav_engine 的 `cumprod` 把 NaN 传播成整条 NAV 失真，代价远大于收益。
+    """
     _ensure_columns(conn, "portfolio_summary", [
         ("max_drawdown_60d", "REAL"),
         ("max_drawdown_1y", "REAL"),
         ("max_drawdown_all", "REAL"),
+        ("daily_return_settled", "INTEGER"),
     ])
 
 

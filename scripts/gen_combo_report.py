@@ -281,10 +281,22 @@ hold = cur.fetchall()
 TOT = sum(r[2] for r in hold)
 
 cur.execute('''SELECT total_value,total_cost,total_pnl,daily_pnl,daily_return,vs_hs300,
-               profit_count,loss_count,sharpe_ratio,max_drawdown,volatility
+               profit_count,loss_count,sharpe_ratio,max_drawdown,volatility,
+               daily_return_settled
                FROM portfolio_summary WHERE date=?''', (DATA_DATE,))
 S = cur.fetchone()
-tot_val, tot_cost, tot_pnl, d_pnl, d_ret, vs300, pc, lc, sharpe, mdd, vol = S
+tot_val, tot_cost, tot_pnl, d_pnl, d_ret, vs300, pc, lc, sharpe, mdd, vol, \
+    d_ret_settled = S
+
+# P1#12（2026-10-27）：`daily_return=0.0` 有两种来源，库内字段同形、语义相反：
+#   ① 真实平价日（有当日新价，算出来就是 0）—— legitimately zero
+#   ② 未结算（当天一个新鲜价都没拿到，0 是「旧价对旧价」的占位）—— 不可读作平价
+# `daily_return_settled` 为 1/0 显式区分。**NULL 一律按「未知」处理、不标未结算**：
+# 历史行没有这个值，若把 NULL 当未结算，会把全部历史日期批量染成不可信。
+D_RET_UNSETTLED = (d_ret_settled == 0)
+if D_RET_UNSETTLED:
+    print(f'[WARN] {DATA_DATE} daily_return_settled=0：'
+          f'daily_return={d_ret} 为未结算值，报告将显式标注而非当作真实平价')
 
 # ---------- 1b. etf_price_history 新鲜度（**真值**，禁止写死日期/天数）----------
 # 🔴 历史缺陷（2026-09-17 发现）：本文件曾把「最新仅至 2026-08-19（滞后 12 个交易日）」
@@ -328,6 +340,16 @@ EPH_INLINE_PAREN = (f'（etf_price_history {EPH_STATE_TXT}）' if EPH_STALE else
 # 🔴 统一当日回报文案（2 位小数）。裸 {d_ret} 会把 DB 原值（如 1.33455691515695）直接印进正文，
 #   与本篇卡片 {chg(d_ret)} 的 +1.33% 自相矛盾 —— 见 §17.5「两套精度」同类缺陷。
 DRET_TXT = '—' if d_ret is None else f'{d_ret:+.2f}'
+
+# P1#12（2026-10-27）：未结算的 `0.00%` 必须与「真实平价日」区分开。
+# 采集侧已把 `daily_return_settled=0` 落库（见 src/analysis/portfolio.py 同名判据），
+# 报告侧只用不改写：`D_RET_UNSETTLED` 为真时，所有把 d_ret 当「真实收益」讲的地方
+# 都要带标记，且「跑赢/跑输沪深300」一并失效——因为 0 本身不是当日收益证据。
+DRET_UNSETTLED_TAG = '<span class="warn-tag">未结算</span>' if D_RET_UNSETTLED else ''
+# 文案不写死「该 0」：settled=0 时正常路径下值必为 0.0，但「无前日基准」等边界
+# 理论上会带出非 0 值；文案若断言「这个 0」就会在那类行上自相矛盾。
+DRET_UNSETTLED_TXT = ('（未结算：当日无任何标的取得新价，此值不构成收益证据）'
+                      if D_RET_UNSETTLED else '')
 
 # ---------- 2. 指数（本地 index_quotes，取最新可得交易日，通常为 RUN_DATE 当日）----------
 cur.execute('SELECT MAX(date) FROM index_quotes'); IDX_DATE = cur.fetchone()[0]
@@ -375,7 +397,7 @@ idx = {_n: (_c, _idx_chg(_c, _p, _n), _a) for _n, (_c, _p, _a) in idx.items()}
 
 # 🔴 vs_hs300 兜底（同批数据缺口）：portfolio_summary.vs_hs300 为 NULL 时，
 #    改用「真值日回报 − 沪深300 当日涨跌幅」计算相对表现，避免 None 比较崩溃（数据驱动，非臆造）。
-if vs300 is None and '沪深300' in idx and idx['沪深300'][1] is not None:
+if vs300 is None and d_ret is not None and '沪深300' in idx and idx['沪深300'][1] is not None:
     vs300 = round(d_ret - idx['沪深300'][1], 4)
 if vs300 is None:
     vs300 = 0.0
@@ -384,11 +406,17 @@ if vs300 is None:
 # 其与沪深300真实涨跌幅相减得到的「跑赢/跑输」纯属口径假象（evolution #75）。
 # 节后该 delta 不具对比意义，统一标「不适用」，避免误导读者以为组合当日真实落后。
 IS_HOLIDAY_RUN = RUN_DATE in CN_HOLIDAYS
-VS_APPLICABLE = not IS_HOLIDAY_RUN
+# P1#12：未结算日（daily_return_settled=0）的 0.00% 不是收益证据，
+# 与沪深300相减得到的跑赢/跑输同样是伪值 ⇒ 一并判为「不适用」。
+VS_APPLICABLE = (not IS_HOLIDAY_RUN) and (not D_RET_UNSETTLED)
 if VS_APPLICABLE:
     _vs_word = '跑赢' if vs300 > 0 else '跑输'
     _vs_detail = f'{_vs_word}沪深300 {abs(vs300):+.2f}pct'
     _vs_val = f'{vs300:+.2f}%'
+elif D_RET_UNSETTLED:
+    _vs_word = '不适用'
+    _vs_detail = '当日回报未结算，对比不适用'
+    _vs_val = '—'
 else:
     _vs_word = '不适用'
     _vs_detail = '休市冻结，对比不适用'
@@ -721,6 +749,19 @@ else:
                         f'即 est 天然缺失过半仓位的当日贡献。本项<b>不得用于归因或业绩判断</b>，'
                         f'当日表现一律以真值 {chg(d_ret)} 为准。</div>')
 est = sum(pct(mv) / 100 * (PROXY.get(c) or 0) for c, n, mv, _, _, _ in hold)
+
+# P1#12：代理 vs 真值的「偏离」在真值未结算时不可解释——分子（est）是当日板块涨幅，
+# 分母（d_ret）是「旧价对旧价」的 0，相减出来的「偏离」只是把 est 反了号，不是误差。
+# 因此未结算时该行改为「—」并说明原因，不许给出一个看起来像误差的数字。
+if D_RET_UNSETTLED or d_ret is None:
+    _dev_txt = '—'
+    _dev_detail = ('当日回报未结算（daily_return_settled=0），偏离不可计算——'
+                   '此时相减得到的只是代理估值的反向数，不构成误差量级')
+else:
+    _dev_txt = f'{est - d_ret:+.2f} pct'
+    _dev_detail = (f'代理与真值偏差 {abs(est - d_ret):.2f}pct，'
+                   f"方向{'一致' if (est < 0) == (d_ret < 0) else '背离'}"
+                   f'（代理{est:+.2f}%、实际{d_ret:+.2f}%）')
 
 # 集中度
 med_w = pct(ind_sum.get('医药系', 0)); mil_w = pct(ind_sum.get('军工系', 0))
@@ -1302,6 +1343,10 @@ _mil_against_txt = f"军工系逆市走弱（地面兵装Ⅱ {chg(HP['地面兵�
 _oper_hold_txt = (f"军工系（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}）领涨且资金净流入，超配逻辑成立"
                   if _mil_av > 0 else
                   f"防御端（债券+红利）与超配方向提供缓冲，但军工系{_mil_wind} {_mil_av:+.2f}%、超配逻辑阶段性弱化，需关注")
+# 引导短语必须随「当日收益是否可用」切换：休市/未结算日写「当日已验证其价值」是
+# 拿不存在的当日收益去论证持仓，属于凭空立论（P1#12 顺带修）。
+_oper_hold_lead = ('当日收益不可归因，以下取向仅基于结构与板块风向'
+                   if not VS_APPLICABLE else '当日已验证其价值')
 _cross_map = {x[0]: x[5] for x in CROSS}
 _weak_sectors = '、'.join(x[0] for x in sorted(CROSS, key=lambda x: (x[5] is None, x[5] if x[5] is not None else 0.0))[:3] if x[5] is not None and x[5] < 0) or '无'
 _strong_sectors = '、'.join(x[0] for x in sorted(CROSS, key=lambda x: (x[5] is None, x[5] if x[5] is not None else 0.0), reverse=True)[:3] if x[5] is not None and x[5] > 0) or '无'
@@ -1309,7 +1354,12 @@ _weak_body = '、'.join(f"{n} {chg(_cross_map.get(n))}" for n in _weak_sectors.s
 _strong_body = '、'.join(f"{n} {_cross_map.get(n,0):+.2f}%" for n in _strong_sectors.split('、')) or '无'
 
 # 3.1 净风向结论段落（完全数据驱动：顺/逆风方向由 CROSS_WIND 实时派生，消除硬编码「普遍逆风/指数涨组合跌」下行日措辞，落实数据纪律）
-if VS_APPLICABLE and vs300 >= 0:
+if not VS_APPLICABLE:
+    # P1#12：休市 / 未结算日**没有**可归因的当日收益，不得沿用「故相对宽基落后」
+    # 这类结论句——那是拿一个不成立的比较结果去讲故事。
+    _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、{_vs_detail}。"
+                    f"该日不做相对宽基归因；组合结构状态（顺/逆风、集中度）照常在下文陈述。")
+elif vs300 >= 0:
     _perf_detail = (f"真实当日回报 <b>{DRET_TXT}%</b>、且<b>{_vs_detail}</b>。"
                     f"当日领涨方向为{_main_line_sectors}；组合顺风方向为{_strong_sectors}（{_strong_body}），"
                     f"{'军工系顺风' if _mil_av>0 else '防御端（债券+红利）'}提供支撑，逆风方向（{_weak_sectors}）拖累有限，整体相对宽基占优。")
@@ -1319,7 +1369,15 @@ else:
         f"组合顺风方向为{_strong_sectors}（{_strong_body}）、逆风方向为{_weak_sectors}（{_weak_body}），"
         f"叠加领涨主线权重偏低，故相对宽基落后。")
 if not VS_APPLICABLE:
-    _perf_reason = "休市日无交易，组合日回报为采集器冻结值 0.00%，相对沪深300 对比不适用"
+    # 原实现把「不适用」一律写成休市 —— 加了未结算之后这条就成了假陈述
+    # （非休市日却写「休市日无交易」）。按实际原因分派，且冻结值取库里真值不写死 0.00%。
+    if D_RET_UNSETTLED:
+        # 不重复 `_vs_detail` 已说过的「未结算」：两句在同一条 lead 里连用，
+        # 重复表述会让读者以为是两个不同的问题。
+        _perf_reason = ("不做「相对宽基」归因；组合收益结论待下一交易日结算后成立")
+    else:
+        _perf_reason = (f"休市日无交易，组合日回报为采集器冻结值 {DRET_TXT}%，"
+                        f"相对沪深300 对比不适用")
 
 # evolution #61/#64：绝对量能处缩量区而周线阶段标签为"启动/放量"类时，
 # 该标签指区间位置低位、非当日量能放大，追加括号澄清，避免读者误读为当日放量。
@@ -1399,7 +1457,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="tldr">
 <div class="lead">大盘{_TODAY_TERM}<b>{regime_txt}</b>：{_idx_desc}。{_main_line_txt}{_mil_txt}。组合当日回报 <b>{chg(d_ret)}</b>、<b>{_vs_detail}</b>：{_perf_reason}。</div>
 <ul>
-{f'<li><b>⚠ 锚定提示</b>：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% <b>方向相反</b>，代理法在本组合结构下方向亦不可信，<b>本报告一律以真值为准</b>。</li>' if (est < 0) != (d_ret < 0) else ''}
+{f'<li><b>⚠ 锚定提示</b>：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% <b>方向相反</b>，代理法在本组合结构下方向亦不可信，<b>本报告一律以真值为准</b>。</li>' if (d_ret is not None and (est < 0) != (d_ret < 0)) else ''}
 <li><b>核心矛盾</b>：主力资金今日<b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。</li>
 <li><b>组合最大集中度风险</b>：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（{_aero_verdict} 10% 审慎线）；军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 <b style="color:#e3a33c">{top3_w:.1f}%</b>。军工系 {_mil_wind}（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}，军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。</li>
 <li><b>亮点/风险</b>：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；红利+债券防御底仓（{def_w:.1f}%）{_def_txt}；{_mil_against_txt}；医药系{_med_wind}（化学制药 {chg(HP['化学制药'])}/生物制品 {chg(HP['生物制品'])}）{'拖累有限' if _med_av < 0 else '提供正向贡献'}。</li>
@@ -1501,12 +1559,12 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="grid">
 <div class="kpi"><div class="k">总市值</div><div class="v">¥{tot_val:,.0f}</div><div class="n">成本 ¥{tot_cost:,.0f}</div></div>
 <div class="kpi"><div class="k">累计盈亏</div><div class="v"><span class="up">+¥{tot_pnl:,.0f}</span></div><div class="n">{chg(tot_pnl/tot_cost*100)}（含失真数据，见2.4）</div></div>
-<div class="kpi"><div class="k">当日回报（真值）</div><div class="v">{chg(d_ret)}</div><div class="n"><span class="down">{d_pnl:+,.0f} 元</span></div></div>
+<div class="kpi"><div class="k">当日回报（真值） {DRET_UNSETTLED_TAG}</div><div class="v">{chg(d_ret)}</div><div class="n"><span class="down">{d_pnl:+,.0f} 元</span>{DRET_UNSETTLED_TXT}</div></div>
 <div class="kpi"><div class="k">相对沪深300</div><div class="v">{_vs_val}</div><div class="n">{_vs_word}（{'军工顺风+防御对冲' if _mil_av>0 else '防御端缓冲'}）</div></div>
 <div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 {HOLD_N} 只</div></div>
 <div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{f2(sharpe)} / {f2(mdd)}% / {f2(vol)}%</div><div class="n">滚动统计口径（本地未采集标—）</div></div>
 </div>
-<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {DRET_TXT}%，{_vs_detail}{'；休市冻结值，不具对比意义' if not VS_APPLICABLE else ''}）。{EPH_CAVEAT_884}</div>
+<div class="note">当日锚定规则：组合当日表现一律以 <b>portfolio_summary.daily_return</b> 真值为准（本日 {DRET_TXT}%，{_vs_detail}{'；休市冻结值，不具对比意义' if IS_HOLIDAY_RUN else ''}）。{EPH_CAVEAT_884}</div>
 </div>
 
 <div class="card">
@@ -1564,8 +1622,8 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <tbody>
 <tr><td>板块/指数代理加权估算</td><td class="num">{chg(est, ' pct')}</td><td>逐持仓 × 对应板块或指数当日涨跌幅，按权重加总；<b>仅覆盖 {PROXY_N} 只场内 ETF（合计权重 {PROXY_W:.2f}%）</b></td></tr>
 <tr><td>&nbsp;&nbsp;↳ 未覆盖部分（场外基金）</td><td class="num"><span class="flat">{PROXY_UNC_N} 只 / {PROXY_UNC_W:.2f}%</span></td><td>场外净值 T+1 披露、本地无当日涨跌口径{EPH_INLINE_PAREN}，<b>未做臆造替代，按 0 贡献计入上式</b>——即 est 天然缺失这 {PROXY_UNC_W:.2f}% 仓位的当日贡献，<b>不等于该部分真实为 0</b></td></tr>
-<tr><td><b>真实当日回报（锚）</b></td><td class="num"><b>{chg(d_ret)}</b></td><td>portfolio_summary.daily_return，市值口径真值</td></tr>
-<tr><td>偏离</td><td class="num"><span class="mid">{est-d_ret:+.2f} pct</span></td><td>代理与真值偏差 {abs(est-d_ret):.2f}pct，方向{'一致' if (est<0)==(d_ret<0) else '背离'}（代理{est:+.2f}%、实际{d_ret:+.2f}%）</td></tr>
+<tr><td><b>真实当日回报（锚）</b></td><td class="num"><b>{chg(d_ret)}</b> {DRET_UNSETTLED_TAG}</td><td>portfolio_summary.daily_return，市值口径真值{DRET_UNSETTLED_TXT}</td></tr>
+<tr><td>偏离</td><td class="num"><span class="mid">{_dev_txt}</span></td><td>{_dev_detail}</td></tr>
 </tbody></table>
 <div class="note">诊断结论：本组合结构下代理法<b>方向亦可能失真</b>（人工智能/机器人/新能源南方等 ETF 实际跟踪指数与所取代理板块不一致），绝对幅度与方向均不可采信，当日表现一律以真值为准。<b>另需注意口径残缺</b>：est 仅覆盖 {PROXY_N} 只场内 ETF 的 {PROXY_W:.2f}% 权重，其余 {PROXY_UNC_W:.2f}%（{PROXY_UNC_N} 只场外基金）无当日涨跌口径、在 est 中被当作 0 贡献，故上表「偏离」同时包含「代理板块选择误差」与「{PROXY_UNC_W:.2f}% 权重口径缺失」两个来源，<b>不可据此推断代理法自身的误差量级</b>。该项已列入自我进化改进项。</div>
 {_PROXY_GRADE_TXT}
@@ -1575,7 +1633,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 
 <div class="op"><div class="t">① 持有（维持现状）—— 军工超配 + 红利/债券防御底仓 {def_w+sec_w:.1f}%</div>
 <ul>
-<li>当日已验证其价值：全组合 {DRET_TXT}%、{_vs_detail}；{_oper_hold_txt}。</li>
+<li>{_oper_hold_lead}：全组合 {DRET_TXT}%、{_vs_detail}；{_oper_hold_txt}。</li>
 <li><span class="cond">维持条件</span>：市场停留在路径 A（箱体震荡）—— 上证守住 MA20 3921、量能 1.7–2.0 万亿。</li>
 <li><span class="cond">加码触发</span>：若出现路径 C 的两条确认信号（破 MA20 + 量能萎缩至 1.5 万亿以下），防御仓位的战略价值上升。</li>
 </ul></div>
@@ -1695,7 +1753,13 @@ _tldr_lines.append(
     f"大盘{_TODAY_TERM}{regime_txt}：{_idx_desc}。{_main_line_txt}{_mil_txt}。"
     f"组合当日回报 {chg(d_ret)}、{_vs_detail}：{_perf_reason}。")
 _tldr_lines.append("")
-if (est < 0) != (d_ret < 0):
+if D_RET_UNSETTLED:
+    # P1#12：TLDR 是邮件正文的直读来源，未结算必须出现在这里——
+    # 否则「只读 TLDR 的读者」看到的仍是一个普通百分比，标记只存在于 HTML 深处。
+    _tldr_lines.append(
+        f"⚠ 结算状态：组合当日回报 {d_ret:+.2f}% 为【未结算】值（daily_return_settled=0，"
+        f"当日无任何标的取得新价），不构成收益证据；相对沪深300 对比同步不适用。")
+if (d_ret is not None and (est < 0) != (d_ret < 0)):
     _tldr_lines.append(
         f"⚠ 锚定提示：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% 方向相反，"
         f"代理法在本组合结构下方向亦不可信，本报告一律以真值为准。")

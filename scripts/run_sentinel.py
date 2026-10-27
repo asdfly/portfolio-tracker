@@ -254,6 +254,76 @@ def _snapshot_probe(date_str: str, db_path: str = None):
             "detail": f"SNAP_ROWS={rows}/{med}"}
 
 
+def _index_quotes_probe(date_str: str, db_path: str = None):
+    """只读探测当日 index_quotes 是否「由主分析整批写完」（P1#13，2026-10-27）。
+
+    ## 为什么需要它
+    `index_quotes` 按 (date, code) 主键 `INSERT OR REPLACE`，所以「主分析整批写完 12 条」
+    与「主分析被杀、补采脚本事后补了 1 条」在库里**长得一模一样** —— 都是「当日若干行」。
+    2026-10-22 实测就是后者：当日仅 1 行 sh932000（补采脚本单独写），`gen_combo_report`
+    取 `MAX(date)` 拿到这个残缺日，`avg_idx=statistics.mean([])` 直接抛 StatisticsError。
+    当时只能靠人肉数行数排查，且「12 行」究竟正常与否无从判断。
+
+    采集侧已改为「整批 executemany + 同事务写 ingest_markers」（见
+    `DatabaseManager.save_index_quotes`）。本探针读那个标记，把「有行无标」这种
+    主分析未完成的形态显式暴露出来。
+
+    返回 dict 或 None；verdict ∈ {'ok','absent','orphan','empty','no_marker'}
+      ok        标记存在且库内行数与标记一致
+      absent    当日无任何 index_quotes 行（非交易日属正常，由调用方豁免）
+      orphan    🔴 当日有行但**无标记**，或行数 > 标记写入数 ⇒ 非主分析完整写入
+      empty     标记存在但 rows_written=0（一个指数都没写成）
+      no_marker 标记表不存在（首次部署 / 旧库）⇒ 降级为「无法判定」，不告警
+    """
+    db = db_path or os.path.join(ROOT, "data", "database", "portfolio.db")
+    if not os.path.exists(db):
+        _log(f"index_quotes 探针跳过：业务库不存在 {db}")
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            cur = con.cursor()
+            rows = cur.execute(
+                "SELECT COUNT(*) FROM index_quotes WHERE date=?", (date_str,)
+            ).fetchone()[0] or 0
+            try:
+                mk = cur.execute(
+                    "SELECT rows_written, rows_expected, skipped, status "
+                    "FROM ingest_markers WHERE table_name='index_quotes' AND date=?",
+                    (date_str,)).fetchone()
+                has_table = True
+            except sqlite3.OperationalError:
+                mk, has_table = None, False
+        finally:
+            con.close()
+    except Exception as exc:
+        _log(f"index_quotes 探针失败（不影响主判定）: {exc}")
+        return None
+
+    if not has_table:
+        # 旧库/首次部署：标记表还不存在。**不告警**——那是把「还没上线」误报成「数据坏了」。
+        verdict, detail = "no_marker", "ingest_markers 表不存在（旧库/未部署）"
+    elif mk is None:
+        if rows == 0:
+            verdict, detail = "absent", "当日无 index_quotes 行且无写入标记"
+        else:
+            verdict = "orphan"
+            detail = (f"当日 {rows} 行但**无主分析写入标记** ⇒ 非整批写入"
+                      f"（典型：主分析被杀后由补采脚本补写）")
+    else:
+        w, exp, sk, st = mk
+        if st == "empty" or (w or 0) == 0:
+            verdict, detail = "empty", f"标记 status={st}，写入 0 行（应写 {exp}）"
+        elif rows > (w or 0):
+            verdict = "orphan"
+            detail = (f"库内 {rows} 行 > 标记写入 {w} 行 ⇒ 事后被其它路径补写，"
+                      f"该日不可当作单一批次结果")
+        else:
+            verdict, detail = "ok", f"IQX_ROWS={rows}/{exp} skipped={sk} status={st}"
+    return {"date": date_str, "rows": rows, "marker": mk, "verdict": verdict,
+            "detail": detail}
+
+
 def _build_snap_text(p: dict) -> str:
     """快照塌缩告警正文（与缺失告警区分，附修复路径）。"""
     why = ("当日快照 0 行（数据完全未写入）" if p["verdict"] == "missing"
@@ -484,6 +554,29 @@ def main() -> int:
                 del flag[_snap_key]
                 _save_flag(flag)
 
+    # ---- P1#13：index_quotes 是否「由主分析整批写完」 ----
+    # 与快照探针的关键差别：**不发邮件，只记账本**。指数残缺的后果是「当日大盘段
+    # 数据不全」，报告侧已有 _idx_has_main 回退到最近完整日兜底（P0 阶段已做），
+    # 不像快照塌缩那样会直接把 total_value 算错。若也按 CRITICAL 发信，只会稀释
+    # 快照那条真正需要立刻处理的告警 —— 告警分级必须对应修复紧迫度。
+    iq_bad = False
+    try:
+        iq = _index_quotes_probe(date_str, os.environ.get("SENTINEL_DB_PATH") or None)
+    except Exception as exc:
+        _log(f"index_quotes 探针异常（不影响主判定）: {exc}")
+        iq = None
+    if iq:
+        _log(f"index_quotes {iq['detail']} verdict={iq['verdict']}")
+        _iq_nontrading = (iq["verdict"] == "absent" and not is_trading_day_safe(bdate))
+        if _iq_nontrading:
+            _log(f"{date_str} 非交易日且当日无指数行 ⇒ 属正常（休市不写），不告警")
+        if iq["verdict"] in ("orphan", "empty") and not _iq_nontrading:
+            iq_bad = True
+            _ledger("sentinel_index_quotes_degraded", "degraded",
+                    f"IQX {iq['detail']} (rows={iq['rows']})")
+        elif iq["verdict"] == "no_marker":
+            _log("index_quotes 标记表不可用 ⇒ 无法判定，放行（不臆造结论）")
+
     # 存在且可解析
     if run_status in _BLOCKING_STATUS:
         _log(f"报告存在但 run_status={run_status}（日报闸门已拒发 + daily_report_not_sent "
@@ -492,21 +585,26 @@ def main() -> int:
         if date_str in flag:  # 若该日曾误报，重置以便未来真缺失能再报
             del flag[date_str]
             _save_flag(flag)
-        return 2 if snap_bad else 0
+        return 2 if (snap_bad or iq_bad) else 0
 
     # ok / 未知（缺字段）
-    if snap_bad:
-        # 快照塌缩时不得再记 sentinel_ok：账本同时出现 degraded 与 ok 会让「本夜是否正常」
-        # 这个问题在事后审计时无解（两条记录互相矛盾，谁后写谁覆盖判断）。
+    if snap_bad or iq_bad:
+        # 快照塌缩 / 指数批次不完整时不得再记 sentinel_ok：账本同时出现 degraded 与 ok
+        # 会让「本夜是否正常」这个问题在事后审计时无解（两条记录互相矛盾，谁后写谁覆盖判断）。
+        _why = []
+        if snap_bad:
+            _why.append("快照行数塌缩（见 sentinel_snapshot_degraded）")
+        if iq_bad:
+            _why.append("index_quotes 非完整批次（见 sentinel_index_quotes_degraded）")
         _log(f"报告存在且状态正常（run_status={run_status or '未知/缺字段'}），"
-             f"但快照行数塌缩 ⇒ 本夜判定为异常（见 sentinel_snapshot_degraded）")
+             f"但{' + '.join(_why)} ⇒ 本夜判定为异常")
     else:
         _log(f"报告存在且状态正常（run_status={run_status or '未知/缺字段'}），夜线已正常收尾")
         _ledger("sentinel_ok", "ok", f"run_status={run_status}")
     if date_str in flag:
         del flag[date_str]
         _save_flag(flag)
-    return 2 if snap_bad else 0
+    return 2 if (snap_bad or iq_bad) else 0
 
 
 if __name__ == "__main__":
