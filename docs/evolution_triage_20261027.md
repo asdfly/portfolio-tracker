@@ -290,3 +290,4 @@ ETF估值台账 14 条防坑判据（凭证过期识别、T+1 发布、`index_co
 2. **#12 的「18:00 对齐」只做了一半**：现在能**判定**未结算，但没把结算时点提前。要真对齐需把 `run_analysis` 的调度从 15:30 挪到收盘后（或增量补算），属调度层改动，未动。
 3. **#13 的标记只覆盖 `index_quotes`**：`portfolio_snapshots` 无同类标记，目前靠 `run_sentinel._snapshot_probe` 数行数间接发现（P0#2）。
 4. **历史日期无 `daily_return_settled`**：NULL 一律按「未知」处理，不标未结算；若要对历史做判定，需另跑一次回溯计算（未做，理由同 11.2）。
+5. **本轮验证时发现一个既存失败（非本轮引入）**：`tests/test_predictor_base.py::test_stored_features_scale_matches_recompute` 报 `vol_20d 存量与现算不一致(max|Δ|=0.00289)`，容差 `1e-6`。证据：该测试依赖链（`src/analysis/predictor/features.py` → numpy/pandas/sqlite3 + `split_merge_guard`）**不含本轮任何改动文件**；且第 11.3 节全部验证均不触及 `etf_features`。推测为「特征先算、价格后同步」造成的当日存量滞后（`etf_features` 与 `etf_price_history` 的 `MAX(date)` 同为 2026-10-27）。需单独排查，本轮未处理 —— 记在此处以免下一轮误以为是本次改造的回归。
