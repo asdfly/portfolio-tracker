@@ -37,9 +37,10 @@ data/reports/run_report_<date>.json 是 nightly 管线每晚重写的机器可�
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPORTS_DIR = os.path.join(REPO, "data", "reports")
@@ -64,6 +65,55 @@ def _git(*args):
 def _is_tracked(rel_path: str) -> bool:
     r = _git("ls-files", "--error-unmatch", rel_path)
     return r.returncode == 0
+
+
+# P1 推进（合并而非重建）：run_sentinel 已在 16:30 独立调度兜底"应产出未产出"硬告警
+# （execution_logs id=650 实证 2026-10-23 命中 sentinel_run_report_missing）。
+# 归档层不重建交易日历缺口检测，仅只读消费哨兵已写出的缺口信号，在归档输出二次暴露，
+# 并对 sentinel 曾标记缺失的日期做"是否已产出报告物证"的解析追踪。
+# DB 只读（mode=ro）；任何异常都不影响归档主流程（哨兵若不可用，归档照常）。
+SENTINEL_GAP_TASKS = (
+    "sentinel_run_report_missing",
+    "sentinel_run_report_corrupt",
+    "sentinel_snapshot_degraded",
+    "sentinel_snapshot_orphan",
+    "sentinel_snapshot_marker_mismatch",
+    "sentinel_index_quotes_degraded",
+)
+
+
+def _consume_sentinel_signals(window_days=30, db_path=None):
+    """只读消费 run_sentinel 已写入 execution_logs 的缺口信号。
+
+    返回 list[dict]: {ts, task, status, detail, date}
+      - date: 从 message 正则提取的业务日期(YYYY-MM-DD)，用于与归档扫描交叉核对。
+      - 空 list 表示近窗口内无哨兵缺口信号（或 DB/查询不可用，已静默降级）。
+    """
+    import sqlite3
+    db = db_path or os.environ.get("ARCHIVE_SENTINEL_DB") or os.path.join(
+        REPO, "data", "database", "portfolio.db")
+    if not os.path.exists(db):
+        return []
+    since = (datetime.now() - timedelta(days=window_days)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            cur = con.cursor()
+            placeholders = ",".join("?" * len(SENTINEL_GAP_TASKS))
+            q = (f"SELECT created_at, task_name, status, message FROM execution_logs "
+                 f"WHERE task_name IN ({placeholders}) AND created_at >= ? "
+                 f"ORDER BY created_at DESC")
+            for ts, task, status, msg in cur.execute(q, (*SENTINEL_GAP_TASKS, since)).fetchall():
+                m = re.search(r"(\d{4}-\d{2}-\d{2})", msg or "")
+                rows.append({"ts": ts, "task": task, "status": status,
+                             "detail": msg or "", "date": m.group(1) if m else None})
+        finally:
+            con.close()
+    except Exception as exc:
+        print(f"[anomaly-archive] 消费 sentinel 信号失败（不影响归档）: {exc}")
+        return []
+    return rows
 
 
 def main():
@@ -122,6 +172,46 @@ def main():
             f"（早于 15:30 管线窗口），本次仅归档历史异常证据；"
             f"当日报告留待晚间运行归档，勿将上方\"0 新增\"误读为\"无新增异常\"。"
         )
+
+    # P1 推进（合并而非重建）：消费 run_sentinel 已写出的缺口信号，归档层二次暴露 + 解析追踪。
+    # 不重建交易日历缺口检测（run_sentinel 已在 16:30 独立兜底，id=650 实证命中）。
+    if "--no-sentinel" not in sys.argv:
+        sent_signals = _consume_sentinel_signals()
+        if sent_signals:
+            print("\n[anomaly-archive] === 运行后哨兵缺口信号（归档层二次暴露，近30日）===")
+            flagged_dates = set()
+            for s in sent_signals:
+                bdate = s["date"]
+                if bdate:
+                    flagged_dates.add(bdate)
+                rep_exists = bool(bdate) and os.path.exists(
+                    os.path.join(REPORTS_DIR, f"run_report_{bdate}.json"))
+                if rep_exists:
+                    tag = ("✓报告在/数据质量缺口" if s["task"].startswith("sentinel_snapshot")
+                           or s["task"].startswith("sentinel_index_quotes")
+                           else "✓已产出物证")
+                else:
+                    tag = "✗仍缺物证" if bdate else "—无日期"
+                print(f"  - {s['ts']} [{s['task']}] {s['status']} "
+                      f"日期={bdate or '?'} {tag}")
+                d = s["detail"]
+                if d and len(d) > 140:
+                    d = d[:140] + "…"
+                if d:
+                    print(f"      {d}")
+            still_missing = sorted(
+                d for d in flagged_dates
+                if not os.path.exists(os.path.join(REPORTS_DIR, f"run_report_{d}.json")))
+            if still_missing:
+                print(f"  >> sentinel 曾报缺失但归档扫描仍未发现报告物证的日期: "
+                      f"{', '.join(still_missing)}")
+                print("     （缺口硬告警由 run_sentinel 兜底，本归档层仅二次暴露，不重建检测）")
+            else:
+                print("  >> 近30日 sentinel 标记日期均已产出报告物证，归档扫描与哨兵信号一致")
+        else:
+            print("\n[anomaly-archive] 运行后哨兵缺口信号：近30日无 (run_sentinel 未报缺口)")
+    else:
+        print("\n[anomaly-archive] 已跳过 sentinel 信号消费（--no-sentinel）")
 
     # #7 修复：仅当索引确有实质变更才提交，避免对已跟踪但未改内容的报告产生空提交
     # / "提交失败"误报（pre-commit 钩子对空提交报"提交失败"，实为无内容可提交）。
