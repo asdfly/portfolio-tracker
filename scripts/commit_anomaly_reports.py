@@ -111,6 +111,18 @@ def main():
     for rel in removed:
         print(f"  - {rel}  (恢复正常, 退回忽略)")
 
+    # P2#1 标注：若当日 run_report 尚未产出（早于 15:30 管线窗口），显式说明
+    # 本次"0 新增"是时序使然而非"无新增异常"，避免 06:01 等早班运行被误读。
+    # 以"当日 run_report 文件是否存在"判定，对节假日/管线延迟同样鲁棒。
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_report = os.path.join(REPORTS_DIR, f"run_report_{today}.json")
+    if not os.path.exists(today_report):
+        print(
+            f"[anomaly-archive] 注：当日 run_report_{today}.json 尚未产出"
+            f"（早于 15:30 管线窗口），本次仅归档历史异常证据；"
+            f"当日报告留待晚间运行归档，勿将上方\"0 新增\"误读为\"无新增异常\"。"
+        )
+
     # #7 修复：仅当索引确有实质变更才提交，避免对已跟踪但未改内容的报告产生空提交
     # / "提交失败"误报（pre-commit 钩子对空提交报"提交失败"，实为无内容可提交）。
     # `git diff --cached --quiet` 返回 0 表示索引相对 HEAD 无差异（无 diff），非 0 表示有差异。
