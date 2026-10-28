@@ -111,7 +111,11 @@ def main():
     for rel in removed:
         print(f"  - {rel}  (恢复正常, 退回忽略)")
 
-    if do_commit and (added or updated or removed):
+    # #7 修复：仅当索引确有实质变更才提交，避免对已跟踪但未改内容的报告产生空提交
+    # / "提交失败"误报（pre-commit 钩子对空提交报"提交失败"，实为无内容可提交）。
+    # `git diff --cached --quiet` 返回 0 表示索引相对 HEAD 无差异（无 diff），非 0 表示有差异。
+    has_staged_diff = do_commit and _git("diff", "--cached", "--quiet").returncode != 0
+    if has_staged_diff:
         parts = []
         if added:
             parts.append(f"新增异常{len(added)}")
@@ -131,7 +135,7 @@ def main():
             print(f"[anomaly-archive] 提交失败: {r.stderr.strip()}")
             committed = False
     elif do_commit:
-        print("[anomaly-archive] 无变更，未提交")
+        print("[anomaly-archive] 索引无实质变更，未提交（与已跟踪内容一致）")
         committed = False
     else:
         committed = False
