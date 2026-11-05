@@ -105,19 +105,61 @@ def _run_query(query: str) -> Optional[dict]:
         return None
 
 
-def _extract_valuation_rows(content: str) -> List[Dict]:
-    """解析「指数估值」markdown 表格，抽取 交易日/PE(TTM)/PB(LF)/股息率 行。
+def _split_row(ln: str) -> List[str]:
+    """拆分行内单元格（去掉首尾 | 并按 | 切分）。"""
+    return [c.strip() for c in ln.strip().strip("|").split("|")]
 
-    Returns:
-        [{code, date, pe, pb, div_yield}, ...]
+
+def _iter_tables(lines: List[str]):
+    """从 markdown 文本中逐个产出 (表头cells, 数据行cells列表)。
+
+    跳过分隔行（| :---: | ---: | 之类），仅返回数据行。
     """
+    i = 0
+    n = len(lines)
+    sep = {"", ":---:", "---:", ":---", "---", ":--:", "--:"}
+    while i < n:
+        if lines[i].lstrip().startswith("|"):
+            header = _split_row(lines[i])
+            data: List[List[str]] = []
+            j = i + 1
+            while j < n and lines[j].lstrip().startswith("|"):
+                cells = _split_row(lines[j])
+                if set(cells) <= sep:  # 分隔行
+                    j += 1
+                    continue
+                data.append(cells)
+                j += 1
+            yield header, data
+            i = j
+        else:
+            i += 1
+
+
+def _col_idx(header: List[str], *keys: str) -> Optional[int]:
+    for i, h in enumerate(header):
+        if any(k in h for k in keys):
+            return i
+    return None
+
+
+def _to_float(v: Optional[str]) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        return float(str(v).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_valuation_rows_old(content: str) -> List[Dict]:
+    """旧格式解析：表头含「指数代码」+「市盈率」，代码在首列（000688.SH 形式）。"""
     if not content:
         return []
     lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
     if len(lines) < 3:
         return []
 
-    # 定位表头行（含「指数代码」与「滚动市盈率」）
     header_line = None
     for ln in lines:
         if "指数代码" in ln and "市盈率" in ln:
@@ -126,54 +168,124 @@ def _extract_valuation_rows(content: str) -> List[Dict]:
     if header_line is None:
         return []
 
-    def _split(ln: str) -> List[str]:
-        return [c.strip() for c in ln.strip().strip("|").split("|")]
-
-    header = _split(header_line)
-
-    def _col(*keys: str) -> Optional[int]:
-        for i, h in enumerate(header):
-            if any(k in h for k in keys):
-                return i
-        return None
-
-    c_code = _col("指数代码")
-    c_date = _col("交易日")
-    c_pe = _col("滚动市盈率PE(TTM)") if _col("滚动市盈率PE(TTM)") is not None else _col("滚动市盈率")
-    c_pb = _col("市净率PB(LF")
-    c_dy = _col("股息率")
+    header = _split_row(header_line)
+    c_code = _col_idx(header, "指数代码")
+    c_date = _col_idx(header, "交易日")
+    c_pe = _col_idx(header, "滚动市盈率PE(TTM)", "滚动市盈率")
+    c_pb = _col_idx(header, "市净率PB(LF)", "市净率PB")
+    c_dy = _col_idx(header, "股息率")
     if c_date is None or c_pe is None:
         return []
 
     rows: List[Dict] = []
     for ln in lines:
-        cells = _split(ln)
+        cells = _split_row(ln)
         if len(cells) <= max(c_date, c_pe):
             continue
         code_cell = cells[c_code] if c_code is not None else ""
         if "." not in code_cell:  # 数据行首列为「000688.SH」形式
             continue
-
-        def _f(idx: Optional[int]) -> Optional[float]:
-            if idx is None or idx >= len(cells):
-                return None
-            v = cells[idx].replace(",", "").strip()
-            try:
-                return float(v)
-            except ValueError:
-                return None
-
-        pe = _f(c_pe)
+        pe = _to_float(cells[c_pe])
         if pe is None or pe <= 0:
             continue
         rows.append({
             "code": code_cell.split(".")[0],
             "date": cells[c_date][:10],
             "pe": pe,
-            "pb": _f(c_pb),
-            "div_yield": _f(c_dy),
+            "pb": _to_float(cells[c_pb]) if c_pb is not None else None,
+            "div_yield": _to_float(cells[c_dy]) if c_dy is not None else None,
         })
     return rows
+
+
+def _extract_valuation_rows_new(content: str) -> List[Dict]:
+    """新格式解析（neodata 2026-10 起接口变更）：单一「统一估值查询」块，
+    首列为「日期」（无指数代码列），PE/PB 与 股息率 拆到两张表：
+      - 历史估值-基础指标：| 日期 | ... | PE(TTM) | ... | PB(LF) | PB(MRQ) |
+      - 历史估值-销售、现金流与股息指标：| 日期 | ... | 股息率(TTM) | 静态股息率 |
+    两张表按日期对齐合并。返回 code=None 的行（由 fetch_index_valuation 按块归属信任）。
+    """
+    if not content:
+        return []
+    lines = [ln.strip() for ln in content.splitlines()]
+    base_cands = []  # 候选基础指标表（含 日期 + PE(TTM)）
+    div_cands = []   # 候选股息率表（含 日期 + 股息率(TTM)）
+    for hdr, rows in _iter_tables(lines):
+        htext = " ".join(hdr)
+        if "日期" in htext and "PE(TTM)" in htext:
+            base_cands.append((hdr, rows))
+        if "日期" in htext and "股息率(TTM)" in htext:
+            div_cands.append((hdr, rows))
+    if not base_cands:
+        return []
+
+    # 优先选「历史估值-基础指标」表：含 PB(LF)/PB(MRQ)/市净率 且数据行最多；
+    # 排除仅 1 行的「实时估值快照」（裸 PB 列、无 PB(LF)）。
+    def _base_score(item):
+        hdr, rows = item
+        htext = " ".join(hdr)
+        has_pblf = ("PB(LF)" in htext) or ("PB(MRQ)" in htext) or ("市净率" in htext)
+        return (1 if has_pblf else 0, len(rows))
+
+    base_hdr, base_rows = max(base_cands, key=_base_score)
+    div_hdr = div_rows = None  # type: ignore
+    if div_cands:
+        # 股息率表同样优先数据行多者（排除快照的 1 行）
+        div_hdr, div_rows = max(div_cands, key=lambda it: len(it[1]))
+
+    c_date = 0
+    c_pe = _col_idx(base_hdr, "PE(TTM)", "滚动市盈率")
+    c_pb = _col_idx(base_hdr, "PB(LF)", "PB(MRQ)", "市净率PB")
+    if c_pe is None:
+        return []
+
+    # 股息率按日期建索引
+    div_map: Dict[str, float] = {}
+    if div_hdr is not None:
+        c_ddate = 0
+        c_dy = _col_idx(div_hdr, "股息率(TTM)", "股息率")
+        if c_dy is not None:
+            for r in div_rows:  # type: ignore
+                if len(r) > max(c_ddate, c_dy):
+                    ds = _norm_date(r[c_ddate])
+                    dy = _to_float(r[c_dy])
+                    if dy is not None:
+                        div_map[ds] = dy
+
+    out: List[Dict] = []
+    for r in base_rows:  # type: ignore
+        if len(r) <= max(c_date, c_pe):
+            continue
+        ds = _norm_date(r[c_date])
+        pe = _to_float(r[c_pe])
+        if pe is None or pe <= 0:
+            continue
+        pb = _to_float(r[c_pb]) if c_pb is not None else None
+        out.append({
+            "code": None,  # 新格式无指数代码列，块已绑定查询标的
+            "date": ds,
+            "pe": pe,
+            "pb": pb,
+            "div_yield": div_map.get(ds),
+        })
+    return out
+
+
+def _extract_valuation_rows(content: str) -> List[Dict]:
+    """解析「指数估值」/「统一估值查询」markdown 表格，抽取 交易日/PE/PB/股息率 行。
+
+    兼容两种 neodata 返回格式：
+      - 旧格式（含「指数代码」列 + 「指数估值」块）
+      - 新格式（2026-10 起，「统一估值查询」块，首列为「日期」，PE/PB 与股息率分表）
+    优先旧格式（带代码列可做跨指数防误标），命中则用之；否则回落新格式。
+
+    Returns:
+        [{code, date, pe, pb, div_yield}, ...]
+    """
+    old = _extract_valuation_rows_old(content)
+    if old:
+        return old
+    return _extract_valuation_rows_new(content)
 
 
 def fetch_index_valuation(index_code: str) -> List[Dict]:
@@ -190,6 +302,8 @@ def fetch_index_valuation(index_code: str) -> List[Dict]:
     """
     name = INDEX_NAME_MAP.get(index_code, index_code)
     queries = [f"{index_code} 指数估值", f"{name} 指数估值"]
+    # neodata 返回块类型：旧「指数估值」或新「统一估值查询」（2026-10 接口变更）
+    VALUATION_BLOCK_TYPES = {"指数估值", "统一估值查询"}
     last_resolved = None
     for q in queries:
         data = _run_query(q)
@@ -200,13 +314,14 @@ def fetch_index_valuation(index_code: str) -> List[Dict]:
         except (KeyError, TypeError):
             continue
         for block in recall:
-            if block.get("type") == "指数估值":
+            if block.get("type") in VALUATION_BLOCK_TYPES:
                 rows = _extract_valuation_rows(block.get("content", ""))
-                matched = [r for r in rows if r["code"] == index_code]
+                # 旧格式按 index_code 过滤（防跨指数误标）；新格式 code=None 已绑定查询标的，直接信任
+                matched = [r for r in rows if r["code"] is None or r["code"] == index_code]
                 if matched:
                     return matched
                 if rows:
-                    last_resolved = sorted({r["code"] for r in rows})
+                    last_resolved = sorted({r["code"] for r in rows if r["code"]})
     if last_resolved:
         logger.warning(
             "[NeoData] %s 全部候选查询返回的「指数估值」行代码 %s 与请求不符，"

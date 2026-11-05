@@ -37,6 +37,7 @@ import json
 import math
 import os
 import sqlite3
+import datetime
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,6 +57,19 @@ def _f(v):
         return fv if math.isfinite(fv) else None
     except (TypeError, ValueError):
         return None
+
+
+def _intraday_drop_date():
+    """返回应剔除的「今日未收盘」日期字符串；今日已收盘(>=15:00)返回 None。
+
+    盘中柱防护：防止把当日未收盘的半日 K 线永久写入生产库（一旦写入且后续调度未跑，
+    会留下一条永久「盘中柱」污染 etf_price_history）。本任务调度在 16:00（已收盘），
+    正常不触发；盘前/盘中手动触发时生效。
+    """
+    now = datetime.datetime.now()
+    if now.hour < 15:
+        return now.strftime("%Y-%m-%d")
+    return None
 
 
 def _market_last(conn, min_codes=2):
@@ -104,8 +118,23 @@ def upsert_from_file(path, code, conn, verify=False, safe=False, source=SOURCE):
             continue
         rows.append((d, code, o, h, l, c, v, a, c, source))
 
+    # 盘中柱防护：剔除「今日且未收盘(<15:00)」的节点，避免把半日柱永久写入生产库
+    drop_today = _intraday_drop_date()
+    if drop_today:
+        kept = []
+        dropped = 0
+        for r in rows:
+            if r[0] == drop_today:
+                dropped += 1
+                continue
+            kept.append(r)
+        rows = kept
+        if dropped:
+            print(f"[INTRADAY][DROP] {code}: 剔除 {dropped} 行今日未收盘节点"
+                  f"(date={drop_today}，当前<15:00)")
+
     if not rows:
-        print(f"[WARN] {code}: 无有效行，跳过")
+        print(f"[WARN] {code}: 无有效行（剔除盘中柱后），跳过")
         return 0
 
     # 重叠日不一致清单（verify 报告 / safe 拒写共用）
@@ -126,14 +155,35 @@ def upsert_from_file(path, code, conn, verify=False, safe=False, source=SOURCE):
             print(f"    {m[0]} db_close={m[1]} new_close={m[2]} db_vol={m[3]} new_vol={m[4]}")
         return 0
 
-    conn.executemany(
-        """
-        INSERT OR REPLACE INTO etf_price_history
-            (date, code, open, high, low, close, volume, amount, adj_close, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        rows,
-    )
+    # 逐行条件 upsert：阻断多源 (date,code) 互刷 churn（PK 不含 source 的权宜缓解，
+    # 根治需 schema 演进为 (date,code,source) 复合主键，见优化分析）
+    # - 同源              -> OR REPLACE（正常刷新）
+    # - 异源且 OHLCV 一致 -> 跳过（保留原 source 标签，消除溯源噪音）
+    # - 异源且 OHLCV 分歧 -> 覆盖（保新鲜）+ WARNING（数据质量分歧，需关注）
+    skipped_same = 0
+    overwritten_diff = 0
+    for row in rows:
+        d, _c, o, h, l, c, v, a, ac, src = row
+        exist = conn.execute(
+            "SELECT source, open, high, low, close, volume, amount, adj_close "
+            "FROM etf_price_history WHERE date=? AND code=?", (d, _c)
+        ).fetchone()
+        if exist and exist[0] != src:
+            e_src, e_o, e_h, e_l, e_c, e_v, e_a, e_ac = exist
+            same = (abs((e_o or 0) - (o or 0)) < 1e-6 and abs((e_h or 0) - (h or 0)) < 1e-6
+                    and abs((e_l or 0) - (l or 0)) < 1e-6 and abs((e_c or 0) - (c or 0)) < 1e-6
+                    and abs((e_v or 0) - (v or 0)) < 1e-1)
+            if same:
+                skipped_same += 1
+                continue
+            overwritten_diff += 1
+            print(f"[CHURN][WARN] {code} {d}: 异源({e_src}->{src})且 OHLCV 分歧，覆盖保新鲜")
+        conn.execute(
+            """INSERT OR REPLACE INTO etf_price_history
+               (date, code, open, high, low, close, volume, amount, adj_close, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            row,
+        )
     conn.commit()
 
     if pre:
@@ -145,8 +195,14 @@ def upsert_from_file(path, code, conn, verify=False, safe=False, source=SOURCE):
         else:
             print(f"[VERIFY][OK] {code}: 重叠日与现有 DB 完全一致")
 
-    print(f"[OK] {code}: upsert {len(rows)} 行（{rows[0][0]}~{rows[-1][0]}）source={source}")
-    return len(rows)
+    written = len(rows) - skipped_same
+    tail = ""
+    if skipped_same:
+        tail += f"；跳过 {skipped_same} 异源同值(保溯源)"
+    if overwritten_diff:
+        tail += f"；覆盖 {overwritten_diff} 异源分歧(保新鲜)"
+    print(f"[OK] {code}: 写入 {written} 行（{rows[0][0]}~{rows[-1][0]}）source={source}{tail}")
+    return written
 
 
 def _code_from_filename(base):

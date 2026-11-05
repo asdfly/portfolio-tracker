@@ -10,6 +10,15 @@ from data_loader import get_db_connection
 from src.analysis.replica_void import (
     void_aware_total_value, void_codes_on, void_excluded_common_codes)
 
+# 治本（报告库漂移）：回填写入 portfolio_summary 前复用「快照基线闸门」，
+# 缺行快照（如 2026-10-26 仅 12 行）禁止落库，避免静默历史重写。
+try:
+    from src.analysis.snapshot_gate import (
+        is_summary_writable, queue_report_rerender_if_drifted)
+except Exception:  # pragma: no cover - 导入失败时退回旧行为，不阻断回填主流程
+    is_summary_writable = None
+    queue_report_rerender_if_drifted = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,6 +95,14 @@ class HistoricalDataBackfiller:
 
         generated = 0
         for dt in dates:
+            # 治本（报告库漂移）：快照缺行时禁止(重)写 portfolio_summary，
+            # 避免「12 行算出 510k → 回填补齐 35 行后静默翻成 1.4M」的静默历史重写。
+            if is_summary_writable is not None:
+                _ok, _why = is_summary_writable(self.db_path, dt)
+                if not _ok:
+                    logger.warning("[回填闸门] 跳过 %s 的 portfolio_summary 生成: %s",
+                                   dt, _why)
+                    continue
             # 检查是否已有汇总
             cursor.execute("SELECT 1 FROM portfolio_summary WHERE date = ?", (dt,))
             if cursor.fetchone():
@@ -155,6 +172,14 @@ class HistoricalDataBackfiller:
                     prev_value = pr[0]
                     daily_pnl = total_value - prev_value
                     daily_return = daily_pnl / prev_value * 100
+
+            # 治本（报告库漂移）：若当日已有发布版报告且内嵌总市值与本次算出值不一致，
+            # 记入重渲染队列（可见、可动作），避免静默漂移。仅追加写，不影响落库。
+            if queue_report_rerender_if_drifted is not None:
+                try:
+                    queue_report_rerender_if_drifted(self.db_path, dt, total_value)
+                except Exception:
+                    pass
 
             cursor.execute("""
                 INSERT OR REPLACE INTO portfolio_summary

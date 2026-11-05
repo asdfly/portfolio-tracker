@@ -122,6 +122,22 @@ def _urllib_get_json(url, retries=3, delay=1.0):
     return None
 
 def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
+    """获取申万二级行业资金流（同花顺 stock_fund_flow_industry，symbol='即时'）。
+
+    🔴 根因存档（2026-10-30 审计 P1-4）：该源自 2026-10-15 起**网络层断连**——
+    采集进程内实测 `ConnectionError('Connection aborted.', ConnectionResetError(10054,
+    '远程主机强迫关闭了一个现有的连接'))`（直连被同花顺重置；经系统代理则返回错误页，
+    akshare 解析时抛 `AttributeError: 'NoneType' object has no attribute 'text'`）。
+    两种形态都**不是** ValueError ⇒ 原 `except ValueError` 全部漏防：
+    AttributeError/ConnectionError 会上抛穿透 run_stage_fund_flow 的内层 try
+    （只捕 sqlite3.OperationalError）与外层 try（同），**整个资金流阶段被一只死源拖垮**
+    （同阶段后续的 ETF 资金流/主力资金/北向全部不执行）。
+    处置（本次落地）：宽捕获 + error 级日志（含异常类型，便于区分断连 vs 解析失败），
+    返回空 DataFrame 由调用方按「无数据返回」降级；报告侧（gen_combo_report 1.4）已按
+    sector 类别真实数据日显式标注断采，读者不会把 10-15 的合计误读为当日值。
+    恢复路径（备选，未实施）：东财行业板块（BK 码）push2his fflow 接口可按板块取资金流，
+    但需建「申万二级名 → 东财 BK 码」映射且颗粒度不同源，列为后续评估项（evolution）。
+    """
     try:
         import akshare as ak
         df = ak.stock_fund_flow_industry(symbol='即时')
@@ -141,8 +157,14 @@ def fetch_sector_fund_flow(date_str=None) -> pd.DataFrame:
         keep_cols = ['date', 'code', 'name', 'change_pct', 'net_inflow', 'buy_amount', 'sell_amount', 'category']
         df = df[[c for c in keep_cols if c in df.columns]]
         return _stamp(df, 'ths', is_estimated=False, confidence=1.0)
-    except ValueError as e:
-        logger.warning(f"获取行业资金流失败: {e}")
+    except Exception as e:
+        # 宽捕获：同花顺源断连的两种形态（ConnectionReset / 代理错误页致 AttributeError）
+        # 都不是 ValueError；漏捕会上抛并拖垮整个资金流阶段（见 docstring）。
+        logger.error(
+            "获取行业资金流失败（同花顺源 %s: %s）——该源自 2026-10-15 起断采，"
+            "返回空由调用方降级；fund_flows sector 类数据日将停留在断采日，"
+            "报告侧已按分口径数据日标注，不会把陈旧合计当当日值",
+            type(e).__name__, str(e)[:200])
     return pd.DataFrame()
 
 def fetch_etf_fund_flow(code: str, name: str = '', retries=3, delay=0.8) -> pd.DataFrame:
@@ -272,8 +294,12 @@ def fetch_main_fund_flow(days: int = 120, date_str: str = None) -> pd.DataFrame:
     try:
         import akshare as ak
         df = ak.stock_fund_flow_industry(symbol='即时')
-    except _requests.RequestException as e:
-        logger.warning(f"同花顺也失败: {e}")
+    except Exception as e:
+        # 宽捕获（2026-10-30 审计 P1-4）：同花顺源断连形态为 ConnectionReset /
+        # 代理错误页致 AttributeError，均非 requests.RequestException；原窄捕获会
+        # 上抛拖垮整个资金流阶段。
+        logger.warning(f"同花顺也失败（{type(e).__name__}: {str(e)[:160]}）——"
+                       f"该源自 2026-10-15 起断采，主资金代理值将由报告侧标注真实数据日")
         return pd.DataFrame()
     if df is None or df.empty:
         return pd.DataFrame()
@@ -813,8 +839,12 @@ def backfill_sector_fund_flow(conn, trading_days=None, apply_market_trend_scalin
 
         # 跳过已有日期
         cursor = conn.cursor()
+        # 🔴 同日单源优先（2026-10-30 人工补数连带）：人工补数行（westock_mcp/neodata_mcp）
+        #    不构成「已覆盖」——若据此跳过，ths 恢复后那些被补日期将永远走不了正常回填，
+        #    补丁口径静默永久化。只认主线源（ths/NULL/ths_decomp）覆盖的日期。
         existing = {r[0] for r in cursor.execute(
-            "SELECT DISTINCT date FROM fund_flows WHERE category='sector'").fetchall()}
+            "SELECT DISTINCT date FROM fund_flows WHERE category='sector' "
+            "AND (source IS NULL OR source NOT IN ('westock_mcp','neodata_mcp'))").fetchall()}
         df_new = df_new[~df_new['date'].isin(existing)]
 
         # 可选增强：市场趋势缩放（填充主分解未覆盖的更早日期）
@@ -842,8 +872,12 @@ def backfill_sector_fund_flow(conn, trading_days=None, apply_market_trend_scalin
                      + ("，含市场趋势缩放增强" if apply_market_trend_scaling else ""))
         return count
 
-    except sqlite3.OperationalError as e:
-        logger.error(f"行业资金流回填失败: {e}")
+    except Exception as e:
+        # 宽捕获（2026-10-30 审计 P1-4）：同花顺多周期排行同样自 10-15 起断连
+        # （ConnectionReset / AttributeError），原仅捕 sqlite3.OperationalError 会
+        # 上抛穿透调用方（run_analysis 内层只捕 sqlite 异常）拖垮整个资金流阶段。
+        logger.error(f"行业资金流回填失败（{type(e).__name__}: {str(e)[:200]}）——"
+                     f"同花顺源断采期间回填不可用，返回 0 由调用方继续")
         return 0
 
 
@@ -862,6 +896,7 @@ def _sector_market_trend_scaling(conn, trading_days, existing_dates):
         SELECT name, AVG(net_inflow) as avg_net
         FROM fund_flows
         WHERE category='sector' AND net_inflow IS NOT NULL
+          AND (source IS NULL OR source NOT IN ('westock_mcp','neodata_mcp'))
         GROUP BY name
     """)
     industry_avg = {r[0]: r[1] for r in cursor.fetchall()}
@@ -904,7 +939,11 @@ def _sector_market_trend_scaling(conn, trading_days, existing_dates):
             net = avg_net * scale * noise
             buy = abs(net) * 0.525 + max(net, 0)
             sell = buy - net
-            cursor.execute("SELECT code FROM fund_flows WHERE category='sector' AND name=? LIMIT 1", (name,))
+            # 码映射只认主线源：禁让人工补数的 westock 板块码（pt0180xxxx）混进
+            # ths_decomp 行的 code 列（两套编码体系，混用即脏数据）。
+            cursor.execute("SELECT code FROM fund_flows WHERE category='sector' AND name=? "
+                           "AND (source IS NULL OR source NOT IN ('westock_mcp','neodata_mcp')) "
+                           "LIMIT 1", (name,))
             code_row = cursor.fetchone()
             code = code_row[0] if code_row else ''
             records.append({

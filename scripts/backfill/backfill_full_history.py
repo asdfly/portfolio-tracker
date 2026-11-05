@@ -35,6 +35,15 @@ sys.path.insert(0, PROJECT_ROOT)
 from config.settings import INDEX_CODES, DATABASE_PATH
 from data_loader import get_db_connection
 
+# 治本（报告库漂移）：DELETE+全量重算 portfolio_summary 前复用「快照基线闸门」，
+# 缺行快照禁止落库；并对已发布报告标记需重渲染。导入失败时退回旧行为。
+try:
+    from src.analysis.snapshot_gate import (
+        is_summary_writable, queue_report_rerender_if_drifted)
+except Exception:  # pragma: no cover
+    is_summary_writable = None
+    queue_report_rerender_if_drifted = None
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -434,6 +443,23 @@ def rebuild_portfolio_summary(db_path):
         idx_row = cur.fetchone()
         if idx_row and idx_row[0]:
             vs_hs300 = daily_return - idx_row[0]
+
+        # 治本（报告库漂移）：快照缺行时禁止写 portfolio_summary，避免静默历史重写。
+        if is_summary_writable is not None:
+            _ok, _why = is_summary_writable(db_path, dt)
+            if not _ok:
+                logger.warning("[回填闸门] 跳过 %s 的 portfolio_summary 生成: %s", dt, _why)
+                if prev_value > 0:
+                    prev_value = 0
+                continue
+
+        # 治本（报告库漂移）：若当日已有发布版报告且内嵌总市值与本次算出值不一致，
+        # 记入重渲染队列（可见、可动作），避免静默漂移。仅追加写，不影响落库。
+        if queue_report_rerender_if_drifted is not None:
+            try:
+                queue_report_rerender_if_drifted(db_path, dt, total_value)
+            except Exception:
+                pass
 
         # 风险指标（限制从全部ETF覆盖日期开始计算，避免早期持仓少导致失真）
         min_risk_date = '2025-08-01'

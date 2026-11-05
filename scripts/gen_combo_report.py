@@ -268,11 +268,18 @@ _TODAY_TERM = '今日' if RUN_DATE_IS_TRADING else f'最近交易日（{DATA_DAT
 # 归因错误比行号错误更危险，故此处必须显式区分，禁止一律写「采集器滞后」。
 _RUN_NOW = datetime.now()
 _RUN_HM = _RUN_NOW.hour * 60 + _RUN_NOW.minute
-PRE_MARKET = bool(RUN_DATE_IS_TRADING and _RUN_HM < 15 * 60)
+# 回溯重生成（RUN_DATE != 实际今天，如 11-05 早上补出 11-04 日报）时，RUN_DATE 当日
+# 早已收盘、数据完整。若仍用「当前时刻」判定盘前，会写出「当日数据尚未产生」的
+# 假陈述，并误导 _prev_gap_note / TLDR 的新鲜度归因（数据纪律红线）。
+_IS_TODAY = (RUN_DATE == _RUN_NOW.strftime('%Y-%m-%d'))
+PRE_MARKET = bool(_IS_TODAY and RUN_DATE_IS_TRADING and _RUN_HM < 15 * 60)
 _RUN_DAY_LABEL = ('为交易日，但本次为盘前运行（{:%H:%M} 早于收盘，当日数据尚未产生）'.format(_RUN_NOW)
                   if PRE_MARKET
-                  else ('为交易日（盘后）' if RUN_DATE_IS_TRADING
-                        else f'为休市日运行（数据基准为最近交易日 {DATA_DATE}）'))
+                  else (f'为交易日（数据已收盘；本报告于 {_RUN_NOW:%Y-%m-%d %H:%M} 回溯重生成，'
+                        f'非当日 18:00 盘后原件）'
+                        if (RUN_DATE_IS_TRADING and not _IS_TODAY)
+                        else ('为交易日（盘后）' if RUN_DATE_IS_TRADING
+                              else f'为休市日运行（数据基准为最近交易日 {DATA_DATE}）')))
 
 # ---------- 1. 组合持仓 ----------
 cur.execute('''SELECT code,name,market_value,pnl_rate,cost_price,pnl
@@ -383,9 +390,11 @@ if IDX_DATE != _IDX_RAW:
 #    若为空则按相邻前交易日收盘推算当日涨跌幅，确保 idx[k][1] 始终为数值、不直接崩溃。
 _idx_prev_date = cur.execute("SELECT MAX(date) FROM index_quotes WHERE date<?", (IDX_DATE,)).fetchone()[0]
 _idx_prev_close = {}
+_idx_prev_amt = {}
 if _idx_prev_date:
-    for _r in cur.execute("SELECT name,close FROM index_quotes WHERE date=?", (_idx_prev_date,)):
+    for _r in cur.execute("SELECT name,close,amount FROM index_quotes WHERE date=?", (_idx_prev_date,)):
         _idx_prev_close[_r[0]] = _r[1]
+        _idx_prev_amt[_r[0]] = _r[2]
 def _idx_chg(_c, _p, _n):
     if _p is not None:
         return _p
@@ -411,7 +420,9 @@ IS_HOLIDAY_RUN = RUN_DATE in CN_HOLIDAYS
 VS_APPLICABLE = (not IS_HOLIDAY_RUN) and (not D_RET_UNSETTLED)
 if VS_APPLICABLE:
     _vs_word = '跑赢' if vs300 > 0 else '跑输'
-    _vs_detail = f'{_vs_word}沪深300 {abs(vs300):+.2f}pct'
+    # 「跑输」时 abs(vs300) 已是幅度，再加 '+' 会写出「跑输 +0.71pct」这类自相矛盾的
+    # 表述；幅度一律不带符号，方向由 _vs_word 承担（数据纪律：显式且不自相矛盾）。
+    _vs_detail = f'{_vs_word}沪深300 {abs(vs300):.2f}pct'
     _vs_val = f'{vs300:+.2f}%'
 elif D_RET_UNSETTLED:
     _vs_word = '不适用'
@@ -434,20 +445,63 @@ cur.execute("SELECT MAX(date) FROM fund_flows WHERE date<=?", (DATA_DATE,))
 FLOW_DATE = cur.fetchone()[0]
 FLOW_LAG = bool(FLOW_DATE) and (FLOW_DATE != DATA_DATE)
 FLOW_LAG_TXT = f'　⚠ 资金流取数日 {FLOW_DATE}（较组合基准 {DATA_DATE} 滞后，采集器尚未写入当日行）' if FLOW_LAG else ''
-cur.execute("SELECT name,net_inflow FROM fund_flows WHERE date=? AND category='sector'", (FLOW_DATE,))
-sec_flow = {k: (_f(v)/1e8 if _f(v) is not None else None) for k, v in cur.fetchall()}
-cur.execute("SELECT code,name,net_inflow,net_inflow_pct FROM fund_flows WHERE date=? AND category='etf'", (FLOW_DATE,))
+# 🔴 分口径取数日（2026-10-30 审计 P0-6「双口径混同」）：原 FLOW_DATE 取**全类别** MAX，
+#    而 sector 类自 2026-10-15 起停摆（同花顺行业资金流接口网络层断连，见
+#    src/data_sources/fund_flow.py:fetch_sector_fund_flow）⇒ 按 FLOW_DATE 查 sector 恒得 0 行
+#    （1.4 表体为空），主力资金代理值却挂 FLOW_DATE 的标签——「fetch 用 sector-only MAX 算值、
+#    gen 用全类别 MAX 标注」正是审计认定的双口径混同形态。现按类别各自取 MAX 并分别标注。
+def _cat_max_date(cat):
+    cur.execute("SELECT MAX(date) FROM fund_flows WHERE date<=? AND category=?", (DATA_DATE, cat))
+    return cur.fetchone()[0]
+SEC_FLOW_DATE = _cat_max_date('sector')   # 申万二级板块（同花顺源，10-15 起断采）
+ETF_FLOW_DATE = _cat_max_date('etf')      # ETF（东财源，正常更新）
+MF_FLOW_DATE = _cat_max_date('main_fund') # 全市场主力（push2his 源）
+SEC_FLOW_LAG_TXT = (f'　⚠ 申万二级板块资金流实际数据日 {SEC_FLOW_DATE}'
+                    f'（较组合基准 {DATA_DATE} 滞后——同花顺行业接口自 2026-10-15 起断采）'
+                    if (SEC_FLOW_DATE and SEC_FLOW_DATE != DATA_DATE) else '')
+# 🔴 同日单源优先（2026-10-30 人工补数）：fund_flows sector 类现混有双源——ths/NULL（主线
+#    同花顺采集，10-15 起断采）与 westock_mcp（2026-10-30 交互会话经 westock MCP 单日补入，
+#    申万二级全量 124 板块、名称带「Ⅱ」后缀）。同一 date 若多源并存（ths 恢复回填后），
+#    展示/汇总/信号一律只取单一来源：优先级 ths/NULL > westock_mcp > neodata_mcp，
+#    禁多源同行混算（双口径混同的又一形态）。
+_SRC_PRIORITY = {'ths': 0, None: 0, 'westock_mcp': 1, 'neodata_mcp': 2}
+def _sector_rows_by_src(d):
+    """返回 (选中源, [(name, net_inflow_亿或None)])；无行返回 (None, [])。"""
+    cur.execute("SELECT source,name,net_inflow FROM fund_flows WHERE date=? AND category='sector'", (d,))
+    rows = cur.fetchall()
+    if not rows:
+        return None, []
+    pick = min({r[0] for r in rows}, key=lambda s: (_SRC_PRIORITY.get(s, 9), str(s)))
+    return pick, [(n, (_f(v)/1e8 if _f(v) is not None else None))
+                  for s, n, v in rows if s == pick]
+SEC_SRC, _sec_rows = _sector_rows_by_src(SEC_FLOW_DATE)
+sec_flow = dict(_sec_rows)
+SEC_N = len(_sec_rows)
+_SEC_SRC_LABEL = {None: '同花顺行业口径', 'ths': '同花顺行业口径',
+                  'westock_mcp': 'westock 申万二级口径·人工补数',
+                  'neodata_mcp': 'NeoData 口径·人工补数'}
+SEC_SRC_LABEL = _SEC_SRC_LABEL.get(SEC_SRC, str(SEC_SRC) if SEC_SRC else '无数据')
+cur.execute("SELECT code,name,net_inflow,net_inflow_pct FROM fund_flows WHERE date=? AND category='etf'", (ETF_FLOW_DATE,))
 etf_flow = {r[0]: (_f(r[2])/1e8 if _f(r[2]) is not None else None, _f(r[3])) for r in cur.fetchall()}
-# 主资金：本地表缺失 -> 以 90 申万板块合计代理
+# 主资金：本地表缺失 -> 以 90 申万板块合计代理。
+# 🔴 代理值必须带其真实数据日（2026-10-30 审计 P0-6）：fetch 侧 local_main_fund_proxy 现返回
+#    (值, sector 类真实 MAX)；sector 停更后该值是 10-15 的合计，禁当「今日」呈现。
 main_proxy = MKT_NEO.get('main_fund_yi')
+main_proxy_date = MKT_NEO.get('main_fund_yi_date')
 main_est = MKT_NEO.get('main_fund_is_proxy', False)
-# 若本地表有 main_fund 则优先
-cur.execute("SELECT net_inflow FROM fund_flows WHERE date=? AND category='main_fund'", (FLOW_DATE,))
+# 若本地表有 main_fund 则优先（按 main_fund 类别**自身** MAX 日，不用全类别 FLOW_DATE）
+cur.execute("SELECT net_inflow FROM fund_flows WHERE date=? AND category='main_fund'", (MF_FLOW_DATE,))
 _mf = cur.fetchone()
 if _mf and _f(_mf[0]) is not None:
-    main_in_yi = _f(_mf[0])/1e8; main_est = False
+    main_in_yi = _f(_mf[0])/1e8; main_est = False; main_fund_date = MF_FLOW_DATE
 else:
-    main_in_yi = main_proxy
+    main_in_yi = main_proxy; main_fund_date = main_proxy_date
+# 代理合计的板块数现算（2026-10-30 人工补数连带）：原展示层写死「90 申万板块」——补数后
+# 代理值可能变为 westock 全量 124 板块合计（ths 恢复前），禁让计数陈述与实算口径脱节。
+main_proxy_n = 0
+if main_est and main_fund_date:
+    _psrc, _prows = _sector_rows_by_src(main_fund_date)
+    main_proxy_n = len(_prows)
 
 # ---------- 4. 本地广度 ----------
 _cur_breadth = None
@@ -623,7 +677,28 @@ money_out_txt = '、'.join(f"{n}{v:+.1f}亿" for n, v in sec_out) or '—'
 # 量能
 amt2 = (idx['上证指数'][2] + idx['深证成指'][2]) / 1e12  # 万亿
 amt_chg = BR.get('amount_chg_yi')
-amt_dir = '放量' if (amt_chg and amt_chg > 0) else '缩量'
+# 🔴 量能环比本地回退（2026-10-30 审计 P0-4）：NeoData 偶不返回「较昨日变化量」⇒
+#    amt_chg=None。原实现此时默认断言「缩量」——把方向性结论赋给缺失数据，违反数据纪律
+#    （本次碰巧正确纯属运气：本地实算 10-28→10-29 为 -720 亿）。本地 index_quotes 含两市
+#    成交额 ⇒ 先试本地环比；仍不可得才保持 None，且 amt_dir 禁赋方向（见下）。
+if amt_chg is None:
+    _a_now = sum(v[2] for k, v in idx.items()
+                 if k in ('上证指数', '深证成指') and v[2] is not None)
+    _a_prev = sum(v for k, v in _idx_prev_amt.items()
+                  if k in ('上证指数', '深证成指') and v is not None)
+    if _a_now and _a_prev:
+        amt_chg = round((_a_now - _a_prev) / 1e8, 1)
+        print(f"[INFO] amt_chg 本地回退：{amt_chg:+.1f} 亿"
+              f"（NeoData 未返回变化量，按 index_quotes 两市成交额 {_a_prev/1e8:,.0f}→{_a_now/1e8:,.0f} 亿环比计算）")
+# 三向判定：None ⇒ 「待定」，禁止默认「缩量」（2026-10-30 审计 P0-4）
+if amt_chg is None:
+    amt_dir = '待定'
+elif amt_chg > 0:
+    amt_dir = '放量'
+elif amt_chg < 0:
+    amt_dir = '缩量'
+else:
+    amt_dir = '平量'
 
 # ============ 交叉验证风向（数据驱动）============
 def wind_label(chg):
@@ -644,6 +719,34 @@ def chg(v, suffix='%'):
     if v is None: return '<span class="flat">—</span>'
     cl = 'up' if v > 0 else ('down' if v < 0 else 'flat')
     return f'<span class="{cl}">{v:+.2f}{suffix}</span>'
+
+# 2026-10-30（审计 P0-3）：累计盈亏曾硬编码 '+¥' 前缀与 up class，亏损日渲染成
+# 「+¥-130,748」且着涨色（符号与配色双错）。中国惯例：盈=红、亏=绿，一律由值推导。
+def money_signed(v, dec=0):
+    if v is None: return '<span class="flat">—</span>'
+    cl = 'up' if v > 0 else ('down' if v < 0 else 'flat')
+    sign = '+' if v > 0 else ('-' if v < 0 else '')
+    return f'<span class="{cl}">{sign}¥{abs(v):,.{dec}f}</span>'
+
+# 同缺陷家族（2026-10-30 审计连带修复）：以下三处均为「带符号数值 + 硬编码 class」——
+#   10-29 期因值恰为负而看起来正确，反向日（盈利日/放量日/净流入日）会静默着错色。
+def amt_signed(v, suffix=' 元'):
+    """当日盈亏等「纯数字+单位」的带色 span（不含货币符号）。"""
+    if v is None: return '<span class="flat">—</span>'
+    cl = 'up' if v > 0 else ('down' if v < 0 else 'flat')
+    return f'<span class="{cl}">{v:+,.0f}{suffix}</span>'
+
+def amt_chg_span():
+    """两市成交额环比变化量（亿元）带色 span；None ⇒ 平色「—」，禁赋方向。"""
+    if amt_chg is None: return '<span class="flat">—</span>'
+    cl = 'up' if amt_chg > 0 else ('down' if amt_chg < 0 else 'flat')
+    return f'<span class="{cl}">{amt_chg:+,.0f} 亿</span>'
+
+def main_fund_span():
+    """主力资金方向+金额带色 span；None ⇒ 平色「—」。净流入=红、净流出=绿（中国惯例）。"""
+    if main_in_yi is None: return f'<b class="flat">{main_dir} —</b>'
+    cl = 'up' if main_in_yi > 0 else ('down' if main_in_yi < 0 else 'flat')
+    return f'<b class="{cl}">{main_dir} {main_in_yi:+,.0f} 亿</b>'
 
 CROSS_DEF = [
  ('医药系', ind_sum.get('医药系', 0),
@@ -782,17 +885,33 @@ def2_w = pct(cls_sum.get('债券', 0) + cls_sum.get('红利', 0) + cls_sum.get('
 otc_w = pct(cls_sum.get('场外主动权益', 0) + cls_sum.get('场外指数', 0) + cls_sum.get('货币', 0))
 off_def_ratio = (f'{off_w / def2_w:.1f} : 1' if def2_w else '—')
 
-# 周线阶段：计算上证 20 日位置
+# 周线阶段：计算上证 20 日区间位置（日线近似，非周线）
+# 🔴 假期填充防御（evolution #2026-11-02）：index_quotes 在非交易日会写入与上一交易日
+#    相同的常量收盘（如 2026-10-01~10-07 均为 3842.1946），若不剔除会抬高 20 日窗口
+#    「高」、污染区间位置与 MA20。下列 _dedupe_trading 做游程去重（合并连续相同收盘），
+#    仅剔除假期填充这类连续常量行，保留真实交易日。
+def _dedupe_trading(rows):
+    out = []
+    for _d, _c in rows:
+        if out and abs(out[-1][1] - _c) < 1e-9:
+            continue  # 合并连续相同收盘（假期填充行）
+        out.append((_d, _c))
+    return out
 try:
     cur.execute("SELECT date,close FROM (SELECT date,close FROM index_quotes WHERE name='上证指数' ORDER BY date DESC LIMIT 20) ORDER BY date")
-    _hist = cur.fetchall()
+    _hist = _dedupe_trading(cur.fetchall())
     _hi = max(c for _, c in _hist); _lo = min(c for _, c in _hist)
     _pos = (idx['上证指数'][0] - _lo) / (_hi - _lo) if _hi > _lo else 0.5
     _hist_dates = f"{_hist[0][0]}~{_hist[-1][0]}"
+    # 最近区间（箱体）上下沿：由去重后的 20 日窗口实高低派生，不再硬编码 3900–4000
+    BOX_LO, BOX_HI = _lo, _hi
+    _box_range_txt = f"{BOX_LO:.0f}–{BOX_HI:.0f}"
 except Exception:
-    _pos = 0.5; _hist_dates = '—'
-# 阶段映射：低位→②放量启动、中位→③主升加速、高位→④高位震荡（原 elif _pos>=0.66 不可达死代码，已按阈值重排）
-STAGE = '④ 高位震荡' if _pos >= 0.66 else '③ 主升加速' if _pos >= 0.33 else '② 放量启动'
+    _pos = 0.5; _hist_dates = '—'; BOX_LO = BOX_HI = None; _box_range_txt = '—'
+# 阶段映射：低位→②低位蓄势、中位→③主升加速、高位→④高位震荡
+#   （原「放量启动」名实不符：该档由 20 日区间低位派生，与「放量」无关、且无周线依据；
+#    改名为「低位蓄势」更贴合位置语义。仅 ②③④ 由位置计算，①⑤⑥⑦ 为示意档位。）
+STAGE = '④ 高位震荡' if _pos >= 0.66 else '③ 主升加速' if _pos >= 0.33 else '② 低位蓄势'
 # 阶段编号（中文圈码）→ 整数，供 1.3 进度条动态高亮（承接 evolution #29）
 _STAGE_CIRCLED = {'①': 1, '②': 2, '③': 3, '④': 4, '⑤': 5, '⑥': 6, '⑦': 7}
 _stage_num = 0
@@ -803,19 +922,29 @@ for _k, _v in _STAGE_CIRCLED.items():
 _stage_bar = ''.join(
     f'<div class="st{" on" if i == _stage_num else ""}">{c} {name}</div>'
     for i, (c, name) in enumerate(
-        [('①', '底部蓄势'), ('②', '放量启动'), ('③', '主升加速'), ('④', '高位震荡'),
+        [('①', '底部蓄势'), ('②', '低位蓄势'), ('③', '主升加速'), ('④', '高位震荡'),
          ('⑤', '局部派发'), ('⑥', '破位下行'), ('⑦', '探底重构')], start=1)
 )
+# 点位「指向」列由位置派生（evolution #2026-11-02 / 行29）：消除硬编码 interpretive 文本
+_pos_label = ('区间低位（近 20 日下沿）' if _pos < 0.33 else '区间中枢' if _pos < 0.66 else '区间高位')
 
 # ============ 跨日信号（读结构化本地历史库，不爬报告 HTML 文本）============
 def _sign(yi):
     return '正' if (yi is not None and yi > 0) else ('负' if (yi is not None and yi < 0) else '—')
 
 # ① 证券净流出连续天数（DB 以交易日为粒度，今日为起点逆向计数）
+# 🔴 信号数据日（2026-10-30 审计 P1-2）：sector 类自 2026-10-15 断采 ⇒ 本信号的「今日」值
+#    实际是 10-15 的流向，「与上期持平」会把数据冻结伪装成「连续未变」。必须记录真实数据日。
 _sec_raw = []
-cur.execute("SELECT date,net_inflow FROM fund_flows WHERE category='sector' AND name='证券' ORDER BY date DESC LIMIT 30")
+# 信号序列保持同花顺口径：显式排除人工补数源。westock 行名「证券Ⅱ」本就不会命中
+# name='证券'，但禁依赖命名差异这种隐性隔离——未来某源若改用无后缀名即会静默混入
+# 「连续净流出天数」，把不同口径的流向接成一条序列。
+cur.execute("SELECT date,net_inflow FROM fund_flows WHERE category='sector' AND name='证券' "
+            "AND (source IS NULL OR source NOT IN ('westock_mcp','neodata_mcp')) "
+            "ORDER BY date DESC LIMIT 30")
 for _d, _v in cur.fetchall():
     _v = _f(_v); _sec_raw.append((_d, _v/1e8 if _v is not None else None))
+sec_sig_date = _sec_raw[0][0] if _sec_raw else None
 sec_out_streak = 0
 for _d, _yi in _sec_raw:
     if _yi is None: break
@@ -829,19 +958,30 @@ _aero_raw = []
 cur.execute("SELECT date,net_inflow FROM fund_flows WHERE category='etf' AND code='159267' ORDER BY date DESC LIMIT 30")
 for _d, _v in cur.fetchall():
     _v = _f(_v); _aero_raw.append((_d, _v/1e8 if _v is not None else None))
+aero_sig_date = _aero_raw[0][0] if _aero_raw else None
 aero_today_yi = _aero_raw[0][1] if _aero_raw else None
 aero_sign = _sign(aero_today_yi)
 aero_prev_sign = _sign(_aero_raw[1][1]) if len(_aero_raw) > 1 else None
 
 # ③ 上证距 MA20 空间% + 量能区间位置
-cur.execute("SELECT close FROM (SELECT date,close FROM index_quotes WHERE name='上证指数' ORDER BY date DESC LIMIT 20) ORDER BY date")
+cur.execute("SELECT date,close FROM (SELECT date,close FROM index_quotes WHERE name='上证指数' ORDER BY date DESC LIMIT 20) ORDER BY date")
 # P0#4：原 `statistics.mean([c for (c,) in cur.fetchall()])` 在 close 含 NULL 时抛 TypeError、
 #   在 index_quotes 无上证指数行时抛 StatisticsError ⇒ 整份日报在组装中段硬崩。
 #   改为 _agg_mean 后可能返回 None，下游 3 处必须显式降级为「数据缺失」，**不得填 0**
 #   （填 0 会让「距 MA20 +0.0%，处箱体下沿」成为假陈述）。
-_ma20 = _agg_mean([c for (c,) in cur.fetchall()], default=None, label='上证 MA20（近20日）')
+# evolution #2026-11-02：MA20 同样经 `_dedupe_trading` 剔除假期填充常量行，与区间位置口径一致
+_ma20 = _agg_mean([c for _, c in _dedupe_trading(cur.fetchall())], default=None, label='上证 MA20（近20交易日）')
 _sh_close = idx['上证指数'][0]
 pos_to_ma20 = ((_sh_close - _ma20) / _ma20 * 100) if (_ma20 and _sh_close is not None) else None
+# evolution #2026-11-02：KPI/箱体下沿文案由硬编 3900–4000 改为数据驱动（BOX_LO/BOX_HI 派生）
+if BOX_LO is None or BOX_HI is None or BOX_HI == BOX_LO:
+    _box_note = '箱体下沿/上方'
+elif _sh_close < BOX_LO:
+    _box_note = '箱体下方（破位）'
+elif _sh_close > BOX_HI:
+    _box_note = '箱体上方（突破）'
+else:
+    _box_note = f"箱内（{(_sh_close-BOX_LO)/(BOX_HI-BOX_LO)*100:.0f}%位置）"
 amt_yi = (idx['上证指数'][2] + idx['深证成指'][2]) / 1e8
 amt_zone = ('1.7–2.0万亿舒适区' if 17000 <= amt_yi <= 20000
             else '低于1.5万亿（缩量区）' if amt_yi < 15000
@@ -852,7 +992,9 @@ phase_path = 'A'
 signal_state = {
     'date': DATA_DATE, 'run_date': RUN_DATE,
     'sec_outflow_streak': sec_out_streak, 'sec_today_yi': sec_today_yi, 'sec_prev_yi': sec_prev_yi,
+    'sec_sig_date': sec_sig_date,
     'aero_sign': aero_sign, 'aero_today_yi': aero_today_yi, 'aero_prev_sign': aero_prev_sign,
+    'aero_sig_date': aero_sig_date,
     'sh_pos_to_ma20': (round(pos_to_ma20, 2) if pos_to_ma20 is not None else None),
     'sh_close': (round(_sh_close, 2) if _sh_close is not None else None),
     'ma20': (round(_ma20, 2) if _ma20 is not None else None),
@@ -963,10 +1105,17 @@ _today_best = max(_mtvals) if None not in _mtvals else None
 _m12 = [_d.get(DATA_DATE, {}).get(s) for s in WATCH12]
 mil_top_today = (None not in _m12) and (_today_best is not None) and \
                 (_today_best == max(_m12)) and (_today_best > 0)
+# 🔴 streak 最新数据日（2026-10-30 审计 P1-2）：DATA_DATE 若非「完整交易日」（sector_daily_change
+#    当日行数 < 12），streak 倒推会停在更早的完整日——「与上期持平」遂把冻结伪装成连续未变。
+#    streak=0 时（当日最优即负）倒推循环第一天就 break、_mil_recent 为空 ⇒ 数据日取
+#    DATA_DATE 本身（评估日就是当日），避免「数据日未知」的模糊表述。
+_mil_streak_date = _mil_recent[0][0] if _mil_recent else (DATA_DATE if DATA_DATE in _complete else None)
 
 signal_state['mil_up_streak'] = mil_up_streak
 signal_state['mil_top_today'] = mil_top_today
 signal_state['mil_complete_days'] = len(_complete)
+signal_state['mil_streak_date'] = _mil_streak_date
+signal_state['mil_data_date_complete'] = (DATA_DATE in _complete)
 
 # 读取往期 sidecar 做连续性对比（仅读结构化 JSON，绝不爬报告 HTML 文本）
 # 【上期选取语义 · 跨日续接的正确性所在，勿改】
@@ -996,6 +1145,22 @@ def _streak_delta(cur_v, prev_v):
     if prev_v is None: return '（上期无数据）'
     if cur_v == prev_v: return '（与上期持平）'
     return f'（较上期 {cur_v-prev_v:+d} 日）'
+# 🔴 信号陈旧熔断的措辞层（2026-10-30 审计 P1-2）：⑤ 块各信号必须带真实数据日；
+#    数据日 < DATA_DATE 时「今日」改「数据日 X」，并追加冻结告警——「与上期持平」
+#    在数据冻结时是同义反复，不标注数据日读者无法区分「连续未变」与「根本没更新」。
+def _sig_when(sig_date):
+    return '今日' if (sig_date and sig_date == DATA_DATE) else (f'数据日 {sig_date}' if sig_date else '数据日未知')
+_sec_when = _sig_when(sec_sig_date)
+_aero_when = _sig_when(aero_sig_date)
+_sec_stale_warn = (f'<span style="color:#e3a33c">⚠ 证券资金流数据冻结于 {sec_sig_date}'
+                   f'（sector 类自 2026-10-15 起断采），streak 未反映其后的真实变化</span>'
+                   if (sec_sig_date and sec_sig_date != DATA_DATE) else '')
+_aero_stale_warn = (f'<span style="color:#e3a33c">⚠ 航天ETF资金流数据日为 {aero_sig_date}，'
+                    f'较组合基准 {DATA_DATE} 滞后（采集器当日行未写入），符号翻转可能被滞后吞掉</span>'
+                    if (aero_sig_date and aero_sig_date != DATA_DATE) else '')
+_mil_stale_warn = (f'<span style="color:#e3a33c">⚠ 军工 streak 数据冻结于 {_mil_streak_date}'
+                   f'（sector_daily_change 完整交易日止于该日，当日板块行数不足 12），未反映其后的真实变化</span>'
+                   if (_mil_streak_date and _mil_streak_date != DATA_DATE) else '')
 sec_delta_txt = _streak_delta(sec_out_streak, _prev_state.get('sec_outflow_streak') if _prev_state else None)
 mil_delta_txt = _streak_delta(mil_up_streak, _prev_state.get('mil_up_streak') if _prev_state else None)
 # 进化项 #30：军工主线顺风连续终止显式提示（streak 由 >0 转 0 时）
@@ -1027,7 +1192,15 @@ else:
     ma20_txt = f"上证收于 {_sh_close:,.0f}，距 MA20（{_ma20:,.0f}）{pos_to_ma20:+.1f}%，处箱体{'上沿' if pos_to_ma20 > 0 else '下沿'}"
 amt_txt = f"两市量能 {amt_yi/10000:.2f} 万亿，处{amt_zone}"
 stage_prev = _prev_state.get('stage', '—') if _prev_state else '—'
-stage_changed = bool(_prev_state and _prev_state.get('stage') != STAGE)
+# 比较阶段编号而非完整字符串（evolution #2026-11-02：②「放量启动」→「低位蓄势」改名不应误报「有变化」）
+_prev_stage_num = None
+if _prev_state:
+    _ps = _prev_state.get('stage') or ''
+    for _k, _v in _STAGE_CIRCLED.items():
+        if _ps.startswith(_k):
+            _prev_stage_num = _v
+            break
+stage_changed = bool(_prev_stage_num is not None and _prev_stage_num != _stage_num)
 
 # 跨期连续性提示（进化项 #21）：上期待续接数据日与本期相同或间隔>1 交易日时显式标注，避免误读
 _prev_date = _prev_state.get('date') if _prev_state else None
@@ -1068,9 +1241,19 @@ def f2(v):
     return f'{v:.2f}' if v is not None else '—'
 
 # 军工近 N 日表现串（需 chg()，故置于 def chg/money 之后）
-mil_recent_txt = '；'.join(
-    f"{d[5:]}:地兵{chg(dv.get('地面兵装Ⅱ'))}/航装{chg(dv.get('航空装备Ⅱ'))}/军工电{chg(dv.get('军工电子Ⅱ'))}/航海{chg(dv.get('航海装备Ⅱ'))}"
-    for d, dv in _mil_recent) or '—'
+# 2026-10-30 审计连带修复：
+#   ① 展示串原手列 4 个板块，漏 10-27 补入 MIL_SECTORS 的 航天装备Ⅱ——集合与展示
+#      不同源即又一处处口径分叉；改为按 MIL_SECTORS 派生，禁手列；
+#   ② streak=0（当日最优即负、循环首日即 break）时 _mil_recent 为空 ⇒ 原渲染
+#      「近0日：—」无任何参照；补当日（DATA_DATE）行，让读者看到「中断日」真实结构。
+_MIL_SHORT = {'地面兵装Ⅱ': '地兵', '航空装备Ⅱ': '航装', '军工电子Ⅱ': '军工电',
+              '航海装备Ⅱ': '航海', '航天装备Ⅱ': '航天'}
+def _mil_day_str(d, dv):
+    return f"{d[5:]}:" + '/'.join(f"{_MIL_SHORT.get(s, s)}{chg(dv.get(s))}" for s in MIL_SECTORS)
+_mil_show = list(_mil_recent)
+if not _mil_show and DATA_DATE in _d:
+    _mil_show = [(DATA_DATE, _d[DATA_DATE])]
+mil_recent_txt = '；'.join(_mil_day_str(d, dv) for d, dv in _mil_show) or '—'
 
 # ================= HTML =================
 rows_hold = ''
@@ -1128,8 +1311,10 @@ for k in IDX_ORDER:
     c, p, a = idx[k]
     rows_idx += f'''<tr><td>{k}</td><td class="num">{c:,.2f}</td><td class="num">{chg(p)}</td><td class="num">{a/1e8:,.0f}亿</td></tr>'''
 
-cur.execute("SELECT name,net_inflow FROM fund_flows WHERE date=? AND category='sector'", (FLOW_DATE,))
-sec_all = [(k, _f(v)/1e8) for k, v in cur.fetchall() if _f(v) is not None]
+# 🔴 1.4 表体按 sector 类别自身数据日取数（2026-10-30 审计 P0-6）：原用全类别 FLOW_DATE，
+#    sector 停更后恒得 0 行 ⇒ 表体空白但标题挂 FLOW_DATE，读者无从判断是「当日无流向」还是断采。
+# 表体与 sec_flow 同源同日（复用 453 行按源优先选取的结果，禁二次查询漂移）
+sec_all = [(k, v) for k, v in _sec_rows if v is not None]
 top_in = sorted(sec_all, key=lambda x: -x[1])[:10]
 top_out = sorted(sec_all, key=lambda x: x[1])[:10]
 rows_flow = ''
@@ -1155,6 +1340,23 @@ except Exception as _e:
     SW_DATE = None
 
 SW_DATE_F = SW_DATE if SW_DATE else '—'
+# sector 断采时对 1.4 空表体的显式说明（禁静默：空表 + 一个不相关的日期 = 双口径混同的展示面）。
+# 定义点在 SW_DATE_F 之后：note 内引用 1.5 的投研线日期作对照。
+# 人工补数说明（2026-10-30）：展示源非 ths/NULL 时，必须讲清口径差异——禁让读者把
+# westock 申万二级全量值（名称带「Ⅱ」）与历史同花顺 90 行业值当同一序列读。
+_sec_patch_note = (
+    f'<br>⚠ 人工补数（数据日 {SEC_FLOW_DATE}）：同花顺行业资金流接口自 2026-10-15 起断采，'
+    f'本节当日数据由交互会话经 westock MCP 单日补入——申万二级全量 {SEC_N} 板块、'
+    f'名称保留申万官方「Ⅱ」后缀（如「白酒Ⅱ」「证券Ⅱ」），与历史同花顺 90 行业口径'
+    f'<b>不同源、板块集合与命名体系均不同</b>，禁与历史序列直接比较或相加'
+    + (f'；且该数据日较组合基准日 {DATA_DATE} 滞后，非当日值'
+       if (SEC_FLOW_DATE and SEC_FLOW_DATE != DATA_DATE) else '')
+    if SEC_SRC not in (None, 'ths') else '')
+_sec_flow_note = (f'<br>⚠ 本节表体为空：fund_flows sector 类实际数据日为 {SEC_FLOW_DATE}'
+                  f'（同花顺行业资金流接口自该日起网络层断连，采集侧见 '
+                  f'src/data_sources/fund_flow.py:fetch_sector_fund_flow），非「当日无流向」；'
+                  f'申万一级口径见 1.5 投研线（{SW_DATE_F}），不受影响。'
+                  if (SEC_FLOW_DATE and SEC_FLOW_DATE != DATA_DATE) and SEC_SRC in (None, 'ths') else '')
 # 申万滞后交易日数（2026-10-27 落地 evolution #2026-10-21）：
 #   🔴 原实现写死「滞后一日：投研线 18:15 同步当日数据」，10-21 实测实为 **2 个交易日**，
 #      属写死陈述与实际不符。日期/计数类断言一律现算（项目铁律）。
@@ -1218,11 +1420,23 @@ sw_lag_note = (f'投研线每日 <b>18:15</b> 同步当日数据，而本日报 
                ('本节数据日期与组合基准日一致。' if SW_DATE else ''))
 con.close()
 
-main_proxy_txt = '（90申万板块合计代理；全市场main_fund口径今日本地缺失）' if main_est else ''
-if FLOW_LAG:
-    # 🔴 资金流滞后守卫（evolution 2026-10-16）：main_fund 取数日=FLOW_DATE≠DATA_DATE 时，所有主力资金
-    # 口径提及处（HTML 与 TLDR）必须显式标注取数日，避免"今日净流出"误读为组合基准日数据。
-    main_proxy_txt += f'（资金流取数日 {FLOW_DATE}，较组合基准 {DATA_DATE} 滞后）'
+main_proxy_txt = (f'（{main_proxy_n}申万板块合计代理；全市场main_fund口径今日本地缺失）'
+                  if main_est else '')
+# 🔴 代理值真实数据日（2026-10-30 审计 P0-6）：sector 类停更后，代理值实际是同花顺断采日
+#    （2026-10-15）的 90 板块合计，必须随值标注其真实数据日，禁止让读者把 14 天前的合计
+#    读作「今日主力资金」。本地 main_fund 真值可用时，才沿用 FLOW_DATE 滞后标注。
+if main_est and main_fund_date and main_fund_date != DATA_DATE:
+    main_proxy_txt += (f'（代理数据日 {main_fund_date}，较组合基准 {DATA_DATE} 滞后，'
+                       f'非当日值——同花顺行业资金流接口自该日起断采）')
+elif main_fund_date and main_fund_date != DATA_DATE:
+    # 🔴 取数日必须用 main_fund 类别自身的 MAX（main_fund_date），禁用全类别 FLOW_DATE——
+    #    后者会被 etf/sector 的更新日带 fresh：补数前实测把 10-15 的真值错标成「取数日
+    #    10-29」，补数后全类别 MAX 被 sector 推进到当日、标记又整体消失（FLOW_LAG=False）。
+    #    两种形态都是「标注日 ≠ 数值真实来源日」，2026-10-30 补数连带修复。
+    main_proxy_txt += f'（数据日 {main_fund_date}，较组合基准 {DATA_DATE} 滞后，非当日值）'
+# 主力资金措辞的日期感知（2026-10-30 审计 P0-6）：值为代理/陈旧数据时禁称「今日」
+_MAIN_FUND_WHEN = ('今日' if (main_fund_date and main_fund_date == DATA_DATE)
+                   else (f'数据日 {main_fund_date}' if main_fund_date else '数据日未知'))
 zt_show = (loc_zt if loc_zt is not None
            else (BR['zt'] if BR.get('zt') is not None else '—'))
 dt_show = (loc_dt if loc_dt is not None
@@ -1239,19 +1453,99 @@ def _pmi_cell(v, up_good=True):
 #   统一渲染为「值未知（NeoData 未返回），方向待定」，避免对未知值做收缩/扩张推断。
 def _pmi_row(label, v, prev, interp, up_good=True):
     pv = f'{prev}%' if prev is not None else '—'
-    delta = f'{prev-v:+.1f}pct' if (v is not None and prev is not None) else '—'
+    # 🔴 环比符号（2026-10-30 审计连带发现）：原为 `prev-v`，v=当期、prev=前值 ⇒ 环比恒为反号
+    #    （如制造业 49.8→50.1 实为 +0.3pct，原代码渲染 -0.3pct）。此前因前值全 None 从未显形，
+    #    parse_pmi 修好后前值开始落值 ⇒ 必须同批修正，否则新增字段自带错误符号。
+    delta = f'{v-prev:+.1f}pct' if (v is not None and prev is not None) else '—'
     interp_disp = '值未知（NeoData 未返回），方向待定' if v is None else interp
     return f'<tr><td>{label}</td><td class="num">{_pmi_cell(v, up_good)}</td><td class="num">{pv}</td><td>{interp_disp}（环比 {delta}）</td></tr>'
+
+def _pmi_interp(v, subject):
+    """PMI 解读按实值生成（2026-10-30 审计 P0-5）：原为静态文案且含写死数字
+    （「建筑业46.9/服务业49.3」），parse_pmi 修好后真实值（服务业 50.2/建筑业 50.3）
+    与静态「收缩」叙事直接矛盾。v=None 时由 _pmi_row 统一渲染「值未知…方向待定」。"""
+    if v is None:
+        return '值未知（NeoData 未返回），方向待定'
+    zone = '扩张区' if v >= 50 else '收缩区'
+    return f'{subject} {v}，处{zone}（荣枯线 50）'
+
 rows_pmi = ''
 rows_pmi += _pmi_row(f"制造业PMI（整体，{PMI['stat']}）", PMI.get('mfg'), PMI.get('mfg_prev'),
-                     'NeoData 宏观库本次查询未直接返回整体值，标「—」', up_good=False)
-rows_pmi += _pmi_row('制造业PMI · 大型企业', PMI.get('large'), PMI.get('large_prev'), '大型企业仍处扩张区（>50）', up_good=False)
-rows_pmi += _pmi_row('制造业PMI · 中型企业', PMI.get('mid'), PMI.get('mid_prev'), '中型企业跌破荣枯线', up_good=False)
-rows_pmi += _pmi_row('综合PMI · 产出指数', PMI.get('composite'), None, '综合景气落入收缩区', up_good=False)
-rows_pmi += _pmi_row('非制造业PMI · 商务活动', PMI.get('nonmfg'), None, '非制造业转收缩（建筑业46.9/服务业49.3）', up_good=False)
-rows_pmi += _pmi_row('PMI · 服务业', PMI.get('service'), None, '服务业弱景气', up_good=False)
-rows_pmi += _pmi_row('PMI · 建筑业', PMI.get('construction'), None, '建筑业收缩', up_good=False)
+                     _pmi_interp(PMI.get('mfg'), '制造业整体'))
+rows_pmi += _pmi_row('制造业PMI · 大型企业', PMI.get('large'), PMI.get('large_prev'),
+                     _pmi_interp(PMI.get('large'), '大型企业'))
+rows_pmi += _pmi_row('制造业PMI · 中型企业', PMI.get('mid'), PMI.get('mid_prev'),
+                     _pmi_interp(PMI.get('mid'), '中型企业'))
+rows_pmi += _pmi_row('制造业PMI · 小型企业', PMI.get('small'), PMI.get('small_prev'),
+                     _pmi_interp(PMI.get('small'), '小型企业'))
+rows_pmi += _pmi_row('综合PMI · 产出指数', PMI.get('composite'), PMI.get('composite_prev'),
+                     _pmi_interp(PMI.get('composite'), '综合景气'))
+rows_pmi += _pmi_row('非制造业PMI · 商务活动', PMI.get('nonmfg'), PMI.get('nonmfg_prev'),
+                     _pmi_interp(PMI.get('nonmfg'), '非制造业'))
+rows_pmi += _pmi_row('PMI · 服务业', PMI.get('service'), PMI.get('service_prev'),
+                     _pmi_interp(PMI.get('service'), '服务业'))
+rows_pmi += _pmi_row('PMI · 建筑业', PMI.get('construction'), PMI.get('construction_prev'),
+                     _pmi_interp(PMI.get('construction'), '建筑业'))
+
+# 制造业分规模可得性说明（1.6 note / 数据源清单共用，数据驱动，2026-10-30 审计 P0-5：
+# 原硬编码「整体值未直接返回」，parse_pmi 修复后该句成假陈述）
+_MFG_FIELDS = [('整体', 'mfg'), ('大型企业', 'large'), ('中型企业', 'mid'), ('小型企业', 'small')]
+_mfg_missing = [lbl for lbl, k in _MFG_FIELDS if PMI.get(k) is None]
+_mfg_ok = [lbl for lbl, k in _MFG_FIELDS if PMI.get(k) is not None]
+_pmi_mfg_note = '；'.join(filter(None, [
+    ('制造业分规模值中' + '、'.join(_mfg_missing) + ' 经查询未直接返回，标「—」，未做任何推算' if _mfg_missing else ''),
+    ('制造业分规模值已取得：' + '、'.join(_mfg_ok) if _mfg_ok else ''),
+])) or '制造业分规模值本次查询无任何返回'
+_mfg_src_txt = (('、'.join(_mfg_ok) + ' 已返回') if _mfg_ok else '未返回，标「—」')
+# TLDR 宏观条目标题（原硬编码「宏观逆风未解」，9 月制造业 50.1/综合 50.7 修复后成假陈述）
+_pmi_known = [PMI.get(k) for k in ('mfg', 'composite', 'nonmfg', 'service', 'construction')
+              if PMI.get(k) is not None]
+if PMI.get('mfg') is not None and _pmi_known and min(_pmi_known) >= 50:
+    _macro_head = '宏观景气处扩张区'
+elif _pmi_known and max(_pmi_known) < 50:
+    _macro_head = '宏观逆风未解'
+elif PMI.get('mfg') is None:
+    _macro_head = '宏观数据部分缺失'
+else:
+    _macro_head = '宏观喜忧参半'
+# ④ 风控标题与 1.3 证据链「宏观」行的指向语（原均硬编码「宏观收缩」/「需求弱、结构强」）
+if PMI.get('composite') is None:
+    _macro_risk_txt = '宏观数据缺失'
+    _macro_evidence = '数据缺失，方向待定'
+elif PMI['composite'] < 50:
+    _macro_risk_txt = '宏观收缩'
+    _macro_evidence = '需求弱、结构强'
+else:
+    _macro_risk_txt = '宏观平稳'
+    _macro_evidence = '景气温和'
 rows_pmi += f'''<tr><td>SHIBOR 隔夜</td><td class="num">{macro.get('SHIBOR_ON','—')}%</td><td class="num">—</td><td>本地 macro_daily 最新口径（仅 SHIBOR，债价微幅波动）</td></tr>'''
+
+# 利率行（2026-10-30 审计 P2-1：NeoData 全球利率库，原 1.6 利率维度恒「—」）。
+# 中债 10Y 为日频、美债 10Y 仅月末值 ⇒ 利差两腿数据日不同时必须显式标注口径混算，禁静默相减。
+RATES = MKT_NEO.get('rates') or {}
+def _rate_row(label, v, vdate, prev, prevdate):
+    if v is None:
+        return (f'<tr><td>{label}</td><td class="num"><span class="flat">—</span></td>'
+                f'<td class="num">—</td><td>NeoData 未返回，方向待定</td></tr>')
+    pv = f'{prev}%（{prevdate}）' if prev is not None else '—'
+    delta = f'{v-prev:+.2f}pct' if prev is not None else '—'
+    return (f'<tr><td>{label}</td><td class="num">{v:.2f}%</td><td class="num">{pv}</td>'
+            f'<td>数据日 {vdate}（环比 {delta}）</td></tr>')
+rows_pmi += _rate_row('中债国债到期收益率 · 10年', RATES.get('cn10y'), RATES.get('cn10y_date'),
+                      RATES.get('cn10y_prev'), RATES.get('cn10y_prev_date'))
+rows_pmi += _rate_row('美国国债收益率 · 10年（月末值）', RATES.get('us10y'), RATES.get('us10y_date'),
+                      RATES.get('us10y_prev'), RATES.get('us10y_prev_date'))
+_cn_v, _cn_d = RATES.get('cn10y'), RATES.get('cn10y_date')
+_us_v, _us_d = RATES.get('us10y'), RATES.get('us10y_date')
+if _cn_v is not None and _us_v is not None:
+    _spread_val = f'{_cn_v - _us_v:+.2f}pct'
+    _spread_interp = (f'中 {_cn_v:.2f}%@{_cn_d} − 美 {_us_v:.2f}%@{_us_d}；'
+                      + ('两腿数据日不同，为口径混算值仅作参照' if _cn_d != _us_d else '同数据日'))
+else:
+    _spread_val = '—'
+    _spread_interp = '任一腿未返回，不计算（禁静默相减）'
+rows_pmi += (f'<tr><td>中美10年期利差（中−美）</td><td class="num">{_spread_val}</td>'
+             f'<td class="num">—</td><td>{_spread_interp}</td></tr>')
 
 # 叙事段落（数据驱动）
 regime_txt = REGIME
@@ -1407,6 +1701,18 @@ if not VS_APPLICABLE:
 _stage_note = ('（指区间位置低位，非量能放大）'
                if ('缩量' in amt_zone and (STAGE.startswith('②') or STAGE.startswith('③')))
                else '')
+# evolution #2026-11-02：路径 C 价格条件动态判定，避免硬编「跌破 3900」在已破位时仍称「若跌破」
+_path_c_below_ma20 = (_sh_close is not None and _ma20 is not None and _sh_close < _ma20)
+_path_c_below_box = (_sh_close is not None and BOX_LO is not None and _sh_close < BOX_LO)
+if _path_c_below_box and _path_c_below_ma20:
+    _path_c_status = (f"价格已跌破 MA20（{_ma20:,.0f}）与箱体下沿（{BOX_LO:,.0f}），路径 C 价格条件已满足；"
+                      f"但量能未萎缩（{amt2:.2f} 万亿）、跌停 {dt_show} 家未骤降，破位确认尚缺量能/广度佐证，暂未确认进入第 ⑥ 阶段。")
+elif _path_c_below_ma20:
+    _path_c_status = (f"价格已跌破 MA20（{_ma20:,.0f}），但仍在箱体下沿（{BOX_LO:,.0f}）之上，"
+                      f"路径 C 需同时满足『有效跌破箱体下沿』方算价格条件齐备；且量能未萎缩（{amt2:.2f} 万亿）、"
+                      f"跌停 {dt_show} 家未骤降，破位确认尚缺佐证，暂未确认进入第 ⑥ 阶段。")
+else:
+    _path_c_status = "价格尚在箱体下沿 / MA20 之上，路径 C 价格条件未触发。"
 HTML = f'''<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>组合+大盘综合视角 {RUN_DATE}</title>
@@ -1481,10 +1787,10 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="lead">大盘{_TODAY_TERM}<b>{regime_txt}</b>：{_idx_desc}。{_main_line_txt}{_mil_txt}。组合当日回报 <b>{chg(d_ret)}</b>、<b>{_vs_detail}</b>：{_perf_reason}。</div>
 <ul>
 {f'<li><b>⚠ 锚定提示</b>：代理加权估算 {est:+.2f}% 与组合真实回报 {d_ret:+.2f}% <b>方向相反</b>，代理法在本组合结构下方向亦不可信，<b>本报告一律以真值为准</b>。</li>' if (d_ret is not None and (est < 0) != (d_ret < 0)) else ''}
-<li><b>核心矛盾</b>：主力资金今日<b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。</li>
+<li><b>核心矛盾</b>：主力资金{_MAIN_FUND_WHEN}{main_fund_span()}{main_proxy_txt}；两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}。</li>
 <li><b>组合最大集中度风险</b>：航天ETF华安 {aero_w:.2f}% 为单一最大持仓（{_aero_verdict} 10% 审慎线）；军工系 {mil_w:.1f}% + 医药系 {med_w:.1f}% + 证券 {sec_w:.1f}% 三方向合计 <b style="color:#e3a33c">{top3_w:.1f}%</b>。军工系 {_mil_wind}（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}，军工装备 {fy(sec_yi('军工装备'))}）{'，暂未共振拖累' if _mil_av < 0 else '，提供正向贡献'}。</li>
 <li><b>亮点/风险</b>：当日主线为 {_main_line_sectors}（资金净流入 {money_in_txt}），{'风险偏好回升' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '主线偏防御/事件驱动'}；红利+债券防御底仓（{def_w:.1f}%）{_def_txt}；{_mil_against_txt}；医药系{_med_wind}（化学制药 {chg(HP['化学制药'])}/生物制品 {chg(HP['生物制品'])}）{'拖累有限' if _med_av < 0 else '提供正向贡献'}。</li>
-<li><b>宏观逆风未解</b>：制造业 PMI 整体值经 NeoData 查询仍未直接返回（标「—」）；仅返回综合PMI产出 {_pmi_pct(PMI['composite'])}、非制造业 {_pmi_pct(PMI['nonmfg'])}{_pmi_zone(PMI['nonmfg'])}、服务业 {_pmi_pct(PMI['service'])}、建筑业 {_pmi_pct(PMI['construction'])}。</li>
+<li><b>{_macro_head}</b>：制造业PMI整体 {_pmi_pct(PMI.get('mfg'))}{_pmi_zone(PMI.get('mfg'))}；综合PMI产出 {_pmi_pct(PMI['composite'])}、非制造业 {_pmi_pct(PMI['nonmfg'])}{_pmi_zone(PMI['nonmfg'])}、服务业 {_pmi_pct(PMI['service'])}、建筑业 {_pmi_pct(PMI['construction'])}。</li>
 </ul>
 </div>
 
@@ -1494,8 +1800,8 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <h3>1.1 指数收盘（{IDX_DATE}）</h3>
 {_breadth_alert}
 <div class="grid">
-<div class="kpi"><div class="k">上证指数</div><div class="v">{idx['上证指数'][0]:,.2f}</div><div class="n">{chg(idx['上证指数'][1])}　{("守住 3900–4000 箱体" if idx['上证指数'][0]>=3900 and idx['上证指数'][0]<=4000 else "箱体下沿/上方")}</div></div>
-<div class="kpi"><div class="k">两市成交额</div><div class="v">{amt2:.2f}万亿</div><div class="n"><span class="down">{amt_chg_txt}</span>　较昨日{amt_dir}</div></div>
+<div class="kpi"><div class="k">上证指数</div><div class="v">{idx['上证指数'][0]:,.2f}</div><div class="n">{chg(idx['上证指数'][1])}　{_box_note}</div></div>
+<div class="kpi"><div class="k">两市成交额</div><div class="v">{amt2:.2f}万亿</div><div class="n">{amt_chg_span()}　较昨日{amt_dir}</div></div>
 <div class="kpi"><div class="k">涨跌家数</div><div class="v"><span class="up">{BR['up']}</span> : <span class="down">{BR['down']}</span></div><div class="n">上涨占比 {BR['up_pct']}%　{regime_txt}</div></div>
 <div class="kpi"><div class="k">涨停 / 跌停</div><div class="v"><span class="up">{zt_show}</span> : <span class="down">{dt_show}</span></div><div class="n">个股面{("无恐慌" if dt_show and dt_show<20 else "需关注")}（{zt_src}口径，NeoData {BR['zt']}）</div></div>
 </div>
@@ -1508,8 +1814,8 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <h3>1.2 日频情绪四段式</h3>
 <div class="four">
 <div class="fbox"><div class="h">① 量能 —— {amt_dir}</div><div class="b">
-两市 <b>{amt2:.2f} 万亿</b>，较昨日 <span class="down">{amt_chg_txt}</span>（{amt_dir}）。<br>
-主力资金 <b class="down">{main_dir} {main_in_yi:+,.0f} 亿</b>{main_proxy_txt}。<br>
+两市 <b>{amt2:.2f} 万亿</b>，较昨日 {amt_chg_span()}（{amt_dir}）。<br>
+主力资金 {main_fund_span()}{main_proxy_txt}。<br>
 <span class="mid">→ {_amt_note}，{'属增量温和延续（风险偏好回升）' if (REGIME=='普涨' and main_in_yi and main_in_yi>0) else '属存量博弈' if (main_in_yi and main_in_yi<0) else '观望'}。</span></div></div>
 <div class="fbox"><div class="h">② 催化 —— {_main_line_sectors}主线</div><div class="b">
 涨幅榜前 3：{top_gain_names}（本地广度 top 行业：{top_ind}）。<br>
@@ -1520,60 +1826,61 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 {_weak_body} 领跌 vs {_strong_body} 领涨。<br>
 红利指数 {chg(idx['红利指数'][1])}、证券Ⅱ {chg(HP['证券Ⅱ'])} 同步回落。<br>
 <span class="mid">→ 指数与个股{'同步上行' if REGIME=='普涨' else '同步下行'}（上涨占比 {BR['up_pct']}%），{'与普涨格局一致' if REGIME=='普涨' else '与「指数跌、个股分化」格局相反'}。</span></div></div>
-<div class="fbox"><div class="h">④ 风控 —— {_weak_sectors}逆风 + 宏观收缩</div><div class="b">
+<div class="fbox"><div class="h">④ 风控 —— {_weak_sectors}逆风 + {_macro_risk_txt}</div><div class="b">
 {_weak_body}（逆风）；{_strong_body}（顺风）。<br>
 宏观：综合PMI产出 {_pmi_pct(PMI['composite'])}、非制造业 {_pmi_pct(PMI['nonmfg'])}{_pmi_zone(PMI['nonmfg'])}。<br>
-<span class="mid">→ 风险集中在{_weak_sectors}逆风与 4000 关阻力；跌停 {dt_show} 家，无系统性恐慌。</span></div></div>
+<span class="mid">→ 风险集中在{_weak_sectors}逆风与 {(f"箱体上沿（{BOX_HI:.0f}）阻力" if BOX_HI is not None else "整数关阻力")}；跌停 {dt_show} 家，无系统性恐慌。</span></div></div>
 </div>
 </div>
 
 <div class="card">
-<h3>1.3 周线七阶段定位</h3>
+<h3>1.3 区间位置七阶段定位（日线 20 日近似）</h3>
 <div class="stage">
 {_stage_bar}
 </div>
-<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 {STAGE}{_stage_note} —— 今日为箱内{REGIME}，箱体（3900–4000）位置见下方点位观察</b></p>
+<p style="font-size:12px;color:#8b949e;margin:6px 0 4px"><b>说明：</b>当前阶段由上證 20 日收盘价区间位置（日线近似，非周线）派生，仅反映价格相对近期区间的位置；①⑤⑥⑦ 为示意档位，②③④ 由位置计算，不表征周线趋势或量能确认。</p>
+<p style="font-size:13px;color:#c9d1d9;margin:10px 0 4px"><b>当前定位：第 {STAGE}{_stage_note} —— 今日为箱内{REGIME}，箱体（{_box_range_txt}）位置见下方点位观察</b></p>
 <h3>证据链</h3>
 <table><thead><tr><th>维度</th><th>观察值</th><th>指向</th></tr></thead>
 <tbody>
-<tr><td>点位位置</td><td>上证 {idx['上证指数'][0]:,.0f}（{idx['上证指数'][1]:+.2f}%），仍在 3900–4000 箱体、关前徘徊；近 20 日区间位置约 {_pos*100:.0f}%（{_hist_dates}）</td><td class="mid">箱体上沿、关前震荡</td></tr>
-<tr><td>量能</td><td>两市 {amt2:.2f} 万亿，较昨日 {amt_chg_txt}（{amt_dir}）</td><td class="mid">{'普涨增量温和' if REGIME=='普涨' else '回调缺增量确认'}</td></tr>
+<tr><td>点位位置</td><td>上证 {idx['上证指数'][0]:,.0f}（{idx['上证指数'][1]:+.2f}%），处于箱体（{_box_range_txt}）下沿；近 20 日区间位置约 {_pos*100:.0f}%（{_hist_dates}）</td><td class="mid">{_pos_label}</td></tr>
+<tr><td>量能</td><td>两市 {amt2:.2f} 万亿，较昨日 {amt_chg_txt}（{amt_dir}）</td><td class="mid">{'普涨增量温和' if REGIME=='普涨' else ('回调，量能方向待定' if amt_chg is None else '回调缺增量确认')}</td></tr>
 <tr><td>主线广度</td><td>{_main_line_sectors}（{top_gain_names}）领涨，资源/周期/红利/证券{'共振' if (not _mil_against and REGIME=='普涨') else '无共振'}，上涨占比 {BR['up_pct']}%</td><td class="mid">轮动非普涨</td></tr>
-<tr><td>资金</td><td>主力 {main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；资金净流入集中于军工（军工装备 {fy(sec_yi('军工装备'))}/军工电子 {fy(sec_yi('军工电子'))}）</td><td class="mid">流出、结构分化</td></tr>
-<tr><td>宏观</td><td>综合PMI产出 {_pmi_pct(PMI['composite'])}、非制造业 {_pmi_pct(PMI['nonmfg'])}{_pmi_zone(PMI['nonmfg'])}</td><td class="mid">需求弱、结构强</td></tr>
+<tr><td>资金</td><td>主力{main_fund_span()}{main_proxy_txt}；资金净流入集中于军工（军工装备 {fy(sec_yi('军工装备'))}/军工电子 {fy(sec_yi('军工电子'))}）</td><td class="mid">流出、结构分化</td></tr>
+<tr><td>宏观</td><td>制造业PMI {_pmi_pct(PMI.get('mfg'))}{_pmi_zone(PMI.get('mfg'))}、综合PMI产出 {_pmi_pct(PMI['composite'])}、非制造业 {_pmi_pct(PMI['nonmfg'])}{_pmi_zone(PMI['nonmfg'])}</td><td class="mid">{_macro_evidence}</td></tr>
 <tr><td>个股情绪</td><td>涨停 {zt_show}、上涨占比 {BR['up_pct']}%、跌停 {dt_show}</td><td class="ok">未系统性转冷 → 未入第 ⑥ 阶段</td></tr>
 </tbody></table>
 <h3>分叉路径（观察条件，非预测）</h3>
 <div class="path"><b>路径 A · 箱体震荡延续（当前证据最充分）</b><br>
-上证在 <b>3900 – 4000</b> 区间反复，军工主线轮动，医药/新能源磨底。<br>
-<span class="cond">确认条件</span>：两市量能维持 1.7–2.0 万亿；上证不失守 MA20（≈3921）；涨停维持 40 家以上、跌停保持低位。</div>
+上证在 <b>{_box_range_txt}</b> 区间反复，军工主线轮动，医药/新能源磨底。<br>
+<span class="cond">确认条件</span>：两市量能维持 1.7–2.0 万亿；上证不失守 MA20（{_ma20:.0f}）；涨停维持 40 家以上、跌停保持低位。</div>
 <div class="path pB"><b>路径 B · 向上突破（需量能+主线扩散配合）</b><br>
-上证站稳 4000 并放量突破。<br>
+上证站稳箱体上沿 {(f"{BOX_HI:.0f}" if BOX_HI is not None else "整数关")} 并放量突破。<br>
 <span class="cond">确认条件</span>：两市量能升至 2.3 万亿以上；军工/半导体资金持续净流入扩散；上涨家数占比升至 55% 以上（当前 {BR['up_pct']}%）。</div>
 <div class="path pC"><b>路径 C · 转入破位（需同时满足两条）</b><br>
 进入第 ⑥ 阶段破位下行。<br>
-<span class="cond">确认条件</span>：① 上证有效跌破 MA20（≈3921）且收盘跌破 3900；且 ② 量能萎缩至 1.5 万亿以下 或 涨停骤降至 25 家以下、跌停扩大至 20+（当前 {dt_show}）。</div>
+<span class="cond">确认条件</span>：① 上证有效跌破 MA20（{_ma20:.0f}）且收盘跌破箱体下沿 {(f"{BOX_LO:.0f}" if BOX_LO is not None else "—")}；且 ② 量能萎缩至 1.5 万亿以下 或 涨停骤降至 25 家以下、跌停扩大至 20+（当前 {dt_show}）。<br><span class="mid">{_path_c_status}</span></div>
 </div>
 
 <div class="card">
-<h3>1.4 板块资金流全景（{FLOW_DATE}，东方财富，90 个申万二级板块{FLOW_LAG_TXT}）</h3>
+<h3>1.4 板块资金流全景（{SEC_FLOW_DATE or '—'}，{SEC_SRC_LABEL}，{SEC_N} 个申万二级板块{SEC_FLOW_LAG_TXT}）</h3>
 <table><thead><tr><th class="num">#</th><th>净流入 TOP10</th><th class="num">金额</th><th>净流出 TOP10</th><th class="num">金额</th></tr></thead>
 <tbody>{rows_flow}</tbody></table>
-<div class="note">主力资金合计 <span class="down">{main_dir} {main_in_yi:+,.0f} 亿</span>{main_proxy_txt}，流入集中于「{money_in_txt}」等方向；流出集中于「{money_out_txt}」等。</div>
+<div class="note">主力资金合计 {main_fund_span()}{main_proxy_txt}，流入集中于「{money_in_txt}」等方向；流出集中于「{money_out_txt}」等。{_sec_flow_note}{_sec_patch_note}</div>
 </div>
 
 <div class="card">
 <h3>1.5 行业资金流 TOP5（申万一级 · 投研线，{SW_DATE_F}）</h3>
 <table><thead><tr><th class="num">#</th><th>净流入 TOP5</th><th class="num">涨跌幅</th><th class="num">金额</th><th>净流出 TOP5</th><th class="num">涨跌幅</th><th class="num">金额</th></tr></thead>
 <tbody>{rows_sw_flow}</tbody></table>
-<div class="note">口径提示：本节为申万<b>一级 31 行业</b>（投研线「A股行业轮动仪表盘」产出，经 history.json 入库），与 1.4 的东方财富 90 个申万<b>二级板块不同源、不同颗粒度</b>，二者不可直接比较或相加。{sw_lag_note}金额为主力资金净流入（大单+特大单口径，亿元）；涨跌幅缺失标「—」，未做任何推算。</div>
+<div class="note">口径提示：本节为申万<b>一级 31 行业</b>（投研线「A股行业轮动仪表盘」产出，经 history.json 入库），与 1.4 的{SEC_SRC_LABEL}（{SEC_N} 个申万<b>二级板块）不同源、不同颗粒度</b>，二者不可直接比较或相加。{sw_lag_note}金额为主力资金净流入（大单+特大单口径，亿元）；涨跌幅缺失标「—」，未做任何推算。</div>
 </div>
 
 <div class="card">
 <h3>1.6 宏观与利率</h3>
 <table><thead><tr><th>指标</th><th class="num">最新值</th><th class="num">前值</th><th>解读</th></tr></thead>
 <tbody>{rows_pmi}</tbody></table>
-<div class="note">PMI 来源：国家统计局（季调值）/ 中国人民银行（高技术、装备制造），经 NeoData 宏观数据库返回，统计截止 {PMI['stat']}。⚠ 制造业PMI<b>整体值</b>与大型/中型/小型企业值经查询未直接返回，标「—」，未做任何推算；仅综合PMI产出/非制造业/服务业/建筑业可用。利率其余字段（10Y国债/中美利差）本地 macro_daily 当日未采集，标「—」。</div>
+<div class="note">PMI 来源：国家统计局（季调值）/ 中国人民银行（高技术、装备制造），经 NeoData 宏观数据库返回，统计截止 {PMI['stat']}。{_pmi_mfg_note}。利率：10Y 中债/美债来自 NeoData 全球利率库（中债日频、美债月末值，两腿数据日不同时利差按口径混算值标注）；本地 macro_daily 仅采集 SHIBOR/COMEX黄金/美元人民币。</div>
 </div>
 
 <h2>二、组合视角</h2>
@@ -1581,8 +1888,8 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <div class="grid">
 <div class="kpi"><div class="k">总市值</div><div class="v">¥{tot_val:,.0f}</div><div class="n">成本 ¥{tot_cost:,.0f}</div></div>
-<div class="kpi"><div class="k">累计盈亏</div><div class="v"><span class="up">+¥{tot_pnl:,.0f}</span></div><div class="n">{chg(tot_pnl/tot_cost*100)}（含失真数据，见2.4）</div></div>
-<div class="kpi"><div class="k">当日回报（真值） {DRET_UNSETTLED_TAG}</div><div class="v">{chg(d_ret)}</div><div class="n"><span class="down">{d_pnl:+,.0f} 元</span>{DRET_UNSETTLED_TXT}</div></div>
+<div class="kpi"><div class="k">累计盈亏</div><div class="v">{money_signed(tot_pnl)}</div><div class="n">{chg(tot_pnl/tot_cost*100)}（含失真数据，见2.4）</div></div>
+<div class="kpi"><div class="k">当日回报（真值） {DRET_UNSETTLED_TAG}</div><div class="v">{chg(d_ret)}</div><div class="n">{amt_signed(d_pnl)}{DRET_UNSETTLED_TXT}</div></div>
 <div class="kpi"><div class="k">相对沪深300</div><div class="v">{_vs_val}</div><div class="n">{_vs_word}（{'军工顺风+防御对冲' if _mil_av>0 else '防御端缓冲'}）</div></div>
 <div class="kpi"><div class="k">盈亏只数</div><div class="v"><span class="up">{pc}</span> : <span class="down">{lc}</span></div><div class="n">共 {HOLD_N} 只</div></div>
 <div class="kpi"><div class="k">Sharpe / 回撤 / 波动</div><div class="v" style="font-size:15px">{f2(sharpe)} / {f2(mdd)}% / {f2(vol)}%</div><div class="n">滚动统计口径（本地未采集标—）</div></div>
@@ -1618,14 +1925,14 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <table><thead><tr><th>代码</th><th>名称</th><th class="num">市值</th><th class="num">占比</th><th class="num">记录盈亏率</th><th class="num">成本价</th><th>触发规则</th></tr></thead>
 <tbody>{rows_bad}</tbody></table>
 <div class="note">命中 <b>{len(bad)}</b> 只，合计市值 ¥{bad_mv:,.0f}（<b>{pct(bad_mv):.2f}%</b> 权重）。其中创业板50ETF华安（cost -2.72）与人工智能ETF易方达（cost -0.292）为<b>负成本价</b>，属明确的成本记录错误，应回溯交易流水修正。<br>
-影响范围：组合层面「累计盈亏 +¥{tot_pnl:,.0f}（+{tot_pnl/tot_cost*100:.2f}%）」因包含这 {len(bad)} 只失真数据而<b>不可靠</b>；当日回报 {DRET_TXT}% 由市值变动计算，<span class="ok">不受成本失真影响，可采信</span>。</div>
+影响范围：组合层面「累计盈亏 ¥{tot_pnl:+,.0f}（{tot_pnl/tot_cost*100:+.2f}%）」因包含这 {len(bad)} 只失真数据而<b>不可靠</b>；当日回报 {DRET_TXT}% 由市值变动计算，<span class="ok">不受成本失真影响，可采信</span>。</div>
 </div>
 
 <div class="card">
 <h3>2.5 持仓明细（{SNAP}）</h3>
 <table><thead><tr><th>代码</th><th>名称</th><th>类别</th><th>行业族</th><th class="num">市值</th><th class="num">占比</th><th class="num">盈亏率</th><th class="num">当日 ETF 资金</th></tr></thead>
 <tbody>{rows_hold}</tbody></table>
-<div class="note">「当日 ETF 资金」= fund_flows 表 category=etf 的净流入（东方财富，{DATA_DATE}），反映 ETF 份额申赎与场内买卖净额，<b>非</b>该 ETF 的当日涨跌幅。</div>
+<div class="note">「当日 ETF 资金」= fund_flows 表 category=etf 的净流入（东方财富，{ETF_FLOW_DATE or '—'}{f'，较组合基准 {DATA_DATE} 滞后' if (ETF_FLOW_DATE and ETF_FLOW_DATE != DATA_DATE) else ''}），反映 ETF 份额申赎与场内买卖净额，<b>非</b>该 ETF 的当日涨跌幅。</div>
 </div>
 
 <h2>三、交叉验证：组合方向 vs 当日市场风向</h2>
@@ -1633,7 +1940,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="card">
 <table><thead><tr><th>组合方向</th><th class="num">权重</th><th>当日板块 / 指数表现</th><th>当日板块/ETF 资金流</th><th>风向</th><th>板块均值</th></tr></thead>
 <tbody>{rows_cross}</tbody></table>
-<div class="note">交叉验证双源：① 板块/指数当日涨跌幅 = NeoData 申万板块行情 + 本地 index_quotes（中证医疗/红利/科创50等）；② 资金流 = 本地 fund_flows（东方财富，90 申万板块 + 23 只 ETF）。重仓板块当日涨跌幅已由 NeoData 完整召回（航天装备/军工电子/化学制药/生物制品/证券/电池/光伏/半导体/通信设备/地面兵装/航空装备）。</div>
+<div class="note">交叉验证双源：① 板块/指数当日涨跌幅 = NeoData 申万板块行情 + 本地 index_quotes（中证医疗/红利/科创50等）；② 资金流 = 本地 fund_flows（{SEC_SRC_LABEL} {SEC_N} 个申万二级板块 + 23 只 ETF）。重仓板块当日涨跌幅已由 NeoData 完整召回（航天装备/军工电子/化学制药/生物制品/证券/电池/光伏/半导体/通信设备/地面兵装/航空装备）。</div>
 </div>
 
 <div class="card">
@@ -1657,7 +1964,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="op"><div class="t">① 持有（维持现状）—— 军工超配 + 红利/债券防御底仓 {def_w+sec_w:.1f}%</div>
 <ul>
 <li>{_oper_hold_lead}：全组合 {DRET_TXT}%、{_vs_detail}；{_oper_hold_txt}。</li>
-<li><span class="cond">维持条件</span>：市场停留在路径 A（箱体震荡）—— 上证守住 MA20 3921、量能 1.7–2.0 万亿。</li>
+<li><span class="cond">维持条件</span>：市场停留在路径 A（箱体震荡）—— 上证守住 MA20（{_ma20:.0f}）、量能 1.7–2.0 万亿。</li>
 <li><span class="cond">加码触发</span>：若出现路径 C 的两条确认信号（破 MA20 + 量能萎缩至 1.5 万亿以下），防御仓位的战略价值上升。</li>
 </ul></div>
 
@@ -1672,7 +1979,7 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="op"><div class="t">③ 对冲 / 减压（针对集中度）—— 关注单一持仓与三方向集中</div>
 <ul>
 <li><b>航天ETF华安 {aero_w:.2f}%</b> 为单一最大持仓，{_aero_verdict} 10% 审慎线。<span class="cond">观察条件</span>：地面兵装板块若冲高回落且 ETF 资金流由正转负，则集中度风险实质化。</li>
-<li><b>军工系 {mil_w:.1f}%</b> {_mil_wind}（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}，军工装备 {fy(sec_yi('军工装备'))}）；<b>医药系 {med_w:.1f}%</b> {_med_wind}（化学制药 {chg(HP['化学制药'])}/生物制品 {chg(HP['生物制品'])}）、<b>证券 {sec_w:.1f}%</b> 当日 {chg(HP['证券Ⅱ'])} 且资金净流出 {fy(sec_today_yi)} 为最大单一拖累。<span class="cond">观察条件</span>：证券若连续 3 日净流出（当前已连续 {sec_out_streak} 日，见⑤跨日跟踪），则该方向逆风从单日事件升级为趋势。</li>
+<li><b>军工系 {mil_w:.1f}%</b> {_mil_wind}（地面兵装Ⅱ {chg(HP['地面兵装Ⅱ'])} / 航空装备Ⅱ {chg(HP['航空装备Ⅱ'])}，军工装备 {fy(sec_yi('军工装备'))}）；<b>医药系 {med_w:.1f}%</b> {_med_wind}（化学制药 {chg(HP['化学制药'])}/生物制品 {chg(HP['生物制品'])}）、<b>证券 {sec_w:.1f}%</b> 当日 {chg(HP['证券Ⅱ'])} 且资金净流出 {fy(sec_today_yi)}（{_sec_when}）为最大单一拖累。<span class="cond">观察条件</span>：证券若连续 3 日净流出（当前已连续 {sec_out_streak} 日，数据日 {sec_sig_date or '—'}，见⑤跨日跟踪），则该方向逆风从单日事件升级为趋势。</li>
 <li><b>宽基核心仅 {core300_w:.2f}%</b>：组合缺少市场平均收益压舱石，风格暴露过重。<span class="cond">改善方向</span>：去重释放的额度可考虑向核心宽基倾斜，而非新增行业主题。</li>
 </ul></div>
 
@@ -1686,11 +1993,11 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <div class="op"><div class="t">⑤ 跨日跟踪（读结构化历史库，非买卖指令）</div>
 <ul>
 {_prev_gap_html}
-<li><span class="cond">证券净流出连续</span>：当前 <b>{sec_out_streak} 日</b>{sec_delta_txt}；今日 {fy(sec_today_yi)}（昨日 {fy(sec_prev_yi)}）。<b>距"连续 3 日趋势"阈值尚差 {sec_thresh_remain} 日</b>{'；已触发趋势确认' if sec_triggered else ''}。</li>
-<li><span class="cond">航天ETF(159267) 资金流</span>：今日 {aero_sign}（{fy(aero_today_yi)}）{aero_trend}。单一最大持仓集中度观察的"由正转负"触发条件{'已满足' if aero_flip else '未满足'}。</li>
+<li><span class="cond">证券净流出连续</span>：当前 <b>{sec_out_streak} 日</b>{sec_delta_txt}；{_sec_when} {fy(sec_today_yi)}（前一日 {fy(sec_prev_yi)}）。<b>距"连续 3 日趋势"阈值尚差 {sec_thresh_remain} 日</b>{'；已触发趋势确认' if sec_triggered else ''}。{_sec_stale_warn}</li>
+<li><span class="cond">航天ETF(159267) 资金流</span>：{_aero_when} {aero_sign}（{fy(aero_today_yi)}）{aero_trend}。单一最大持仓集中度观察的"由正转负"触发条件{'已满足' if aero_flip else '未满足'}。{_aero_stale_warn}</li>
 <li><span class="cond">上证位置 / 量能</span>：{ma20_txt}；{amt_txt}。与路径 A 维持条件（守住 MA20 + 量能 1.7–2.0 万亿）{'吻合' if ma20_ok else '出现偏离'}。</li>
-<li><span class="cond">周线阶段</span>：{STAGE}（{REGIME}），较上期（{stage_prev}）{'未变' if not stage_changed else '有变化'}。</li>
-<li><span class="cond">军工主线延续性</span>：连续 <b>{mil_up_streak} 日</b>军工板块（地面兵装/航空装备/军工电子/航海装备）最优涨跌幅为正{mil_alive_txt}{mil_delta_txt}{mil_terminate_warn}；今日军工最优 {chg(_today_best)}，<b>12板块观测池</b>内严格领涨{'✔' if mil_top_today else '✘'}（{'是' if mil_top_today else '非'}当日观测池第一）。<br>&nbsp;&nbsp;近{mil_up_streak if mil_up_streak else len(_mil_recent)}日：{mil_recent_txt}。<br>&nbsp;&nbsp;<span class="note">（数据源自 sector_daily_change 历史表，回溯窗口 {signal_state['mil_complete_days']} 个完整交易日；"观测池"为我方重仓相关 12 板块，非全市场 90 板块；NeoData 宽区间查询为采样返回，更深日度历史由每日运行自动累积）</span></li>
+<li><span class="cond">区间位置（日线近似）</span>：{STAGE}（{REGIME}），较上期（{stage_prev}）{'未变' if not stage_changed else '有变化'}。</li>
+<li><span class="cond">军工主线延续性</span>：连续 <b>{mil_up_streak} 日</b>军工板块（地面兵装/航空装备/军工电子/航海装备）最优涨跌幅为正{mil_alive_txt}{mil_delta_txt}{mil_terminate_warn}（streak 最新数据日 {_mil_streak_date or '—'}）；当日军工最优 {chg(_today_best)}，<b>{len(WATCH12)}板块观测池</b>内严格领涨{'✔' if mil_top_today else '✘'}（{'是' if mil_top_today else '非'}当日观测池第一）。<br>&nbsp;&nbsp;近{len(_mil_show)}日：{mil_recent_txt}。<br>&nbsp;&nbsp;<span class="note">（数据源自 sector_daily_change 历史表，回溯窗口 {signal_state['mil_complete_days']} 个完整交易日；"观测池"为我方重仓相关 {len(WATCH12)} 板块，非全市场 90 板块；NeoData 宽区间查询为采样返回，更深日度历史由每日运行自动累积）</span>{_mil_stale_warn}</li>
 </ul></div>
 
 <h2>五、数据源与可用性</h2>
@@ -1698,15 +2005,15 @@ font-size:11.6px;color:#7d8590;line-height:1.75}}
 <b>✓ 项目本地数据层</b>（data/database/portfolio.db）—— 本次为主数据源<br>
 &nbsp;&nbsp;· portfolio_snapshots / portfolio_summary：{SNAP}（{HOLD_N} 只持仓 = 场内 ETF {ETF_N} + 场外 {OTC_N}；当日真实回报 {DRET_TXT}%）<br>
 &nbsp;&nbsp;· index_quotes：{IDX_DATE}（11 个指数收盘/涨跌/成交额）{f'　⚠ 较组合基准 {DATA_DATE} 更新（采集器滞后）' if IDX_DATE != DATA_DATE else ''}<br>
-&nbsp;&nbsp;· fund_flows：{FLOW_DATE}（90 个申万板块 + 23 只 ETF{FLOW_LAG_TXT}；main_fund 行缺失，主资金以 90 板块合计代理）<br>
-&nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币，PMI 仍缺）<br>
+&nbsp;&nbsp;· fund_flows（分口径取数日，2026-10-30 审计 P0-6）：申万二级板块 {SEC_FLOW_DATE or '—'}（{SEC_SRC_LABEL}）/ ETF {ETF_FLOW_DATE or '—'}（东财源）/ main_fund {MF_FLOW_DATE or '—'}{FLOW_LAG_TXT}；{('主资金以 ' + str(main_proxy_n) + ' 板块合计代理（代理数据日 ' + str(main_fund_date) + '，非当日值）') if main_est else '主资金取本地 main_fund 真值'}<br>
+&nbsp;&nbsp;· macro_daily：{DATA_DATE}（SHIBOR_ON / COMEX黄金 / 美元人民币）<br>
 &nbsp;&nbsp;· market_breadth：{BL.get('date','—')}（zt={_ZT_DISP}/dt={_DT_DISP}{'' if (loc_zt is not None or loc_dt is not None) else '，列为空未臆造'}）<br>
 &nbsp;&nbsp;· <span class="mid">{EPH_SRC_LINE}</span><br>
 &nbsp;&nbsp;· sector_fund_flow：{SW_DATE_F}（申万<b>一级 31 行业</b>涨跌幅+主力净流入，投研线 history.json 入库；与上方 fund_flows 的东财 90 个申万<b>二级</b>板块不同源、不同颗粒度，不可直接比较）<br>
-<b>✓ NeoData 金融搜索</b> —— 本次可用（查询时间 {MKT_NEO['query_time']}，凭证经 connect_cloud_service 重取）<br>
+<b>✓ NeoData 金融搜索</b> —— 本次可用（查询时间 {MKT_NEO['query_time']}）<br>
 &nbsp;&nbsp;· 三大指数统一行情（与本地交叉核对一致）、大盘市场宽度（涨跌 {BR['up']}:{BR['down']}）<br>
 &nbsp;&nbsp;· 板块涨跌排行（{top_gain_names} 等）+ 申万板块当日涨跌幅（航天装备/生物制品/半导体 等完整召回）<br>
-&nbsp;&nbsp;· 宏观 PMI（综合PMI产出 {_pmi_pct(PMI['composite'])}、非制造业 {_pmi_pct(PMI['nonmfg'])}、服务业 {_pmi_pct(PMI['service'])}、建筑业 {_pmi_pct(PMI['construction'])}；制造业整体值未返回标「—」）<br>
+&nbsp;&nbsp;· 宏观 PMI（制造业 {_pmi_pct(PMI.get('mfg'))}、综合PMI产出 {_pmi_pct(PMI['composite'])}、非制造业 {_pmi_pct(PMI['nonmfg'])}、服务业 {_pmi_pct(PMI['service'])}、建筑业 {_pmi_pct(PMI['construction'])}；制造业分规模值 {_mfg_src_txt}）<br>
 {f'<b style="color:#d29922">⚠ 回溯重生成标记</b>：本报告按运行日 {RUN_DATE} 重新生成（实际生成 {now}），非当日 18:00 盘后原件；场外基金纳入分类与权重口径属本次修正内容。<br>' if BACKFILL else ''}<b>无法核实项一律以「—」标注，未做任何推算填充。</b>
 </div>
 
@@ -1731,6 +2038,18 @@ _DISALLOWED = (
     ('nan',  r'(?<![A-Za-z0-9_])nan(?![A-Za-z0-9_])'),
     ('inf',  r'(?<![A-Za-z0-9_])[-+]?inf(?![A-Za-z0-9_])'),
     ('未替换占位符', r'\{[A-Za-z_][A-Za-z0-9_.\[\]]{0,40}\}'),
+    # 🔴 符号一致性（2026-10-30 审计 P0-3 / P2-3）：10-29 期「累计盈亏」渲染成
+    #    「+¥-130,748」「+-8.57%」且着涨色——硬编码 '+' 前缀/class 撞上负值，f-string
+    #    层无感知、原守卫只查 None/NaN 全无感。三类模式：
+    #    ① 相邻反号（+- / -+）：unambiguous 渲染 bug；不含 --/++（HTML 注释 <!-- 合法）；
+    #    ② 「符号→¥→符号」三连（+¥- / -¥+）：货币双符号写。⚠ 禁写成 ¥[+\-]——那会误伤
+    #       修复后的正确格式「¥-142,182」（货币符号后紧跟负号是合法单符号，10-30 实测已咬过一次）；
+    #    ③ 涨色 span 内负值 / 跌色 span 内正值：class 与符号矛盾（同缺陷家族潜伏形态，
+    #       10-29 期当日盈亏/成交额环比/主力资金三处均因值恰为负而未显形，已同批修复）。
+    ('符号双写(反号相邻)', r'\+(?=-)|-(?=\+)'),
+    ('符号双写(货币)', r'[+\-]¥[+\-]'),
+    ('涨色负值', r'class="up">\s*-'),
+    ('跌色正值', r'class="down">\s*\+'),
 )
 
 
@@ -1795,7 +2114,7 @@ if _PROXY_GRADE != 'full':
         f"按 0 贡献计入 est，故 est 与真值的偏离<b>不可用于推断代理法自身误差量级</b>"
         f"{'，本项结论参考性极低、不得用于归因或业绩判断' if _PROXY_GRADE == 'severe' else ''}。")
 _tldr_lines.append(
-    f"核心矛盾：主力资金今日{main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；"
+    f"核心矛盾：主力资金{_MAIN_FUND_WHEN}{main_dir} {main_in_yi:+,.0f} 亿{main_proxy_txt}；"
     f"两市量能 {amt2:.2f} 万亿较昨日 {amt_chg_txt}（{amt_dir}），{_amt_note}；绝对量能{amt_zone}。")
 _tldr_lines.append(SW_TLDR_TXT)
 _tldr_lines.append(

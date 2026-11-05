@@ -92,6 +92,9 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import os
+import re
+import json
 import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -210,6 +213,123 @@ def record_error_alert(db_path, rule_name, message):
         logger.error("[快照闸门] error 级告警写入失败(%s): %s —— 拒绝结论不变",
                      rule_name, e)
         return False
+
+
+# ---------------------------------------------------------------------------
+# 治本（报告库漂移）：回填/重算 portfolio_summary 前的「可写」闸门 + 重渲染队列
+# ---------------------------------------------------------------------------
+# 背景：2026-10-26 当日快照仅 12 行（应为 34/35），backfill/重算据此写出
+# total_value=510,118.64 并由报告固化；后续快照被回填补齐至 35 行，重算又把
+# 同一行静默改写为 1,416,039.63 ⇒ 静态 HTML 报告无法跟随 ⇒ 哨兵判定 MATCH→DIFFER。
+# 根因 = 摘要（summary）写入方未复用「快照基线闸门」而直接 INSERT OR REPLACE。
+#
+# 本闸门与 check_snapshot_baseline 同口径（当日快照 code 集合 ⊇ 基线标的域），
+# 但**不写 alerts 表**、可被批量回填调用。基线由 expected_universe 推导，取
+# date < date_str 的近 N 个快照日**交集** —— 天然排除目标日自身，且对历史稀疏
+# 日期（如 2012 仅 1~数行）自然放宽（其局部窗口也都是稀疏的），**不会误伤**。
+# 仅当某近期日期的快照确实缺行（如 12 行 vs 基线 34 行）时才拒绝。
+def is_summary_writable(db_path, date_str, lookback=BASELINE_LOOKBACK_DATES):
+    """回填/重算 portfolio_summary 前的「可写」判据（只读、不写库）。
+
+    Returns:
+        (ok: bool, reason: str)
+        - 基线不可判定（历史日不足 BASELINE_MIN_DATES）⇒ ok=True（不拦，与
+          check_snapshot_baseline 一致，避免全新库被卡死）；
+        - actual_codes ⊇ expected ⇒ ok=True；
+        - 否则 ok=False，reason 给出缺失只数。
+    """
+    try:
+        conn = _connect(db_path)
+    except (ValueError, sqlite3.Error) as e:
+        # 连不上库 ⇒ 保守方向：不允许写，避免基于读不到的快照静默落库
+        return False, "无法连接数据库以校验快照完整性: %s" % e
+    try:
+        uni = expected_universe(conn, date_str, lookback=lookback)
+        actual_codes = {r[0] for r in conn.execute(
+            "SELECT DISTINCT code FROM portfolio_snapshots WHERE date = ?",
+            (str(date_str),))}
+    finally:
+        conn.close()
+
+    if uni is None:
+        return True, "baseline_unavailable(历史快照日不足)"
+    expected = uni["expected_codes"]
+    missing = sorted(expected - actual_codes)
+    if not missing:
+        return True, ""
+    return False, ("当日快照 %d 只 不覆盖基线 %d 只，缺失 %d 只: %s"
+                   % (len(actual_codes), len(expected), len(missing),
+                      ",".join(missing[:20])))
+
+
+# 与 audit/sentinel_report_drift.py 同源的正则：从报告 HTML 头部取「总市值」
+_REPORT_VAL_RE = re.compile(
+    r'总市值</div><div class="v"[^>]*>\s*[¥￥]?\s*([0-9][0-9,]*(?:\.[0-9]+)?)'
+)
+_REPORT_DATE_RE = re.compile(r"enhanced_report_(\d{8})\.html")
+_RERENDER_QUEUE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "audit", "report_rerender_queue.jsonl")
+_RERENDER_THRESHOLD = 0.51
+_RERENDER_MAX_LINES = 2000  # 队列文件裁剪上限，防止夜间自动回填无限增长
+
+
+def queue_report_rerender_if_drifted(db_path, date_str, computed_total_value):
+    """当某日 portfolio_summary 被（重）写、且该日已有发布版报告、但报告内嵌总市值
+    与本次算出值不一致时，将「需重渲染」事件追加进 audit/report_rerender_queue.jsonl。
+
+    目的：把「DB 被回填/重算修正、静态报告却停留在旧值」的**静默漂移**转为**可见、
+    可动作**的队列项（由人工或后续重渲染作业消费），而非让哨兵无差别地每轮告警。
+
+    健壮性（避免夜间自动回填反复刷屏/无限增长）：
+      - 若当日最新队列项已是相同 computed_total_value，则跳过（幂等，不重复刷）；
+      - 队列文件超过 _RERENDER_MAX_LINES 时裁剪到末尾 N 行；
+      - 任何异常都吞掉（绝不影响主流程落库）。
+    """
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(db_path))))
+        reports_dir = os.path.join(root, "data", "reports")
+        stamp = str(date_str).replace("-", "")
+        html_path = os.path.join(reports_dir, "enhanced_report_%s.html" % stamp)
+        if not os.path.isfile(html_path):
+            return
+        with open(html_path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(30000)
+        m = _REPORT_VAL_RE.search(head)
+        if not m:
+            return
+        embedded = float(m.group(1).replace(",", ""))
+        computed = float(computed_total_value)
+        if abs(embedded - computed) < _RERENDER_THRESHOLD:
+            return
+
+        os.makedirs(os.path.dirname(_RERENDER_QUEUE), exist_ok=True)
+        # 幂等：当日最新项已是相同算出值则跳过
+        try:
+            _existing = [json.loads(l) for l in open(_RERENDER_QUEUE, encoding="utf-8") if l.strip()]
+        except Exception:
+            _existing = []
+        _same_date = [e for e in _existing if str(e.get("date")) == str(date_str)]
+        if _same_date and abs(float(_same_date[-1].get("computed_total_value", 0)) - computed) < _RERENDER_THRESHOLD:
+            return
+
+        entry = {
+            "date": str(date_str),
+            "report_embedded_total_value": embedded,
+            "computed_total_value": computed,
+            "queued_at": _dt.datetime.now().isoformat(timespec="seconds"),
+            "reason": "summary 重算值与已发布报告内嵌总市值不一致，需重渲染报告",
+        }
+        _existing.append(entry)
+        if len(_existing) > _RERENDER_MAX_LINES:
+            _existing = _existing[-_RERENDER_MAX_LINES:]
+        with open(_RERENDER_QUEUE, "w", encoding="utf-8") as fh:
+            for e in _existing:
+                fh.write(json.dumps(e, ensure_ascii=False) + "\n")
+        logger.warning("[重渲染队列] %s 报告需重渲染: 报告内嵌 %.2f vs 本次算出 %.2f",
+                       date_str, embedded, computed)
+    except Exception as e:
+        logger.debug("[重渲染队列] 记录失败(不影响主流程): %s", e)
 
 
 def check_otc_nav_coverage(db_path, date_str, per_code, otc_codes=None):
