@@ -11,14 +11,27 @@ from src.utils.database import get_db_connection
 
 # ==================== 数据查询（纯函数）====================
 
-def load_trade_records():
-    """加载全部交易流水"""
+def load_trade_records(flow_category: str = None):
+    """加载交易流水。
+
+    flow_category 可选：'证券'|'基金'|'资金'|'分红'|'其他'，按大类筛选；
+    默认 None 返回全账本。ETF 证券买卖与场外基金/银行转账分离标记后，
+    FIFO 盈亏与交易成本统计可显式只取 '证券' 口径。
+    """
     conn = get_db_connection()
-    df = pd.read_sql_query("""
-        SELECT date, market, code, name, action, quantity, price,
-               amount, commission, stamp_tax, change_amount
-        FROM trade_records ORDER BY date
-    """, conn)
+    if flow_category:
+        df = pd.read_sql_query("""
+            SELECT date, market, code, name, action, quantity, price,
+                   amount, commission, stamp_tax, change_amount, flow_category
+            FROM trade_records WHERE flow_category = ?
+            ORDER BY date
+        """, conn, params=(flow_category,))
+    else:
+        df = pd.read_sql_query("""
+            SELECT date, market, code, name, action, quantity, price,
+                   amount, commission, stamp_tax, change_amount, flow_category
+            FROM trade_records ORDER BY date
+        """, conn)
     conn.close()
     return df
 

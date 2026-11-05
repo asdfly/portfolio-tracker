@@ -351,7 +351,8 @@ TABLE_DEFS = [
             amount REAL,
             commission REAL,
             stamp_tax REAL,
-            change_amount REAL
+            change_amount REAL,
+            flow_category TEXT
         )
     """, [
         "CREATE INDEX IF NOT EXISTS idx_trade_date ON trade_records(date)",
@@ -645,6 +646,16 @@ def ensure_etf_forward_returns_risk_columns(conn):
 def ensure_etf_features_v2_columns(conn):
     """对已存在的 etf_features 表幂等补齐 v2 特征列（迁移用）。"""
     _ensure_columns(conn, "etf_features", _V2_FEATURE_COLS)
+
+
+def ensure_trade_records_flow_category(conn):
+    """对已存在的 trade_records 表幂等补齐 flow_category 列（迁移用）。
+
+    flow_category ∈ {证券, 基金, 资金, 分红, 其他}，将招商证券对账单全账本流水按
+    大类标记，使 ETF 证券买卖与场外基金定投/银行转账分离，避免污染 tab15 FIFO 盈亏与
+    交易成本统计。存量行(action 已存在)由 backfill 逻辑补标。
+    """
+    _ensure_columns(conn, "trade_records", [("flow_category", "TEXT")])
 
 
 def ensure_portfolio_summary_drawdown_columns(conn):

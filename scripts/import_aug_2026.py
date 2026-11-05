@@ -55,6 +55,25 @@ def _is_num(tok: str) -> bool:
     return bool(re.match(r"^-?\d+(\.\d+)?$", tok or ""))
 
 
+def _classify_action(action: str) -> str:
+    """将业务标志映射到流水大类，用于与 ETF 证券口径分离标记。
+
+    证券=场内买卖；基金=场外开基定投/申购/赎回；分红=股息红利；
+    资金=银行转存/回购；其他=未匹配。
+    """
+    a = (action or "").strip()
+    if a in ("证券买入", "证券卖出"):
+        return "证券"
+    if a in ("产品定时定额投资确认", "产品申购确认", "产品赎回确认"):
+        return "基金"
+    if a in ("股息入账", "产品红利发放", "红利发放", "股息"):
+        return "分红"
+    if a in ("银行转存", "质押回购拆出", "质押回购拆入", "报价回购拆出",
+             "拆出质押购回", "质押购回", "报价回购"):
+        return "资金"
+    return "其他"
+
+
 def parse_pdf_trades(pdf_path: str):
     """解析 PDF 流水明细 -> list[dict] (字段对齐 trade_records)。"""
     import pdfplumber
@@ -133,9 +152,10 @@ def parse_pdf_trades(pdf_path: str):
                 # 数值块：action 之后所有 token（变动金额可能以 '-' 占位/缺失）
                 post = [t for x, t in toks if x > action_x]
                 nums = [t for t in post if _is_num(t) or t == "-"]
-                # 至少需有 发生数量/价格/金额/佣金/印花税 5 个，否则视为异常
-                if len(nums) < 5:
-                    issues.append((pi + 1, top, f"数值字段仅{len(nums)}个(<5)", texts))
+                # 至少需有 发生数量/价格/金额/佣金 4 个；场外基金(无印花税列)仅 4 列也合法。
+                # 此前硬性要求 >=5 误杀全部场外基金定投行，本次放宽。
+                if len(nums) < 4:
+                    issues.append((pi + 1, top, f"数值字段仅{len(nums)}个(<4)", texts))
                     continue
 
                 def _num(t, default=0.0):
@@ -145,7 +165,7 @@ def parse_pdf_trades(pdf_path: str):
                 price = _num(nums[1])
                 amount = _num(nums[2])
                 commission = _num(nums[3])
-                stamp = _num(nums[4])
+                stamp = _num(nums[4]) if len(nums) > 4 else 0.0
                 other = _num(nums[5]) if len(nums) > 5 else 0.0
                 commission = commission + other  # 佣金 + 其他费(合并入佣金列)
 
@@ -171,6 +191,7 @@ def parse_pdf_trades(pdf_path: str):
                     "commission": round(commission, 2),
                     "stamp_tax": stamp,
                     "change_amount": change_amount,
+                    "flow_category": _classify_action(action),
                 })
     return trades, issues
 
